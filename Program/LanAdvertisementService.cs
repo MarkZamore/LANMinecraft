@@ -70,6 +70,18 @@ public sealed class LanAdvertisementService : IAsyncDisposable
         }
     }
 
+    public LanAdvertisementDiagnosticSnapshot GetDiagnosticSnapshot()
+    {
+        lock (_stateGate)
+        {
+            return new LanAdvertisementDiagnosticSnapshot(
+                _loopTask is not null && _cts is { IsCancellationRequested: false },
+                _snapshot.Peers.Count(peer => peer.IsHost),
+                _remoteSessions.Count,
+                _senders.Count);
+        }
+    }
+
     public void Update(
         int? localPort,
         string localSessionId,
@@ -460,3 +472,9 @@ public sealed class LanAdvertisementService : IAsyncDisposable
         public int LocalPort { get; set; }
     }
 }
+
+public sealed record LanAdvertisementDiagnosticSnapshot(
+    bool IsRunning,
+    int AdvertisedHostCount,
+    int RemoteSessionCount,
+    int LocalSenderCount);

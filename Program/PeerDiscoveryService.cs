@@ -65,6 +65,18 @@ public sealed class PeerDiscoveryService : IAsyncDisposable
 
     public event Action<PeerAnnouncement>? PeerUpdated;
 
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_senderGate)
+            {
+                return _cts is { IsCancellationRequested: false } &&
+                       (_senders.Count > 0 || _listeners.Count > 0);
+            }
+        }
+    }
+
     public async Task StartAsync(
         NetworkEnvironmentSnapshot snapshot,
         Func<NetworkEndpointInfo, PeerAnnouncement> createAnnouncement)
