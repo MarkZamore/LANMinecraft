@@ -27,9 +27,15 @@ public sealed class MinecraftProcessService
     private readonly ConcurrentDictionary<int, byte> _activeClientProcesses = new();
     private int _clientPreparing;
     private int _tcpOwnershipWarningLogged;
+    private string _lastJavaPath = "";
+    private string _lastGameVersion = "";
+    private string _lastProfileId = "";
 
     public bool IsClientRunning => !_activeClientProcesses.IsEmpty;
     public bool IsClientPreparing => Volatile.Read(ref _clientPreparing) != 0;
+    public string DiagnosticJavaPath => Volatile.Read(ref _lastJavaPath);
+    public string DiagnosticGameVersion => Volatile.Read(ref _lastGameVersion);
+    public string DiagnosticProfileId => Volatile.Read(ref _lastProfileId);
     public event Action<bool>? ClientRunningChanged;
     public event Action<bool>? ClientPreparingChanged;
 
@@ -131,6 +137,9 @@ public sealed class MinecraftProcessService
         var descriptor = PackManifestService.Load(packDir);
         var identityContext = _identityService.ResolveContext(settings);
         var runtime = await _packRuntimes.PrepareAsync(settings.ClientRelativePath, runtimeProgress, token);
+        Volatile.Write(ref _lastJavaPath, runtime.JavaPath);
+        Volatile.Write(ref _lastGameVersion, runtime.Descriptor.MinecraftVersion);
+        Volatile.Write(ref _lastProfileId, runtime.ProfileId);
         if (!string.Equals(runtime.Descriptor.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Pack manifest changed while its runtime was being prepared. Start the game again.");

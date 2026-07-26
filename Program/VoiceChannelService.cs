@@ -63,6 +63,7 @@ public sealed class VoiceChannelService : IDisposable, IAsyncDisposable
     private double _outputVolume = 1d;
     private string _lastPacketError = "";
     private DateTimeOffset _lastPacketWarningAt = DateTimeOffset.MinValue;
+    private long _decodeErrors;
 
     public VoiceChannelService(
         Logger logger,
@@ -109,6 +110,21 @@ public sealed class VoiceChannelService : IDisposable, IAsyncDisposable
     }
     public string SelfPeerId => _selfPeerId;
     public string LastPacketError => _lastPacketError;
+    public VoiceChannelDiagnosticSnapshot GetDiagnosticSnapshot()
+    {
+        lock (_stateLock)
+        {
+            return new VoiceChannelDiagnosticSnapshot(
+                _isJoined,
+                _isMuted,
+                _isDeafened,
+                _routes.Count,
+                _decoders.Count,
+                Interlocked.Read(ref _decodeErrors),
+                _lastPacketError,
+                _transport.GetDiagnosticSnapshot());
+        }
+    }
     public event Action<string, bool>? SpeakingStateChanged;
     public event Action<string, bool, bool>? PeerPresenceChanged;
     public event Action<bool>? TrafficProtectionChanged;
@@ -863,6 +879,7 @@ public sealed class VoiceChannelService : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref _decodeErrors);
             _lastPacketError = ex.Message;
             ResetPeerDecoderAfterFailure(buffer);
             WarnPacketError("Voice packet processing failed: " + ex.Message);
@@ -1261,6 +1278,16 @@ public sealed class VoiceChannelService : IDisposable, IAsyncDisposable
         Goodbye = 4
     }
 }
+
+public sealed record VoiceChannelDiagnosticSnapshot(
+    bool IsJoined,
+    bool IsMuted,
+    bool IsDeafened,
+    int RouteCount,
+    int DecoderCount,
+    long DecodeErrors,
+    string LastPacketError,
+    VoiceTransportDiagnosticSnapshot Transport);
 
 internal sealed record VoiceJoinAudioSession(
     string InputDeviceId,

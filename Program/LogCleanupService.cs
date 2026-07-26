@@ -6,6 +6,8 @@ namespace Minecraft;
 
 public static class LogCleanupService
 {
+    private static readonly TimeSpan DiagnosticRetention = TimeSpan.FromDays(7);
+
     public static void RunCleanup(AppPaths paths)
     {
         CleanupLauncherLog(paths.LogFile);
@@ -75,10 +77,47 @@ public static class LogCleanupService
         var directory = Path.GetDirectoryName(launcherLogPath);
         if (string.IsNullOrWhiteSpace(directory)) return;
         Directory.CreateDirectory(directory);
-        DeleteFile(launcherLogPath);
+        try
+        {
+            var current = new FileInfo(launcherLogPath);
+            if (current.Exists && current.Length > 0)
+            {
+                var stamp = current.LastWriteTimeUtc.ToString(
+                    "yyyyMMdd-HHmmss",
+                    System.Globalization.CultureInfo.InvariantCulture);
+                var archivedPath = Path.Combine(directory, $"logs-{stamp}.log");
+                if (File.Exists(archivedPath))
+                {
+                    archivedPath = Path.Combine(
+                        directory,
+                        $"logs-{stamp}-{Guid.NewGuid():N}.log");
+                }
+                File.Move(launcherLogPath, archivedPath);
+            }
+            else
+            {
+                DeleteFile(launcherLogPath);
+            }
+        }
+        catch
+        {
+            // A second running launcher may still own the file. Keeping it is safer
+            // than deleting diagnostic data.
+        }
+
+        var cutoff = DateTime.UtcNow - DiagnosticRetention;
         foreach (var archivedLog in Directory.EnumerateFiles(directory, "logs-*.log", SearchOption.TopDirectoryOnly))
         {
-            DeleteFile(archivedLog);
+            try
+            {
+                if (File.GetLastWriteTimeUtc(archivedLog) < cutoff)
+                {
+                    DeleteFile(archivedLog);
+                }
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -96,7 +135,7 @@ public static class LogCleanupService
         if (!Directory.Exists(logsRoot)) return;
         foreach (var file in Directory.EnumerateFiles(logsRoot, "*", SearchOption.AllDirectories)
                      .Select(path => new FileInfo(path))
-                     .Where(ShouldDeleteGeneratedFile)
+                     .Where(ShouldDeleteExpiredGeneratedFile)
                      .ToList())
         {
             DeleteFile(file.FullName);
@@ -149,19 +188,20 @@ public static class LogCleanupService
         TryDeleteDirectoryIfEmpty(updatesRoot);
     }
 
-    private static bool ShouldDeleteGeneratedFile(FileInfo file)
+    private static bool ShouldDeleteExpiredGeneratedFile(FileInfo file)
     {
-        if (file.Extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
-            file.Extension.Equals(".gz", StringComparison.OrdinalIgnoreCase))
+        var directory = file.DirectoryName ?? string.Empty;
+        if (directory.Contains("dynamic-data-pack-cache", StringComparison.OrdinalIgnoreCase) ||
+            directory.Contains("dynamic-resource-pack-cache", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        var directory = file.DirectoryName ?? string.Empty;
-        return directory.Contains("crash-reports", StringComparison.OrdinalIgnoreCase) ||
-               directory.Contains("debug", StringComparison.OrdinalIgnoreCase) ||
-               directory.Contains("dynamic-data-pack-cache", StringComparison.OrdinalIgnoreCase) ||
-               directory.Contains("dynamic-resource-pack-cache", StringComparison.OrdinalIgnoreCase);
+        return file.LastWriteTimeUtc < DateTime.UtcNow - DiagnosticRetention &&
+               (file.Extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
+                file.Extension.Equals(".gz", StringComparison.OrdinalIgnoreCase) ||
+                directory.Contains("crash-reports", StringComparison.OrdinalIgnoreCase) ||
+                directory.Contains("debug", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void CleanupInstanceGeneratedFiles(string instancesRoot)
@@ -170,9 +210,6 @@ public static class LogCleanupService
         var generatedDirectories = new[]
         {
             ".mixin.out",
-            "logs",
-            "crash-reports",
-            "debug",
             "downloads",
             "dynamic-data-pack-cache",
             "dynamic-resource-pack-cache"
@@ -183,12 +220,36 @@ public static class LogCleanupService
             {
                 DeleteDirectory(Path.Combine(instanceDir, directoryName));
             }
+            RetainRecentSessionDiagnostics(instanceDir);
             try
             {
                 PackInstanceService.CleanupDisposableInstancePlaceholders(instanceDir);
             }
             catch
             {
+            }
+        }
+    }
+
+    internal static void RetainRecentSessionDiagnostics(string gameDirectory)
+    {
+        var cutoff = DateTime.UtcNow - DiagnosticRetention;
+        foreach (var directoryName in new[] { "logs", "debug", "crash-reports" })
+        {
+            var directory = Path.Combine(gameDirectory, directoryName);
+            if (!Directory.Exists(directory)) continue;
+            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    {
+                        DeleteFile(path);
+                    }
+                }
+                catch
+                {
+                }
             }
         }
     }
