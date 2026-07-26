@@ -129,7 +129,11 @@ public sealed class VirtualNetworkServiceTests
             first.NetworkAddress));
         environment.BlockNextCapture = true;
 
-        var staleCapture = Task.Run(service.GetSnapshot);
+        var staleCapture = Task.Factory.StartNew(
+            service.GetSnapshot,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         Assert.True(environment.CaptureEntered.Wait(TimeSpan.FromSeconds(2)));
         Assert.True(service.SelectAddress(
             second.InterfaceId,
@@ -191,13 +195,18 @@ public sealed class VirtualNetworkServiceTests
     {
         public ManualResetEventSlim CaptureEntered { get; } = new(false);
         public ManualResetEventSlim ReleaseCapture { get; } = new(false);
-        public bool BlockNextCapture { get; set; }
+        private int _blockNextCapture;
+
+        public bool BlockNextCapture
+        {
+            get => Volatile.Read(ref _blockNextCapture) != 0;
+            set => Volatile.Write(ref _blockNextCapture, value ? 1 : 0);
+        }
 
         public IReadOnlyList<NetworkEndpointInfo> CaptureEndpoints()
         {
-            if (BlockNextCapture)
+            if (Interlocked.Exchange(ref _blockNextCapture, 0) != 0)
             {
-                BlockNextCapture = false;
                 CaptureEntered.Set();
                 if (!ReleaseCapture.Wait(TimeSpan.FromSeconds(2)))
                 {
