@@ -19,6 +19,7 @@ public sealed class LanRelayService : IAsyncDisposable
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private HostSession _hostSession = HostSession.Empty;
     private CancellationTokenSource _hostSessionCts = CreateCanceledTokenSource();
+    private int _clientRelayCount;
     private volatile bool _disposed;
 
     public LanRelayService(Logger logger, ISelectedNetworkTransport network, PeerRouteResolver routes)
@@ -58,6 +59,18 @@ public sealed class LanRelayService : IAsyncDisposable
         previousCts.Dispose();
     }
 
+    public LanRelayDiagnosticSnapshot GetDiagnosticSnapshot()
+    {
+        lock (_hostSessionGate)
+        {
+            return new LanRelayDiagnosticSnapshot(
+                _hostSession != HostSession.Empty,
+                _hostSession.SessionId,
+                _hostSession.Port,
+                Volatile.Read(ref _clientRelayCount));
+        }
+    }
+
     public async Task<ClientLanRelayInfo> GetOrCreateClientRelayAsync(
         string peerId,
         string lanSessionId,
@@ -93,6 +106,7 @@ public sealed class LanRelayService : IAsyncDisposable
             {
                 _clientRelays.Remove(previous.Key);
             }
+            Volatile.Write(ref _clientRelayCount, _clientRelays.Count);
 
             var preferredLocalPort = previousSessions
                 .Select(pair => pair.Value.LocalPort)
@@ -113,6 +127,7 @@ public sealed class LanRelayService : IAsyncDisposable
                 _peerConnector,
                 _routes);
             _clientRelays.Add(key, relay);
+            Volatile.Write(ref _clientRelayCount, _clientRelays.Count);
             return new ClientLanRelayInfo(key, relay.LocalPort);
         }
         finally
@@ -134,6 +149,7 @@ public sealed class LanRelayService : IAsyncDisposable
                 _clientRelays.Remove(pair.Key);
                 removed.Add(pair.Value);
             }
+            Volatile.Write(ref _clientRelayCount, _clientRelays.Count);
         }
         finally
         {
@@ -259,6 +275,7 @@ public sealed class LanRelayService : IAsyncDisposable
         {
             relays = _clientRelays.Values.ToArray();
             _clientRelays.Clear();
+            Volatile.Write(ref _clientRelayCount, 0);
         }
         finally
         {
@@ -618,6 +635,12 @@ public sealed class LanRelayService : IAsyncDisposable
         public void Dispose() => cancellation.Dispose();
     }
 }
+
+public sealed record LanRelayDiagnosticSnapshot(
+    bool IsHosting,
+    string LanSessionId,
+    int LocalMinecraftPort,
+    int ClientRelayCount);
 
 public sealed record ClientLanRelayInfo(string Key, int LocalPort);
 
