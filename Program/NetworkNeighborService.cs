@@ -70,20 +70,8 @@ public sealed class NetworkNeighborService
         return null;
     }
 
-    private static bool IsUsable(IPAddress address)
-    {
-        if (IPAddress.IsLoopback(address) || address.IsIPv6Multicast ||
-            address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
-        {
-            return false;
-        }
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
-            var bytes = address.GetAddressBytes();
-            return bytes[0] is > 0 and < 224 && !(bytes[0] == 169 && bytes[1] == 254);
-        }
-        return address.AddressFamily == AddressFamily.InterNetworkV6;
-    }
+    private static bool IsUsable(IPAddress address) =>
+        VirtualNetworkService.IsUsableAddress(address);
 
     private static int Align(int value, int alignment) => (value + alignment - 1) & ~(alignment - 1);
 

@@ -19,15 +19,19 @@ public sealed class SkinService : IAsyncDisposable
     private const int MaxSkinBytes = 128 * 1024 * 1024;
     private readonly AppPaths _paths;
     private readonly Logger _logger;
-    private readonly VirtualNetworkService _network;
+    private readonly ISelectedNetworkTransport _network;
     private readonly PeerRouteResolver _routes;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, SkinAsset> _assets = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SkinPeerDescriptor> _peers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _fetches = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _taskGate = new();
+    private readonly HashSet<Task> _backgroundTasks = [];
     private TcpListener? _httpListener;
     private Task? _httpTask;
+    private Task? _disposeTask;
+    private bool _stopping;
     private SkinAsset? _localAsset;
     private string _localUuid = "";
     private string _localSourceState = "";
@@ -35,7 +39,7 @@ public sealed class SkinService : IAsyncDisposable
     public SkinService(
         AppPaths paths,
         Logger logger,
-        VirtualNetworkService network,
+        ISelectedNetworkTransport network,
         PeerRouteResolver routes)
     {
         _paths = paths;
@@ -121,23 +125,29 @@ public sealed class SkinService : IAsyncDisposable
         }
     }
 
-    public async Task StartAsync(CancellationToken token = default)
+    public Task StartAsync(CancellationToken token = default)
     {
-        if (_httpTask is not null) return;
-        var listener = new TcpListener(IPAddress.Loopback, HttpPort);
-        try
+        lock (_taskGate)
         {
-            listener.Start();
-        }
-        catch (SocketException ex)
-        {
-            _logger.Warn($"Local skin endpoint could not start on 127.0.0.1:{HttpPort}: {ex.Message}");
-            return;
+            if (_stopping || _httpTask is not null) return Task.CompletedTask;
+            var listener = new TcpListener(IPAddress.Loopback, HttpPort);
+            try
+            {
+                listener.Start();
+            }
+            catch (Exception ex)
+            {
+                listener.Stop();
+                if (ex is not SocketException) throw;
+                _logger.Warn($"Local skin endpoint could not start on 127.0.0.1:{HttpPort}: {ex.Message}");
+                return Task.CompletedTask;
+            }
+
+            _httpListener = listener;
+            _httpTask = HttpLoopAsync(listener, _shutdown.Token);
         }
 
-        _httpListener = listener;
-        _httpTask = HttpLoopAsync(listener, _shutdown.Token);
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     public void ObservePeer(PeerViewModel peer)
@@ -156,11 +166,11 @@ public sealed class SkinService : IAsyncDisposable
             uuid,
             peer.SkinSha256.ToUpperInvariant(),
             NormalizeModel(peer.SkinModel),
-            _routes.GetSendCandidates(peer.IdentityId, _network.SelectedProviderId)
+            _routes.GetSendCandidates(peer.IdentityId)
                 .Select(endpoint => new SkinPeerEndpoint(
                     endpoint.Address,
-                    endpoint.ProviderId,
-                    endpoint.InterfaceId))
+                    endpoint.LocalAddress,
+                    endpoint.LocalInterfaceId))
                 .ToArray());
         var metadataChanged = !_peers.TryGetValue(uuid, out var previousDescriptor) ||
                               previousDescriptor.Sha256 != descriptor.Sha256 ||
@@ -176,7 +186,9 @@ public sealed class SkinService : IAsyncDisposable
 
         _assets.TryRemove(uuid, out _);
         WriteRegistry();
-        _ = FetchPeerSkinAsync(descriptor, _shutdown.Token);
+        TryRunBackground(
+            cancellationToken => FetchPeerSkinAsync(descriptor, cancellationToken),
+            "Peer skin request");
     }
 
     public string PrepareRegistry(AppSettings settings, LocalIdentityContext identity)
@@ -236,7 +248,10 @@ public sealed class SkinService : IAsyncDisposable
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                     timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                    using var client = _network.CreateBoundTcpClient(address, endpoint.ProviderId);
+                    using var client = _network.CreateBoundTcpClient(
+                        address,
+                        endpoint.LocalAddress,
+                        endpoint.LocalInterfaceId);
                     await client.ConnectAsync(address, WorldTransferService.TransferPort, timeout.Token).ConfigureAwait(false);
                     await using var stream = client.GetStream();
                     await PortableProtocol.WriteJsonAsync(stream, new SkinRequest
@@ -274,7 +289,7 @@ public sealed class SkinService : IAsyncDisposable
                     WriteRegistry();
                     return;
                 }
-                catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or InvalidDataException)
+                catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or InvalidDataException or JsonException)
                 {
                     if (token.IsCancellationRequested) return;
                     _routes.MarkEndpointUnhealthy(descriptor.PlayerUuid, endpoint.ToCandidate());
@@ -295,7 +310,12 @@ public sealed class SkinService : IAsyncDisposable
             try
             {
                 var client = await listener.AcceptTcpClientAsync(token).ConfigureAwait(false);
-                _ = ServeHttpClientAsync(client, token);
+                if (!TryRunBackground(
+                        cancellationToken => ServeHttpClientAsync(client, cancellationToken),
+                        "Local skin response"))
+                {
+                    client.Dispose();
+                }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -309,6 +329,47 @@ public sealed class SkinService : IAsyncDisposable
             {
                 _logger.Warn($"Local skin endpoint failed: {ex.Message}");
             }
+        }
+    }
+
+    private bool TryRunBackground(Func<CancellationToken, Task> operation, string description)
+    {
+        Task task;
+        lock (_taskGate)
+        {
+            if (_stopping) return false;
+            task = RunBackgroundAsync(operation, description);
+            _backgroundTasks.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            completed =>
+            {
+                lock (_taskGate)
+                {
+                    _backgroundTasks.Remove(completed);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return true;
+    }
+
+    private async Task RunBackgroundAsync(
+        Func<CancellationToken, Task> operation,
+        string description)
+    {
+        try
+        {
+            await operation(_shutdown.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"{description} failed: {ex.Message}");
         }
     }
 
@@ -561,14 +622,36 @@ public sealed class SkinService : IAsyncDisposable
         await stream.FlushAsync(token).ConfigureAwait(false);
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        _shutdown.Cancel();
-        _httpListener?.Stop();
-        if (_httpTask is not null)
+        lock (_taskGate)
         {
-            try { await _httpTask.ConfigureAwait(false); }
+            if (_disposeTask is not null) return new ValueTask(_disposeTask);
+            _stopping = true;
+            _shutdown.Cancel();
+            _httpListener?.Stop();
+            _disposeTask = DisposeCoreAsync(_httpTask);
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async Task DisposeCoreAsync(Task? httpTask)
+    {
+        await Task.Yield();
+        if (httpTask is not null)
+        {
+            try { await httpTask.ConfigureAwait(false); }
             catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException) { }
+        }
+
+        Task[] backgroundTasks;
+        lock (_taskGate)
+        {
+            backgroundTasks = _backgroundTasks.ToArray();
+        }
+        if (backgroundTasks.Length > 0)
+        {
+            await Task.WhenAll(backgroundTasks).ConfigureAwait(false);
         }
         _shutdown.Dispose();
     }
@@ -581,13 +664,16 @@ public sealed class SkinService : IAsyncDisposable
         long SizeBytes,
         long LastWriteUtcTicks);
 
-    private sealed record SkinPeerEndpoint(string Address, string ProviderId, string InterfaceId)
+    private sealed record SkinPeerEndpoint(
+        string Address,
+        string LocalAddress,
+        string LocalInterfaceId)
     {
         public PeerCandidateEndpoint ToCandidate() => new()
         {
             Address = Address,
-            ProviderId = ProviderId,
-            InterfaceId = InterfaceId,
+            LocalAddress = LocalAddress,
+            LocalInterfaceId = LocalInterfaceId,
             AddressFamily = IPAddress.TryParse(Address, out var parsed) &&
                             parsed.AddressFamily == AddressFamily.InterNetworkV6
                 ? "IPv6"

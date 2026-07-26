@@ -11,6 +11,8 @@
 /Program/**/bin/
 /Program/**/obj/
 /Program/publish/
+/Program.Tests/bin/
+/Program.Tests/obj/
 
 # IDE/user files
 /.vs/
