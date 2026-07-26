@@ -19,13 +19,15 @@ public sealed class WaypointSyncService : IAsyncDisposable
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly WorldMetadataService _worldMetadata;
-    private readonly VirtualNetworkService _network;
+    private readonly ISelectedNetworkTransport _network;
     private readonly PeerRouteResolver _routes;
     private readonly WaypointProviderRegistry _providerRegistry;
     private readonly WaypointStoreService _store;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
     private readonly object _stateGate = new();
+    private readonly object _lifecycleGate = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+    private readonly CancellationTokenSource _syncLoopCts = new();
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly Dictionary<string, RemoteWorldSession> _remoteSessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PendingHostAnnouncement> _pendingAnnouncements = new(StringComparer.OrdinalIgnoreCase);
@@ -39,12 +41,16 @@ public sealed class WaypointSyncService : IAsyncDisposable
     private DateTimeOffset _lastRelevantChangeUtc = DateTimeOffset.MinValue;
     private bool _scanRequested;
     private int _disposeState;
+    private int _activeOperations;
+    private readonly TaskCompletionSource _operationsDrained =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _disposeTask;
 
     public WaypointSyncService(
         AppPaths paths,
         Logger logger,
         WorldMetadataService worldMetadata,
-        VirtualNetworkService network,
+        ISelectedNetworkTransport network,
         PeerRouteResolver routes)
     {
         _paths = paths;
@@ -56,7 +62,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
         _store = new WaypointStoreService(worldMetadata, _providerRegistry, logger);
         MigrateLegacyState();
         _localState = LoadLocalState();
-        _syncLoopTask = Task.Run(() => SyncLoopAsync(_shutdownCts.Token));
+        _syncLoopTask = Task.Run(() => SyncLoopAsync(_syncLoopCts.Token));
     }
 
     public WaypointStoreService Store => _store;
@@ -66,9 +72,12 @@ public sealed class WaypointSyncService : IAsyncDisposable
         LocalIdentityContext identity,
         CancellationToken token)
     {
-        await _syncGate.WaitAsync(token).ConfigureAwait(false);
+        var operation = BeginOperation(token);
+        var gateEntered = false;
         try
         {
+            await _syncGate.WaitAsync(operation.Token).ConfigureAwait(false);
+            gateEntered = true;
             var packDirectory = _paths.CombineUnderPacks(packRelativePath);
             var gameDirectory = _paths.CombineUnderInstances(packRelativePath);
             var providers = _providerRegistry.Detect(packDirectory);
@@ -88,7 +97,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
 
             foreach (var worldPath in EnumerateWorlds())
             {
-                token.ThrowIfCancellationRequested();
+                operation.Token.ThrowIfCancellationRequested();
                 string worldId;
                 try
                 {
@@ -137,12 +146,14 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 RegisterRemote(announcement, session);
             }
 
-            await SyncCoreAsync(token).ConfigureAwait(false);
+            await SyncCoreAsync(operation.Token).ConfigureAwait(false);
             RequestScan();
         }
         finally
         {
-            _syncGate.Release();
+            if (gateEntered) _syncGate.Release();
+            operation.Dispose();
+            EndOperation();
         }
     }
 
@@ -222,11 +233,11 @@ public sealed class WaypointSyncService : IAsyncDisposable
             return;
         }
 
-        var addresses = _routes.GetSendCandidates(announcement.IdentityId, _network.SelectedProviderId)
+        var addresses = _routes.GetSendCandidates(announcement.IdentityId)
             .Select(endpoint => new WaypointRouteEndpoint(
                 endpoint.Address,
-                endpoint.ProviderId,
-                endpoint.InterfaceId))
+                endpoint.LocalAddress,
+                endpoint.LocalInterfaceId))
             .Where(endpoint => IPAddress.TryParse(endpoint.Address, out _))
             .Distinct()
             .ToArray();
@@ -246,8 +257,8 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 worldId.ToString("D"),
                 identityKey,
                 endpoint.Address,
-                endpoint.ProviderId,
-                endpoint.InterfaceId,
+                endpoint.LocalAddress,
+                endpoint.LocalInterfaceId,
                 providers,
                 DateTimeOffset.UtcNow))
             .ToArray();
@@ -286,15 +297,15 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 remote = new RemoteWorldSession(announcement.WorldId, announcement.HostIdentityId);
                 _remoteSessions[key] = remote;
             }
-            var endpointKey = $"{announcement.ProviderId}|{announcement.InterfaceId}|{announcement.Address}";
+            var endpointKey = $"{announcement.LocalAddress}|{announcement.LocalInterfaceId}|{announcement.Address}";
             var endpointAdded = !remote.Addresses.ContainsKey(endpointKey);
             var providersChanged = remote.Providers.Count != providers.Count || providers.Any(item =>
                 !remote.Providers.TryGetValue(item.Key, out var current) ||
                 !string.Equals(current.WorldContextId, item.Value.WorldContextId, StringComparison.Ordinal));
             remote.Addresses[endpointKey] = new RemoteAddressState(
                 announcement.Address,
-                announcement.ProviderId,
-                announcement.InterfaceId,
+                announcement.LocalAddress,
+                announcement.LocalInterfaceId,
                 announcement.LastSeenUtc);
             remote.Providers = providers;
             if (endpointAdded || providersChanged)
@@ -309,22 +320,30 @@ public sealed class WaypointSyncService : IAsyncDisposable
 
     public async Task FlushAsync(CancellationToken token = default)
     {
-        await _syncGate.WaitAsync(token).ConfigureAwait(false);
+        var operation = BeginOperation(token);
+        var gateEntered = false;
         try
         {
-            await SyncCoreAsync(token).ConfigureAwait(false);
+            await _syncGate.WaitAsync(operation.Token).ConfigureAwait(false);
+            gateEntered = true;
+            await SyncCoreAsync(operation.Token).ConfigureAwait(false);
         }
         finally
         {
-            _syncGate.Release();
+            if (gateEntered) _syncGate.Release();
+            operation.Dispose();
+            EndOperation();
         }
     }
 
     public async Task FlushWorldAsync(string worldPath, LocalIdentityContext identity, CancellationToken token)
     {
-        await _syncGate.WaitAsync(token).ConfigureAwait(false);
+        var operation = BeginOperation(token);
+        var gateEntered = false;
         try
         {
+            await _syncGate.WaitAsync(operation.Token).ConfigureAwait(false);
+            gateEntered = true;
             HostedWorldSession? hosted;
             LocalWaypointSession? local;
             lock (_stateGate)
@@ -346,7 +365,9 @@ public sealed class WaypointSyncService : IAsyncDisposable
         }
         finally
         {
-            _syncGate.Release();
+            if (gateEntered) _syncGate.Release();
+            operation.Dispose();
+            EndOperation();
         }
     }
 
@@ -512,8 +533,8 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 pair.Value.Addresses.Values
                     .Select(endpoint => new WaypointRouteEndpoint(
                         endpoint.Address,
-                        endpoint.ProviderId,
-                        endpoint.InterfaceId))
+                        endpoint.LocalAddress,
+                        endpoint.LocalInterfaceId))
                     .ToArray(),
                 pair.Value.Providers.Values.ToArray(),
                 pair.Value.PullRequested,
@@ -739,7 +760,10 @@ public sealed class WaypointSyncService : IAsyncDisposable
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
             try
             {
-                using var client = _network.CreateBoundTcpClient(ip, endpoint.ProviderId);
+                using var client = _network.CreateBoundTcpClient(
+                    ip,
+                    endpoint.LocalAddress,
+                    endpoint.LocalInterfaceId);
                 await client.ConnectAsync(ip, WorldTransferService.TransferPort, timeoutCts.Token).ConfigureAwait(false);
                 await using var stream = client.GetStream();
                 await PortableProtocol.WriteJsonAsync(stream, request, _jsonOptions, timeoutCts.Token).ConfigureAwait(false);
@@ -751,7 +775,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
                     return response;
                 }
             }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or InvalidDataException)
+            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or InvalidDataException or JsonException)
             {
                 token.ThrowIfCancellationRequested();
                 _routes.MarkEndpointUnhealthy(hostIdentityId, endpoint.ToCandidate());
@@ -1058,32 +1082,117 @@ public sealed class WaypointSyncService : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    private CancellationTokenSource BeginOperation(CancellationToken token)
     {
-        if (Interlocked.Exchange(ref _disposeState, 1) != 0) return;
+        lock (_lifecycleGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeState != 0, this);
+            _activeOperations++;
+        }
+
         try
         {
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await FlushAsync(timeoutCts.Token).ConfigureAwait(false);
+            return CancellationTokenSource.CreateLinkedTokenSource(
+                token,
+                _shutdownCts.Token);
         }
         catch
         {
+            EndOperation();
+            throw;
         }
-        _shutdownCts.Cancel();
+    }
+
+    private void EndOperation()
+    {
+        lock (_lifecycleGate)
+        {
+            _activeOperations--;
+            if (_disposeState != 0 && _activeOperations == 0)
+            {
+                _operationsDrained.TrySetResult();
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource? completion = null;
+        lock (_lifecycleGate)
+        {
+            if (_disposeTask is not null) return new ValueTask(_disposeTask);
+            _disposeState = 1;
+            if (_activeOperations == 0) _operationsDrained.TrySetResult();
+            completion = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _disposeTask = completion.Task;
+        }
+
+        _syncLoopCts.Cancel();
+        _ = DisposeCoreAsync(completion);
+        return new ValueTask(completion.Task);
+    }
+
+    private async Task DisposeCoreAsync(TaskCompletionSource completion)
+    {
         try
         {
-            await _syncLoopTask.ConfigureAwait(false);
+            try
+            {
+                await _syncLoopTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            await _operationsDrained.Task.ConfigureAwait(false);
+            var gateEntered = false;
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await _syncGate.WaitAsync(timeout.Token).ConfigureAwait(false);
+                gateEntered = true;
+                await SyncCoreAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"Final waypoint synchronization was incomplete: {ex.Message}");
+            }
+            finally
+            {
+                if (gateEntered) _syncGate.Release();
+            }
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
+            _logger.Warn($"Waypoint synchronization shutdown failed: {ex.Message}");
         }
-        lock (_stateGate)
+        finally
         {
-            foreach (var watcher in _watchers) watcher.Dispose();
-            _watchers.Clear();
+            try
+            {
+                _shutdownCts.Cancel();
+                lock (_stateGate)
+                {
+                    foreach (var watcher in _watchers)
+                    {
+                        try { watcher.Dispose(); }
+                        catch (Exception ex) { _logger.Warn($"Waypoint watcher shutdown failed: {ex.Message}"); }
+                    }
+                    _watchers.Clear();
+                }
+                _shutdownCts.Dispose();
+                _syncLoopCts.Dispose();
+                _syncGate.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"Waypoint resource cleanup failed: {ex.Message}");
+            }
+            finally
+            {
+                completion.TrySetResult();
+            }
         }
-        _shutdownCts.Dispose();
-        _syncGate.Dispose();
     }
 
     private sealed record LocalWaypointSession(
@@ -1099,8 +1208,8 @@ public sealed class WaypointSyncService : IAsyncDisposable
         string WorldId,
         string HostIdentityId,
         string Address,
-        string ProviderId,
-        string InterfaceId,
+        string LocalAddress,
+        string LocalInterfaceId,
         IReadOnlyList<WaypointProviderAnnouncement> Providers,
         DateTimeOffset LastSeenUtc);
     private sealed record RemoteWorldWorkItem(
@@ -1128,13 +1237,16 @@ public sealed class WaypointSyncService : IAsyncDisposable
         public long ChangeVersion { get; set; }
     }
 
-    private sealed record WaypointRouteEndpoint(string Address, string ProviderId, string InterfaceId = "")
+    private sealed record WaypointRouteEndpoint(
+        string Address,
+        string LocalAddress,
+        string LocalInterfaceId)
     {
         public PeerCandidateEndpoint ToCandidate() => new()
         {
             Address = Address,
-            ProviderId = ProviderId,
-            InterfaceId = InterfaceId,
+            LocalAddress = LocalAddress,
+            LocalInterfaceId = LocalInterfaceId,
             AddressFamily = IPAddress.TryParse(Address, out var parsed) &&
                             parsed.AddressFamily == AddressFamily.InterNetworkV6
                 ? "IPv6"
@@ -1143,8 +1255,8 @@ public sealed class WaypointSyncService : IAsyncDisposable
     }
     private sealed record RemoteAddressState(
         string Address,
-        string ProviderId,
-        string InterfaceId,
+        string LocalAddress,
+        string LocalInterfaceId,
         DateTimeOffset LastSeenUtc);
 }
 

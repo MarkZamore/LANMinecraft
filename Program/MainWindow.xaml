@@ -70,7 +70,7 @@
         <DataTemplate x:Key="PeerItemTemplate">
             <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
         </DataTemplate>
-        <DataTemplate x:Key="NetworkProviderItemTemplate">
+        <DataTemplate x:Key="NetworkAddressItemTemplate">
             <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
         </DataTemplate>
         <DataTemplate x:Key="VoicePeerTemplate">
@@ -170,13 +170,13 @@
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
                     <TextBlock Grid.Column="3" Text="GB" Margin="6,0,0,0"/>
                 </Grid>
-                <TextBlock Grid.Row="1" Grid.Column="3" Text="VPN" Margin="0,10,0,0"/>
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="IP" Margin="0,10,0,0"/>
                 <Grid Grid.Row="1" Grid.Column="4" Margin="8,10,0,0">
-                    <local:CenteredDropDown x:Name="NetworkProviderComboBox"
-                                            ItemTemplate="{StaticResource NetworkProviderItemTemplate}"
-                                            SelectionChanged="NetworkProviderComboBox_SelectionChanged"/>
-                    <TextBlock x:Name="NetworkProviderPlaceholderText"
-                               Text="Сервис не найден"
+                    <local:CenteredDropDown x:Name="NetworkAddressComboBox"
+                                            ItemTemplate="{StaticResource NetworkAddressItemTemplate}"
+                                            SelectionChanged="NetworkAddressComboBox_SelectionChanged"/>
+                    <TextBlock x:Name="NetworkAddressPlaceholderText"
+                               Text="Сетевой IP не найден"
                                Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"
