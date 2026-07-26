@@ -132,9 +132,10 @@ public sealed class VirtualNetworkService : ISelectedNetworkTransport
 
             NetworkAddressOption? selected;
             lock (_selectionGate) selected = _selectedAddress;
+            var capturedEndpoints = _environment.CaptureEndpoints();
             var endpoint = selected is null
                 ? null
-                : _environment.CaptureEndpoints().FirstOrDefault(candidate =>
+                : capturedEndpoints.FirstOrDefault(candidate =>
                     !candidate.IsFilterInterface &&
                     !candidate.IsEndpointInterface &&
                     string.Equals(candidate.InterfaceId, selected.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
@@ -143,6 +144,7 @@ public sealed class VirtualNetworkService : ISelectedNetworkTransport
             {
                 CapturedAtUtc = DateTimeOffset.UtcNow,
                 Endpoints = endpoint is null ? [] : [endpoint],
+                AvailableEndpoints = capturedEndpoints,
                 PrimaryEndpoint = endpoint
             };
             lock (_snapshotGate)
@@ -381,9 +383,9 @@ public sealed class VirtualNetworkService : ISelectedNetworkTransport
 
 internal sealed class WindowsNetworkEnvironment : INetworkEnvironment
 {
-    private const int InterfaceFlagHardware = 1 << 0;
-    private const int InterfaceFlagFilter = 1 << 1;
-    private const int InterfaceFlagEndpoint = 1 << 7;
+    internal const int InterfaceFlagHardware = 1 << 0;
+    internal const int InterfaceFlagFilter = 1 << 1;
+    internal const int InterfaceFlagEndpoint = 1 << 7;
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(2);
     private readonly Logger _logger;
     private DateTimeOffset _lastCommandWarningUtc = DateTimeOffset.MinValue;
@@ -684,6 +686,17 @@ internal sealed class WindowsNetworkEnvironment : INetworkEnvironment
                 ? InterfaceFlagHardware
                 : 0;
     }
+
+    internal static int GetInterfaceFlagsForDiagnostics(
+        int interfaceIndex,
+        NetworkInterfaceType fallbackType) =>
+        interfaceIndex > 0
+            ? GetInterfaceFlags(interfaceIndex, fallbackType)
+            : fallbackType is NetworkInterfaceType.Ethernet or
+                NetworkInterfaceType.GigabitEthernet or
+                NetworkInterfaceType.Wireless80211
+                    ? InterfaceFlagHardware
+                    : 0;
 
     internal static (int Size, int InterfaceIndexOffset, int FlagsOffset) GetMibIfRow2Layout() =>
     (

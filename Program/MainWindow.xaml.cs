@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _networkRefreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly SemaphoreSlim _diagnosticLogTargetChangeGate = new(1, 1);
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
     private readonly TransferRateTracker _runtimeRate = new();
@@ -61,6 +62,7 @@ public partial class MainWindow : Window
     private UpdateService? _updateService;
     private VoiceChannelService? _voiceChannel;
     private VoiceNetworkCoordinator? _voiceNetwork;
+    private PeerSupportLogService? _peerSupportLogs;
     private VoiceSettingsWindow? _voiceSettingsWindow;
     private GlobalPttHotkeyService? _pttHotkey;
     private NetworkEnvironmentSnapshot _networkSnapshot = new();
@@ -107,6 +109,8 @@ public partial class MainWindow : Window
     private bool _minecraftPreparing;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
+    private string _diagnosticLogTargetIdentityId = "";
+    private long _diagnosticLogTargetChangeVersion;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -176,7 +180,22 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
+            _peerSupportLogs = new PeerSupportLogService(
+                _paths,
+                _network,
+                _peerRoutes,
+                ResolveActiveLocalIdentity,
+                ResolveCurrentInstanceDirectory,
+                CaptureSupportEnvironmentAsync,
+                CaptureSupportNetworkMetrics);
+            _peerSupportLogs.StateChanged += () => PostToUi(() =>
+            {
+                _diagnosticLogTargetIdentityId =
+                    _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
+                RefreshVoiceSettingsWindow();
+            });
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _voiceNetwork, _network, _peerRoutes);
+            _transfer.AttachPeerSupportLogService(_peerSupportLogs);
             _updateService = new UpdateService(
                 _paths,
                 _logger,
@@ -280,6 +299,7 @@ public partial class MainWindow : Window
             _voiceSettingsWindow?.Close();
             if (_voiceChannel is not null) await _voiceChannel.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
+            if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
             if (_lanRelay is not null) await _lanRelay.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
@@ -530,14 +550,29 @@ public partial class MainWindow : Window
         try
         {
             var previousFingerprint = _networkSnapshot.Fingerprint;
+            var previousTopologyFingerprint =
+                _networkSnapshot.TopologyFingerprint;
             RequireNetwork().InvalidateSnapshot();
             CaptureNetworkAddresses(isStartup: false);
             RefreshNetworkEnvironment();
             var currentFingerprint = _networkSnapshot.Fingerprint;
+            var currentTopologyFingerprint =
+                _networkSnapshot.TopologyFingerprint;
             if (_startupComplete &&
                 (forceRestart || !string.Equals(previousFingerprint, currentFingerprint, StringComparison.Ordinal)))
             {
                 await StartNetworkingAsync();
+            }
+            else if (_startupComplete &&
+                     _peerSupportLogs is not null &&
+                     !string.Equals(
+                         previousTopologyFingerprint,
+                         currentTopologyFingerprint,
+                         StringComparison.Ordinal))
+            {
+                await _peerSupportLogs.UpdateNetworkContextAsync(
+                    _networkSnapshot,
+                    _lifetimeCts.Token);
             }
 
             RefreshVoicePeers();
@@ -748,7 +783,11 @@ public partial class MainWindow : Window
             _settings.VoicePttMode,
             PttInputBinding.Parse(_settings.VoicePushToTalkBinding).DisplayName,
             _settings.VoiceInputVolume,
-            _settings.VoiceOutputVolume);
+            _settings.VoiceOutputVolume,
+            BuildDiagnosticLogTargets(),
+            _diagnosticLogTargetIdentityId,
+            _peerSupportLogs?.StatusText ?? "Передача логов выключена.",
+            _peerSupportLogs?.HasReceivedLogs == true);
     }
 
     internal void ClearVoiceSettingsWindow(VoiceSettingsWindow window)
@@ -757,6 +796,119 @@ public partial class MainWindow : Window
         {
             _voiceSettingsWindow = null;
         }
+    }
+
+    internal async void SetDiagnosticLogTarget(DiagnosticLogTargetOption option)
+    {
+        if (_peerSupportLogs is null || _shutdownStarted)
+        {
+            return;
+        }
+
+        var changeVersion = Interlocked.Increment(
+            ref _diagnosticLogTargetChangeVersion);
+        var enteredGate = false;
+        _diagnosticLogTargetIdentityId = option.IdentityId;
+        try
+        {
+            await _diagnosticLogTargetChangeGate.WaitAsync(_lifetimeCts.Token);
+            enteredGate = true;
+            if (changeVersion != Volatile.Read(
+                    ref _diagnosticLogTargetChangeVersion))
+            {
+                return;
+            }
+
+            await _peerSupportLogs.SetTargetAsync(option, _lifetimeCts.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (changeVersion == Volatile.Read(
+                    ref _diagnosticLogTargetChangeVersion))
+            {
+                _diagnosticLogTargetIdentityId = string.Empty;
+                _logger?.Warn(
+                    $"Diagnostic log sharing could not be changed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            if (enteredGate)
+            {
+                _diagnosticLogTargetChangeGate.Release();
+            }
+            if (changeVersion == Volatile.Read(
+                    ref _diagnosticLogTargetChangeVersion))
+            {
+                RefreshVoiceSettingsWindow();
+            }
+        }
+    }
+
+    internal void OpenSupportLogsDirectory()
+    {
+        if (_paths is null) return;
+        try
+        {
+            Directory.CreateDirectory(_paths.SupportLogs);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = _paths.SupportLogs,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex) when (ex is IOException or
+                                   InvalidOperationException or
+                                   System.ComponentModel.Win32Exception)
+        {
+            _logger?.Warn($"Received diagnostic log directory could not be opened: {ex.Message}");
+        }
+    }
+
+    private List<DiagnosticLogTargetOption> BuildDiagnosticLogTargets()
+    {
+        var cutoff = DateTimeOffset.Now - PeerTtl;
+        var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
+        var selectedEndpoint = _primaryEndpoint;
+        if (selectedEndpoint is null)
+        {
+            return result;
+        }
+
+        foreach (var peer in _peers
+                     .Where(peer =>
+                         peer.LastSeen >= cutoff &&
+                         peer.DiagnosticLogProtocolVersion ==
+                         PeerSupportProtocol.ProtocolVersion &&
+                         PeerSupportCertificate.TryNormalizeFingerprint(
+                             peer.DiagnosticTlsFingerprint,
+                             out _))
+                     .OrderBy(
+                         peer => peer.PlayerName,
+                         StringComparer.CurrentCultureIgnoreCase))
+        {
+            if (!peer.TryGetObservedRemoteAddress(
+                    selectedEndpoint.NetworkAddress,
+                    selectedEndpoint.InterfaceId,
+                    cutoff,
+                    out var observedAddress))
+            {
+                continue;
+            }
+
+            var playerName = string.IsNullOrWhiteSpace(peer.PlayerName)
+                ? "Неизвестный игрок"
+                : peer.PlayerName;
+            result.Add(new DiagnosticLogTargetOption(
+                peer.IdentityId,
+                $"{playerName} - {observedAddress}",
+                observedAddress,
+                peer.DiagnosticTlsFingerprint));
+        }
+        return result;
     }
 
     internal void SetVoiceInputDevice(VoiceAudioDevice device)
@@ -1234,6 +1386,17 @@ public partial class MainWindow : Window
     private async Task StartNetworkingAsync()
     {
         var settings = RequireSettings();
+        if (_peerSupportLogs is not null)
+        {
+            await _peerSupportLogs.UpdateNetworkContextAsync(
+                _networkSnapshot,
+                _lifetimeCts.Token);
+        }
+        if (_peerSupportLogs is not null &&
+            string.IsNullOrWhiteSpace(_peerSupportLogs.CurrentTargetIdentityId))
+        {
+            _diagnosticLogTargetIdentityId = string.Empty;
+        }
         if (_networkEndpoints.Count == 0)
         {
             await RequireTransfer().StopListenerAsync();
@@ -1294,8 +1457,231 @@ public partial class MainWindow : Window
             SkinModel = skin.Model,
             HostedWorldId = waypointHost?.WorldId ?? string.Empty,
             WaypointProtocolVersion = WaypointSyncService.ProtocolVersion,
-            WaypointProviders = waypointHost?.Providers.ToList() ?? []
+            WaypointProviders = waypointHost?.Providers.ToList() ?? [],
+            DiagnosticLogProtocolVersion = PeerSupportProtocol.ProtocolVersion,
+            DiagnosticTlsFingerprint = _peerSupportLogs?.Fingerprint ?? string.Empty
         };
+    }
+
+    private string? ResolveCurrentInstanceDirectory()
+    {
+        if (_paths is null || _settings is null ||
+            string.IsNullOrWhiteSpace(_settings.ClientRelativePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _paths.CombineUnderInstances(_settings.ClientRelativePath);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private Task<SupportEnvironmentSnapshot> CaptureSupportEnvironmentAsync(
+        CancellationToken token)
+    {
+        var settings = RequireSettings();
+        return SupportDiagnosticSnapshotBuilder.CaptureAsync(
+            new SupportDiagnosticSnapshotRequest(
+                RequirePaths(),
+                settings.ClientRelativePath,
+                _localPackHash,
+                RequireNetwork().GetSnapshot(),
+                _peerRoutes?.Export() ?? new KnownPeerCache(),
+                BuildSupportRuntimeState(),
+                _minecraft?.DiagnosticJavaPath),
+            token);
+    }
+
+    private SupportNetworkMetrics CaptureSupportNetworkMetrics()
+    {
+        var network = _network?.GetSnapshot() ?? new NetworkEnvironmentSnapshot();
+        var routes = _peerRoutes?.Export() ?? new KnownPeerCache();
+        var voice = _voiceNetwork?.Snapshot ?? default;
+        var relay = _lanRelay?.GetDiagnosticSnapshot() ??
+                    new LanRelayDiagnosticSnapshot(false, string.Empty, 0, 0);
+        return SupportDiagnosticSnapshotBuilder.CaptureMetrics(
+            network,
+            routes,
+            routes.Peers.Count,
+            _discovery?.IsRunning == true,
+            _transfer?.IsOperationActive == true,
+            relay.IsHosting,
+            relay.ClientRelayCount,
+            voice,
+            diagnosticBytesSent: 0,
+            diagnosticBytesReceived: 0,
+            reconnects: 0,
+            decodeErrors: 0,
+            BuildSupportRuntimeState());
+    }
+
+    private Dictionary<string, string> BuildSupportRuntimeState()
+    {
+        var endpoint = _network?.GetSnapshot().PrimaryEndpoint;
+        var relay = _lanRelay?.GetDiagnosticSnapshot();
+        var lan = _lanAdvertisement?.GetDiagnosticSnapshot();
+        var voice = _voiceNetwork?.Snapshot ?? default;
+        var voiceDetails = _voiceChannel?.GetDiagnosticSnapshot();
+        var identity = _settings is null
+            ? (id: string.Empty, name: string.Empty)
+            : ResolveActiveLocalIdentity();
+        var state = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["launcher.state"] = _state,
+            ["launcher.identityId"] = identity.id,
+            ["launcher.playerName"] = identity.name,
+            ["game.running"] = _minecraftRunning.ToString(CultureInfo.InvariantCulture),
+            ["game.preparing"] = _minecraftPreparing.ToString(CultureInfo.InvariantCulture),
+            ["game.version"] = _minecraft?.DiagnosticGameVersion ?? string.Empty,
+            ["game.profile"] = _minecraft?.DiagnosticProfileId ?? string.Empty,
+            ["pack.hash"] = _localPackHash,
+            ["network.selectedAddress"] = endpoint?.NetworkAddress ?? string.Empty,
+            ["network.selectedInterfaceId"] = endpoint?.InterfaceId ?? string.Empty,
+            ["network.selectedInterfaceIndex"] =
+                endpoint?.InterfaceIndex.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["network.selectedInterfaceHardware"] =
+                endpoint?.IsHardware.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["network.selectedInterfaceFilter"] =
+                endpoint?.IsFilterInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["network.selectedInterfaceEndpoint"] =
+                endpoint?.IsEndpointInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["network.selectedInterfaceDefaultRoute"] =
+                endpoint?.HasDefaultRoute.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["network.routeSelectionReason"] = endpoint is null
+                ? "no selected endpoint"
+                : endpoint.IsHardware
+                    ? endpoint.HasDefaultRoute
+                        ? "physical primary route"
+                        : "manually selected physical interface"
+                    : "selected software interface",
+            ["discovery.protocolVersion"] =
+                PeerDiscoveryService.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
+            ["discovery.running"] =
+                (_discovery?.IsRunning == true).ToString(CultureInfo.InvariantCulture),
+            ["lan.hostSessionId"] = relay?.LanSessionId ?? string.Empty,
+            ["lan.hostPort"] =
+                relay?.LocalMinecraftPort.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["lan.clientRelays"] =
+                relay?.ClientRelayCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.remoteSessions"] =
+                lan?.RemoteSessionCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["transfer.active"] =
+                (_transfer?.IsOperationActive == true).ToString(CultureInfo.InvariantCulture),
+            ["transfer.bytesCurrent"] =
+                Interlocked.Read(ref _transferBytesCurrent).ToString(CultureInfo.InvariantCulture),
+            ["transfer.bytesTotal"] =
+                Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture),
+            ["voice.joined"] = voice.IsJoined.ToString(CultureInfo.InvariantCulture),
+            ["voice.connectedPeers"] =
+                voice.ConnectedPeers.ToString(CultureInfo.InvariantCulture),
+            ["voice.rttMs"] = voice.RoundTripMs.ToString("F2", CultureInfo.InvariantCulture),
+            ["voice.lossPercent"] =
+                voice.LossPercent.ToString("F2", CultureInfo.InvariantCulture),
+            ["voice.jitterMs"] =
+                voice.JitterMs.ToString("F2", CultureInfo.InvariantCulture),
+            ["voice.lastPacketError"] = _voiceChannel?.LastPacketError ?? string.Empty,
+            ["voice.routeCount"] =
+                voiceDetails?.RouteCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.decoderCount"] =
+                voiceDetails?.DecoderCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.decodeErrors"] =
+                voiceDetails?.DecodeErrors.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.packetsSent"] =
+                voiceDetails?.Transport.PacketsSent.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.packetsReceived"] =
+                voiceDetails?.Transport.PacketsReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.bytesSent"] =
+                voiceDetails?.Transport.BytesSent.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.bytesReceived"] =
+                voiceDetails?.Transport.BytesReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.transportErrors"] =
+                voiceDetails?.Transport.Errors.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["voice.reconnects"] =
+                voiceDetails?.Transport.ListenerReconnects.ToString(CultureInfo.InvariantCulture) ?? "0"
+        };
+
+        if (endpoint is null)
+        {
+            return state;
+        }
+
+        foreach (var pair in BuildPeerSupportRuntimeState(endpoint))
+        {
+            state[pair.Key] = pair.Value;
+        }
+        return state;
+    }
+
+    private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState(
+        NetworkEndpointInfo endpoint)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (_shutdownStarted ||
+                Dispatcher.HasShutdownStarted ||
+                Dispatcher.HasShutdownFinished)
+            {
+                return new Dictionary<string, string>();
+            }
+
+            try
+            {
+                return Dispatcher.Invoke(() => BuildPeerSupportRuntimeState(endpoint));
+            }
+            catch (InvalidOperationException) when (
+                Dispatcher.HasShutdownStarted ||
+                Dispatcher.HasShutdownFinished)
+            {
+                return new Dictionary<string, string>();
+            }
+            catch (TaskCanceledException)
+            {
+                return new Dictionary<string, string>();
+            }
+        }
+
+        var state = new Dictionary<string, string>(StringComparer.Ordinal);
+        var cutoff = DateTimeOffset.Now - TimeSpan.FromSeconds(35);
+        var peerIndex = 0;
+        foreach (var peer in _peers
+                     .Where(peer => peer.LastSeen >= cutoff)
+                     .OrderBy(peer => peer.IdentityId, StringComparer.OrdinalIgnoreCase)
+                     .Take(32))
+        {
+            if (!peer.TryGetObservedRemoteAddress(
+                    endpoint.NetworkAddress,
+                    endpoint.InterfaceId,
+                    cutoff,
+                    out var remoteAddress))
+            {
+                continue;
+            }
+
+            var prefix = $"peer.{peerIndex++}";
+            state[$"{prefix}.identityId"] = peer.IdentityId;
+            state[$"{prefix}.playerName"] = peer.PlayerName.Length <= 128
+                ? peer.PlayerName
+                : peer.PlayerName[..128];
+            state[$"{prefix}.observedAddress"] = remoteAddress;
+            state[$"{prefix}.lastSeenUtc"] =
+                peer.LastSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+            state[$"{prefix}.rttMs"] =
+                peer.LastRttMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+            state[$"{prefix}.isHost"] = peer.IsHost.ToString(CultureInfo.InvariantCulture);
+            state[$"{prefix}.lanSessionId"] = peer.LanSessionId.Length <= 128
+                ? peer.LanSessionId
+                : peer.LanSessionId[..128];
+            state[$"{prefix}.diagnosticCompatible"] =
+                peer.SupportsDiagnosticLogs.ToString(CultureInfo.InvariantCulture);
+        }
+
+        state["peer.count"] = peerIndex.ToString(CultureInfo.InvariantCulture);
+        return state;
     }
 
     private void OnVoiceSpeakingStateChanged(string peerId, bool isSpeaking)
@@ -1406,6 +1792,7 @@ public partial class MainWindow : Window
         }
 
         RequireWaypointSync().ObservePeer(announcement);
+        _peerSupportLogs?.ObservePeer(announcement);
 
         var peer = _peers.FirstOrDefault(candidate =>
             string.Equals(candidate.IdentityId, announcement.IdentityId, StringComparison.OrdinalIgnoreCase));
@@ -1439,6 +1826,7 @@ public partial class MainWindow : Window
         RefreshVoicePeers();
         UpdateVoicePeersFromDiscovery();
         RefreshLanAdvertisementState();
+        RefreshVoiceSettingsWindow();
         RefreshUi();
     }
 
@@ -1469,6 +1857,22 @@ public partial class MainWindow : Window
         UpdateVoicePeersFromDiscovery();
         RefreshHostPeers();
         RefreshLanAdvertisementState();
+        if (!string.IsNullOrWhiteSpace(_diagnosticLogTargetIdentityId) &&
+            !_peers.Any(peer =>
+                string.Equals(
+                    peer.IdentityId,
+                    _diagnosticLogTargetIdentityId,
+                    StringComparison.OrdinalIgnoreCase) &&
+                peer.LastSeen >= cutoff &&
+                peer.SupportsDiagnosticLogs))
+        {
+            _diagnosticLogTargetIdentityId = string.Empty;
+            if (_peerSupportLogs is not null)
+            {
+                SetDiagnosticLogTarget(DiagnosticLogTargetOption.Nobody);
+            }
+        }
+        RefreshVoiceSettingsWindow();
     }
 
     private void RefreshLanAdvertisementState()

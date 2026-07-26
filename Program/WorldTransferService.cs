@@ -17,6 +17,13 @@ public sealed class WorldTransferService : IAsyncDisposable
     public const int ProtocolVersion = 4;
     public const string TransferMessageType = "Transfer";
     public const string ProbeMessageType = "Probe";
+    private const int MaxIncomingClients = 32;
+    // The first frame is shared by world, waypoint, skin, relay and diagnostics
+    // protocols. Existing waypoint snapshots may legitimately use the portable
+    // protocol's full JSON limit; diagnostics applies its 256 KiB limit only
+    // after the short upgrade frame and TLS handshake.
+    private const int MaxInitialFrameBytes = PortableProtocol.MaxJsonFrameBytes;
+    private static readonly TimeSpan InitialFrameTimeout = TimeSpan.FromSeconds(10);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -36,9 +43,12 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly JsonSerializerOptions _indentedJsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly SemaphoreSlim _listenerGate = new(1, 1);
     private readonly SemaphoreSlim _transferGate = new(1, 1);
+    private readonly SemaphoreSlim _incomingClientGate =
+        new(MaxIncomingClients, MaxIncomingClients);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly ConcurrentDictionary<int, Task> _receiveTasks = new();
     private readonly object _disposeGate = new();
+    private PeerSupportLogService? _peerSupportLogs;
     private int _nextReceiveTaskId;
     private int _disposeState;
     private CancellationTokenSource? _listenerCts;
@@ -83,6 +93,16 @@ public sealed class WorldTransferService : IAsyncDisposable
     public event Action? BecameHost;
     public event Action<WorldTransferProgress>? ProgressChanged;
     public bool IsOperationActive => _transferGate.CurrentCount == 0;
+
+    internal void AttachPeerSupportLogService(PeerSupportLogService service)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        if (Interlocked.CompareExchange(ref _peerSupportLogs, service, null) is not null)
+        {
+            throw new InvalidOperationException(
+                "The diagnostics protocol handler is already attached.");
+        }
+    }
 
     public async Task StartListenerAsync(AppSettings settings, CancellationToken token = default)
     {
@@ -414,6 +434,11 @@ public sealed class WorldTransferService : IAsyncDisposable
         while (!token.IsCancellationRequested)
         {
             var client = await listener.AcceptTcpClientAsync(token).ConfigureAwait(false);
+            if (!await _incomingClientGate.WaitAsync(0, token).ConfigureAwait(false))
+            {
+                client.Dispose();
+                continue;
+            }
             var id = Interlocked.Increment(ref _nextReceiveTaskId);
             var receiveTask = ObserveIncomingClientAsync(client, settings, token);
             _receiveTasks[id] = receiveTask;
@@ -444,6 +469,10 @@ public sealed class WorldTransferService : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.Warn($"Incoming world transfer failed: {ex.Message}");
+        }
+        finally
+        {
+            _incomingClientGate.Release();
         }
     }
 
@@ -512,7 +541,13 @@ public sealed class WorldTransferService : IAsyncDisposable
         try
         {
             await using var stream = client.GetStream();
-            var initialFrame = await PortableProtocol.ReadFrameAsync(stream, token).ConfigureAwait(false);
+            using var initialTimeout =
+                CancellationTokenSource.CreateLinkedTokenSource(token);
+            initialTimeout.CancelAfter(InitialFrameTimeout);
+            var initialFrame = await PortableProtocol.ReadFrameAsync(
+                stream,
+                initialTimeout.Token,
+                MaxInitialFrameBytes).ConfigureAwait(false);
             var protocol = PortableProtocol.ReadProtocol(initialFrame);
             if (string.Equals(protocol, WaypointSyncService.ProtocolName, StringComparison.Ordinal))
             {
@@ -529,6 +564,21 @@ public sealed class WorldTransferService : IAsyncDisposable
                 await _lanRelay.HandleIncomingAsync(stream, initialFrame, token).ConfigureAwait(false);
                 return;
             }
+            if (string.Equals(
+                    protocol,
+                    PeerSupportProtocol.UpgradeProtocolName,
+                    StringComparison.Ordinal))
+            {
+                var supportLogs = Volatile.Read(ref _peerSupportLogs) ??
+                    throw new InvalidOperationException(
+                        "The diagnostics protocol handler is unavailable.");
+                await supportLogs.HandleIncomingAsync(
+                    stream,
+                    initialFrame,
+                    CreatePortableConnectionContext(client),
+                    token).ConfigureAwait(false);
+                return;
+            }
             await ReceiveWorldAsync(stream, settings, initialFrame, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -538,6 +588,36 @@ public sealed class WorldTransferService : IAsyncDisposable
         {
             _logger.Warn($"Incoming portable protocol request was rejected: {ex.Message}");
         }
+    }
+
+    private PortableConnectionContext CreatePortableConnectionContext(TcpClient client)
+    {
+        if (client.Client.RemoteEndPoint is not IPEndPoint remote ||
+            client.Client.LocalEndPoint is not IPEndPoint local)
+        {
+            throw new InvalidDataException(
+                "The portable connection endpoints are unavailable.");
+        }
+
+        var endpoint = _network.GetSnapshot().Endpoints.FirstOrDefault(candidate =>
+            string.Equals(
+                candidate.NetworkAddress,
+                local.Address.ToString(),
+                StringComparison.OrdinalIgnoreCase));
+        if (endpoint is null)
+        {
+            throw new InvalidDataException(
+                "The portable connection did not arrive through the selected interface.");
+        }
+
+        return new PortableConnectionContext(
+            remote.Address,
+            remote.Port,
+            local.Address,
+            local.Port,
+            endpoint.InterfaceId,
+            endpoint.InterfaceIndex,
+            DateTimeOffset.UtcNow);
     }
 
     private async Task ReceiveWorldAsync(Stream stream, AppSettings settings, byte[] initialFrame, CancellationToken token)

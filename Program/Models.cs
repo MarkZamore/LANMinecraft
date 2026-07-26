@@ -78,13 +78,45 @@ public sealed class NetworkEnvironmentSnapshot
 {
     public DateTimeOffset CapturedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public IReadOnlyList<NetworkEndpointInfo> Endpoints { get; init; } = Array.Empty<NetworkEndpointInfo>();
+    public IReadOnlyList<NetworkEndpointInfo> AvailableEndpoints { get; init; } =
+        Array.Empty<NetworkEndpointInfo>();
     public NetworkEndpointInfo? PrimaryEndpoint { get; init; }
 
-    public string Fingerprint => string.Join(
+    public string Fingerprint =>
+        $"primary={FormatEndpoint(PrimaryEndpoint)}";
+
+    public string TopologyFingerprint => string.Join(
         "|",
-        Endpoints.Select(endpoint =>
-            $"{endpoint.InterfaceId}@{endpoint.NetworkAddress}/{endpoint.PrefixLength}")) +
-        $"|primary={PrimaryEndpoint?.InterfaceId}@{PrimaryEndpoint?.NetworkAddress}";
+        (AvailableEndpoints.Count == 0 ? Endpoints : AvailableEndpoints)
+        .OrderBy(endpoint => endpoint.InterfaceId, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(endpoint => endpoint.NetworkAddress, StringComparer.OrdinalIgnoreCase)
+        .Select(FormatEndpoint)) + $"|{Fingerprint}";
+
+    private static string FormatEndpoint(NetworkEndpointInfo? endpoint) =>
+        endpoint is null
+            ? string.Empty
+            : string.Join(
+                "@",
+                endpoint.InterfaceId,
+                endpoint.NetworkAddress,
+                endpoint.PrefixLength,
+                endpoint.InterfaceIndex,
+                endpoint.IsHardware,
+                endpoint.IsFilterInterface,
+                endpoint.IsEndpointInterface,
+                endpoint.HasDefaultRoute);
+}
+
+public sealed record DiagnosticLogTargetOption(
+    string IdentityId,
+    string DisplayName,
+    string NetworkAddress,
+    string TlsFingerprint)
+{
+    public static DiagnosticLogTargetOption Nobody { get; } =
+        new(string.Empty, "Никому", string.Empty, string.Empty);
+
+    public bool IsNobody => string.IsNullOrWhiteSpace(IdentityId);
 }
 
 public sealed class PeerEndpointInfo
@@ -157,6 +189,8 @@ public sealed class PeerAnnouncement
     public string HostedWorldId { get; set; } = "";
     public int WaypointProtocolVersion { get; set; }
     public List<WaypointProviderAnnouncement> WaypointProviders { get; set; } = [];
+    public int DiagnosticLogProtocolVersion { get; set; }
+    public string DiagnosticTlsFingerprint { get; set; } = "";
 }
 
 public sealed class WaypointProviderAnnouncement
@@ -196,6 +230,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _hostedWorldId = "";
     private int _waypointProtocolVersion;
     private IReadOnlyList<WaypointProviderAnnouncement> _waypointProviders = Array.Empty<WaypointProviderAnnouncement>();
+    private int _diagnosticLogProtocolVersion;
+    private string _diagnosticTlsFingerprint = "";
 
     public string PlayerName
     {
@@ -374,6 +410,19 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         get => _waypointProviders;
         set => Set(ref _waypointProviders, value ?? Array.Empty<WaypointProviderAnnouncement>());
     }
+    public int DiagnosticLogProtocolVersion
+    {
+        get => _diagnosticLogProtocolVersion;
+        set => Set(ref _diagnosticLogProtocolVersion, value);
+    }
+    public string DiagnosticTlsFingerprint
+    {
+        get => _diagnosticTlsFingerprint;
+        set => Set(ref _diagnosticTlsFingerprint, value?.Trim() ?? "");
+    }
+    public bool SupportsDiagnosticLogs =>
+        DiagnosticLogProtocolVersion == PeerSupportProtocol.ProtocolVersion &&
+        DiagnosticTlsFingerprint.Length == 64;
 
     public string DisplayName
     {
@@ -459,6 +508,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         HostedWorldId = announcement.HostedWorldId;
         WaypointProtocolVersion = announcement.WaypointProtocolVersion;
         WaypointProviders = announcement.WaypointProviders?.ToArray() ?? Array.Empty<WaypointProviderAnnouncement>();
+        DiagnosticLogProtocolVersion = announcement.DiagnosticLogProtocolVersion;
+        DiagnosticTlsFingerprint = announcement.DiagnosticTlsFingerprint;
         PackHash = announcement.PackHash;
         LanSessionId = announcement.LanSessionId;
         LanWorldName = announcement.LanWorldName;
@@ -502,6 +553,54 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         SelectPrimaryEndpoint();
         NotifyAddressDisplayChanged();
         return _endpoints.Count > 0;
+    }
+
+    public bool TryGetObservedRemoteAddress(
+        string? selectedLocalAddress,
+        string? selectedLocalInterfaceId,
+        DateTimeOffset cutoff,
+        out string remoteAddress)
+    {
+        remoteAddress = string.Empty;
+        if (string.IsNullOrWhiteSpace(selectedLocalInterfaceId) ||
+            !IPAddress.TryParse(selectedLocalAddress, out var localAddress))
+        {
+            return false;
+        }
+
+        var observed = _endpoints.Values
+            .Select(endpoint => new
+            {
+                Endpoint = endpoint,
+                RemoteAddress = IPAddress.TryParse(endpoint.Address, out var remote)
+                    ? remote
+                    : null,
+                LocalAddress = IPAddress.TryParse(endpoint.LocalAddress, out var local)
+                    ? local
+                    : null
+            })
+            .Where(item =>
+                item.Endpoint.LastSeen >= cutoff &&
+                item.RemoteAddress is not null &&
+                item.LocalAddress is not null &&
+                VirtualNetworkService.IsUsableAddress(item.RemoteAddress) &&
+                !IPAddress.IsLoopback(item.RemoteAddress) &&
+                item.LocalAddress.Equals(localAddress) &&
+                string.Equals(
+                    item.Endpoint.LocalInterfaceId,
+                    selectedLocalInterfaceId,
+                    StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.Endpoint.LastSeen)
+            .ThenBy(item => item.RemoteAddress!.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
+            .ThenBy(item => item.RemoteAddress!.ToString(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (observed?.RemoteAddress is null)
+        {
+            return false;
+        }
+
+        remoteAddress = observed.RemoteAddress.ToString();
+        return true;
     }
 
     public void SetLocalEndpoints(

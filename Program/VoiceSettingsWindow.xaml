@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Minecraft"
         Title="Настройки голосового чата"
-        Height="390"
+        Height="500"
         Width="680"
         MinHeight="300"
         MinWidth="520"
@@ -45,10 +45,16 @@
                        TextAlignment="Center"
                        HorizontalAlignment="Stretch"/>
         </DataTemplate>
+        <DataTemplate x:Key="DiagnosticTargetItemTemplate">
+            <TextBlock Text="{Binding DisplayName}"
+                       ToolTip="{Binding DisplayName}"
+                       TextAlignment="Center"
+                       HorizontalAlignment="Stretch"/>
+        </DataTemplate>
     </Window.Resources>
 
     <Viewbox Stretch="Uniform" StretchDirection="Both">
-        <Grid Width="640" Height="330" Margin="14">
+        <Grid Width="640" Height="440" Margin="14">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -103,7 +109,7 @@
                 </Grid>
             </StackPanel>
 
-            <StackPanel Grid.Row="2">
+            <StackPanel Grid.Row="2" Margin="0,0,0,12">
                 <TextBlock Text="Громкость" Style="{StaticResource SectionTitleStyle}"/>
                 <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>
@@ -133,6 +139,31 @@
                             ValueChanged="OutputVolumeSlider_ValueChanged"/>
                     <TextBlock Grid.Column="2" x:Name="OutputVolumeText" TextAlignment="Right"/>
                 </Grid>
+            </StackPanel>
+
+            <StackPanel Grid.Row="3">
+                <TextBlock Text="Диагностика" Style="{StaticResource SectionTitleStyle}"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Передавать логи"/>
+                    <local:CenteredDropDown Grid.Column="1"
+                                            x:Name="DiagnosticLogTargetComboBox"
+                                            ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"
+                                            SelectionChanged="DiagnosticLogTargetComboBox_SelectionChanged"/>
+                </Grid>
+                <DockPanel Margin="0,8,0,0" LastChildFill="True">
+                    <Button DockPanel.Dock="Right"
+                            x:Name="OpenSupportLogsButton"
+                            Content="Открыть полученные логи"
+                            Margin="8,0,0,0"
+                            Click="OpenSupportLogsButton_Click"/>
+                    <TextBlock x:Name="DiagnosticLogStatusText"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
             </StackPanel>
         </Grid>
     </Viewbox>
