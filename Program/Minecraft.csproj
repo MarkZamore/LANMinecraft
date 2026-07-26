@@ -37,9 +37,6 @@
     <Resource Include="Minecraft.ico" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
-    <None Remove="NetworkProviders.json" />
-    <EmbeddedResource Include="NetworkProviders.json"
-                      LogicalName="Minecraft.NetworkProviders.json" />
     <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
@@ -53,7 +50,7 @@
 
   <Target Name="BuildPortableIdentityAdapter"
           BeforeTargets="PrepareForBuild"
-          Condition="'$(DesignTimeBuild)' != 'true'">
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\IdentityAdapters\Common\Build-IdentityAdapter.ps1&quot; -AdapterName &quot;$(PortableIdentityAdapterName)&quot; -OutputPath &quot;$(PortableIdentityAdapterJar)&quot;" />
     <ItemGroup>
       <EmbeddedResource Include="$(PortableIdentityAdapterJar)" LogicalName="Minecraft.PortableIdentityAdapter.jar" />
