@@ -29,7 +29,7 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly SkinService _skinService;
     private readonly LanRelayService _lanRelay;
     private readonly VoiceNetworkCoordinator _voiceNetwork;
-    private readonly VirtualNetworkService _network;
+    private readonly ISelectedNetworkTransport _network;
     private readonly PeerRouteResolver _routes;
     private readonly WorldTransferRuntimeOptions _runtimeOptions;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
@@ -38,10 +38,12 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly SemaphoreSlim _transferGate = new(1, 1);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly ConcurrentDictionary<int, Task> _receiveTasks = new();
+    private readonly object _disposeGate = new();
     private int _nextReceiveTaskId;
     private int _disposeState;
     private CancellationTokenSource? _listenerCts;
     private Task? _listenerTask;
+    private Task? _disposeTask;
 
     public WorldTransferService(
         AppPaths paths,
@@ -55,7 +57,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         SkinService skinService,
         LanRelayService lanRelay,
         VoiceNetworkCoordinator voiceNetwork,
-        VirtualNetworkService network,
+        ISelectedNetworkTransport network,
         PeerRouteResolver routes,
         WorldTransferRuntimeOptions? runtimeOptions = null)
     {
@@ -84,10 +86,12 @@ public sealed class WorldTransferService : IAsyncDisposable
 
     public async Task StartListenerAsync(AppSettings settings, CancellationToken token = default)
     {
-        _shutdownCts.Token.ThrowIfCancellationRequested();
         await _listenerGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref _disposeState) != 0,
+                this);
             await StopListenerCoreAsync().ConfigureAwait(false);
             var cts = new CancellationTokenSource();
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -126,29 +130,52 @@ public sealed class WorldTransferService : IAsyncDisposable
         var task = _listenerTask;
         _listenerCts = null;
         _listenerTask = null;
-        cts?.Cancel();
-        if (task is not null)
+        try
         {
             try
             {
-                await task.ConfigureAwait(false);
+                cts?.Cancel();
             }
-            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
+            catch (Exception ex)
             {
+                _logger.Warn($"World transfer listener cancellation failed: {ex.Message}");
+            }
+
+            if (task is not null)
+            {
+                try
+                {
+                    await task.ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn($"World transfer listener shutdown failed: {ex.Message}");
+                }
+            }
+
+            var receiveTasks = _receiveTasks.Values.ToArray();
+            if (receiveTasks.Length > 0)
+            {
+                try
+                {
+                    await Task.WhenAll(receiveTasks).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException or IOException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn($"Incoming world transfer shutdown failed: {ex.Message}");
+                }
             }
         }
-        var receiveTasks = _receiveTasks.Values.ToArray();
-        if (receiveTasks.Length > 0)
+        finally
         {
-            try
-            {
-                await Task.WhenAll(receiveTasks).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException or IOException)
-            {
-            }
+            cts?.Dispose();
         }
-        cts?.Dispose();
     }
 
     public async Task SendWorldAsync(PeerViewModel peer, AppSettings settings, string worldPath, CancellationToken token)
@@ -238,7 +265,8 @@ public sealed class WorldTransferService : IAsyncDisposable
                     StatusChanged?.Invoke("Sending world archive...");
                     using var client = _network.CreateBoundTcpClient(
                         peerAddress,
-                        peerEndpoint.ProviderId);
+                        peerEndpoint.LocalAddress,
+                        peerEndpoint.LocalInterfaceId);
                     await client.ConnectAsync(peerAddress, _runtimeOptions.Port, token);
                     await using var stream = client.GetStream();
                     await WriteJsonAsync(stream, header, token);
@@ -329,37 +357,40 @@ public sealed class WorldTransferService : IAsyncDisposable
         TaskCompletionSource ready,
         CancellationToken token)
     {
-        TcpListener? listener = null;
+        var listeners = new List<TcpListener>();
         try
         {
-            var listenAddress = _runtimeOptions.ListenAddress.Equals(IPAddress.Any)
-                ? IPAddress.IPv6Any
-                : _runtimeOptions.ListenAddress;
-            listener = CreateListener(listenAddress, _runtimeOptions.Port);
-            try
+            foreach (var endpoint in ResolveListenerEndpoints())
             {
-                listener.Start();
+                var listener = CreateListener(endpoint.Address, _runtimeOptions.Port);
+                try
+                {
+                    if (endpoint.NetworkEndpoint is not null)
+                    {
+                        VirtualNetworkService.ConfigureInterface(
+                            listener.Server,
+                            endpoint.NetworkEndpoint);
+                    }
+                    listener.Start();
+                    listeners.Add(listener);
+                }
+                catch (Exception ex)
+                {
+                    listener.Stop();
+                    if (ex is not SocketException) throw;
+                    _logger.Warn(
+                        $"Transfer listener on {endpoint.Address}:{_runtimeOptions.Port} is unavailable: {ex.Message}");
+                }
             }
-            catch (SocketException ex) when (listenAddress.Equals(IPAddress.IPv6Any))
+
+            if (listeners.Count == 0)
             {
-                listener.Stop();
-                _logger.Warn($"Dual-stack transfer listener is unavailable; using IPv4: {ex.Message}");
-                listener = CreateListener(IPAddress.Any, _runtimeOptions.Port);
-                listener.Start();
+                throw new SocketException((int)SocketError.AddressNotAvailable);
             }
+
             ready.TrySetResult();
-            while (!token.IsCancellationRequested)
-            {
-                var client = await listener.AcceptTcpClientAsync(token);
-                var id = Interlocked.Increment(ref _nextReceiveTaskId);
-                var receiveTask = HandleIncomingClientAsync(client, settings, token);
-                _receiveTasks[id] = receiveTask;
-                _ = receiveTask.ContinueWith(
-                    completedTask => _receiveTasks.TryRemove(id, out _),
-                    CancellationToken.None,
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            }
+            await Task.WhenAll(listeners.Select(listener =>
+                AcceptClientsAsync(listener, settings, token))).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -371,19 +402,109 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
         finally
         {
-            listener?.Stop();
+            foreach (var listener in listeners) listener.Stop();
         }
+    }
+
+    private async Task AcceptClientsAsync(
+        TcpListener listener,
+        AppSettings settings,
+        CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            var client = await listener.AcceptTcpClientAsync(token).ConfigureAwait(false);
+            var id = Interlocked.Increment(ref _nextReceiveTaskId);
+            var receiveTask = ObserveIncomingClientAsync(client, settings, token);
+            _receiveTasks[id] = receiveTask;
+            _ = receiveTask.ContinueWith(
+                completedTask =>
+                {
+                    _ = completedTask.Exception;
+                    _receiveTasks.TryRemove(id, out _);
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+    }
+
+    private async Task ObserveIncomingClientAsync(
+        TcpClient client,
+        AppSettings settings,
+        CancellationToken token)
+    {
+        try
+        {
+            await HandleIncomingClientAsync(client, settings, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Incoming world transfer failed: {ex.Message}");
+        }
+    }
+
+    private TransferListenerEndpoint[] ResolveListenerEndpoints()
+    {
+        var configuredAddress = _runtimeOptions.ListenAddress;
+        var snapshot = _network.GetSnapshot();
+        if (!configuredAddress.Equals(IPAddress.Any) &&
+            !configuredAddress.Equals(IPAddress.IPv6Any))
+        {
+            var matchingEndpoint = snapshot.Endpoints.FirstOrDefault(endpoint =>
+                string.Equals(
+                    endpoint.NetworkAddress,
+                    configuredAddress.ToString(),
+                    StringComparison.OrdinalIgnoreCase));
+            return matchingEndpoint is null
+                ? []
+                : [new TransferListenerEndpoint(configuredAddress, matchingEndpoint)];
+        }
+
+        return snapshot.Endpoints
+            .Select(endpoint => new
+            {
+                Endpoint = endpoint,
+                Address = IPAddress.TryParse(endpoint.NetworkAddress, out var address)
+                    ? address
+                    : null
+            })
+            .Where(item => item.Address is not null && !IPAddress.IsLoopback(item.Address))
+            .GroupBy(
+                item => item.Address!.ToString(),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var item = group.First();
+                return new TransferListenerEndpoint(item.Address!, item.Endpoint);
+            })
+            .ToArray();
     }
 
     private static TcpListener CreateListener(IPAddress address, int port)
     {
         var listener = new TcpListener(address, port);
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        try
         {
-            listener.Server.DualMode = true;
+            if (address.Equals(IPAddress.IPv6Any))
+            {
+                listener.Server.DualMode = true;
+            }
+            return listener;
         }
-        return listener;
+        catch
+        {
+            listener.Stop();
+            throw;
+        }
     }
+
+    private sealed record TransferListenerEndpoint(
+        IPAddress Address,
+        NetworkEndpointInfo? NetworkEndpoint);
 
     private async Task HandleIncomingClientAsync(TcpClient client, AppSettings settings, CancellationToken token)
     {
@@ -633,7 +754,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         CancellationToken token)
     {
         var identity = _identityService.ResolveContext(settings);
-        var candidateEndpoints = _routes.GetSendCandidates(peer.IdentityId, _network.SelectedProviderId)
+        var candidateEndpoints = _routes.GetSendCandidates(peer.IdentityId)
             .Where(endpoint => IPAddress.TryParse(endpoint.Address, out _))
             .ToArray();
         if (candidateEndpoints.Length == 0)
@@ -649,7 +770,10 @@ public sealed class WorldTransferService : IAsyncDisposable
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
             try
             {
-                using var client = _network.CreateBoundTcpClient(ip, endpoint.ProviderId);
+                using var client = _network.CreateBoundTcpClient(
+                    ip,
+                    endpoint.LocalAddress,
+                    endpoint.LocalInterfaceId);
                 await client.ConnectAsync(ip, _runtimeOptions.Port, timeoutCts.Token);
                 await using var stream = client.GetStream();
                 await WriteJsonAsync(stream, new WorldTransferHeader
@@ -674,7 +798,7 @@ public sealed class WorldTransferService : IAsyncDisposable
                 _routes.MarkEndpointHealthy(peer.IdentityId, endpoint);
                 return endpoint;
             }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or TimeoutException or InvalidOperationException)
+            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or TimeoutException or InvalidOperationException or InvalidDataException or JsonException)
             {
                 token.ThrowIfCancellationRequested();
                 _routes.MarkEndpointUnhealthy(peer.IdentityId, endpoint);
@@ -1060,15 +1184,32 @@ public sealed class WorldTransferService : IAsyncDisposable
         if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposeState, 1) != 0) return;
+        Task disposeTask;
+        lock (_disposeGate)
+        {
+            _disposeTask ??= DisposeCoreAsync();
+            disposeTask = _disposeTask;
+        }
+        return new ValueTask(disposeTask);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        Interlocked.Exchange(ref _disposeState, 1);
         _shutdownCts.Cancel();
-        await StopListenerAsync().ConfigureAwait(false);
+        await _listenerGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await StopListenerCoreAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _listenerGate.Release();
+        }
         await _transferGate.WaitAsync().ConfigureAwait(false);
         _transferGate.Release();
-        _listenerGate.Dispose();
-        _transferGate.Dispose();
         _shutdownCts.Dispose();
     }
 }

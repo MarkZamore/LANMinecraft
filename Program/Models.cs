@@ -27,6 +27,8 @@ public sealed class AppSettings
     public string ClientRelativePath { get; set; } = "";
     public string SkinPath { get; set; } = "";
     public string SelectedWorldRelativePath { get; set; } = "";
+    public string SelectedNetworkInterfaceId { get; set; } = "";
+    public string SelectedNetworkAddress { get; set; } = "";
     public string VoiceInputDeviceId { get; set; } = "";
     public string VoiceOutputDeviceId { get; set; } = "";
 
@@ -57,11 +59,10 @@ public sealed class NetworkEndpointInfo
     public required string NetworkAddress { get; init; }
     public int PrefixLength { get; init; }
     public string BroadcastAddress { get; init; } = "";
-    public string ProviderId { get; init; } = "";
-    public bool IsPreferredNetwork { get; init; }
-    public bool IsPhysical { get; init; }
+    public bool IsHardware { get; init; }
+    public bool IsFilterInterface { get; init; }
+    public bool IsEndpointInterface { get; init; }
     public bool HasDefaultRoute { get; init; }
-    public string NetworkType { get; init; } = "Unknown";
     public int SortPriority { get; init; } = 50;
 
     [JsonIgnore]
@@ -82,34 +83,25 @@ public sealed class NetworkEnvironmentSnapshot
     public string Fingerprint => string.Join(
         "|",
         Endpoints.Select(endpoint =>
-            $"{endpoint.InterfaceId}@{endpoint.NetworkAddress}/{endpoint.PrefixLength}:{endpoint.ProviderId}")) +
-        $"|primary={PrimaryEndpoint?.InterfaceId}@{PrimaryEndpoint?.NetworkAddress}:{PrimaryEndpoint?.ProviderId}";
+            $"{endpoint.InterfaceId}@{endpoint.NetworkAddress}/{endpoint.PrefixLength}")) +
+        $"|primary={PrimaryEndpoint?.InterfaceId}@{PrimaryEndpoint?.NetworkAddress}";
 }
 
 public sealed class PeerEndpointInfo
 {
     public required string Address { get; init; }
-    public string ProviderId { get; set; } = "";
-    public string InterfaceId { get; set; } = "";
+    public string LocalAddress { get; set; } = "";
+    public string LocalInterfaceId { get; set; } = "";
     public string AddressFamily { get; set; } = "";
-    public string NetworkType { get; set; } = "Unknown";
     public bool IsHost { get; set; }
     public int ServerPort { get; set; }
     public DateTimeOffset LastSeen { get; set; }
 }
 
-public sealed class PeerAdvertisedEndpoint
-{
-    public string Address { get; set; } = "";
-    public string ProviderId { get; set; } = "";
-    public string InterfaceId { get; set; } = "";
-    public string AddressFamily { get; set; } = "";
-    public string NetworkType { get; set; } = "Unknown";
-}
-
 public sealed class KnownPeerCache
 {
-    public int SchemaVersion { get; set; } = 4;
+    public const int CurrentSchemaVersion = 5;
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<KnownPeerIdentityRecord> Peers { get; set; } = [];
 }
 
@@ -123,9 +115,8 @@ public sealed class KnownPeerIdentityRecord
 public sealed class KnownPeerEndpointRecord
 {
     public string Address { get; set; } = "";
-    public string ProviderId { get; set; } = "";
-    public string InterfaceId { get; set; } = "";
-    public string NetworkType { get; set; } = "Unknown";
+    public string LocalAddress { get; set; } = "";
+    public string LocalInterfaceId { get; set; } = "";
     public DateTimeOffset LastSeenUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastSuccessUtc { get; set; }
     public bool IsObserved { get; set; }
@@ -140,14 +131,17 @@ public sealed class PeerAnnouncement
     public string PlayerName { get; set; } = "";
     public string IdentityId { get; set; } = "";
     public string IdentityName { get; set; } = "";
-    [JsonPropertyName("vpnIp")]
+
+    // These fields are derived from packet information after reception. They are
+    // deliberately never accepted from, or sent to, a remote peer.
+    [JsonIgnore]
     public string NetworkAddress { get; set; } = "";
-    public string NetworkProviderId { get; set; } = "";
-    public string NetworkInterfaceId { get; set; } = "";
-    public string NetworkAddressFamily { get; set; } = "";
-    public string NetworkType { get; set; } = "";
+    [JsonIgnore]
+    public string LocalAddress { get; set; } = "";
+    [JsonIgnore]
+    public string LocalInterfaceId { get; set; } = "";
+
     public bool IsDirectedReply { get; set; }
-    public List<PeerAdvertisedEndpoint> NetworkEndpoints { get; set; } = [];
     public bool IsHost { get; set; }
     public string PackHash { get; set; } = "";
     public int ServerPort { get; set; }
@@ -177,8 +171,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private readonly Dictionary<string, PeerEndpointInfo> _endpoints = new(StringComparer.OrdinalIgnoreCase);
     private string _playerName = "";
     private string _networkAddress = "";
-    private string _networkType = "";
-    private string _preferredProviderId = "";
     private string _primaryEndpointKey = "";
     private string _identityId = "";
     private string _identityName = "";
@@ -228,21 +220,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(DisplayName));
                 OnPropertyChanged(nameof(VoiceDisplayName));
-                OnPropertyChanged(nameof(HostDisplayName));
-                OnPropertyChanged(nameof(NetworkType));
-            }
-        }
-    }
-
-    public string NetworkType
-    {
-        get => string.IsNullOrWhiteSpace(_networkType)
-            ? AddressBelongsToNetwork(_networkAddress)
-            : _networkType;
-        set
-        {
-            if (Set(ref _networkType, NormalizeNetworkType(value)))
-            {
                 OnPropertyChanged(nameof(HostDisplayName));
             }
         }
@@ -444,7 +421,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             var baseName = DisplayName;
             if (IsHost && ServerPort > 0)
             {
-                var hostName = $"{baseName}:{ServerPort} [{NetworkType}]";
+                var hostName = $"{baseName}:{ServerPort}";
                 return LastRttMs is null ? $"{hostName} (—)" : $"{hostName} ({LastRttMs} ms)";
             }
 
@@ -489,36 +466,23 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         var now = DateTimeOffset.Now;
         LastSeen = now;
 
-        var announcedEndpoints = (announcement.NetworkEndpoints ?? [])
-            .Concat(string.IsNullOrWhiteSpace(announcement.NetworkAddress)
-                ? []
-                : [new PeerAdvertisedEndpoint
-                {
-                    Address = announcement.NetworkAddress,
-                    ProviderId = announcement.NetworkProviderId,
-                    InterfaceId = announcement.NetworkInterfaceId,
-                    AddressFamily = announcement.NetworkAddressFamily,
-                    NetworkType = announcement.NetworkType
-                }])
-            .Where(item => !string.IsNullOrWhiteSpace(item.Address))
-            .GroupBy(item => GetEndpointKey(item.Address, item.ProviderId, item.InterfaceId), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First());
-        foreach (var announcedEndpoint in announcedEndpoints)
+        if (IPAddress.TryParse(announcement.NetworkAddress, out var observedAddress) &&
+            VirtualNetworkService.IsUsableAddress(observedAddress))
         {
             var endpointKey = GetEndpointKey(
-                announcedEndpoint.Address,
-                announcedEndpoint.ProviderId,
-                announcedEndpoint.InterfaceId);
+                observedAddress.ToString(),
+                announcement.LocalInterfaceId);
             if (!_endpoints.TryGetValue(endpointKey, out var endpoint))
             {
-                endpoint = new PeerEndpointInfo { Address = announcedEndpoint.Address };
+                endpoint = new PeerEndpointInfo { Address = observedAddress.ToString() };
                 _endpoints[endpointKey] = endpoint;
             }
 
-            endpoint.ProviderId = announcedEndpoint.ProviderId?.Trim() ?? "";
-            endpoint.InterfaceId = announcedEndpoint.InterfaceId?.Trim() ?? "";
-            endpoint.AddressFamily = announcedEndpoint.AddressFamily?.Trim() ?? "";
-            endpoint.NetworkType = NormalizeNetworkType(announcedEndpoint.NetworkType);
+            endpoint.LocalAddress = announcement.LocalAddress?.Trim() ?? "";
+            endpoint.LocalInterfaceId = announcement.LocalInterfaceId?.Trim() ?? "";
+            endpoint.AddressFamily = observedAddress.AddressFamily == AddressFamily.InterNetworkV6
+                ? "IPv6"
+                : "IPv4";
             endpoint.IsHost = announcement.IsHost;
             endpoint.ServerPort = announcement.ServerPort;
             endpoint.LastSeen = now;
@@ -551,83 +515,62 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             var item = new PeerEndpointInfo
             {
                 Address = endpoint.NetworkAddress,
-                ProviderId = endpoint.ProviderId,
-                InterfaceId = endpoint.InterfaceId,
+                LocalAddress = endpoint.NetworkAddress,
+                LocalInterfaceId = endpoint.InterfaceId,
                 AddressFamily = endpoint.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
-                NetworkType = endpoint.NetworkType,
                 LastSeen = now
             };
-            _endpoints[GetEndpointKey(item.Address, item.ProviderId, item.InterfaceId)] = item;
+            _endpoints[GetEndpointKey(item.Address, item.LocalInterfaceId)] = item;
         }
 
-        _preferredProviderId = preferredEndpoint?.ProviderId?.Trim() ?? "";
         SelectPrimaryEndpoint();
         if (preferredEndpoint is not null &&
             _endpoints.Values.FirstOrDefault(endpoint =>
                 string.Equals(endpoint.Address, preferredEndpoint.NetworkAddress, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(endpoint.ProviderId, preferredEndpoint.ProviderId, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(endpoint.InterfaceId, preferredEndpoint.InterfaceId, StringComparison.OrdinalIgnoreCase)) is { } preferred)
+                string.Equals(endpoint.LocalInterfaceId, preferredEndpoint.InterfaceId, StringComparison.OrdinalIgnoreCase)) is { } preferred)
         {
-            _primaryEndpointKey = GetEndpointKey(preferred.Address, preferred.ProviderId, preferred.InterfaceId);
+            _primaryEndpointKey = GetEndpointKey(preferred.Address, preferred.LocalInterfaceId);
             NetworkAddress = preferred.Address;
         }
         NotifyAddressDisplayChanged();
     }
 
-    public IReadOnlyList<string> GetCandidateAddresses(bool requireHost = false, string? preferredProviderId = null)
-        => GetCandidateEndpoints(requireHost, preferredProviderId)
+    public IReadOnlyList<string> GetCandidateAddresses(bool requireHost = false)
+        => GetCandidateEndpoints(requireHost)
             .Select(endpoint => endpoint.Address)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    private PeerEndpointInfo[] GetCandidateEndpoints(
-        bool requireHost = false,
-        string? preferredProviderId = null)
+    private PeerEndpointInfo[] GetCandidateEndpoints(bool requireHost = false)
     {
-        var preferred = string.IsNullOrWhiteSpace(preferredProviderId)
-            ? _preferredProviderId
-            : preferredProviderId;
         return _endpoints.Values
             .Where(endpoint => !requireHost || endpoint.IsHost)
-            .OrderByDescending(endpoint => !string.IsNullOrWhiteSpace(preferred) &&
-                                           string.Equals(endpoint.ProviderId, preferred, StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(endpoint => endpoint.Address.Equals(NetworkAddress, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(endpoint => endpoint.Address.Equals(NetworkAddress, StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(endpoint => endpoint.LastSeen)
             .GroupBy(
-                endpoint => GetEndpointKey(endpoint.Address, endpoint.ProviderId, endpoint.InterfaceId),
+                endpoint => GetEndpointKey(endpoint.Address, endpoint.LocalInterfaceId),
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
     }
 
-    public void SetPreferredProvider(string? providerId)
-    {
-        _preferredProviderId = providerId?.Trim() ?? "";
-        SelectPrimaryEndpoint();
-        NotifyAddressDisplayChanged();
-    }
-
     private void SelectPrimaryEndpoint()
     {
         var primary = _endpoints.Values
-            .OrderByDescending(endpoint => !string.IsNullOrWhiteSpace(_preferredProviderId) &&
-                                           string.Equals(endpoint.ProviderId, _preferredProviderId, StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(endpoint => endpoint.IsHost)
+            .OrderByDescending(endpoint => endpoint.IsHost)
             .ThenByDescending(endpoint => endpoint.LastSeen)
             .FirstOrDefault();
         if (primary is null)
         {
             _primaryEndpointKey = "";
             NetworkAddress = "";
-            NetworkType = "";
             IsHost = false;
             ServerPort = 0;
             return;
         }
 
-        _primaryEndpointKey = GetEndpointKey(primary.Address, primary.ProviderId, primary.InterfaceId);
+        _primaryEndpointKey = GetEndpointKey(primary.Address, primary.LocalInterfaceId);
         NetworkAddress = primary.Address;
-        NetworkType = primary.NetworkType;
         IsHost = _endpoints.Values.Any(endpoint => endpoint.IsHost);
         ServerPort = _endpoints.Values
             .Where(endpoint => endpoint.IsHost && endpoint.ServerPort is > 0 and <= 65535)
@@ -636,35 +579,18 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             .FirstOrDefault();
     }
 
-    private static string NormalizeNetworkType(string? networkType)
-    {
-        if (string.IsNullOrWhiteSpace(networkType))
-        {
-            return "";
-        }
-
-        if (string.Equals(networkType, "LAN", StringComparison.OrdinalIgnoreCase))
-        {
-            return "LAN";
-        }
-
-        if (string.Equals(networkType, "Unknown", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Unknown";
-        }
-
-        return "VPN";
-    }
-
     private static bool IsSameDisplayGroup(PeerEndpointInfo left, PeerEndpointInfo right)
     {
-        if (!string.IsNullOrWhiteSpace(left.InterfaceId) || !string.IsNullOrWhiteSpace(right.InterfaceId))
+        if (!string.IsNullOrWhiteSpace(left.LocalInterfaceId) ||
+            !string.IsNullOrWhiteSpace(right.LocalInterfaceId))
         {
-            return string.Equals(left.InterfaceId, right.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(left.ProviderId, right.ProviderId, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(
+                left.LocalInterfaceId,
+                right.LocalInterfaceId,
+                StringComparison.OrdinalIgnoreCase);
         }
 
-        return string.Equals(left.ProviderId, right.ProviderId, StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
     private static bool IsAddressFamily(PeerEndpointInfo endpoint, AddressFamily family)
@@ -675,8 +601,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             : string.Equals(endpoint.AddressFamily, "IPv4", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string GetEndpointKey(string address, string? providerId, string? interfaceId) =>
-        $"{providerId?.Trim()}|{interfaceId?.Trim()}|{address.Trim()}";
+    private static string GetEndpointKey(string address, string? localInterfaceId) =>
+        $"{localInterfaceId?.Trim()}|{address.Trim()}";
 
     private void NotifyAddressDisplayChanged()
     {
@@ -684,30 +610,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(DisplayName));
         OnPropertyChanged(nameof(VoiceDisplayName));
         OnPropertyChanged(nameof(HostDisplayName));
-    }
-
-    private static string AddressBelongsToNetwork(string ip)
-    {
-        if (!System.Net.IPAddress.TryParse(ip, out var parsed))
-        {
-            return "Unknown";
-        }
-
-        var bytes = parsed.GetAddressBytes();
-        if (bytes.Length == 16)
-        {
-            return (bytes[0] & 0xFE) == 0xFC ? "LAN" : "Unknown";
-        }
-        if (bytes.Length != 4) return "Unknown";
-
-        if (bytes[0] == 10 ||
-            (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
-            (bytes[0] == 192 && bytes[1] == 168))
-        {
-            return "LAN";
-        }
-
-        return "Unknown";
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

@@ -20,17 +20,16 @@ public partial class MainWindow : Window
 {
     private const int MinMemoryGb = MemorySizingService.MinMemoryGb;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
-    private const int HostReachabilityAttempts = 3;
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
     private static readonly Matrix DisabledVoiceProtectionIconTransform = new(2d, 0d, 0d, 2d, -14.875d, -14d);
-    private static readonly TimeSpan HostReachabilityTimeout = TimeSpan.FromMilliseconds(900);
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
     private readonly ObservableCollection<PeerViewModel> _hostPeers = new();
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly ObservableCollection<PeerViewModel> _voicePeers = new();
-    private readonly ObservableCollection<NetworkProviderOption> _networkProviders = new();
+    private readonly ObservableCollection<NetworkAddressOption> _networkAddresses = new();
+    private readonly HashSet<string> _knownNetworkAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, VoicePresenceEntry> _voicePresence = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _networkRefreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -81,13 +80,16 @@ public partial class MainWindow : Window
     private bool _openToLanCloseObserved;
     private bool _networkRefreshInProgress;
     private bool _networkChangeSubscribed;
+    private bool _networkSelectionRefreshPending;
+    private string _pendingNetworkInterfaceId = "";
+    private string _pendingNetworkAddress = "";
     private bool _busy;
     private bool _voiceBusy;
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
     private bool _suppressVoicePersistence;
-    private bool _suppressNetworkProviderSelection;
+    private bool _suppressNetworkAddressSelection;
     private string _lastVoicePeerListSignature = "";
     private string _lastVoiceTransportPeerSignature = "";
     private PeerViewModel? _localVoicePeer;
@@ -119,7 +121,7 @@ public partial class MainWindow : Window
         HostComboBox.ItemsSource = _hostPeers;
         WorldComboBox.ItemsSource = _worlds;
         VoicePeersItemsControl.ItemsSource = _voicePeers;
-        NetworkProviderComboBox.ItemsSource = _networkProviders;
+        NetworkAddressComboBox.ItemsSource = _networkAddresses;
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
@@ -131,6 +133,10 @@ public partial class MainWindow : Window
             UpdateVoicePeersFromDiscovery();
             RefreshLanAdvertisementState();
             RefreshUi();
+            if (IsNetworkSelectionIdle() && _networkSelectionRefreshPending)
+            {
+                _ = RefreshNetworkAdaptersSafelyAsync(forceRestart: false);
+            }
         };
         _networkRefreshTimer.Tick += NetworkRefreshTimer_Tick;
     }
@@ -146,7 +152,7 @@ public partial class MainWindow : Window
             _settingsService = new SettingsService(_paths);
             _settings = _settingsService.Load();
             _logger = new Logger(_paths.LogFile);
-            _logger.LineWritten += line => Dispatcher.Invoke(() => AppendLog(line));
+            _logger.LineWritten += line => PostToUi(() => AppendLog(line));
             _network = new VirtualNetworkService(_logger);
             _peerRoutes = new PeerRouteResolver();
             NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
@@ -175,20 +181,37 @@ public partial class MainWindow : Window
                 _paths,
                 _logger,
                 networkCoordinator: _voiceNetwork);
-            _transfer.StatusChanged += message => Dispatcher.Invoke(() => SetState(message));
+            _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
-            {
-                Dispatcher.Invoke(() => ApplyTransferProgress(progress));
-            };
-            _transfer.BecameHost += () => Dispatcher.Invoke(() =>
+                PostToUi(() => ApplyTransferProgress(progress));
+            _transfer.BecameHost += () => PostToUi(() =>
             {
                 SetState("World received");
                 RefreshWorlds();
                 RefreshUi();
             });
             _discovery = new PeerDiscoveryService(_paths, _logger, _network, _peerRoutes);
-            _discovery.PeerUpdated += announcement => Dispatcher.Invoke(() => ApplyPeer(announcement));
-            _lanAdvertisement = new LanAdvertisementService(_logger, _lanRelay, _network, _peerRoutes);
+            _discovery.PeerUpdated += announcement =>
+            {
+                PostToUi(() =>
+                {
+                    if (_shutdownStarted ||
+                        _primaryEndpoint is null ||
+                        !string.Equals(
+                            _primaryEndpoint.InterfaceId,
+                            announcement.LocalInterfaceId,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(
+                            _primaryEndpoint.NetworkAddress,
+                            announcement.LocalAddress,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+                    ApplyPeer(announcement);
+                });
+            };
+            _lanAdvertisement = new LanAdvertisementService(_logger, _lanRelay, _peerRoutes);
             _lanAdvertisement.Start();
             _voiceChannel = new VoiceChannelService(
                 _logger,
@@ -204,7 +227,7 @@ public partial class MainWindow : Window
             LoadSettingsIntoUi();
             RefreshVoiceDevices();
             RefreshBuilds();
-            CaptureNetworkProviders();
+            CaptureNetworkAddresses(isStartup: true);
             RefreshNetworkEnvironment();
             RefreshHostPeers();
             RefreshMemoryText(saveIfChanged: true);
@@ -317,38 +340,147 @@ public partial class MainWindow : Window
         _networkSnapshot = RequireNetwork().GetSnapshot();
         _networkEndpoints = _networkSnapshot.Endpoints.ToList();
         _primaryEndpoint = _networkSnapshot.PrimaryEndpoint;
-        var preferredProvider = _primaryEndpoint?.ProviderId;
-        foreach (var peer in _peers)
-        {
-            peer.SetPreferredProvider(preferredProvider);
-        }
     }
 
-    private void CaptureNetworkProviders()
+    private void CaptureNetworkAddresses(bool isStartup)
     {
-        var providers = RequireNetwork().CaptureActiveProviders();
-        _suppressNetworkProviderSelection = true;
+        var network = RequireNetwork();
+        var settings = RequireSettings();
+        var addresses = network.CaptureAvailableAddresses();
+        var selected = network.SelectedAddress;
+        var selectionChanged = false;
+        var previouslyKnown = new HashSet<string>(_knownNetworkAddresses, StringComparer.OrdinalIgnoreCase);
+        var isIdle = IsNetworkSelectionIdle();
+
+        NetworkAddressOption? target = null;
+        if (!isStartup && selected is not null)
+        {
+            target = NetworkSelectionPolicy.Find(addresses, selected.InterfaceId, selected.Address);
+        }
+
+        if (target is null && (isStartup || isIdle))
+        {
+            target = NetworkSelectionPolicy.Find(
+                addresses,
+                settings.SelectedNetworkInterfaceId,
+                settings.SelectedNetworkAddress);
+        }
+
+        var newestSoftwareAddress = NetworkSelectionPolicy.SelectNewestSoftwareAddress(
+            addresses,
+            previouslyKnown);
+        if (!isStartup && isIdle)
+        {
+            var pendingSoftwareAddress = NetworkSelectionPolicy.Find(
+                addresses,
+                _pendingNetworkInterfaceId,
+                _pendingNetworkAddress);
+            target = newestSoftwareAddress ?? pendingSoftwareAddress ?? target;
+            _networkSelectionRefreshPending = false;
+            _pendingNetworkInterfaceId = "";
+            _pendingNetworkAddress = "";
+        }
+        else if (!isStartup && !isIdle)
+        {
+            if (newestSoftwareAddress is not null)
+            {
+                _pendingNetworkInterfaceId = newestSoftwareAddress.InterfaceId;
+                _pendingNetworkAddress = newestSoftwareAddress.Address;
+                _networkSelectionRefreshPending = true;
+            }
+            else if (target is null)
+            {
+                _networkSelectionRefreshPending = true;
+            }
+        }
+
+        if (target is null && (isStartup || isIdle))
+        {
+            target = NetworkSelectionPolicy.SelectStartupFallback(
+                addresses,
+                settings.SelectedNetworkInterfaceId,
+                settings.SelectedNetworkAddress);
+        }
+
+        if (target is not null &&
+            !IsSameNetworkAddress(network.SelectedAddress, target) &&
+            network.SelectAddress(target.InterfaceId, target.Address))
+        {
+            selectionChanged = true;
+        }
+        else if (target is not null && !IsSameNetworkAddress(network.SelectedAddress, target))
+        {
+            target = null;
+        }
+
+        if (target is not null)
+        {
+            PersistNetworkAddressSelection(target);
+        }
+
+        _suppressNetworkAddressSelection = true;
         try
         {
-            _networkProviders.Clear();
-            foreach (var provider in providers) _networkProviders.Add(provider);
-            NetworkProviderComboBox.SelectedItem = _networkProviders.FirstOrDefault();
+            _networkAddresses.Clear();
+            foreach (var address in addresses)
+            {
+                _networkAddresses.Add(address);
+            }
+
+            NetworkAddressComboBox.SelectedItem = target;
         }
         finally
         {
-            _suppressNetworkProviderSelection = false;
+            _suppressNetworkAddressSelection = false;
         }
-        NetworkProviderPlaceholderText.Visibility = _networkProviders.Count == 0
+
+        _knownNetworkAddresses.Clear();
+        foreach (var address in addresses)
+        {
+            _knownNetworkAddresses.Add(NetworkSelectionPolicy.GetKey(address));
+        }
+
+        NetworkAddressPlaceholderText.Text = _networkAddresses.Count == 0
+            ? "Сетевой IP не найден"
+            : "Выберите сетевой IP";
+        NetworkAddressPlaceholderText.Visibility = target is null
             ? Visibility.Visible
             : Visibility.Collapsed;
-        if (_networkProviders.Count > 0)
+        if (target is not null && (isStartup || selectionChanged))
         {
-            RequireLogger().Info($"Network provider selected for this session: {_networkProviders[0].DisplayName}.");
+            RequireLogger().Info($"Network IP selected: {target.DisplayName}.");
         }
-        else
+        else if (isStartup && _networkAddresses.Count > 0)
         {
-            RequireLogger().Info("No running VPN client with a usable adapter was detected; physical LAN remains available.");
+            RequireLogger().Info("Select a network IP before starting network play.");
         }
+    }
+
+    private static bool IsSameNetworkAddress(NetworkAddressOption? left, NetworkAddressOption? right) =>
+        left is not null &&
+        right is not null &&
+        string.Equals(left.InterfaceId, right.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.Address, right.Address, StringComparison.OrdinalIgnoreCase);
+
+    private bool IsNetworkSelectionIdle() =>
+        !_busy &&
+        !_transferActive &&
+        !_minecraftRunning &&
+        !_minecraftPreparing &&
+        _voiceChannel is not { IsJoined: true };
+
+    private void PersistNetworkAddressSelection(NetworkAddressOption address)
+    {
+        var settings = RequireSettings();
+        if (string.Equals(settings.SelectedNetworkInterfaceId, address.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(settings.SelectedNetworkAddress, address.Address, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        settings.SelectedNetworkInterfaceId = address.InterfaceId;
+        settings.SelectedNetworkAddress = address.Address;
+        RequireSettingsService().Save(settings);
     }
 
     private void NetworkAddressChanged(object? sender, EventArgs e)
@@ -399,6 +531,7 @@ public partial class MainWindow : Window
         {
             var previousFingerprint = _networkSnapshot.Fingerprint;
             RequireNetwork().InvalidateSnapshot();
+            CaptureNetworkAddresses(isStartup: false);
             RefreshNetworkEnvironment();
             var currentFingerprint = _networkSnapshot.Fingerprint;
             if (_startupComplete &&
@@ -940,19 +1073,19 @@ public partial class MainWindow : Window
 
         var peers = _voicePresence
             .Where(pair => pair.Value.LastSeenUtc >= DateTimeOffset.UtcNow - TimeSpan.FromSeconds(30))
-            .SelectMany(pair => (_peerRoutes?.GetSendCandidates(pair.Key, _primaryEndpoint?.ProviderId) ?? [])
+            .SelectMany(pair => (_peerRoutes?.GetSendCandidates(pair.Key) ?? [])
                 .Select(endpoint =>
                 new VoicePeerCandidate(
                     pair.Key,
                     endpoint.Address,
-                    endpoint.ProviderId,
-                    endpoint.InterfaceId)))
+                    endpoint.LocalAddress,
+                    endpoint.LocalInterfaceId)))
             .Where(peer => !string.IsNullOrWhiteSpace(peer.PeerId))
             .Distinct()
             .ToArray();
 
         var signature = string.Join("|", peers.Select(peer =>
-            $"{peer.PeerId}@{peer.Address}:{peer.ProviderId}:{peer.InterfaceId}"));
+            $"{peer.PeerId}@{peer.Address}:{peer.LocalAddress}:{peer.LocalInterfaceId}"));
         if (string.Equals(signature, _lastVoiceTransportPeerSignature, StringComparison.Ordinal))
         {
             return;
@@ -977,9 +1110,9 @@ public partial class MainWindow : Window
     private string GetVoicePeerSignature(PeerViewModel peer)
     {
         var peerId = ResolveVoicePeerId(peer);
-        var addresses = (_peerRoutes?.GetSendCandidates(peer.IdentityId, _primaryEndpoint?.ProviderId) ?? [])
+        var addresses = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
             .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
-            .Select(endpoint => $"{endpoint.Address}|{endpoint.ProviderId}|{endpoint.InterfaceId}")
+            .Select(endpoint => $"{endpoint.Address}|{endpoint.LocalAddress}|{endpoint.LocalInterfaceId}")
             .Where(address => !string.IsNullOrWhiteSpace(address))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(address => address, StringComparer.OrdinalIgnoreCase)
@@ -1101,14 +1234,15 @@ public partial class MainWindow : Window
     private async Task StartNetworkingAsync()
     {
         var settings = RequireSettings();
-        await RequireTransfer().StartListenerAsync(settings, _lifetimeCts.Token);
         if (_networkEndpoints.Count == 0)
         {
+            await RequireTransfer().StopListenerAsync();
             await RequireDiscovery().StopAsync();
-            RequireLogger().Warn("No usable network endpoint is available.");
+            RequireLogger().Warn("Select a usable network IP to enable network play.");
             return;
         }
 
+        await RequireTransfer().StartListenerAsync(settings, _lifetimeCts.Token);
         await RequireDiscovery().StartAsync(_networkSnapshot, CreateAnnouncement);
     }
 
@@ -1125,12 +1259,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private PeerAnnouncement CreateAnnouncement(NetworkEndpointInfo endpoint)
+    private PeerAnnouncement CreateAnnouncement(NetworkEndpointInfo _)
     {
         var settings = RequireSettings();
         var identity = ResolveActiveLocalIdentity();
         RefreshOpenToLanState();
         var openToLanPort = _openToLanPort;
+        _lanRelay?.SetHostSession(openToLanPort, _openToLanSessionId);
         var identityContext = RequireIdentityService().ResolveContext(settings);
         RequireWaypointSync().UpdateHostingState(
             openToLanPort.HasValue,
@@ -1139,33 +1274,12 @@ public partial class MainWindow : Window
             identityContext);
         var waypointHost = RequireWaypointSync().GetHostAdvertisement();
         var skin = RequireSkinService().GetAnnouncement(settings, identity.id);
-        var advertisedEndpoints = _networkEndpoints
-            .Where(candidate =>
-                string.Equals(candidate.InterfaceId, endpoint.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(candidate.ProviderId, endpoint.ProviderId, StringComparison.OrdinalIgnoreCase))
-            .Select(candidate => new PeerAdvertisedEndpoint
-            {
-                Address = candidate.NetworkAddress,
-                ProviderId = candidate.ProviderId,
-                InterfaceId = candidate.InterfaceId,
-                AddressFamily = candidate.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
-                NetworkType = VirtualNetworkService.DetectNetworkType(candidate)
-            })
-            .DistinctBy(item => string.Join("|", item.Address, item.ProviderId, item.InterfaceId, item.AddressFamily),
-                StringComparer.OrdinalIgnoreCase)
-            .ToList();
         return new PeerAnnouncement
         {
             ProtocolVersion = PeerDiscoveryService.ProtocolVersion,
             PlayerName = identity.name,
             IdentityId = identity.id,
             IdentityName = identity.name,
-            NetworkAddress = endpoint.NetworkAddress,
-            NetworkProviderId = endpoint.ProviderId,
-            NetworkInterfaceId = endpoint.InterfaceId,
-            NetworkAddressFamily = endpoint.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
-            NetworkType = VirtualNetworkService.DetectNetworkType(endpoint),
-            NetworkEndpoints = advertisedEndpoints,
             IsHost = openToLanPort.HasValue,
             PackHash = _localPackHash,
             ServerPort = openToLanPort ?? 0,
@@ -1186,7 +1300,7 @@ public partial class MainWindow : Window
 
     private void OnVoiceSpeakingStateChanged(string peerId, bool isSpeaking)
     {
-        Dispatcher.Invoke(() =>
+        PostToUi(() =>
         {
             var peer = _voicePeers.FirstOrDefault(item =>
                 string.Equals(ResolveVoicePeerId(item), peerId, StringComparison.OrdinalIgnoreCase));
@@ -1200,10 +1314,28 @@ public partial class MainWindow : Window
         });
     }
 
+    private void PostToUi(Action action)
+    {
+        if (_shutdownStarted ||
+            Dispatcher.HasShutdownStarted ||
+            Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+        try
+        {
+            _ = Dispatcher.BeginInvoke(action);
+        }
+        catch (InvalidOperationException) when (
+            Dispatcher.HasShutdownStarted ||
+            Dispatcher.HasShutdownFinished)
+        {
+        }
+    }
+
     private void OnVoicePeerPresenceChanged(string peerId, bool isPresent, bool explicitLeave)
     {
-        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        Dispatcher.BeginInvoke(() =>
+        PostToUi(() =>
         {
             if (isPresent)
             {
@@ -1235,8 +1367,7 @@ public partial class MainWindow : Window
 
     private void OnVoiceTrafficProtectionChanged(bool enabled)
     {
-        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        Dispatcher.BeginInvoke(RefreshUi);
+        PostToUi(RefreshUi);
     }
 
     internal double GetCurrentUiScale()
@@ -1284,7 +1415,6 @@ public partial class MainWindow : Window
             _peers.Add(peer);
         }
 
-        peer.SetPreferredProvider(_primaryEndpoint?.ProviderId);
         peer.Apply(announcement, _localPackHash);
         RequireSkinService().ObservePeer(peer);
         var voicePeerId = ResolveVoicePeerId(peer);
@@ -1373,7 +1503,11 @@ public partial class MainWindow : Window
             var probes = hostPeers.Select(async peer =>
             {
                 var peerPort = Math.Clamp(peer.ServerPort, 1, 65535);
-                var result = await ProbeHostEndpointAsync(peer, peerPort, attempts: 1, timeout: TimeSpan.FromMilliseconds(600));
+                var result = await ProbeHostEndpointAsync(
+                    peer,
+                    WorldTransferService.TransferPort,
+                    attempts: 1,
+                    timeout: TimeSpan.FromMilliseconds(600));
 
                 await Dispatcher.InvokeAsync(() =>
                 {
@@ -1599,12 +1733,7 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientRunningChanged(bool isRunning)
     {
-        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
-        {
-            return;
-        }
-
-        Dispatcher.BeginInvoke(() =>
+        PostToUi(() =>
         {
             _minecraftRunning = isRunning;
             if (!isRunning)
@@ -1618,8 +1747,7 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientPreparingChanged(bool isPreparing)
     {
-        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
-        Dispatcher.BeginInvoke(() =>
+        PostToUi(() =>
         {
             _minecraftPreparing = isPreparing;
             RefreshUi();
@@ -1722,45 +1850,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<(string Ip, int Port)?> GetSelectedHostAddressAsync(PeerViewModel? peer)
-    {
-        if (peer is null || peer.ServerPort <= 0)
-        {
-            if (peer is null)
-            {
-                SetState("No host selected.");
-            }
-            else
-            {
-                SetState($"Host {peer.PlayerName} has no open LAN port.");
-            }
-            return null;
-        }
-
-        if (!peer.IsHost)
-        {
-            SetState($"Player {peer.PlayerName} is not marked as host.");
-            return null;
-        }
-
-        var selectedHostPort = Math.Clamp(peer.ServerPort, 1, 65535);
-        var probe = await ProbeHostEndpointAsync(
-            peer,
-            selectedHostPort,
-            HostReachabilityAttempts,
-            HostReachabilityTimeout);
-        if (!probe.IsReachable)
-        {
-            SetState($"Host {peer.PlayerName} is not reachable. {probe.Reachability.FailureReason}");
-            return null;
-        }
-
-        peer.LastRttMs = probe.Reachability.RoundTripMs;
-        peer.LastRttAt = DateTimeOffset.Now;
-        peer.NetworkAddress = probe.Address;
-        return (probe.Address, selectedHostPort);
-    }
-
     private sealed record HostEndpointProbeResult(
         bool IsReachable,
         HostReachabilityResult Reachability,
@@ -1772,9 +1861,7 @@ public partial class MainWindow : Window
         int attempts,
         TimeSpan timeout)
     {
-        var candidateEndpoints = (_peerRoutes?.GetSendCandidates(
-                peer.IdentityId,
-                _primaryEndpoint?.ProviderId) ?? [])
+        var candidateEndpoints = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
             .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
             .ToArray();
         foreach (var endpoint in candidateEndpoints)
@@ -1792,7 +1879,8 @@ public partial class MainWindow : Window
             var effectivePort = Math.Clamp(port, 1, 65535);
             var reachability = await CheckHostReachabilityAsync(
                 address,
-                endpoint.ProviderId,
+                endpoint.LocalAddress,
+                endpoint.LocalInterfaceId,
                 effectivePort,
                 attempts,
                 timeout);
@@ -1809,7 +1897,8 @@ public partial class MainWindow : Window
 
     private async Task<HostReachabilityResult> CheckHostReachabilityAsync(
         IPAddress address,
-        string providerId,
+        string localAddress,
+        string localInterfaceId,
         int port,
         int attempts,
         TimeSpan timeout)
@@ -1821,7 +1910,10 @@ public partial class MainWindow : Window
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                using var client = RequireNetwork().CreateBoundTcpClient(address, providerId);
+                using var client = RequireNetwork().CreateBoundTcpClient(
+                    address,
+                    localAddress,
+                    localInterfaceId);
                 await client.ConnectAsync(address, port, cts.Token);
                 return HostReachabilityResult.Succeeded(stopwatch.ElapsedMilliseconds);
             }
@@ -2219,16 +2311,20 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
-    private async void NetworkProviderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void NetworkAddressComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressNetworkProviderSelection ||
-            NetworkProviderComboBox.SelectedItem is not NetworkProviderOption provider ||
-            !RequireNetwork().SelectProvider(provider.Id))
+        if (_suppressNetworkAddressSelection ||
+            NetworkAddressComboBox.SelectedItem is not NetworkAddressOption address ||
+            !RequireNetwork().SelectAddress(address.InterfaceId, address.Address))
         {
             return;
         }
 
-        RequireLogger().Info($"Network provider selected for this session: {provider.DisplayName}.");
+        _networkSelectionRefreshPending = false;
+        _pendingNetworkInterfaceId = "";
+        _pendingNetworkAddress = "";
+        PersistNetworkAddressSelection(address);
+        RequireLogger().Info($"Network IP selected: {address.DisplayName}.");
         await RefreshNetworkAdaptersSafelyAsync(forceRestart: true);
     }
 
@@ -2852,7 +2948,7 @@ public partial class MainWindow : Window
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
         SkinButton.IsEnabled = !_minecraftRunning;
-        NetworkProviderComboBox.IsEnabled = !_transferActive && _networkProviders.Count > 0;
+        NetworkAddressComboBox.IsEnabled = IsNetworkSelectionIdle() && _networkAddresses.Count > 0;
         WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 0;
         OnlinePlayerComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
