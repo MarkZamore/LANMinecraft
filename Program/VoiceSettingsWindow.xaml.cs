@@ -13,7 +13,7 @@ public partial class VoiceSettingsWindow : Window
         new("Toggle", "По нажатию")
     ];
     private const double BaseWidth = 680;
-    private const double BaseHeight = 390;
+    private const double BaseHeight = 500;
     private readonly MainWindow _owner;
     private bool _isApplyingState;
     private bool _isCapturingPttBinding;
@@ -35,7 +35,11 @@ public partial class VoiceSettingsWindow : Window
         string pttMode,
         string pttBindingDisplayName,
         double inputVolume,
-        double outputVolume)
+        double outputVolume,
+        IReadOnlyList<DiagnosticLogTargetOption> diagnosticTargets,
+        string selectedDiagnosticTargetIdentityId,
+        string diagnosticStatus,
+        bool canOpenReceivedLogs)
     {
         _isApplyingState = true;
         try
@@ -58,6 +62,16 @@ public partial class VoiceSettingsWindow : Window
             OutputVolumeSlider.Value = Math.Clamp(outputVolume, 0d, 2d);
             InputVolumeText.Text = FormatPercent(InputVolumeSlider.Value);
             OutputVolumeText.Text = FormatPercent(OutputVolumeSlider.Value);
+
+            DiagnosticLogTargetComboBox.ItemsSource = diagnosticTargets;
+            DiagnosticLogTargetComboBox.SelectedItem = diagnosticTargets.FirstOrDefault(option =>
+                string.Equals(
+                    option.IdentityId,
+                    selectedDiagnosticTargetIdentityId,
+                    StringComparison.OrdinalIgnoreCase)) ??
+                diagnosticTargets.FirstOrDefault(option => option.IsNobody);
+            DiagnosticLogStatusText.Text = diagnosticStatus;
+            OpenSupportLogsButton.IsEnabled = canOpenReceivedLogs;
         }
         finally
         {
@@ -185,6 +199,24 @@ public partial class VoiceSettingsWindow : Window
 
         OutputVolumeText.Text = FormatPercent(e.NewValue);
         _owner.SetVoiceOutputVolume(e.NewValue);
+    }
+
+    private void DiagnosticLogTargetComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (_isApplyingState ||
+            DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption option)
+        {
+            return;
+        }
+
+        _owner.SetDiagnosticLogTarget(option);
+    }
+
+    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e)
+    {
+        _owner.OpenSupportLogsDirectory();
     }
 }
 

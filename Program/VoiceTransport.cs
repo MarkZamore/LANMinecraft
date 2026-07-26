@@ -15,12 +15,26 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _cts;
     private bool _disposed;
     private DateTimeOffset _lastWarningAt = DateTimeOffset.MinValue;
+    private long _packetsSent;
+    private long _packetsReceived;
+    private long _bytesSent;
+    private long _bytesReceived;
+    private long _errors;
+    private long _listenerStarts;
 
     public VoiceTransport(Logger logger, ISelectedNetworkTransport network)
     {
         _logger = logger;
         _network = network;
     }
+
+    public VoiceTransportDiagnosticSnapshot GetDiagnosticSnapshot() => new(
+        Interlocked.Read(ref _packetsSent),
+        Interlocked.Read(ref _packetsReceived),
+        Interlocked.Read(ref _bytesSent),
+        Interlocked.Read(ref _bytesReceived),
+        Interlocked.Read(ref _errors),
+        Math.Max(0, Interlocked.Read(ref _listenerStarts) - 1));
 
     public void StartListening(
         IPAddress listenAddress,
@@ -48,6 +62,7 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
         int port,
         Func<IPEndPoint, byte[], string, string, Task> onPacketReceived)
     {
+        Interlocked.Increment(ref _listenerStarts);
         var cts = new CancellationTokenSource();
         var useNetworkEndpoints = listenAddress.Equals(IPAddress.Any) ||
                                   listenAddress.Equals(IPAddress.IPv6Any);
@@ -162,6 +177,8 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
             try
             {
                 var result = await udp.ReceiveAsync(token).ConfigureAwait(false);
+                Interlocked.Increment(ref _packetsReceived);
+                Interlocked.Add(ref _bytesReceived, result.Buffer.Length);
                 await onPacketReceived(
                     result.RemoteEndPoint,
                     result.Buffer,
@@ -184,6 +201,7 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
             }
             catch (Exception ex)
             {
+                Interlocked.Increment(ref _errors);
                 WarnThrottled("Voice receive failed: " + ex.Message);
                 try
                 {
@@ -217,6 +235,8 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
             {
                 transport.Qos.AddDestination(target.EndPoint);
                 await transport.Udp.SendAsync(payload, target.EndPoint, token).ConfigureAwait(false);
+                Interlocked.Increment(ref _packetsSent);
+                Interlocked.Add(ref _bytesSent, payload.Length);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -224,6 +244,7 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
             }
             catch (Exception ex)
             {
+                Interlocked.Increment(ref _errors);
                 WarnThrottled($"Voice send to {target.EndPoint.Address} failed: {ex.Message}");
             }
         }
@@ -390,6 +411,14 @@ public sealed class VoiceTransport : IAsyncDisposable, IDisposable
         string LocalAddress,
         string LocalInterfaceId);
 }
+
+public sealed record VoiceTransportDiagnosticSnapshot(
+    long PacketsSent,
+    long PacketsReceived,
+    long BytesSent,
+    long BytesReceived,
+    long Errors,
+    long ListenerReconnects);
 
 public sealed record VoiceRouteTarget(
     IPEndPoint EndPoint,

@@ -89,9 +89,7 @@ public sealed class PackInstanceService : IDisposable
                 SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
                 if (removeSessionLogs)
                 {
-                    DeleteDirectoryIfPresent(Path.Combine(gameDir, "logs"));
-                    DeleteDirectoryIfPresent(Path.Combine(gameDir, "debug"));
-                    DeleteDirectoryIfPresent(Path.Combine(gameDir, "crash-reports"));
+                    LogCleanupService.RetainRecentSessionDiagnostics(gameDir);
                 }
                 CleanupDisposableInstancePlaceholders(gameDir);
                 CleanupEmptyWorldPlaceholders(_paths.Worlds);
@@ -101,11 +99,6 @@ public sealed class PackInstanceService : IDisposable
         {
             _gate.Release();
         }
-    }
-
-    private static void DeleteDirectoryIfPresent(string path)
-    {
-        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
 
     internal static void CleanupEmptyWorldPlaceholders(string worldsRoot)

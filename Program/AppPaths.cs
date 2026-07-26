@@ -58,6 +58,8 @@ public sealed class AppPaths
     public string SkinRegistryFile => Path.Combine(Personal, "skin-profiles.properties");
     public string WaypointSyncStateFile => Path.Combine(Personal, "waypoint-sync.json");
     public string WaypointConflicts => Path.Combine(Personal, "WaypointConflicts");
+    public string SupportLogs => Path.Combine(Personal, "SupportLogs");
+    public string SupportSpool => Path.Combine(Personal, "SupportSpool");
     public string[] LegacySettingsFiles => new[]
     {
         Path.Combine(Service, "settings.json"),
@@ -74,6 +76,8 @@ public sealed class AppPaths
         Directory.CreateDirectory(Personal);
         Directory.CreateDirectory(Instances);
         Directory.CreateDirectory(Worlds);
+        Directory.CreateDirectory(SupportLogs);
+        Directory.CreateDirectory(SupportSpool);
     }
 
     public string CombineUnderRoot(string relativePath)

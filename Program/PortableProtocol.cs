@@ -24,12 +24,19 @@ internal static class PortableProtocol
         await stream.FlushAsync(token).ConfigureAwait(false);
     }
 
-    public static async Task<byte[]> ReadFrameAsync(Stream stream, CancellationToken token)
+    public static async Task<byte[]> ReadFrameAsync(
+        Stream stream,
+        CancellationToken token,
+        int maxFrameBytes = MaxJsonFrameBytes)
     {
+        if (maxFrameBytes is <= 0 or > MaxJsonFrameBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxFrameBytes));
+        }
         var lengthBytes = new byte[4];
         await ReadExactAsync(stream, lengthBytes, token).ConfigureAwait(false);
         var length = BinaryPrimitives.ReadInt32BigEndian(lengthBytes);
-        if (length <= 0 || length > MaxJsonFrameBytes)
+        if (length <= 0 || length > maxFrameBytes)
         {
             throw new InvalidDataException("Invalid protocol JSON frame length.");
         }
