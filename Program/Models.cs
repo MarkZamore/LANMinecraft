@@ -179,6 +179,7 @@ public sealed class PeerAnnouncement
     public int ServerPort { get; set; }
     public string LanSessionId { get; set; } = "";
     public string LanWorldName { get; set; } = "";
+    public int LanRelayProtocolVersion { get; set; }
     public bool IsVoiceChannelActive { get; set; }
     public bool IsVoiceMuted { get; set; }
     public bool IsMinecraftRunning { get; set; }
@@ -213,6 +214,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private int _serverPort;
     private string _lanSessionId = "";
     private string _lanWorldName = "";
+    private int _lanRelayProtocolVersion;
     private bool _isInVoiceChannel;
     private bool _isSpeaking;
     private bool _isVoiceMuted;
@@ -388,6 +390,13 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     }
     public string LanSessionId { get => _lanSessionId; set => Set(ref _lanSessionId, value ?? ""); }
     public string LanWorldName { get => _lanWorldName; set => Set(ref _lanWorldName, value ?? ""); }
+    public int LanRelayProtocolVersion
+    {
+        get => _lanRelayProtocolVersion;
+        set => Set(ref _lanRelayProtocolVersion, value);
+    }
+    public bool SupportsResumableLanRelay =>
+        LanRelayProtocolVersion >= LanRelayService.ResumableProtocolVersion;
     public DateTimeOffset LastSeen { get => _lastSeen; set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); } }
     public string LocalPackHash { get => _localPackHash; set { if (Set(ref _localPackHash, value)) OnPropertyChanged(nameof(PackStatus)); } }
     public int? LastRttMs
@@ -513,6 +522,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         PackHash = announcement.PackHash;
         LanSessionId = announcement.LanSessionId;
         LanWorldName = announcement.LanWorldName;
+        LanRelayProtocolVersion = announcement.LanRelayProtocolVersion;
         LocalPackHash = localPackHash;
         var now = DateTimeOffset.Now;
         LastSeen = now;
