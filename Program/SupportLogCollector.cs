@@ -52,13 +52,18 @@ public sealed class SupportLogCollector : IAsyncDisposable
     public const int MaxItemUtf8Bytes = 192 * 1024;
 
     private const int ReadBufferBytes = 64 * 1024;
-    private const int MaxBytesPerSourcePerPass = 4 * 1024 * 1024;
+    internal const int MaxBytesPerSourcePerPass = 256 * 1024;
     private const int MaximumLineChars = 1024 * 1024;
     private const long MaximumCompressedExpansionBytes = 256L * 1024 * 1024;
     private const int MaximumCompressedExpansionRatio = 200;
     private const long CompressedExpansionAllowanceBytes = 1024L * 1024;
+    private const long CompressedHighPriorityServiceBytes = 4L * 1024 * 1024;
 
+    internal static readonly TimeSpan HighPriorityBacklogPollInterval =
+        TimeSpan.FromMilliseconds(25);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan CompressedReplayMissingGrace =
+        TimeSpan.FromSeconds(5);
     private static readonly string[] ProhibitedDirectoryNames =
     [
         "saves",
@@ -91,6 +96,7 @@ public sealed class SupportLogCollector : IAsyncDisposable
     private Task? _runTask;
     private long _sequence;
     private bool _snapshotCompleted;
+    private string _lastLowPriorityPath = string.Empty;
 
     public SupportLogCollector(
         AppPaths paths,
@@ -118,6 +124,9 @@ public sealed class SupportLogCollector : IAsyncDisposable
     }
 
     public ChannelReader<SupportLogCollectorItem> Items => _items.Reader;
+
+    internal Func<long, CancellationToken, Task>?
+        CompressedPreparationCheckpointForTesting { get; set; }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -177,23 +186,37 @@ public sealed class SupportLogCollector : IAsyncDisposable
             {
                 while (!token.IsCancellationRequested)
                 {
-                    var candidates = DiscoverSources();
+                    var discoveredCandidates = DiscoverSources();
+                    var candidates = SelectCandidatesForPass(discoveredCandidates);
                     var discoveredPaths = new HashSet<string>(
-                        candidates.Select(candidate => candidate.Path),
+                        discoveredCandidates.Select(candidate => candidate.Path),
                         StringComparer.OrdinalIgnoreCase);
+                    foreach (var candidate in discoveredCandidates)
+                    {
+                        if (!_sources.ContainsKey(candidate.Path))
+                        {
+                            _sources.Add(
+                                candidate.Path,
+                                new SourceState(candidate, candidate.IsInitial));
+                        }
+                    }
                     foreach (var candidate in candidates)
                     {
                         token.ThrowIfCancellationRequested();
-                        if (!_sources.TryGetValue(candidate.Path, out var state))
+                        var state = _sources[candidate.Path];
+                        if (!state.SourceOpenedPublished)
                         {
-                            state = new SourceState(candidate, candidate.IsInitial);
-                            _sources.Add(candidate.Path, state);
                             await PublishAsync(
                                 SupportLogCollectorItemKind.SourceOpened,
                                 state,
                                 string.Empty,
-                                state.IsInitial,
+                                state.IsInitial && !_snapshotCompleted,
                                 token).ConfigureAwait(false);
+                            state.SourceOpenedPublished = true;
+                        }
+                        if (candidate.Compressed)
+                        {
+                            state.MarkCompressedDiscovered();
                         }
 
                         await ReadAvailableAsync(state, token).ConfigureAwait(false);
@@ -201,6 +224,16 @@ public sealed class SupportLogCollector : IAsyncDisposable
                     foreach (var missing in _sources.Values.Where(source =>
                                  !discoveredPaths.Contains(source.Candidate.Path)))
                     {
+                        if (missing.Candidate.Compressed && !missing.Completed)
+                        {
+                            if (!missing.ShouldCompleteMissingCompressed(
+                                    _timeProvider.GetUtcNow(),
+                                    CompressedReplayMissingGrace))
+                            {
+                                continue;
+                            }
+                            missing.CompleteMissingCompressed();
+                        }
                         if (missing.PendingText.Length > 0 &&
                             !missing.DiscardUntilNewLine)
                         {
@@ -216,7 +249,8 @@ public sealed class SupportLogCollector : IAsyncDisposable
                         }
                     }
 
-                    if (!_snapshotCompleted && InitialSnapshotHasBeenDrained())
+                    if (!_snapshotCompleted &&
+                        InitialSnapshotHasBeenDrained(discoveredCandidates))
                     {
                         _snapshotCompleted = true;
                         await PublishAsync(
@@ -233,15 +267,12 @@ public sealed class SupportLogCollector : IAsyncDisposable
                             token).ConfigureAwait(false);
                     }
 
-                    if (_snapshotCompleted)
-                    {
-                        await Task.Delay(PollInterval, _timeProvider, token).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await Task.Delay(TimeSpan.FromMilliseconds(25), _timeProvider, token)
-                            .ConfigureAwait(false);
-                    }
+                    var delay = !_snapshotCompleted ||
+                                HasUnreadHighPriorityBacklog(discoveredCandidates)
+                        ? HighPriorityBacklogPollInterval
+                        : PollInterval;
+                    await Task.Delay(delay, _timeProvider, token)
+                        .ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -255,6 +286,10 @@ public sealed class SupportLogCollector : IAsyncDisposable
             finally
             {
                 await FlushPendingLinesAsync(token).ConfigureAwait(false);
+                foreach (var state in _sources.Values)
+                {
+                    state.DisposeCompressedReplay();
+                }
                 _items.Writer.TryComplete();
             }
         }
@@ -287,7 +322,7 @@ public sealed class SupportLogCollector : IAsyncDisposable
         var instanceDirectory = ResolveAllowedInstanceDirectory();
         if (instanceDirectory is null)
         {
-            return result.Values.OrderBy(item => item.LogicalName, StringComparer.Ordinal).ToArray();
+            return OrderCandidates(result.Values);
         }
 
         var firstVisitToInstance = _initializedInstanceDirectories.Add(
@@ -363,7 +398,153 @@ public sealed class SupportLogCollector : IAsyncDisposable
                 isInitial: !_snapshotCompleted);
         }
 
-        return result.Values.OrderBy(item => item.LogicalName, StringComparer.Ordinal).ToArray();
+        return OrderCandidates(result.Values);
+    }
+
+    private static SourceCandidate[] OrderCandidates(
+        IEnumerable<SourceCandidate> candidates) =>
+        candidates
+            .OrderBy(GetSourcePriority)
+            .ThenBy(item => item.LogicalName, StringComparer.Ordinal)
+            .ToArray();
+
+    private static int GetSourcePriority(SourceCandidate candidate)
+    {
+        if (candidate.LogicalName.Equals(
+                "launcher/logs.log",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+        if (candidate.LogicalName.EndsWith(
+                "/latest.log",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return 1;
+        }
+        if (candidate.LogicalName.EndsWith(
+                "/debug.log",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+        if (candidate.Kind == SupportLogSourceKind.CrashReport)
+        {
+            return 3;
+        }
+        if (!candidate.Compressed &&
+            candidate.Kind == SupportLogSourceKind.Game)
+        {
+            return 4;
+        }
+        if (!candidate.Compressed)
+        {
+            return 5;
+        }
+        return 6;
+    }
+
+    private SourceCandidate[] SelectCandidatesForPass(
+        IReadOnlyList<SourceCandidate> candidates)
+    {
+        var selected = candidates
+            .Where(IsHighPrioritySource)
+            .ToList();
+        var lowPriority = candidates
+            .Where(candidate => !IsHighPrioritySource(candidate))
+            .ToArray();
+        if (lowPriority.Length == 0)
+        {
+            _lastLowPriorityPath = string.Empty;
+            return selected.ToArray();
+        }
+
+        var lastIndex = Array.FindIndex(
+            lowPriority,
+            candidate => string.Equals(
+                candidate.Path,
+                _lastLowPriorityPath,
+                StringComparison.OrdinalIgnoreCase));
+        var next = lowPriority[(lastIndex + 1) % lowPriority.Length];
+        _lastLowPriorityPath = next.Path;
+        selected.Add(next);
+        return selected.ToArray();
+    }
+
+    private bool HasUnreadHighPriorityBacklog(
+        IEnumerable<SourceCandidate> candidates)
+    {
+        foreach (var candidate in candidates.Where(IsHighPrioritySource))
+        {
+            if (candidate.Compressed ||
+                !_sources.TryGetValue(candidate.Path, out var state) ||
+                !IsSafeExistingFile(candidate.AllowedRoot, candidate.Path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(candidate.Path);
+                info.Refresh();
+                if (info.Exists && info.Length > state.Offset)
+                {
+                    return true;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or
+                                       UnauthorizedAccessException)
+            {
+            }
+        }
+        return false;
+    }
+
+    private static bool IsHighPrioritySource(SourceCandidate candidate) =>
+        candidate.Kind == SupportLogSourceKind.CrashReport ||
+        candidate.LogicalName.Equals(
+            "launcher/logs.log",
+            StringComparison.OrdinalIgnoreCase) ||
+        candidate.LogicalName.EndsWith(
+            "/latest.log",
+            StringComparison.OrdinalIgnoreCase) ||
+        candidate.LogicalName.EndsWith(
+            "/debug.log",
+            StringComparison.OrdinalIgnoreCase);
+
+    private async Task ServiceHighPrioritySourcesDuringCompressedPreparationAsync(
+        SourceState compressedState,
+        CancellationToken token)
+    {
+        var candidates = DiscoverSources()
+            .Where(candidate =>
+                !candidate.Compressed &&
+                IsHighPrioritySource(candidate) &&
+                !string.Equals(
+                    candidate.Path,
+                    compressedState.Candidate.Path,
+                    StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var candidate in candidates)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!_sources.TryGetValue(candidate.Path, out var state))
+            {
+                state = new SourceState(candidate, candidate.IsInitial);
+                _sources.Add(candidate.Path, state);
+            }
+            if (!state.SourceOpenedPublished)
+            {
+                await PublishAsync(
+                    SupportLogCollectorItemKind.SourceOpened,
+                    state,
+                    string.Empty,
+                    state.IsInitial && !_snapshotCompleted,
+                    token).ConfigureAwait(false);
+                state.SourceOpenedPublished = true;
+            }
+            await ReadAvailableAsync(state, token).ConfigureAwait(false);
+        }
     }
 
     private void AddCandidate(
@@ -434,7 +615,7 @@ public sealed class SupportLogCollector : IAsyncDisposable
             {
                 return;
             }
-            if (state.Completed &&
+            if (state.HasCompressedSourceVersion &&
                 (state.CompressedLength != compressedInfo.Length ||
                  state.CompressedCreationTimeUtcTicks != compressedInfo.CreationTimeUtc.Ticks ||
                  state.CompressedLastWriteTimeUtcTicks != compressedInfo.LastWriteTimeUtc.Ticks))
@@ -656,178 +837,207 @@ public sealed class SupportLogCollector : IAsyncDisposable
         CancellationToken token)
     {
         if (_timeProvider.GetUtcNow() < state.NextCompressedRetryUtc) return;
-        var completed = false;
         var initial = state.IsInitial && !_snapshotCompleted;
-        try
+        if (state.CompressedReplayStream is null)
         {
-            if (!IsSafeExistingFile(
-                    state.Candidate.AllowedRoot,
-                    state.Candidate.Path))
+            if (_sources.Values.Any(source =>
+                    !ReferenceEquals(source, state) &&
+                    source.CompressedReplayStream is not null))
             {
                 return;
             }
 
-            Directory.CreateDirectory(_paths.SupportSpool);
-            var spoolPath = Path.Combine(
-                _paths.SupportSpool,
-                $".compressed-{Guid.NewGuid():N}.tmp");
-            await using var sanitizedOutput = new FileStream(
-                spoolPath,
-                FileMode.CreateNew,
-                FileAccess.ReadWrite,
-                FileShare.None,
-                ReadBufferBytes,
-                FileOptions.Asynchronous |
-                FileOptions.SequentialScan |
-                FileOptions.DeleteOnClose);
-            await using var source = new FileStream(
-                state.Candidate.Path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                ReadBufferBytes,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            if (!IsSafeExistingFile(
-                    state.Candidate.AllowedRoot,
-                    state.Candidate.Path))
+            FileStream? sanitizedOutput = null;
+            try
             {
-                return;
-            }
-
-            await using var gzip = new GZipStream(
-                source,
-                CompressionMode.Decompress,
-                leaveOpen: false);
-            var decompressedBuffer = new byte[ReadBufferBytes];
-            var decodedCharacters =
-                new char[Encoding.UTF8.GetMaxCharCount(ReadBufferBytes)];
-            var decoder = new UTF8Encoding(
-                    encoderShouldEmitUTF8Identifier: false,
-                    throwOnInvalidBytes: false)
-                .GetDecoder();
-            var expansionLimit = GetCompressedExpansionLimit(info.Length);
-            long decompressedBytes = 0;
-            var expansionLimitReached = false;
-            var firstDecodedCharacters = true;
-            await using (var spoolWriter = new StreamWriter(
-                             sanitizedOutput,
-                             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-                             ReadBufferBytes,
-                             leaveOpen: true))
-            {
-                while (true)
+                if (!IsSafeExistingFile(
+                        state.Candidate.AllowedRoot,
+                        state.Candidate.Path))
                 {
-                    var read = await gzip.ReadAsync(decompressedBuffer, token)
-                        .ConfigureAwait(false);
-                    if (read == 0) break;
-                    if (decompressedBytes > expansionLimit - read)
-                    {
-                        expansionLimitReached = true;
-                        break;
-                    }
-                    decompressedBytes += read;
-
-                    var charsUsed = decoder.GetChars(
-                        decompressedBuffer,
-                        0,
-                        read,
-                        decodedCharacters,
-                        0,
-                        flush: false);
-                    firstDecodedCharacters = await AppendCompressedCharactersAsync(
-                            state,
-                            decodedCharacters,
-                            charsUsed,
-                            firstDecodedCharacters,
-                            initial,
-                            spoolWriter,
-                            token)
-                        .ConfigureAwait(false);
+                    return;
                 }
 
-                if (!expansionLimitReached)
+                Directory.CreateDirectory(_paths.SupportSpool);
+                var spoolPath = Path.Combine(
+                    _paths.SupportSpool,
+                    $".compressed-{Guid.NewGuid():N}.tmp");
+                sanitizedOutput = new FileStream(
+                    spoolPath,
+                    FileMode.CreateNew,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    ReadBufferBytes,
+                    FileOptions.Asynchronous |
+                    FileOptions.SequentialScan |
+                    FileOptions.DeleteOnClose);
+                await using var source = new FileStream(
+                    state.Candidate.Path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    ReadBufferBytes,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                if (!IsSafeExistingFile(
+                        state.Candidate.AllowedRoot,
+                        state.Candidate.Path))
                 {
-                    var charsUsed = decoder.GetChars(
-                        [],
-                        0,
-                        0,
-                        decodedCharacters,
-                        0,
-                        flush: true);
-                    _ = await AppendCompressedCharactersAsync(
-                            state,
-                            decodedCharacters,
-                            charsUsed,
-                            firstDecodedCharacters,
-                            initial,
-                            spoolWriter,
-                            token)
-                        .ConfigureAwait(false);
-                    if (state.PendingText.Length > 0 &&
-                        !state.DiscardUntilNewLine)
+                    return;
+                }
+
+                await using var gzip = new GZipStream(
+                    source,
+                    CompressionMode.Decompress,
+                    leaveOpen: false);
+                var decompressedBuffer = new byte[ReadBufferBytes];
+                var decodedCharacters =
+                    new char[Encoding.UTF8.GetMaxCharCount(ReadBufferBytes)];
+                var decoder = new UTF8Encoding(
+                        encoderShouldEmitUTF8Identifier: false,
+                        throwOnInvalidBytes: false)
+                    .GetDecoder();
+                var expansionLimit = GetCompressedExpansionLimit(info.Length);
+                long decompressedBytes = 0;
+                long nextHighPriorityService =
+                    CompressedHighPriorityServiceBytes;
+                var expansionLimitReached = false;
+                var firstDecodedCharacters = true;
+                await using (var spoolWriter = new StreamWriter(
+                                 sanitizedOutput,
+                                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                                 ReadBufferBytes,
+                                 leaveOpen: true))
+                {
+                    while (true)
                     {
-                        await FlushPartialLineAsync(
+                        var read = await gzip.ReadAsync(decompressedBuffer, token)
+                            .ConfigureAwait(false);
+                        if (read == 0) break;
+                        if (decompressedBytes > expansionLimit - read)
+                        {
+                            expansionLimitReached = true;
+                            break;
+                        }
+                        decompressedBytes += read;
+                        if (decompressedBytes >= nextHighPriorityService)
+                        {
+                            var checkpoint =
+                                CompressedPreparationCheckpointForTesting;
+                            if (checkpoint is not null)
+                            {
+                                await checkpoint(decompressedBytes, token)
+                                    .ConfigureAwait(false);
+                            }
+                            await ServiceHighPrioritySourcesDuringCompressedPreparationAsync(
+                                    state,
+                                    token)
+                                .ConfigureAwait(false);
+                            nextHighPriorityService = checked(
+                                decompressedBytes +
+                                CompressedHighPriorityServiceBytes);
+                        }
+
+                        var charsUsed = decoder.GetChars(
+                            decompressedBuffer,
+                            0,
+                            read,
+                            decodedCharacters,
+                            0,
+                            flush: false);
+                        firstDecodedCharacters = await AppendCompressedCharactersAsync(
                                 state,
+                                decodedCharacters,
+                                charsUsed,
+                                firstDecodedCharacters,
                                 initial,
-                                token,
-                                spoolWriter)
+                                spoolWriter,
+                                token)
                             .ConfigureAwait(false);
                     }
-                    await spoolWriter.FlushAsync(token).ConfigureAwait(false);
-                }
-            }
 
-            if (expansionLimitReached)
+                    if (!expansionLimitReached)
+                    {
+                        var charsUsed = decoder.GetChars(
+                            [],
+                            0,
+                            0,
+                            decodedCharacters,
+                            0,
+                            flush: true);
+                        _ = await AppendCompressedCharactersAsync(
+                                state,
+                                decodedCharacters,
+                                charsUsed,
+                                firstDecodedCharacters,
+                                initial,
+                                spoolWriter,
+                                token)
+                            .ConfigureAwait(false);
+                        if (state.PendingText.Length > 0 &&
+                            !state.DiscardUntilNewLine)
+                        {
+                            await FlushPartialLineAsync(
+                                    state,
+                                    initial,
+                                    token,
+                                    spoolWriter)
+                                .ConfigureAwait(false);
+                        }
+                        await spoolWriter.FlushAsync(token).ConfigureAwait(false);
+                    }
+                }
+
+                if (expansionLimitReached)
+                {
+                    ClearPendingCompressedLine(state);
+                    await PublishAsync(
+                        SupportLogCollectorItemKind.Warning,
+                        state,
+                        "[compressed diagnostic log exceeded its bounded expansion limit]" +
+                        Environment.NewLine,
+                        initial,
+                        token).ConfigureAwait(false);
+                    state.CompleteCompressed(info);
+                    return;
+                }
+
+                sanitizedOutput.Position = 0;
+                state.AttachCompressedReplay(sanitizedOutput, info);
+                sanitizedOutput = null;
+                ClearPendingCompressedLine(state);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
             {
                 ClearPendingCompressedLine(state);
                 await PublishAsync(
                     SupportLogCollectorItemKind.Warning,
                     state,
-                    "[compressed diagnostic log exceeded its bounded expansion limit]" +
+                    $"[compressed diagnostic log could not be read: {ex.GetType().Name}]" +
                     Environment.NewLine,
-                    initial,
+                    state.IsInitial,
                     token).ConfigureAwait(false);
-                completed = true;
+                // A corrupt or still-being-written archive must not block completion
+                // of the initial snapshot. A changed file version triggers a fresh
+                // validation attempt.
+                state.CompleteCompressed(info);
                 return;
             }
-
-            sanitizedOutput.Position = 0;
-            await ReplayCompressedOutputAsync(
-                    sanitizedOutput,
-                    state,
-                    initial,
-                    token)
-                .ConfigureAwait(false);
-            ClearPendingCompressedLine(state);
-            completed = true;
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
-        {
-            ClearPendingCompressedLine(state);
-            await PublishAsync(
-                SupportLogCollectorItemKind.Warning,
-                state,
-                $"[compressed diagnostic log could not be read: {ex.GetType().Name}]" +
-                Environment.NewLine,
-                state.IsInitial,
-                token).ConfigureAwait(false);
-            // A corrupt or still-being-written archive must not block completion
-            // of the initial snapshot. Its observed file version is complete with
-            // a warning; length/timestamp changes trigger the normal replacement
-            // path and a fresh validation attempt.
-            completed = true;
-        }
-        finally
-        {
-            state.Completed = completed;
-            if (completed)
+            finally
             {
-                state.Offset = Math.Max(state.Offset, state.InitialBoundary);
-                state.CompressedLength = info.Length;
-                state.CompressedCreationTimeUtcTicks = info.CreationTimeUtc.Ticks;
-                state.CompressedLastWriteTimeUtcTicks = info.LastWriteTimeUtc.Ticks;
-                state.NextCompressedRetryUtc = default;
+                if (sanitizedOutput is not null)
+                {
+                    await sanitizedOutput.DisposeAsync().ConfigureAwait(false);
+                }
             }
+        }
+
+        if (state.CompressedReplayStream is null) return;
+        if (await ReplayCompressedOutputAsync(
+                state.CompressedReplayStream,
+                state,
+                initial,
+                token).ConfigureAwait(false))
+        {
+            state.CompleteCompressed(info);
         }
     }
 
@@ -880,33 +1090,67 @@ public sealed class SupportLogCollector : IAsyncDisposable
         return firstDecodedCharacters;
     }
 
-    private async Task ReplayCompressedOutputAsync(
-        Stream sanitizedOutput,
+    private async Task<bool> ReplayCompressedOutputAsync(
+        FileStream sanitizedOutput,
         SourceState state,
         bool initial,
         CancellationToken token)
     {
-        using var reader = new StreamReader(
-            sanitizedOutput,
-            new UTF8Encoding(
-                encoderShouldEmitUTF8Identifier: false,
-                throwOnInvalidBytes: true),
-            detectEncodingFromByteOrderMarks: false,
-            ReadBufferBytes,
-            leaveOpen: true);
-        var characters = new char[MaxItemUtf8Bytes / 4];
-        while (true)
+        var remaining = Math.Min(
+            MaxBytesPerSourcePerPass,
+            sanitizedOutput.Length - sanitizedOutput.Position);
+        var bytes = new byte[ReadBufferBytes];
+        var characters = new char[Encoding.UTF8.GetMaxCharCount(ReadBufferBytes)];
+        while (remaining > 0)
         {
-            var read = await reader.ReadAsync(characters, token).ConfigureAwait(false);
+            var requested = checked((int)Math.Min(bytes.Length, remaining));
+            var read = await sanitizedOutput.ReadAsync(
+                    bytes.AsMemory(0, requested),
+                    token)
+                .ConfigureAwait(false);
             if (read == 0) break;
+            remaining -= read;
+            var charsUsed = state.CompressedReplayDecoder.GetChars(
+                bytes,
+                0,
+                read,
+                characters,
+                0,
+                flush: false);
+            if (charsUsed == 0) continue;
             await PublishAsync(
                     SupportLogCollectorItemKind.Content,
                     state,
-                    new string(characters, 0, read),
+                    new string(characters, 0, charsUsed),
                     initial,
                     token)
                 .ConfigureAwait(false);
         }
+
+        if (sanitizedOutput.Position < sanitizedOutput.Length)
+        {
+            return false;
+        }
+
+        var finalCharacters = new char[4];
+        var finalCount = state.CompressedReplayDecoder.GetChars(
+            [],
+            0,
+            0,
+            finalCharacters,
+            0,
+            flush: true);
+        if (finalCount > 0)
+        {
+            await PublishAsync(
+                    SupportLogCollectorItemKind.Content,
+                    state,
+                    new string(finalCharacters, 0, finalCount),
+                    initial,
+                    token)
+                .ConfigureAwait(false);
+        }
+        return true;
     }
 
     private static void ClearPendingCompressedLine(SourceState state)
@@ -1046,12 +1290,28 @@ public sealed class SupportLogCollector : IAsyncDisposable
         }
     }
 
-    private bool InitialSnapshotHasBeenDrained() =>
-        _sources.Values
-            .Where(source => source.IsInitial)
-            .All(source => source.Candidate.Compressed
+    private bool InitialSnapshotHasBeenDrained(
+        IEnumerable<SourceCandidate> discoveredCandidates)
+    {
+        static bool IsDrained(SourceState source) =>
+            source.Candidate.Compressed
                 ? source.Completed
-                : source.Offset >= source.InitialBoundary);
+                : source.Offset >= source.InitialBoundary;
+
+        if (!_sources.Values
+                .Where(source => source.IsInitial)
+                .All(IsDrained))
+        {
+            return false;
+        }
+
+        return discoveredCandidates
+            .Where(candidate => candidate.IsInitial)
+            .All(candidate =>
+                _sources.TryGetValue(candidate.Path, out var source) &&
+                source.SourceOpenedPublished &&
+                IsDrained(source));
+    }
 
     private async Task FlushPendingLinesAsync(CancellationToken token)
     {
@@ -1379,6 +1639,7 @@ public sealed class SupportLogCollector : IAsyncDisposable
 
         public SourceCandidate Candidate { get; }
         public bool IsInitial { get; }
+        public bool SourceOpenedPublished { get; set; }
         public long InitialBoundary { get; set; }
         public long Offset { get; set; }
         public long LastObservedLength { get; set; }
@@ -1397,6 +1658,38 @@ public sealed class SupportLogCollector : IAsyncDisposable
         public long CompressedLength { get; set; }
         public long CompressedCreationTimeUtcTicks { get; set; }
         public long CompressedLastWriteTimeUtcTicks { get; set; }
+        public FileStream? CompressedReplayStream { get; private set; }
+        private DateTimeOffset? CompressedReplayMissingSinceUtc { get; set; }
+        public Decoder CompressedReplayDecoder { get; private set; } =
+            new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true)
+                .GetDecoder();
+        public bool HasCompressedSourceVersion =>
+            Completed || CompressedReplayStream is not null;
+
+        public void MarkCompressedDiscovered()
+        {
+            CompressedReplayMissingSinceUtc = null;
+        }
+
+        public bool ShouldCompleteMissingCompressed(
+            DateTimeOffset now,
+            TimeSpan grace)
+        {
+            if (CompressedReplayStream is null)
+            {
+                return true;
+            }
+
+            if (CompressedReplayMissingSinceUtc is null)
+            {
+                CompressedReplayMissingSinceUtc = now;
+                return false;
+            }
+
+            return now - CompressedReplayMissingSinceUtc.Value >= grace;
+        }
 
         public void Reset(long creationTimeUtcTicks, long initialBoundary)
         {
@@ -1419,15 +1712,66 @@ public sealed class SupportLogCollector : IAsyncDisposable
 
         public void ResetCompressed()
         {
+            DisposeCompressedReplay();
             Completed = false;
             Offset = 0;
             NextCompressedRetryUtc = default;
             CompressedLength = 0;
             CompressedCreationTimeUtcTicks = 0;
             CompressedLastWriteTimeUtcTicks = 0;
+            CompressedReplayDecoder = new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true)
+                .GetDecoder();
             PendingText.Clear();
             PendingLastChangedUtc = default;
             DiscardUntilNewLine = false;
+        }
+
+        public void AttachCompressedReplay(FileStream stream, FileInfo sourceInfo)
+        {
+            DisposeCompressedReplay();
+            CompressedReplayStream = stream;
+            CompressedReplayDecoder = new UTF8Encoding(
+                    encoderShouldEmitUTF8Identifier: false,
+                    throwOnInvalidBytes: true)
+                .GetDecoder();
+            CompressedLength = sourceInfo.Length;
+            CompressedCreationTimeUtcTicks = sourceInfo.CreationTimeUtc.Ticks;
+            CompressedLastWriteTimeUtcTicks = sourceInfo.LastWriteTimeUtc.Ticks;
+            Completed = false;
+        }
+
+        public void CompleteCompressed(FileInfo sourceInfo)
+        {
+            DisposeCompressedReplay();
+            Completed = true;
+            Offset = Math.Max(Offset, InitialBoundary);
+            CompressedLength = sourceInfo.Length;
+            CompressedCreationTimeUtcTicks = sourceInfo.CreationTimeUtc.Ticks;
+            CompressedLastWriteTimeUtcTicks = sourceInfo.LastWriteTimeUtc.Ticks;
+            NextCompressedRetryUtc = default;
+        }
+
+        public void CompleteMissingCompressed()
+        {
+            DisposeCompressedReplay();
+            Completed = true;
+            Offset = Math.Max(Offset, InitialBoundary);
+            NextCompressedRetryUtc = default;
+        }
+
+        public void DisposeCompressedReplay()
+        {
+            try
+            {
+                CompressedReplayStream?.Dispose();
+            }
+            catch
+            {
+            }
+            CompressedReplayStream = null;
+            CompressedReplayMissingSinceUtc = null;
         }
     }
 }
