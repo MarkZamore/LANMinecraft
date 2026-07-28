@@ -177,6 +177,7 @@ public partial class MainWindow : Window
             _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
             await _skinService.StartAsync(_lifetimeCts.Token);
             _lanRelay = new LanRelayService(_logger, _network, _peerRoutes);
+            _lanRelay.SetLocalIdentity(ResolveActiveLocalIdentity().id);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
@@ -194,6 +195,7 @@ public partial class MainWindow : Window
                     _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
                 RefreshVoiceSettingsWindow();
             });
+            _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _voiceNetwork, _network, _peerRoutes);
             _transfer.AttachPeerSupportLogService(_peerSupportLogs);
             _updateService = new UpdateService(
@@ -1426,6 +1428,7 @@ public partial class MainWindow : Window
     {
         var settings = RequireSettings();
         var identity = ResolveActiveLocalIdentity();
+        _lanRelay?.SetLocalIdentity(identity.id);
         RefreshOpenToLanState();
         var openToLanPort = _openToLanPort;
         _lanRelay?.SetHostSession(openToLanPort, _openToLanSessionId);
@@ -1448,6 +1451,7 @@ public partial class MainWindow : Window
             ServerPort = openToLanPort ?? 0,
             LanSessionId = _openToLanSessionId,
             LanWorldName = _openToLanWorldName,
+            LanRelayProtocolVersion = LanRelayService.ResumableProtocolVersion,
             IsVoiceChannelActive = _voiceChannel?.IsJoined == true,
             IsVoiceMuted = _voiceChannel?.IsMuted == true,
             IsMinecraftRunning = _minecraftRunning,
@@ -1566,8 +1570,20 @@ public partial class MainWindow : Window
             ["lan.hostSessionId"] = relay?.LanSessionId ?? string.Empty,
             ["lan.hostPort"] =
                 relay?.LocalMinecraftPort.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            ["lan.relayProtocolVersion"] =
+                LanRelayService.ResumableProtocolVersion.ToString(CultureInfo.InvariantCulture),
             ["lan.clientRelays"] =
                 relay?.ClientRelayCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.activeResumableTunnels"] =
+                relay?.ActiveResumableTunnels.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.transportDrops"] =
+                relay?.TransportDrops.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.resumeAttempts"] =
+                relay?.ResumeAttempts.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.resumeSuccesses"] =
+                relay?.ResumeSuccesses.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["lan.resumeFailures"] =
+                relay?.ResumeFailures.ToString(CultureInfo.InvariantCulture) ?? "0",
             ["lan.remoteSessions"] =
                 lan?.RemoteSessionCount.ToString(CultureInfo.InvariantCulture) ?? "0",
             ["transfer.active"] =
@@ -1615,6 +1631,48 @@ public partial class MainWindow : Window
             state[pair.Key] = pair.Value;
         }
         return state;
+    }
+
+    private void OnLanRelayDiagnosticEvent(LanRelayDiagnosticEvent value)
+    {
+        var details = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["phase"] = value.Phase,
+            ["role"] = value.Role,
+            ["tunnelId"] = value.TunnelId,
+            ["lanSessionId"] = value.LanSessionId,
+            ["direction"] = value.Direction,
+            ["localRelayPort"] =
+                value.LocalRelayPort.ToString(CultureInfo.InvariantCulture),
+            ["hostMinecraftPort"] =
+                value.HostMinecraftPort.ToString(CultureInfo.InvariantCulture),
+            ["outboundProducedOffset"] =
+                value.OutboundProducedOffset.ToString(CultureInfo.InvariantCulture),
+            ["outboundAcknowledgedOffset"] =
+                value.OutboundAcknowledgedOffset.ToString(CultureInfo.InvariantCulture),
+            ["inboundReceivedOffset"] =
+                value.InboundReceivedOffset.ToString(CultureInfo.InvariantCulture),
+            ["bufferedBytes"] =
+                value.BufferedBytes.ToString(CultureInfo.InvariantCulture),
+            ["attempt"] = value.Attempt.ToString(CultureInfo.InvariantCulture),
+            ["downtimeMs"] =
+                value.Downtime.TotalMilliseconds.ToString(
+                    "F0",
+                    CultureInfo.InvariantCulture),
+            ["error"] = value.Error,
+            ["terminalReason"] = value.TerminalReason
+        };
+        _peerSupportLogs?.PublishRuntimeEvent(
+            $"lan_relay.{value.Phase}",
+            value.PeerIdentityId,
+            value.RemoteAddress,
+            value.LocalAddress,
+            value.LocalInterfaceId,
+            value.TerminalReason.Length > 0
+                ? value.TerminalReason
+                : value.Error,
+            details,
+            value.AtUtc);
     }
 
     private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState(
@@ -1676,6 +1734,8 @@ public partial class MainWindow : Window
             state[$"{prefix}.lanSessionId"] = peer.LanSessionId.Length <= 128
                 ? peer.LanSessionId
                 : peer.LanSessionId[..128];
+            state[$"{prefix}.lanRelayProtocolVersion"] =
+                peer.LanRelayProtocolVersion.ToString(CultureInfo.InvariantCulture);
             state[$"{prefix}.diagnosticCompatible"] =
                 peer.SupportsDiagnosticLogs.ToString(CultureInfo.InvariantCulture);
         }

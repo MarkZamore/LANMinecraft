@@ -561,7 +561,11 @@ public sealed class WorldTransferService : IAsyncDisposable
             }
             if (string.Equals(protocol, LanRelayService.ProtocolName, StringComparison.Ordinal))
             {
-                await _lanRelay.HandleIncomingAsync(stream, initialFrame, token).ConfigureAwait(false);
+                await _lanRelay.HandleIncomingAsync(
+                    stream,
+                    initialFrame,
+                    CreatePortableConnectionContext(client),
+                    token).ConfigureAwait(false);
                 return;
             }
             if (string.Equals(

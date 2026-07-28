@@ -21,6 +21,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     private const int MaxIncomingSessions = 32;
     private const int MaxIncomingSessionsPerPeer = 2;
     private const int MaxManifestStreams = 512;
+    private const int CollectorQueueCapacity = 4;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
@@ -133,6 +134,91 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 return false;
             }
         }
+    }
+
+    public void PublishRuntimeEvent(
+        string type,
+        string peerIdentityId,
+        string remoteAddress,
+        string localAddress,
+        string localInterfaceId,
+        string reason,
+        IReadOnlyDictionary<string, string>? details = null,
+        DateTimeOffset? atUtc = null)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        OutgoingSession? target;
+        lock (_targetGate) target = _target;
+        target?.TryPublishEvent(new SupportTransportEvent(
+            atUtc ?? _timeProvider.GetUtcNow(),
+            SanitizeRuntimeField(
+                _sanitizer,
+                "type",
+                string.IsNullOrWhiteSpace(type) ? "runtime" : type),
+            SanitizeRuntimeField(
+                _sanitizer,
+                "peerIdentityId",
+                NormalizeIdentity(peerIdentityId)),
+            SanitizeRuntimeField(_sanitizer, "remoteAddress", remoteAddress),
+            SanitizeRuntimeField(_sanitizer, "localAddress", localAddress),
+            SanitizeRuntimeField(
+                _sanitizer,
+                "localInterfaceId",
+                localInterfaceId),
+            SanitizeRuntimeField(_sanitizer, "reason", reason),
+            SanitizeRuntimeDetails(_sanitizer, details)));
+    }
+
+    internal static string SanitizeRuntimeField(
+        SupportLogSanitizer sanitizer,
+        string fieldName,
+        string? value)
+    {
+        ArgumentNullException.ThrowIfNull(sanitizer);
+        var normalizedName = string.IsNullOrWhiteSpace(fieldName)
+            ? "field"
+            : fieldName.Trim();
+        var normalizedValue = value?.Trim() ?? string.Empty;
+        var prefix = normalizedName + ": ";
+        var contextual = sanitizer.SanitizeLine(prefix + normalizedValue);
+        if (contextual is null)
+        {
+            return "<REMOVED_USER_CONTENT>";
+        }
+        return contextual.StartsWith(prefix, StringComparison.Ordinal)
+            ? contextual[prefix.Length..]
+            : sanitizer.SanitizeMetadataValue(normalizedValue);
+    }
+
+    internal static IReadOnlyDictionary<string, string>? SanitizeRuntimeDetails(
+        SupportLogSanitizer sanitizer,
+        IReadOnlyDictionary<string, string>? details)
+    {
+        ArgumentNullException.ThrowIfNull(sanitizer);
+        if (details is null) return null;
+
+        var sanitized = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var pair in details)
+        {
+            var key = SanitizeRuntimeField(sanitizer, "detailName", pair.Key);
+            if (key.Length == 0)
+            {
+                key = "detail";
+            }
+            var value = SanitizeRuntimeField(
+                sanitizer,
+                key,
+                pair.Value);
+            if (string.Equals(
+                    value,
+                    "<REMOVED_USER_CONTENT>",
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+            sanitized[key] = value;
+        }
+        return sanitized;
     }
 
     public void ObservePeer(PeerAnnouncement announcement)
@@ -617,7 +703,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 _paths,
                 _sanitizer,
                 _instanceDirectoryProvider,
-                _timeProvider);
+                _timeProvider,
+                CollectorQueueCapacity);
             var producerTask = RunProducerGroupAsync(session, collector);
             var senderTask = SendSpoolAsync(session, token);
             await Task.WhenAll(producerTask, senderTask).ConfigureAwait(false);
@@ -651,6 +738,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     await session.Spool.AckThroughAsync(
                         ulong.MaxValue,
                         CancellationToken.None).ConfigureAwait(false);
+                    session.CollectorWindow.AcknowledgeThrough(ulong.MaxValue);
                     await session.Spool.DeleteIfEmptyAsync().ConfigureAwait(false);
                 }
                 catch
@@ -769,7 +857,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                         PeerSupportFrameType.Manifest,
                         0,
                         PeerSupportProtocol.SerializeJson(session.Manifest!),
-                        token).ConfigureAwait(false);
+                        token,
+                        collectorFrame: true).ConfigureAwait(false);
                     break;
                 }
                 case SupportLogCollectorItemKind.Content:
@@ -785,7 +874,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                         PeerSupportFrameType.Data,
                         streamId,
                         item.Text,
-                        token).ConfigureAwait(false);
+                        token,
+                        collectorFrame: true).ConfigureAwait(false);
                     break;
                 }
                 case SupportLogCollectorItemKind.SnapshotCompleted:
@@ -798,7 +888,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                             item.SourceId,
                             item.LogicalName,
                             item.Text.Trim()),
-                        token).ConfigureAwait(false);
+                        token,
+                        collectorFrame: true).ConfigureAwait(false);
                     break;
             }
         }
@@ -858,7 +949,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     private Task EnqueueEventAsync<T>(
         OutgoingSession session,
         T value,
-        CancellationToken token)
+        CancellationToken token,
+        bool collectorFrame = false)
     {
         var json = _sanitizer.SanitizeLine(JsonSerializer.Serialize(value, JsonOptions));
         return json is null
@@ -868,7 +960,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 PeerSupportFrameType.Data,
                 2,
                 json + Environment.NewLine,
-                token);
+                token,
+                collectorFrame);
     }
 
     private async Task EnqueueTextAsync(
@@ -876,7 +969,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         PeerSupportFrameType type,
         uint streamId,
         string text,
-        CancellationToken token)
+        CancellationToken token,
+        bool collectorFrame = false)
     {
         var bytes = Encoding.UTF8.GetBytes(text);
         if (bytes.Length == 0) return;
@@ -899,7 +993,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 type,
                 streamId,
                 bytes.AsMemory(offset, count),
-                token).ConfigureAwait(false);
+                token,
+                collectorFrame).ConfigureAwait(false);
             offset += count;
         }
     }
@@ -909,7 +1004,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         PeerSupportFrameType type,
         uint streamId,
         ReadOnlyMemory<byte> payload,
-        CancellationToken token)
+        CancellationToken token,
+        bool collectorFrame = false)
     {
         var spool = session.Spool ??
             throw new InvalidOperationException("The diagnostics spool is unavailable.");
@@ -917,31 +1013,68 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         {
             throw new InvalidDataException("The diagnostics spool payload is too large.");
         }
-        await session.EnqueueGate.WaitAsync(token).ConfigureAwait(false);
+        var collectorReservationBytes =
+            checked(payload.Length + SpoolEnvelopeHeaderSize);
+        var collectorReservationState = 0;
+        await session.CollectorWindow.ReserveIfCollectorAsync(
+                collectorFrame,
+                collectorReservationBytes,
+                token)
+            .ConfigureAwait(false);
+        if (collectorFrame) collectorReservationState = 1;
         try
         {
-            var sequenceValue = Interlocked.Increment(ref session.LastSequence);
-            var sequence = checked((ulong)sequenceValue);
+            await session.EnqueueGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                await spool.EnqueueAsync(
-                    sequence,
-                    EncodeSpoolEnvelope(type, streamId, sequence, 0, payload.Span),
-                    token).ConfigureAwait(false);
-                session.SignalData();
+                var sequenceValue = Interlocked.Increment(ref session.LastSequence);
+                var sequence = checked((ulong)sequenceValue);
+                try
+                {
+                    if (collectorFrame)
+                    {
+                        session.CollectorWindow.Commit(
+                            sequence,
+                            collectorReservationBytes);
+                        collectorReservationState = 2;
+                    }
+                    await spool.EnqueueAsync(
+                        sequence,
+                        EncodeSpoolEnvelope(
+                            type,
+                            streamId,
+                            sequence,
+                            0,
+                            payload.Span),
+                        token).ConfigureAwait(false);
+                    session.SignalData();
+                }
+                catch
+                {
+                    if (collectorReservationState == 2)
+                    {
+                        session.CollectorWindow.Remove(sequence);
+                        collectorReservationState = 3;
+                    }
+                    _ = Interlocked.CompareExchange(
+                        ref session.LastSequence,
+                        sequenceValue - 1,
+                        sequenceValue);
+                    throw;
+                }
             }
-            catch
+            finally
             {
-                _ = Interlocked.CompareExchange(
-                    ref session.LastSequence,
-                    sequenceValue - 1,
-                    sequenceValue);
-                throw;
+                session.EnqueueGate.Release();
             }
         }
         finally
         {
-            session.EnqueueGate.Release();
+            if (collectorReservationState == 1)
+            {
+                session.CollectorWindow.CancelReservation(
+                    collectorReservationBytes);
+            }
         }
     }
 
@@ -1103,6 +1236,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         await session.Spool!.AckThroughAsync(
             session.LastAcknowledged,
             token).ConfigureAwait(false);
+        session.CollectorWindow.AcknowledgeThrough(session.LastAcknowledged);
         _routes.MarkEndpointHealthy(peer.IdentityId, candidate);
         SetStatus($"Логи передаются игроку {peer.PlayerName} ({peer.RemoteAddress}).");
 
@@ -1170,6 +1304,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 session.LastAcknowledged = ack.Ack;
                 await session.Spool.AckThroughAsync(ack.Ack, token)
                     .ConfigureAwait(false);
+                session.CollectorWindow.AcknowledgeThrough(ack.Ack);
                 Interlocked.Add(ref _bytesSent, frame.Payload.Length);
                 if (frame.Type is PeerSupportFrameType.Cancel or
                     PeerSupportFrameType.CompleteSession)
@@ -1203,6 +1338,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         await spool.DiscardAfterAsync(
             session.LastAcknowledged,
             token).ConfigureAwait(false);
+        session.CollectorWindow.DiscardAfter(session.LastAcknowledged);
         Interlocked.Exchange(
             ref session.LastSequence,
             checked((long)session.LastAcknowledged));
@@ -2369,6 +2505,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         public PeerSupportManifest? Manifest { get; set; }
         public Channel<SupportTransportEvent> Events { get; }
         public SemaphoreSlim EnqueueGate { get; } = new(1, 1);
+        public SupportCollectorSpoolWindow CollectorWindow { get; } = new();
         public string? FailureStatus { get; set; }
         public bool StopRequested => Volatile.Read(ref _stopRequested) != 0;
         public string StopReason
@@ -2651,7 +2788,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         string RemoteAddress,
         string LocalAddress,
         string LocalInterfaceId,
-        string Reason);
+        string Reason,
+        IReadOnlyDictionary<string, string>? Details = null);
 
     private sealed record SupportCollectorEvent(
         DateTimeOffset AtUtc,
@@ -2659,4 +2797,173 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         string SourceId,
         string LogicalName,
         string Message);
+}
+
+internal sealed class SupportCollectorSpoolWindow
+{
+    public const int DefaultMaxBytes = 512 * 1024;
+
+    private readonly object _gate = new();
+    private readonly int _maxBytes;
+    private readonly SortedDictionary<ulong, int> _frames = [];
+    private TaskCompletionSource _spaceAvailable = CreateSignal();
+    private long _outstandingBytes;
+    private long _reservedBytes;
+
+    public SupportCollectorSpoolWindow(int maxBytes = DefaultMaxBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+        _maxBytes = maxBytes;
+    }
+
+    internal long OutstandingBytes
+    {
+        get
+        {
+            lock (_gate) return _outstandingBytes;
+        }
+    }
+
+    internal long ReservedBytes
+    {
+        get
+        {
+            lock (_gate) return _reservedBytes;
+        }
+    }
+
+    public async ValueTask ReserveAsync(
+        int byteCount,
+        CancellationToken token)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(byteCount);
+        if (byteCount > _maxBytes)
+        {
+            throw new InvalidDataException(
+                "A collector frame exceeds the diagnostics spool-ahead window.");
+        }
+
+        while (true)
+        {
+            Task waitForSpace;
+            lock (_gate)
+            {
+                if (_outstandingBytes + _reservedBytes <=
+                    _maxBytes - byteCount)
+                {
+                    _reservedBytes = checked(_reservedBytes + byteCount);
+                    return;
+                }
+                waitForSpace = _spaceAvailable.Task;
+            }
+            await waitForSpace.WaitAsync(token).ConfigureAwait(false);
+        }
+    }
+
+    public ValueTask ReserveIfCollectorAsync(
+        bool collectorFrame,
+        int byteCount,
+        CancellationToken token) =>
+        collectorFrame
+            ? ReserveAsync(byteCount, token)
+            : ValueTask.CompletedTask;
+
+    public void Commit(ulong sequence, int byteCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(sequence);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(byteCount);
+        lock (_gate)
+        {
+            if (_reservedBytes < byteCount)
+            {
+                throw new InvalidOperationException(
+                    "The collector spool reservation is unavailable.");
+            }
+            if (_frames.ContainsKey(sequence))
+            {
+                throw new InvalidOperationException(
+                    "The collector spool sequence is already tracked.");
+            }
+            _reservedBytes -= byteCount;
+            _outstandingBytes = checked(_outstandingBytes + byteCount);
+            _frames.Add(sequence, byteCount);
+        }
+    }
+
+    public void CancelReservation(int byteCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(byteCount);
+        lock (_gate)
+        {
+            if (_reservedBytes < byteCount)
+            {
+                throw new InvalidOperationException(
+                    "The collector spool reservation is unavailable.");
+            }
+            _reservedBytes -= byteCount;
+            SignalSpaceAvailableNoLock();
+        }
+    }
+
+    public void Remove(ulong sequence)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(sequence);
+        lock (_gate)
+        {
+            if (!_frames.Remove(sequence, out var byteCount))
+            {
+                return;
+            }
+            _outstandingBytes = Math.Max(0, _outstandingBytes - byteCount);
+            SignalSpaceAvailableNoLock();
+        }
+    }
+
+    public void AcknowledgeThrough(ulong sequence)
+    {
+        lock (_gate)
+        {
+            var released = RemoveWhereNoLock(
+                candidate => candidate <= sequence);
+            if (released > 0)
+            {
+                SignalSpaceAvailableNoLock();
+            }
+        }
+    }
+
+    public void DiscardAfter(ulong sequence)
+    {
+        lock (_gate)
+        {
+            var released = RemoveWhereNoLock(
+                candidate => candidate > sequence);
+            if (released > 0)
+            {
+                SignalSpaceAvailableNoLock();
+            }
+        }
+    }
+
+    private long RemoveWhereNoLock(Func<ulong, bool> predicate)
+    {
+        long released = 0;
+        foreach (var sequence in _frames.Keys.Where(predicate).ToArray())
+        {
+            released = checked(released + _frames[sequence]);
+            _frames.Remove(sequence);
+        }
+        _outstandingBytes = Math.Max(0, _outstandingBytes - released);
+        return released;
+    }
+
+    private void SignalSpaceAvailableNoLock()
+    {
+        var previous = _spaceAvailable;
+        _spaceAvailable = CreateSignal();
+        previous.TrySetResult();
+    }
+
+    private static TaskCompletionSource CreateSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

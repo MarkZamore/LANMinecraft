@@ -100,6 +100,7 @@ public sealed class LanAdvertisementService : IAsyncDisposable
                 peer.ServerPort,
                 peer.LanSessionId,
                 peer.LanWorldName,
+                peer.LanRelayProtocolVersion,
                 peerEndpoints);
         }).ToArray();
         var selectedRoutes = endpoints
@@ -199,13 +200,15 @@ public sealed class LanAdvertisementService : IAsyncDisposable
 
             if (endpoints.Length > 0)
             {
+                sessionState.LastRoutableUtc = now;
                 try
                 {
                     var relay = await _relay.GetOrCreateClientRelayAsync(
                         peer.IdentityId,
                         peer.LanSessionId,
                         endpoints,
-                        peer.ServerPort).ConfigureAwait(false);
+                        peer.ServerPort,
+                        peer.RelayProtocolVersion).ConfigureAwait(false);
                     sessionState.RelayKey = relay.Key;
                     sessionState.LocalPort = relay.LocalPort;
                 }
@@ -216,8 +219,13 @@ public sealed class LanAdvertisementService : IAsyncDisposable
             }
             else
             {
-                sessionState.RelayKey = "";
-                sessionState.LocalPort = 0;
+                if (sessionState.LastRoutableUtc == default ||
+                    now - sessionState.LastRoutableUtc >
+                    MissingSessionRetention)
+                {
+                    sessionState.RelayKey = "";
+                    sessionState.LocalPort = 0;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(sessionState.RelayKey) ||
@@ -450,6 +458,7 @@ public sealed class LanAdvertisementService : IAsyncDisposable
         int ServerPort,
         string LanSessionId,
         string WorldName,
+        int RelayProtocolVersion,
         IReadOnlyList<PeerCandidateEndpoint> Endpoints);
 
     private sealed record LanAdvertisementSnapshot(
@@ -468,6 +477,7 @@ public sealed class LanAdvertisementService : IAsyncDisposable
     {
         public string IdentityId { get; } = identityId;
         public DateTimeOffset LastSeenUtc { get; set; } = lastSeenUtc;
+        public DateTimeOffset LastRoutableUtc { get; set; }
         public string RelayKey { get; set; } = "";
         public int LocalPort { get; set; }
     }
