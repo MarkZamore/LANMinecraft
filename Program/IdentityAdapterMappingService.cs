@@ -6,6 +6,7 @@ namespace Minecraft;
 
 internal sealed class IdentityAdapterMappingService
 {
+    private const string XaeroWaypointTeleport = "xaero/hud/minimap/waypoint/WaypointTeleport";
     private const string LoginListener = "net/minecraft/server/network/ServerLoginPacketListenerImpl";
     private const string HelloPacket = "net/minecraft/network/protocol/login/ServerboundHelloPacket";
     private const string MinecraftServer = "net/minecraft/server/MinecraftServer";
@@ -14,12 +15,23 @@ internal sealed class IdentityAdapterMappingService
     private const string Component = "net/minecraft/network/chat/Component";
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
+    private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
+    private const string Screen = "net/minecraft/client/gui/screens/Screen";
     private const string LanServerEntry =
         "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry";
     private const string LanServer = "net/minecraft/client/server/LanServer";
     private const string TextureUrlChecker = "com/mojang/authlib/yggdrasil/TextureUrlChecker";
+    private readonly AppPaths _paths;
 
-    public IdentityAdapterConfiguration Build(PreparedRuntime runtime)
+    public IdentityAdapterMappingService(AppPaths paths)
+    {
+        _paths = paths;
+    }
+
+    public IdentityAdapterConfiguration Build(
+        PreparedRuntime runtime,
+        string gameDirectory,
+        bool enableXaeroWaypointBridge)
     {
         var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
         if (mappingPath is null)
@@ -36,6 +48,8 @@ internal sealed class IdentityAdapterMappingService
         var component = mappings.RequireClass(Component);
         var playerInfo = mappings.RequireClass(PlayerInfo);
         var playerSkin = mappings.RequireClass(PlayerSkin);
+        var clientPacketListener = mappings.RequireClass(ClientPacketListener);
+        var screen = mappings.RequireClass(Screen);
         var lanServerEntry = mappings.RequireClass(LanServerEntry);
         var lanServer = mappings.RequireClass(LanServer);
 
@@ -50,6 +64,12 @@ internal sealed class IdentityAdapterMappingService
         var lanRender = lanServerEntry.RequireMethod(
             "render",
             descriptor => descriptor.EndsWith(")V", StringComparison.Ordinal));
+        var sendUnsignedCommand = clientPacketListener.RequireMethod(
+            "sendUnsignedCommand",
+            descriptor => descriptor == "(Ljava/lang/String;)Z");
+        var sendCommand = clientPacketListener.RequireMethod(
+            "sendCommand",
+            descriptor => descriptor == "(Ljava/lang/String;)V");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -103,7 +123,23 @@ internal sealed class IdentityAdapterMappingService
                 lanServer.RequireMethod("getMotd", descriptor => descriptor == "()Ljava/lang/String;").LeftName),
             ["textureUrlCheckerClasses"] = TextureUrlChecker,
             ["textureUrlCheckerMethods"] = "isAllowedTextureDomain",
-            ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z"
+            ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z",
+            ["xaeroWaypointEnabled"] =
+                enableXaeroWaypointBridge ? "true" : "false",
+            ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
+            ["xaeroWaypointTeleportMethods"] = "teleportToWaypoint",
+            ["xaeroWaypointTeleportDescriptors"] = JoinAliases(
+                "(Lxaero/common/minimap/waypoints/Waypoint;Lxaero/hud/minimap/world/MinimapWorld;" +
+                "Lnet/minecraft/client/gui/screens/Screen;Z)V",
+                "(Lxaero/common/minimap/waypoints/Waypoint;Lxaero/hud/minimap/world/MinimapWorld;" +
+                $"L{screen.LeftName};Z)V"),
+            ["clientPacketListenerClasses"] = JoinAliases(
+                ClientPacketListener,
+                clientPacketListener.LeftName),
+            ["sendUnsignedCommandMethods"] = JoinAliases(
+                "sendUnsignedCommand",
+                sendUnsignedCommand.LeftName),
+            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName)
         };
 
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
@@ -116,7 +152,11 @@ internal sealed class IdentityAdapterMappingService
             lanServerEntry.LeftName,
             TextureUrlChecker
         };
-        var targets = FindRuntimeTargets(runtime, requiredTargets);
+        if (enableXaeroWaypointBridge)
+        {
+            requiredTargets.Add(XaeroWaypointTeleport);
+        }
+        var targets = FindRuntimeTargets(runtime, gameDirectory, requiredTargets);
         if (targets.Count != requiredTargets.Count)
         {
             var found = targets.Select(target => target.ClassName).ToHashSet(StringComparer.Ordinal);
@@ -147,8 +187,9 @@ internal sealed class IdentityAdapterMappingService
         return null;
     }
 
-    private static List<IdentityAdapterTarget> FindRuntimeTargets(
+    private List<IdentityAdapterTarget> FindRuntimeTargets(
         PreparedRuntime runtime,
+        string gameDirectory,
         IReadOnlySet<string> requiredTargets)
     {
         var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal);
@@ -159,6 +200,13 @@ internal sealed class IdentityAdapterMappingService
             candidates.AddRange(Directory.EnumerateFiles(minecraftLibraries, "*-srg.jar", SearchOption.AllDirectories));
         }
         candidates.Add(runtime.ClientJarPath);
+        var normalizedGameDirectory = Path.GetFullPath(gameDirectory);
+        _paths.EnsureUnderRoot(normalizedGameDirectory);
+        var instanceMods = Path.Combine(normalizedGameDirectory, "mods");
+        if (Directory.Exists(instanceMods))
+        {
+            candidates.AddRange(Directory.EnumerateFiles(instanceMods, "*.jar", SearchOption.TopDirectoryOnly));
+        }
         var libraries = Path.Combine(runtime.RuntimeRoot, "libraries");
         if (Directory.Exists(libraries))
         {
@@ -221,6 +269,8 @@ internal sealed class IdentityAdapterMappingService
                 Component,
                 PlayerInfo,
                 PlayerSkin,
+                ClientPacketListener,
+                Screen,
                 LanServerEntry,
                 LanServer
             };

@@ -37,6 +37,8 @@
     <Resource Include="Minecraft.ico" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
+    <EmbeddedResource Include="PortableTeleportCommands.js"
+                      LogicalName="Minecraft.PortableTeleportCommands.js" />
     <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />

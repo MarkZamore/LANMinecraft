@@ -21,6 +21,8 @@ public sealed class MinecraftProcessService
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly PackInstanceService _packInstances;
     private readonly PackRuntimeService _packRuntimes;
+    private readonly ManagedComponentService _managedComponents;
+    private readonly ManagedTeleportConfigurationService _managedTeleportConfiguration;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
@@ -74,7 +76,9 @@ public sealed class MinecraftProcessService
         PackInstanceService packInstances,
         PackRuntimeService packRuntimes,
         WaypointSyncService waypointSync,
-        SkinService skinService)
+        SkinService skinService,
+        ManagedComponentService? managedComponents = null,
+        ManagedTeleportConfigurationService? managedTeleportConfiguration = null)
     {
         _paths = paths;
         _logger = logger;
@@ -83,6 +87,9 @@ public sealed class MinecraftProcessService
         _playerProfiles = playerProfiles;
         _packInstances = packInstances;
         _packRuntimes = packRuntimes;
+        _managedComponents = managedComponents ?? new ManagedComponentService(paths, logger);
+        _managedTeleportConfiguration =
+            managedTeleportConfiguration ?? new ManagedTeleportConfigurationService();
         _waypointSync = waypointSync;
         _skinService = skinService;
         _gameWindowPlacement = new MinecraftWindowPlacementService(paths, logger);
@@ -144,10 +151,28 @@ public sealed class MinecraftProcessService
         {
             throw new InvalidOperationException("Pack manifest changed while its runtime was being prepared. Start the game again.");
         }
-        var identityJvmArguments = await _identityAdapter.PrepareJvmArgumentsAsync(runtime, token);
-        var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
-
         var instance = await _packInstances.PrepareAsync(settings.ClientRelativePath, token);
+        var managedTeleportEnabled =
+            ManagedTeleportPackPolicy.IsEnabledFor(settings.ClientRelativePath);
+        if (managedTeleportEnabled)
+        {
+            ManagedTeleportPackPolicy.Validate(descriptor, instance);
+            await _managedComponents
+                .EnsureFtbEssentialsAsync(instance, token)
+                .ConfigureAwait(false);
+            _managedTeleportConfiguration.Apply(
+                instance.GameDirectory,
+                _paths.Worlds,
+                settings.ClientRelativePath);
+        }
+        var identityJvmArguments = await _identityAdapter
+            .PrepareJvmArgumentsAsync(
+                runtime,
+                instance.GameDirectory,
+                managedTeleportEnabled,
+                token)
+            .ConfigureAwait(false);
+        var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
         var gameDir = instance.GameDirectory;
         EnsureWorldsDirectoryAndSavesLink(gameDir);
         ValidatePackCompatibility(packDir);
