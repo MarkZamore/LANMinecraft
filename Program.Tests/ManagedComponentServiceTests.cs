@@ -21,8 +21,16 @@ public sealed class ManagedComponentServiceTests
             "4da8e4d461ceef1a5e6f6705265fe24239b132cdc408eb77787231cb56c219bf",
             ManagedComponentService.FtbEssentialsSha256);
         Assert.Equal(
-            "https://www.curseforge.com/api/v1/mods/410811/files/7608733/download",
+            "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
             ManagedComponentService.FtbEssentialsDownloadUri.AbsoluteUri);
+        Assert.Equal(
+            [
+                "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
+                "https://edge.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
+                "https://www.curseforge.com/api/v1/mods/410811/files/7608733/download"
+            ],
+            ManagedComponentService.FtbEssentialsDownloadUris
+                .Select(uri => uri.AbsoluteUri));
     }
 
     [Fact]
@@ -53,7 +61,7 @@ public sealed class ManagedComponentServiceTests
             Path.Combine("Launcher", "ManagedComponents"),
             result.CachePath,
             StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(component.DownloadUri, Assert.Single(handler.RequestUris));
+        Assert.Equal(component.DownloadUris[0], Assert.Single(handler.RequestUris));
         Assert.Empty(Directory.EnumerateFiles(
             fixture.Root,
             "*.tmp",
@@ -135,10 +143,10 @@ public sealed class ManagedComponentServiceTests
         Directory.CreateDirectory(Path.GetDirectoryName(service.FtbEssentialsCachePath)!);
         await File.WriteAllBytesAsync(service.FtbEssentialsCachePath, rejected);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
+        await Assert.ThrowsAsync<HttpRequestException>(
             () => service.EnsureFtbEssentialsAsync(instance));
 
-        Assert.Equal(component.DownloadUri, Assert.Single(handler.RequestUris));
+        Assert.Equal(component.DownloadUris[0], Assert.Single(handler.RequestUris));
         Assert.Equal(rejected, await File.ReadAllBytesAsync(installedPath));
         Assert.Equal(rejected, await File.ReadAllBytesAsync(service.FtbEssentialsCachePath));
         Assert.Empty(Directory.EnumerateFiles(
@@ -173,7 +181,7 @@ public sealed class ManagedComponentServiceTests
         Assert.True(result.Downloaded);
         Assert.True(result.Installed);
         Assert.True(result.CachePopulated);
-        Assert.Equal(component.DownloadUri, Assert.Single(handler.RequestUris));
+        Assert.Equal(component.DownloadUris[0], Assert.Single(handler.RequestUris));
         Assert.Equal(expected, await File.ReadAllBytesAsync(installedPath));
         Assert.Equal(expected, await File.ReadAllBytesAsync(service.FtbEssentialsCachePath));
         Assert.Empty(Directory.EnumerateFiles(
@@ -202,6 +210,144 @@ public sealed class ManagedComponentServiceTests
             service.EnsureFtbEssentialsAsync(instance));
 
         Assert.Single(handler.RequestUris);
+    }
+
+    [Fact]
+    public async Task PrimaryForbidden_FallsBackToNextOfficialSource()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("fallback managed component");
+        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
+        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var component = TestComponent(payload, primary, fallback);
+        var handler = new RecordingHandler((request, _) =>
+            Task.FromResult(
+                request.RequestUri == primary
+                    ? new HttpResponseMessage(HttpStatusCode.Forbidden)
+                    : Success(payload)));
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component);
+        var instance = fixture.CreatePreparedInstance();
+
+        var result = await service.EnsureFtbEssentialsAsync(instance);
+
+        Assert.True(result.Downloaded);
+        Assert.True(result.Installed);
+        Assert.Equal([primary, fallback], handler.RequestUris);
+        Assert.Equal(payload, await File.ReadAllBytesAsync(result.InstalledPath));
+        Assert.Empty(Directory.EnumerateFiles(
+            fixture.Root,
+            "*.tmp",
+            SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task InvalidPrimaryPayload_FallsBackWithoutPublishingIt()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var expected = Encoding.UTF8.GetBytes("correct bytes");
+        var rejected = Encoding.UTF8.GetBytes("wrong__ bytes");
+        Assert.Equal(expected.Length, rejected.Length);
+        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
+        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var component = TestComponent(expected, primary, fallback);
+        var handler = new RecordingHandler((request, _) =>
+            Task.FromResult(Success(request.RequestUri == primary ? rejected : expected)));
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component);
+        var instance = fixture.CreatePreparedInstance();
+
+        var result = await service.EnsureFtbEssentialsAsync(instance);
+
+        Assert.Equal([primary, fallback], handler.RequestUris);
+        Assert.Equal(expected, await File.ReadAllBytesAsync(result.CachePath));
+        Assert.Equal(expected, await File.ReadAllBytesAsync(result.InstalledPath));
+        Assert.Empty(Directory.EnumerateFiles(
+            fixture.Root,
+            "*.tmp",
+            SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task PrimaryResponseBodyFailure_FallsBackToNextOfficialSource()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("body fallback managed component");
+        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
+        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var component = TestComponent(payload, primary, fallback);
+        var handler = new RecordingHandler((request, _) =>
+            Task.FromResult(
+                request.RequestUri == primary
+                    ? new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StreamContent(new FailingHttpResponseStream())
+                    }
+                    : Success(payload)));
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component);
+        var instance = fixture.CreatePreparedInstance();
+
+        var result = await service.EnsureFtbEssentialsAsync(instance);
+
+        Assert.Equal([primary, fallback], handler.RequestUris);
+        Assert.Equal(payload, await File.ReadAllBytesAsync(result.CachePath));
+        Assert.Equal(payload, await File.ReadAllBytesAsync(result.InstalledPath));
+        Assert.Empty(Directory.EnumerateFiles(
+            fixture.Root,
+            "*.tmp",
+            SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task AllOfficialSourcesFail_FailsClosedAndReportsEachStatus()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("component");
+        var primary = new Uri(
+            "https://primary.example.test/ftb-essentials.jar?temporary-token=secret");
+        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var component = TestComponent(payload, primary, fallback);
+        var handler = new RecordingHandler((request, _) =>
+            Task.FromResult(new HttpResponseMessage(
+                request.RequestUri == primary
+                    ? HttpStatusCode.Forbidden
+                    : HttpStatusCode.ServiceUnavailable)));
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component);
+        var instance = fixture.CreatePreparedInstance();
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => service.EnsureFtbEssentialsAsync(instance));
+
+        Assert.Equal([primary, fallback], handler.RequestUris);
+        Assert.Contains("HTTP 403", error.Message, StringComparison.Ordinal);
+        Assert.Contains("HTTP 503", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("?", error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(service.FtbEssentialsCachePath));
+        Assert.Empty(Directory.EnumerateFiles(
+            fixture.Root,
+            "*.tmp",
+            SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void ComponentSourceWithCredentials_IsRejected()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("component");
+        var component = TestComponent(
+            payload,
+            new Uri(
+                "https://user:password@example.test/ftb-essentials.jar?temporary-token=secret"));
+        using var httpClient = new HttpClient(new RecordingHandler((_, _) =>
+            Task.FromResult(Success(payload))));
+
+        var error = Assert.Throws<ArgumentException>(
+            () => fixture.CreateService(httpClient, component));
+
+        Assert.DoesNotContain("password", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -251,12 +397,16 @@ public sealed class ManagedComponentServiceTests
         Assert.Empty(handler.RequestUris);
     }
 
-    private static ManagedComponentDescriptor TestComponent(byte[] payload) =>
+    private static ManagedComponentDescriptor TestComponent(
+        byte[] payload,
+        params Uri[] downloadUris) =>
         new(
             "ftb-essentials-test",
             123456,
             "ftb-essentials-neoforge-test.jar",
-            new Uri("https://example.test/ftb-essentials.jar"),
+            downloadUris.Length == 0
+                ? [new Uri("https://example.test/ftb-essentials.jar")]
+                : downloadUris,
             payload.LongLength,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant());
 
@@ -283,6 +433,43 @@ public sealed class ManagedComponentServiceTests
                 ?? throw new InvalidOperationException("Request URI is missing."));
             return _responseFactory(request, cancellationToken);
         }
+    }
+
+    private sealed class FailingHttpResponseStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw CreateFailure();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(CreateFailure());
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        private static HttpIOException CreateFailure() =>
+            new(HttpRequestError.ResponseEnded, "Simulated response body failure.");
     }
 
     private sealed class TemporaryPortableRoot : IDisposable
