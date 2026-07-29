@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 
 namespace Minecraft;
@@ -19,16 +21,33 @@ public sealed class ManagedComponentService
     public const long FtbEssentialsSizeBytes = 209459;
     public const string FtbEssentialsSha256 =
         "4da8e4d461ceef1a5e6f6705265fe24239b132cdc408eb77787231cb56c219bf";
+    private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
 
     public static Uri FtbEssentialsDownloadUri { get; } = new(
+        "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
+        UriKind.Absolute);
+
+    public static Uri FtbEssentialsEdgeDownloadUri { get; } = new(
+        "https://edge.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
+        UriKind.Absolute);
+
+    public static Uri FtbEssentialsCurseForgeDownloadUri { get; } = new(
         "https://www.curseforge.com/api/v1/mods/410811/files/7608733/download",
         UriKind.Absolute);
+
+    public static IReadOnlyList<Uri> FtbEssentialsDownloadUris { get; } =
+        Array.AsReadOnly(
+        [
+            FtbEssentialsDownloadUri,
+            FtbEssentialsEdgeDownloadUri,
+            FtbEssentialsCurseForgeDownloadUri
+        ]);
 
     private static readonly ManagedComponentDescriptor FtbEssentials = new(
         "ftb-essentials",
         FtbEssentialsCurseForgeFileId,
         FtbEssentialsFileName,
-        FtbEssentialsDownloadUri,
+        FtbEssentialsDownloadUris,
         FtbEssentialsSizeBytes,
         FtbEssentialsSha256);
     private static readonly SemaphoreSlim FtbEssentialsGate = new(1, 1);
@@ -196,39 +215,172 @@ public sealed class ManagedComponentService
         var cacheDirectory = Path.GetDirectoryName(cachePath)
             ?? throw new InvalidOperationException($"Cache file has no parent directory: {cachePath}");
         EnsureOrdinaryDirectory(cacheDirectory);
-        var temporaryPath = CreateTemporarySiblingPath(cachePath, "download");
-        try
+        var failures = new List<string>(component.DownloadUris.Count);
+
+        for (var sourceIndex = 0; sourceIndex < component.DownloadUris.Count; sourceIndex++)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, component.DownloadUri);
-            using var response = await _httpClient.SendAsync(
+            token.ThrowIfCancellationRequested();
+            var source = component.DownloadUris[sourceIndex];
+            var sourceNumber = sourceIndex + 1;
+            var temporaryPath = CreateTemporarySiblingPath(cachePath, "download");
+            try
+            {
+                using var sourceTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                sourceTimeout.CancelAfter(DownloadSourceTimeout);
+                var sourceToken = sourceTimeout.Token;
+                _logger.Info(
+                    $"Trying official managed-component source {sourceNumber}/" +
+                    $"{component.DownloadUris.Count}: {SanitizeUri(source)}");
+
+                using var request = new HttpRequestMessage(HttpMethod.Get, source);
+                using var response = await _httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
-                    token)
-                .ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is { } contentLength &&
-                contentLength != component.SizeBytes)
-            {
-                throw new InvalidDataException(
-                    $"Managed component {component.Id} has an unexpected Content-Length.");
-            }
+                    sourceToken)
+                    .ConfigureAwait(false);
+                var effectiveUri = response.RequestMessage?.RequestUri ?? source;
+                if (!IsApprovedEffectiveUri(component, effectiveUri))
+                {
+                    throw new InvalidDataException(
+                        $"Managed component {component.Id} was redirected to an unapproved endpoint " +
+                        $"{SanitizeUri(effectiveUri)}.");
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    var failure = DescribeHttpFailure(response.StatusCode, effectiveUri);
+                    RecordSourceFailure(
+                        component,
+                        sourceNumber,
+                        failure,
+                        failures);
+                    continue;
+                }
+                if (response.Content.Headers.ContentLength is { } contentLength &&
+                    contentLength != component.SizeBytes)
+                {
+                    throw new InvalidDataException(
+                        $"Managed component {component.Id} has an unexpected Content-Length " +
+                        $"{contentLength} at {SanitizeUri(effectiveUri)}.");
+                }
 
-            await using (var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false))
-            await using (var output = OpenTemporaryOutput(temporaryPath))
-            {
-                await CopyExactAsync(input, output, component.SizeBytes, token).ConfigureAwait(false);
-                await output.FlushAsync(token).ConfigureAwait(false);
-                output.Flush(flushToDisk: true);
-            }
+                await using (var input = await response.Content
+                                 .ReadAsStreamAsync(sourceToken)
+                                 .ConfigureAwait(false))
+                await using (var output = OpenTemporaryOutput(temporaryPath))
+                {
+                    await CopyExactAsync(input, output, component.SizeBytes, sourceToken)
+                        .ConfigureAwait(false);
+                    await output.FlushAsync(sourceToken).ConfigureAwait(false);
+                    output.Flush(flushToDisk: true);
+                }
 
-            ValidateFile(temporaryPath, component);
-            PublishTemporaryFile(temporaryPath, cachePath);
-            ValidateFile(cachePath, component);
+                sourceTimeout.CancelAfter(Timeout.InfiniteTimeSpan);
+                token.ThrowIfCancellationRequested();
+                ValidateFile(temporaryPath, component);
+                PublishTemporaryFile(temporaryPath, cachePath);
+                ValidateFile(cachePath, component);
+                _logger.Info(
+                    $"Managed component {component.Id} downloaded and verified from " +
+                    $"{SanitizeUri(effectiveUri)}.");
+                return;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                RecordSourceFailure(
+                    component,
+                    sourceNumber,
+                    $"request timed out after {DownloadSourceTimeout.TotalSeconds:0} seconds at " +
+                    $"{SanitizeUri(source)}",
+                    failures);
+            }
+            catch (HttpIOException ex)
+            {
+                RecordSourceFailure(
+                    component,
+                    sourceNumber,
+                    $"HTTP body error {ex.HttpRequestError} at {SanitizeUri(source)}",
+                    failures);
+            }
+            catch (HttpRequestException ex)
+            {
+                RecordSourceFailure(
+                    component,
+                    sourceNumber,
+                    DescribeTransportFailure(source, ex),
+                    failures);
+            }
+            catch (InvalidDataException ex)
+            {
+                RecordSourceFailure(
+                    component,
+                    sourceNumber,
+                    ex.Message,
+                    failures);
+            }
+            finally
+            {
+                TryDeleteFile(temporaryPath);
+            }
         }
-        finally
+
+        throw new HttpRequestException(
+            $"All {component.DownloadUris.Count} official download sources failed for managed " +
+            $"component {component.Id}: {string.Join("; ", failures)}");
+    }
+
+    private void RecordSourceFailure(
+        ManagedComponentDescriptor component,
+        int sourceNumber,
+        string failure,
+        List<string> failures)
+    {
+        failures.Add(failure);
+        var hasFallback = sourceNumber < component.DownloadUris.Count;
+        _logger.Warn(
+            $"Managed component {component.Id} source {sourceNumber}/" +
+            $"{component.DownloadUris.Count} failed: {failure}." +
+            (hasFallback ? " Trying the next official source." : string.Empty));
+    }
+
+    private static string DescribeHttpFailure(HttpStatusCode statusCode, Uri effectiveUri) =>
+        $"HTTP {(int)statusCode} {statusCode} at {SanitizeUri(effectiveUri)}";
+
+    private static string DescribeTransportFailure(Uri source, HttpRequestException exception)
+    {
+        var status = exception.StatusCode is { } statusCode
+            ? $"HTTP {(int)statusCode} {statusCode}"
+            : "HTTP transport error";
+        var socket = exception.InnerException is SocketException socketException
+            ? $", SocketError={socketException.SocketErrorCode}"
+            : string.Empty;
+        return $"{status}{socket} at {SanitizeUri(source)}";
+    }
+
+    private static bool IsApprovedEffectiveUri(
+        ManagedComponentDescriptor component,
+        Uri effectiveUri) =>
+        effectiveUri.IsAbsoluteUri &&
+        effectiveUri.Scheme == Uri.UriSchemeHttps &&
+        effectiveUri.IsDefaultPort &&
+        string.IsNullOrEmpty(effectiveUri.UserInfo) &&
+        component.DownloadUris.Any(candidate =>
+            string.Equals(candidate.Host, effectiveUri.Host, StringComparison.OrdinalIgnoreCase));
+
+    private static string SanitizeUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri) return "<invalid-uri>";
+        var sanitized = new UriBuilder(uri)
         {
-            TryDeleteFile(temporaryPath);
-        }
+            UserName = string.Empty,
+            Password = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return sanitized.Uri.GetLeftPart(UriPartial.Path);
     }
 
     private static async Task AtomicCopyAsync(
@@ -363,10 +515,35 @@ public sealed class ManagedComponentService
         {
             throw new ArgumentException("Managed component file name is invalid.", nameof(component));
         }
-        if (!component.DownloadUri.IsAbsoluteUri ||
-            component.DownloadUri.Scheme != Uri.UriSchemeHttps)
+        if (component.DownloadUris is null || component.DownloadUris.Count == 0)
         {
-            throw new ArgumentException("Managed component URL must use HTTPS.", nameof(component));
+            throw new ArgumentException(
+                "Managed component must have at least one download URL.",
+                nameof(component));
+        }
+        var downloadUris = component.DownloadUris.ToArray();
+        foreach (var downloadUri in downloadUris)
+        {
+            if (downloadUri is null ||
+                !downloadUri.IsAbsoluteUri ||
+                downloadUri.Scheme != Uri.UriSchemeHttps ||
+                !downloadUri.IsDefaultPort ||
+                !string.IsNullOrEmpty(downloadUri.UserInfo) ||
+                string.IsNullOrWhiteSpace(downloadUri.Host))
+            {
+                throw new ArgumentException(
+                    "Managed component URLs must be absolute and use HTTPS.",
+                    nameof(component));
+            }
+        }
+        if (downloadUris
+            .Select(uri => uri.AbsoluteUri)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count() != downloadUris.Length)
+        {
+            throw new ArgumentException(
+                "Managed component download URLs must be unique.",
+                nameof(component));
         }
         if (component.SizeBytes <= 0)
         {
@@ -377,7 +554,11 @@ public sealed class ManagedComponentService
         {
             throw new ArgumentException("Managed component SHA-256 is invalid.", nameof(component));
         }
-        return component with { Sha256 = component.Sha256.ToLowerInvariant() };
+        return component with
+        {
+            DownloadUris = Array.AsReadOnly(downloadUris),
+            Sha256 = component.Sha256.ToLowerInvariant()
+        };
     }
 
     private static bool IsValidFile(
@@ -502,6 +683,6 @@ internal sealed record ManagedComponentDescriptor(
     string Id,
     long FileId,
     string FileName,
-    Uri DownloadUri,
+    IReadOnlyList<Uri> DownloadUris,
     long SizeBytes,
     string Sha256);
