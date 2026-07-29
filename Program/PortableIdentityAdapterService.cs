@@ -9,12 +9,12 @@ namespace Minecraft;
 
 public sealed class PortableIdentityAdapterService : IDisposable
 {
-    private const int StateSchemaVersion = 1;
+    private const int StateSchemaVersion = 3;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
-    private readonly IdentityAdapterMappingService _mappings = new();
+    private readonly IdentityAdapterMappingService _mappings;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -22,12 +22,40 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         _paths = paths;
         _logger = logger;
+        _mappings = new IdentityAdapterMappingService(paths);
     }
 
-    public async Task<IReadOnlyList<string>> PrepareJvmArgumentsAsync(
+    public Task<IReadOnlyList<string>> PrepareJvmArgumentsAsync(
         PreparedRuntime runtime,
         CancellationToken token)
     {
+        var runtimeRelativePath = Path.GetRelativePath(_paths.Runtimes, runtime.RuntimeRoot);
+        var sourcePackDirectory = _paths.CombineUnderPacks(runtimeRelativePath);
+        return PrepareJvmArgumentsAsync(
+            runtime,
+            sourcePackDirectory,
+            enableXaeroWaypointBridge: false,
+            token);
+    }
+
+    public Task<IReadOnlyList<string>> PrepareJvmArgumentsAsync(
+        PreparedRuntime runtime,
+        string gameDirectory,
+        CancellationToken token) =>
+        PrepareJvmArgumentsAsync(
+            runtime,
+            gameDirectory,
+            enableXaeroWaypointBridge: false,
+            token);
+
+    public async Task<IReadOnlyList<string>> PrepareJvmArgumentsAsync(
+        PreparedRuntime runtime,
+        string gameDirectory,
+        bool enableXaeroWaypointBridge,
+        CancellationToken token)
+    {
+        var targetRoot = Path.GetFullPath(gameDirectory);
+        _paths.EnsureUnderRoot(targetRoot);
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
@@ -38,7 +66,13 @@ public sealed class PortableIdentityAdapterService : IDisposable
             var adapterHash = HashFile(adapterPath);
             var statePath = Path.Combine(directory, "adapter-state.json");
             var state = ReadState(statePath);
-            if (state is not null && IsStateValid(state, runtime, adapterHash))
+            if (state is not null &&
+                IsStateValid(
+                    state,
+                    runtime,
+                    targetRoot,
+                    enableXaeroWaypointBridge,
+                    adapterHash))
             {
                 return CreateJvmArguments(adapterPath, state.Properties);
             }
@@ -46,7 +80,10 @@ public sealed class PortableIdentityAdapterService : IDisposable
             IdentityAdapterConfiguration configuration;
             try
             {
-                configuration = _mappings.Build(runtime);
+                configuration = _mappings.Build(
+                    runtime,
+                    targetRoot,
+                    enableXaeroWaypointBridge);
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException)
             {
@@ -90,6 +127,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             {
                 SchemaVersion = StateSchemaVersion,
                 DescriptorHash = runtime.Descriptor.DescriptorHash,
+                TargetRoot = targetRoot,
+                XaeroWaypointBridgeEnabled = enableXaeroWaypointBridge,
                 AdapterSha256 = adapterHash,
                 MappingPath = configuration.MappingPath,
                 MappingSizeBytes = mappingInfo.Length,
@@ -306,10 +345,17 @@ public sealed class PortableIdentityAdapterService : IDisposable
         return arguments;
     }
 
-    private bool IsStateValid(IdentityAdapterState state, PreparedRuntime runtime, string adapterHash)
+    private bool IsStateValid(
+        IdentityAdapterState state,
+        PreparedRuntime runtime,
+        string targetRoot,
+        bool enableXaeroWaypointBridge,
+        string adapterHash)
     {
         if (state.SchemaVersion != StateSchemaVersion ||
             !string.Equals(state.DescriptorHash, runtime.Descriptor.DescriptorHash, StringComparison.Ordinal) ||
+            !string.Equals(state.TargetRoot, targetRoot, StringComparison.OrdinalIgnoreCase) ||
+            state.XaeroWaypointBridgeEnabled != enableXaeroWaypointBridge ||
             !string.Equals(state.AdapterSha256, adapterHash, StringComparison.Ordinal) ||
             state.Properties.Count == 0 ||
             state.Targets.Count == 0 ||
@@ -344,6 +390,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         var text = new StringBuilder()
             .AppendLine(state.DescriptorHash)
+            .AppendLine(state.TargetRoot)
+            .AppendLine(state.XaeroWaypointBridgeEnabled ? "xaero=1" : "xaero=0")
             .AppendLine(state.AdapterSha256)
             .AppendLine(state.MappingSha256);
         foreach (var pair in state.Properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
@@ -399,6 +447,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         public int SchemaVersion { get; set; }
         public string DescriptorHash { get; set; } = "";
+        public string TargetRoot { get; set; } = "";
+        public bool XaeroWaypointBridgeEnabled { get; set; }
         public string AdapterSha256 { get; set; } = "";
         public string MappingPath { get; set; } = "";
         public long MappingSizeBytes { get; set; }

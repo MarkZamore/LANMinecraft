@@ -9,6 +9,7 @@ import java.util.zip.ZipFile;
 import jdk.internal.org.objectweb.asm.ClassReader;
 import jdk.internal.org.objectweb.asm.tree.ClassNode;
 import jdk.internal.org.objectweb.asm.tree.FieldNode;
+import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
 import jdk.internal.org.objectweb.asm.tree.MethodNode;
 
 public final class PortableIdentityPreflight {
@@ -25,9 +26,14 @@ public final class PortableIdentityPreflight {
         try (ZipFile archive = new ZipFile(jarPath.toFile())) {
             byte[] original = readClassBytes(archive, className);
 
-            ClassFileTransformer transformer = isAlias("lanEntryClasses", className)
-                ? new PortableLanTitleTransformer()
-                : new PortableIdentityTransformer();
+            ClassFileTransformer transformer;
+            if (isAlias("lanEntryClasses", className)) {
+                transformer = new PortableLanTitleTransformer();
+            } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
+                transformer = new PortableXaeroWaypointTransformer();
+            } else {
+                transformer = new PortableIdentityTransformer();
+            }
             byte[] transformed = transformer.transform(
                 null,
                 null,
@@ -43,6 +49,8 @@ public final class PortableIdentityPreflight {
                 verifyHookTargets(archive, className);
             } else if (isAlias("lanEntryClasses", className)) {
                 verifyLanTitleTargets(archive, className);
+            } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
+                verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
                 !isAlias("textureUrlCheckerClasses", className)) {
                 throw new IllegalStateException("Unexpected portable identity target: " + className);
@@ -94,6 +102,65 @@ public final class PortableIdentityPreflight {
         if (!"Player".equals(PortableLanTitleHooks.resolveSubtitle(encoded)) ||
             !"ordinary motd".equals(PortableLanTitleHooks.resolveSubtitle("ordinary motd"))) {
             throw new IllegalStateException("Portable LAN metadata decoding failed.");
+        }
+    }
+
+    private static void verifyXaeroWaypointTargets(
+        ZipFile archive,
+        String waypointClass,
+        byte[] transformed) throws Exception {
+        ClassNode original = readClass(archive, waypointClass);
+        requireMethod(original, "xaeroWaypointTeleportMethods", 4);
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hookCalls = 0;
+        for (MethodNode method : patched.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableXaeroWaypointHooks") &&
+                    call.name.equals("rewriteCrossDimensionCommand") &&
+                    call.desc.equals("(Ljava/lang/String;)Ljava/lang/String;")) {
+                    hookCalls++;
+                }
+            }
+        }
+        if (hookCalls != 2) {
+            throw new IllegalStateException(
+                "Xaero waypoint transformer inserted " + hookCalls + " command hooks instead of 2.");
+        }
+
+        assertWaypointRewrite(
+            "execute in minecraft:the_nether run portable_waypoint_tp -12 64.5 8",
+            "portable_waypoint_tp_dimension minecraft:the_nether -12 64.5 8");
+        assertWaypointRewrite(
+            "/execute in example.mod:moon/base run portable_waypoint_tp -1 -0.5 2 90",
+            "portable_waypoint_tp_dimension example.mod:moon/base -1 -0.5 2 90");
+
+        assertWaypointUnchanged("portable_waypoint_tp -12 64 8");
+        assertWaypointUnchanged("execute in minecraft:overworld run tp @s 1 2 3");
+        assertWaypointUnchanged("execute  in minecraft:overworld run portable_waypoint_tp 1 2 3");
+        assertWaypointUnchanged("execute in Minecraft:overworld run portable_waypoint_tp 1 2 3");
+        assertWaypointUnchanged("execute in minecraft:overworld run portable_waypoint_tp 1 ~ 3");
+        assertWaypointUnchanged("execute in minecraft:overworld run portable_waypoint_tp 1 2 3 4 extra");
+    }
+
+    private static void assertWaypointRewrite(String input, String expected) {
+        String actual = PortableXaeroWaypointHooks.rewriteCrossDimensionCommand(input);
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException(
+                "Xaero waypoint command rewrite mismatch: expected '" + expected +
+                "', got '" + actual + "'.");
+        }
+    }
+
+    private static void assertWaypointUnchanged(String input) {
+        String actual = PortableXaeroWaypointHooks.rewriteCrossDimensionCommand(input);
+        if (!input.equals(actual)) {
+            throw new IllegalStateException(
+                "Xaero waypoint command escaped fail-closed validation: '" + input + "'.");
         }
     }
 
