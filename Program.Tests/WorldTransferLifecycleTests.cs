@@ -170,7 +170,6 @@ public sealed class WorldTransferLifecycleTests
                 waypoints,
                 skins,
                 relay,
-                voiceNetwork,
                 network,
                 routes,
                 new WorldTransferRuntimeOptions

@@ -21,9 +21,6 @@ public sealed class AppSettings
 
     public int MaxMemoryGb { get; set; } = 16;
 
-    [JsonIgnore]
-    public long MaxArchiveBytes { get; set; } = 10L * 1024 * 1024 * 1024;
-
     public string ClientRelativePath { get; set; } = "";
     public string SkinPath { get; set; } = "";
     public string SelectedWorldRelativePath { get; set; } = "";
@@ -769,6 +766,17 @@ public sealed class WorldTransferHeader
     public string WorldName { get; set; } = "World";
 }
 
+public sealed class WorldTransferProgressFrame
+{
+    public string Protocol { get; set; } = "";
+    public int ProtocolVersion { get; set; }
+    public string MessageType { get; set; } = "";
+    public string TransferId { get; set; } = "";
+    public string Stage { get; set; } = "";
+    public long Current { get; set; }
+    public long Total { get; set; }
+}
+
 public sealed class WorldTransferAck
 {
     public string Protocol { get; set; } = "";
@@ -787,7 +795,10 @@ public sealed class WorldTransferControl
     public string Protocol { get; set; } = "";
     public int ProtocolVersion { get; set; }
     public string TransferId { get; set; } = "";
-    public string Command { get; set; } = "Commit";
+    public string MessageType { get; set; } = "";
+    // No default command: a frame that omits the field must never be mistaken
+    // for a commit.
+    public string Command { get; set; } = "";
 }
 
 public sealed class WorldTransferJournal
