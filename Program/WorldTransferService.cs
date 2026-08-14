@@ -69,6 +69,8 @@ public sealed class WorldTransferService : IAsyncDisposable
         new(MaxIncomingClients, MaxIncomingClients);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly ConcurrentDictionary<int, Task> _receiveTasks = new();
+    private readonly ConcurrentDictionary<int, Task> _cleanupTasks = new();
+    private int _nextCleanupTaskId;
     private readonly ConcurrentDictionary<int, TcpClient> _incomingClients = new();
     private readonly object _disposeGate = new();
     private PeerSupportLogService? _peerSupportLogs;
@@ -444,10 +446,17 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }
                 finally
                 {
-                    if (completed || journal.State != "CommitSent")
+                    // Deleting the transaction root can mean multiple copies of
+                    // a multi-GB world; do it in the background so the transfer
+                    // reports done and the gate frees as soon as the peers have
+                    // committed. Leftovers are swept on the next launch. If the
+                    // escrow rollback itself failed, the root still holds the
+                    // only copy of the world - keep it for startup recovery.
+                    var escrowStillHoldsWorld = !completed &&
+                        Directory.Exists(escrowPath) && !Directory.Exists(worldDir);
+                    if ((completed || journal.State != "CommitSent") && !escrowStillHoldsWorld)
                     {
-                        RaiseProgress(0, 0, "Очистка временных файлов");
-                        DeleteDirectoryIfExists(transactionRoot);
+                        ScheduleTransactionCleanup(transactionRoot);
                     }
                 }
             }
@@ -973,23 +982,43 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
         finally
         {
-            // Cleanup of a multi-GB staging tree can take a while; stay marked
-            // busy until the gate is free so the UI never claims to be idle
-            // while an incoming transfer would still be refused.
-            if (progressStarted) RaiseProgress(0, 0, "Очистка временных файлов");
-            try
-            {
-                DeleteFileIfExists(receivedPath);
-                DeleteDirectoryIfExists(tempWorldPath);
-                if (transactionRoot is not null) DeleteDirectoryIfExists(transactionRoot);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.Warn($"World transfer cleanup failed: {ex.Message}");
-            }
+            // received.zip and the staging tree live inside the transaction
+            // root, and a successful install has already moved the world out of
+            // it, so one background delete covers every path. The gate frees
+            // immediately; leftovers are swept on the next launch.
+            ScheduleTransactionCleanup(transactionRoot);
             if (operationAcquired) _transferGate.Release();
             if (progressStarted) EndProgress();
         }
+    }
+
+    private void ScheduleTransactionCleanup(string? transactionRoot)
+    {
+        if (string.IsNullOrWhiteSpace(transactionRoot) || !Directory.Exists(transactionRoot)) return;
+        var id = Interlocked.Increment(ref _nextCleanupTaskId);
+        var cleanup = Task.Run(() =>
+        {
+            try
+            {
+                DeleteDirectoryIfExists(transactionRoot);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn(
+                    $"World transfer cleanup could not delete {Path.GetFileName(transactionRoot)}: " +
+                    $"{ex.Message}; it will be removed on the next launch.");
+            }
+        });
+        _cleanupTasks[id] = cleanup;
+        _ = cleanup.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                _cleanupTasks.TryRemove(id, out _);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private string InstallReceivedWorld(string extractedWorldPath, string? worldName)
@@ -2043,6 +2072,16 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
         await _transferGate.WaitAsync().ConfigureAwait(false);
         _transferGate.Release();
+        // Give background transaction cleanup a moment to finish so temp files
+        // usually disappear before the process exits; anything still running is
+        // swept by WorldTransferRecoveryService on the next launch.
+        var cleanupTasks = _cleanupTasks.Values.ToArray();
+        if (cleanupTasks.Length > 0)
+        {
+            await Task.WhenAny(
+                Task.WhenAll(cleanupTasks),
+                Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+        }
         _shutdownCts.Dispose();
     }
 }
