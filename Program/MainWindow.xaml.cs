@@ -177,7 +177,11 @@ public partial class MainWindow : Window
             _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _network, _peerRoutes);
             _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
             await _skinService.StartAsync(_lifetimeCts.Token);
-            _lanRelay = new LanRelayService(_logger, _network, _peerRoutes);
+            _lanRelay = new LanRelayService(
+                _logger,
+                _network,
+                _peerRoutes,
+                new LanRelayPortStore(_paths, _logger));
             _lanRelay.SetLocalIdentity(ResolveActiveLocalIdentity().id);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
