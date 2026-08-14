@@ -14,10 +14,33 @@ public sealed class WorldTransferService : IAsyncDisposable
 {
     public const int TransferPort = 35656;
     public const string ProtocolName = "MinecraftPortableWorld";
-    public const int ProtocolVersion = 4;
+    public const int ProtocolVersion = 5;
     public const string TransferMessageType = "Transfer";
     public const string ProbeMessageType = "Probe";
+    public const string PrepareMessageType = "Prepare";
+    public const string ProgressMessageType = "Progress";
+    public const string ControlMessageType = "Control";
+    internal const string SnapshotStage = "Snapshot";
+    internal const string ProfileStage = "Profiles";
+    internal const string CompressStage = "Compress";
+    internal const string ExtractStage = "Extract";
+    internal const string VerifyStage = "Verify";
+    internal const string EscrowStage = "Escrow";
+    internal const string InstallStage = "Install";
+    private const int TransferCopyBufferBytes = 1024 * 1024;
     private const int MaxIncomingClients = 32;
+    // A transfer may legitimately run for hours, so nothing caps its duration.
+    // What is capped is silence: an active peer emits a progress frame at least
+    // every ProgressHeartbeatInterval, so a longer gap means the peer is wedged.
+    internal static readonly TimeSpan ProgressHeartbeatInterval = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan DefaultPeerIdleTimeout = TimeSpan.FromSeconds(90);
+    // A peer that keeps talking but reports no movement for this long is stuck.
+    private static readonly TimeSpan StallTimeout = TimeSpan.FromMinutes(30);
+    // A blocked socket write is not the same signal as a silent peer: the
+    // receiver's disk can legitimately stall for minutes while flushing a huge
+    // archive, and its TCP window stays closed the whole time.
+    private static TimeSpan WriteStallTimeout(TimeSpan idleTimeout) => idleTimeout * 8;
+    private static readonly TimeSpan RejectionWriteTimeout = TimeSpan.FromSeconds(5);
     // The first frame is shared by world, waypoint, skin, relay and diagnostics
     // protocols. Existing waypoint snapshots may legitimately use the portable
     // protocol's full JSON limit; diagnostics applies its 256 KiB limit only
@@ -35,7 +58,6 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
     private readonly LanRelayService _lanRelay;
-    private readonly VoiceNetworkCoordinator _voiceNetwork;
     private readonly ISelectedNetworkTransport _network;
     private readonly PeerRouteResolver _routes;
     private readonly WorldTransferRuntimeOptions _runtimeOptions;
@@ -47,6 +69,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         new(MaxIncomingClients, MaxIncomingClients);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly ConcurrentDictionary<int, Task> _receiveTasks = new();
+    private readonly ConcurrentDictionary<int, TcpClient> _incomingClients = new();
     private readonly object _disposeGate = new();
     private PeerSupportLogService? _peerSupportLogs;
     private int _nextReceiveTaskId;
@@ -66,7 +89,6 @@ public sealed class WorldTransferService : IAsyncDisposable
         WaypointSyncService waypointSync,
         SkinService skinService,
         LanRelayService lanRelay,
-        VoiceNetworkCoordinator voiceNetwork,
         ISelectedNetworkTransport network,
         PeerRouteResolver routes,
         WorldTransferRuntimeOptions? runtimeOptions = null)
@@ -81,7 +103,6 @@ public sealed class WorldTransferService : IAsyncDisposable
         _waypointSync = waypointSync;
         _skinService = skinService;
         _lanRelay = lanRelay;
-        _voiceNetwork = voiceNetwork;
         _network = network;
         _routes = routes;
         _runtimeOptions = runtimeOptions ?? new WorldTransferRuntimeOptions();
@@ -144,7 +165,9 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
     }
 
-    private async Task StopListenerCoreAsync()
+    // waitForReceives is set only on shutdown: restarting the listener rebinds
+    // the accept sockets and must leave in-flight transfers running.
+    private async Task StopListenerCoreAsync(bool waitForReceives = false)
     {
         var cts = _listenerCts;
         var task = _listenerTask;
@@ -176,6 +199,21 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }
             }
 
+            if (!waitForReceives) return;
+
+            // Dispose the sockets first: a peer that stopped reading could
+            // otherwise block an in-flight write and stall shutdown forever.
+            foreach (var client in _incomingClients.Values.ToArray())
+            {
+                try
+                {
+                    client.Dispose();
+                }
+                catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+                {
+                }
+            }
+
             var receiveTasks = _receiveTasks.Values.ToArray();
             if (receiveTasks.Length > 0)
             {
@@ -204,6 +242,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         token = operationCts.Token;
         EnsureMinecraftAvailableForTransfer("sender");
         await _transferGate.WaitAsync(token).ConfigureAwait(false);
+        var gateReleased = false;
         try
         {
             BeginProgress();
@@ -215,13 +254,16 @@ public sealed class WorldTransferService : IAsyncDisposable
                     _logger.Warn($"Pack hash mismatch ({peer.PackStatus}); world transfer is allowed by local settings.");
                 }
 
+                RaiseProgress(0, 0, "Проверка получателя");
                 var peerEndpoint = await VerifyPeerTransferReadyAsync(peer, settings, token);
                 var peerAddress = IPAddress.Parse(peerEndpoint.Address);
 
                 var worldDir = ResolveWorldToSend(worldPath);
                 WorldAccessGuard.EnsureClosed(worldDir);
                 StatusChanged?.Invoke("Saving personal waypoints...");
+                RaiseProgress(0, 0, "Сохранение точек");
                 await _waypointSync.FlushWorldAsync(worldDir, identity, token).ConfigureAwait(false);
+                RaiseProgress(0, 0, "Подключение к получателю");
                 var worldName = Path.GetFileName(worldDir);
                 var worldMetadata = _worldMetadata.Read(worldDir);
                 var ownerId = ResolveOwnerIdentity(worldMetadata?.OwnerIdentityId, worldMetadata?.OwnerIdentityName, settings, identity.IdentityId, identity.IdentityName);
@@ -243,25 +285,71 @@ public sealed class WorldTransferService : IAsyncDisposable
 
                 try
                 {
+                    // Connect before preparation so the receiver can follow
+                    // snapshot and compression progress in its own window.
+                    using var client = _network.CreateBoundTcpClient(
+                        peerAddress,
+                        peerEndpoint.LocalAddress,
+                        peerEndpoint.LocalInterfaceId);
+                    await client.ConnectAsync(peerAddress, _runtimeOptions.Port, token);
+                    ConfigureTransferSocket(client.Client);
+                    await using var stream = client.GetStream();
+                    await WriteJsonAsync(stream, new WorldTransferHeader
+                    {
+                        Protocol = ProtocolName,
+                        ProtocolVersion = ProtocolVersion,
+                        MessageType = PrepareMessageType,
+                        TransferId = transferId,
+                        SenderName = identity.IdentityName,
+                        SenderIdentityId = identity.IdentityId,
+                        SenderIdentityName = identity.IdentityName,
+                        Size = 0,
+                        FileName = "world.zip",
+                        WorldName = worldName
+                    }, token);
+                    var preparedFrame = await ReadFrameWithIdleTimeoutAsync(stream, token).ConfigureAwait(false);
+                    var prepared = PortableProtocol.Deserialize<WorldTransferAck>(preparedFrame, _jsonOptions);
+                    if (prepared is null || !HasExpectedProtocol(prepared.Protocol, prepared.ProtocolVersion) ||
+                        !prepared.Ok || prepared.Stage != "Preparing" || prepared.TransferId != transferId)
+                    {
+                        throw new InvalidOperationException(
+                            $"Receiver rejected world transfer: {prepared?.Message ?? "no prepare acknowledgement"}");
+                    }
+
+                    var progress = new TransferProgressChannel(this, stream, transferId, token);
                     StatusChanged?.Invoke("Creating safe world snapshot...");
-                    CopyWorldDirectory(worldDir, stagingWorld, token);
+                    await progress.PublishStageAsync(SnapshotStage, "Копирование мира");
+                    await CopyWorldDirectoryAsync(
+                        worldDir,
+                        stagingWorld,
+                        (current, total) => progress.PublishAsync(
+                            SnapshotStage, "Копирование мира", current, total),
+                        progress.HeartbeatAsync,
+                        token).ConfigureAwait(false);
                     StatusChanged?.Invoke("Preparing player profiles...");
-                    _playerProfiles.PrepareWorldForOutgoingTransfer(stagingWorld, identity);
-                    var playerManifestSha = _playerProfiles.GetPlayerManifestHash(stagingWorld);
-                    _waypointSync.Store.EnsureManifest(stagingWorld);
-                    var waypointManifestSha = _waypointSync.Store.GetManifestHash(stagingWorld);
+                    await progress.PublishStageAsync(ProfileStage, "Подготовка профилей");
+                    string playerManifestSha = "";
+                    string waypointManifestSha = "";
+                    await RunWithHeartbeatAsync(progress, () =>
+                    {
+                        _playerProfiles.PrepareWorldForOutgoingTransfer(stagingWorld, identity);
+                        playerManifestSha = _playerProfiles.GetPlayerManifestHash(stagingWorld);
+                        _waypointSync.Store.EnsureManifest(stagingWorld);
+                        waypointManifestSha = _waypointSync.Store.GetManifestHash(stagingWorld);
+                    }, token).ConfigureAwait(false);
 
-                    StatusChanged?.Invoke("Hashing world...");
-                    var worldSha = HashDirectory(stagingWorld);
-
-                    ZipFile.CreateFromDirectory(stagingWorld, archivePath, CompressionLevel.Optimal, includeBaseDirectory: false);
+                    StatusChanged?.Invoke("Compressing world...");
+                    await progress.PublishStageAsync(CompressStage, "Сжатие мира");
+                    var worldSha = await CreateWorldArchiveWithHashAsync(
+                        stagingWorld,
+                        archivePath,
+                        (current, total) => progress.PublishAsync(
+                            CompressStage, "Сжатие мира", current, total),
+                        progress.HeartbeatAsync,
+                        token).ConfigureAwait(false);
 
                     var fileInfo = new FileInfo(archivePath);
-                    if (fileInfo.Length > settings.MaxArchiveBytes)
-                    {
-                        throw new InvalidOperationException("World archive exceeds configured size limit.");
-                    }
-                    RaiseProgress(0, fileInfo.Length);
+                    RaiseProgress(0, fileInfo.Length, "Отправка мира");
 
                     var header = new WorldTransferHeader
                     {
@@ -283,23 +371,16 @@ public sealed class WorldTransferService : IAsyncDisposable
                     };
 
                     StatusChanged?.Invoke("Sending world archive...");
-                    using var client = _network.CreateBoundTcpClient(
-                        peerAddress,
-                        peerEndpoint.LocalAddress,
-                        peerEndpoint.LocalInterfaceId);
-                    await client.ConnectAsync(peerAddress, _runtimeOptions.Port, token);
-                    await using var stream = client.GetStream();
                     await WriteJsonAsync(stream, header, token);
                     await using (var file = File.OpenRead(archivePath))
                     {
-                        using var limiter = _voiceNetwork.CreateTransferLimiter();
-                        await CopyWithProgressAsync(file, stream, fileInfo.Length, progress =>
+                        await CopyWithProgressAsync(file, stream, fileInfo.Length, current =>
                         {
-                            RaiseProgress(progress, fileInfo.Length);
-                        }, limiter, token);
+                            progress.PublishLocal("Отправка мира", current, fileInfo.Length);
+                        }, WriteStallTimeout(_runtimeOptions.PeerIdleTimeout), token);
                     }
 
-                    var ready = await ReadJsonAsync<WorldTransferAck>(stream, token);
+                    var ready = await ReadAckWatchingProgressAsync(stream, transferId, token);
                     if (ready is null || !HasExpectedProtocol(ready.Protocol, ready.ProtocolVersion) ||
                         !ready.Ok || ready.Stage != "Ready" || ready.TransferId != transferId ||
                         !string.Equals(ready.WorldSha256, worldSha, StringComparison.OrdinalIgnoreCase) ||
@@ -312,8 +393,12 @@ public sealed class WorldTransferService : IAsyncDisposable
                         throw new InvalidOperationException($"Receiver rejected world archive: {ready?.Message ?? "no ready acknowledgement"}");
                     }
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(escrowPath)!);
-                    Directory.Move(worldDir, escrowPath);
+                    await progress.PublishStageAsync(EscrowStage, "Перенос исходного мира");
+                    await RunWithHeartbeatAsync(progress, () =>
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(escrowPath)!);
+                        Directory.Move(worldDir, escrowPath);
+                    }, token).ConfigureAwait(false);
                     journal.State = "Escrowed";
                     WriteJournal(transactionRoot, journal);
                     journal.State = "CommitSent";
@@ -323,10 +408,11 @@ public sealed class WorldTransferService : IAsyncDisposable
                         Protocol = ProtocolName,
                         ProtocolVersion = ProtocolVersion,
                         TransferId = transferId,
+                        MessageType = ControlMessageType,
                         Command = "Commit"
                     }, token);
 
-                    var committed = await ReadJsonAsync<WorldTransferAck>(stream, token);
+                    var committed = await ReadAckWatchingProgressAsync(stream, transferId, token);
                     if (committed is null || !HasExpectedProtocol(committed.Protocol, committed.ProtocolVersion) ||
                         !committed.Ok || committed.Stage != "Committed" || committed.TransferId != transferId ||
                         !string.Equals(committed.WorldSha256, worldSha, StringComparison.OrdinalIgnoreCase) ||
@@ -358,17 +444,25 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }
                 finally
                 {
-                    if (completed || journal.State != "CommitSent") DeleteDirectoryIfExists(transactionRoot);
+                    if (completed || journal.State != "CommitSent")
+                    {
+                        RaiseProgress(0, 0, "Очистка временных файлов");
+                        DeleteDirectoryIfExists(transactionRoot);
+                    }
                 }
             }
             finally
             {
+                // Release before reporting idle: the UI must never look free
+                // while the gate would still refuse the next transfer.
+                _transferGate.Release();
+                gateReleased = true;
                 EndProgress();
             }
         }
         finally
         {
-            _transferGate.Release();
+            if (!gateReleased) _transferGate.Release();
         }
     }
 
@@ -440,13 +534,17 @@ public sealed class WorldTransferService : IAsyncDisposable
                 continue;
             }
             var id = Interlocked.Increment(ref _nextReceiveTaskId);
-            var receiveTask = ObserveIncomingClientAsync(client, settings, token);
+            _incomingClients[id] = client;
+            // An in-flight transfer outlives a listener restart: rebinding the
+            // accept sockets after a network change must not abort hours of work.
+            var receiveTask = ObserveIncomingClientAsync(client, settings, _shutdownCts.Token);
             _receiveTasks[id] = receiveTask;
             _ = receiveTask.ContinueWith(
                 completedTask =>
                 {
                     _ = completedTask.Exception;
                     _receiveTasks.TryRemove(id, out _);
+                    _incomingClients.TryRemove(id, out _);
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -583,6 +681,9 @@ public sealed class WorldTransferService : IAsyncDisposable
                     token).ConfigureAwait(false);
                 return;
             }
+            // Keepalive belongs to world transfers only: the other protocols
+            // keep long idle sessions open on purpose.
+            ConfigureTransferSocket(client.Client);
             await ReceiveWorldAsync(stream, settings, initialFrame, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -663,7 +764,8 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }, token);
                 return;
             }
-            if (header.MessageType != TransferMessageType ||
+            var isPrepare = header.MessageType == PrepareMessageType;
+            if ((header.MessageType != TransferMessageType && !isPrepare) ||
                 !Guid.TryParseExact(header.TransferId, "N", out var parsedTransferId))
             {
                 throw new InvalidOperationException("The sender uses an incompatible world transfer protocol.");
@@ -674,13 +776,6 @@ public sealed class WorldTransferService : IAsyncDisposable
                 throw new InvalidOperationException("Another world transfer is already active.");
             }
             EnsureMinecraftAvailableForTransfer("receiver");
-            if (header.Size <= 0 || header.Size > settings.MaxArchiveBytes ||
-                string.IsNullOrWhiteSpace(header.WorldSha256) ||
-                string.IsNullOrWhiteSpace(header.PlayerManifestSha256) ||
-                string.IsNullOrWhiteSpace(header.WaypointManifestSha256))
-            {
-                throw new InvalidOperationException("Transfer header is incomplete or exceeds the configured limit.");
-            }
 
             transactionRoot = CreateTransactionDirectory(header.TransferId);
             journal = new WorldTransferJournal
@@ -690,57 +785,112 @@ public sealed class WorldTransferService : IAsyncDisposable
                 State = "Receiving"
             };
             WriteJournal(transactionRoot, journal);
-            receivedPath = Path.Combine(transactionRoot, "received.zip");
-            BeginProgress(header.Size);
+            BeginProgress();
             progressStarted = true;
-            await using (var file = new FileStream(receivedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+
+            if (isPrepare)
             {
-                using var limiter = _voiceNetwork.CreateTransferLimiter();
-                await CopyExactlyWithLimitWithProgressAsync(stream, file, header.Size, settings.MaxArchiveBytes, progress =>
+                await WriteJsonAsync(stream, new WorldTransferAck
                 {
-                    RaiseProgress(progress, header.Size);
-                }, limiter, token);
+                    Protocol = ProtocolName,
+                    ProtocolVersion = ProtocolVersion,
+                    Ok = true,
+                    Stage = "Preparing",
+                    TransferId = header.TransferId,
+                    Message = "watching"
+                }, token);
+                StatusChanged?.Invoke("Waiting for the sender to prepare the world...");
+                RaiseProgress(0, 0, "Подготовка у отправителя");
+                header = await WaitForTransferHeaderAsync(stream, header.TransferId, token);
+            }
+
+            if (header.Size <= 0 ||
+                string.IsNullOrWhiteSpace(header.WorldSha256) ||
+                string.IsNullOrWhiteSpace(header.PlayerManifestSha256) ||
+                string.IsNullOrWhiteSpace(header.WaypointManifestSha256))
+            {
+                throw new InvalidOperationException("Transfer header is incomplete.");
+            }
+            EnsureSufficientDiskSpace(transactionRoot, header.Size);
+
+            receivedPath = Path.Combine(transactionRoot, "received.zip");
+            var progressChannel = new TransferProgressChannel(this, stream, header.TransferId, token);
+            RaiseProgress(0, header.Size, "Получение мира");
+            await using (var file = new FileStream(
+                receivedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, TransferCopyBufferBytes))
+            {
+                await CopyExactlyWithProgressAsync(stream, file, header.Size, current =>
+                {
+                    progressChannel.PublishLocal("Получение мира", current, header.Size);
+                }, _runtimeOptions.PeerIdleTimeout, token);
             }
 
             tempWorldPath = Path.Combine(transactionRoot, "staging-world");
             Directory.CreateDirectory(tempWorldPath);
-            await Task.Run(() => ZipFile.ExtractToDirectory(receivedPath, tempWorldPath), token);
+            StatusChanged?.Invoke("Extracting world archive...");
+            await progressChannel.PublishStageAsync(ExtractStage, "Распаковка мира");
+            await ExtractWorldArchiveAsync(
+                receivedPath,
+                tempWorldPath,
+                (current, total) => progressChannel.PublishAsync(
+                    ExtractStage, "Распаковка мира", current, total),
+                // The archive already occupies its own space on disk, so only
+                // the extracted tree still has to fit.
+                declaredSize => EnsureSufficientDiskSpace(transactionRoot!, 0, declaredSize),
+                token,
+                progressChannel.HeartbeatAsync).ConfigureAwait(false);
             if (!IsMinecraftWorldDirectory(tempWorldPath))
             {
                 throw new InvalidOperationException("Received archive does not contain a Minecraft world.");
             }
 
-            var receivedWorldSha = HashDirectory(tempWorldPath);
+            StatusChanged?.Invoke("Verifying world integrity...");
+            await progressChannel.PublishStageAsync(VerifyStage, "Проверка мира");
+            var receivedWorldSha = await HashDirectoryAsync(
+                tempWorldPath,
+                (current, total) => progressChannel.PublishAsync(
+                    VerifyStage, "Проверка мира", current, total),
+                token,
+                progressChannel.HeartbeatAsync).ConfigureAwait(false);
             if (!string.Equals(receivedWorldSha, header.WorldSha256, StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("World SHA256 mismatch after extraction.");
             }
-            _playerProfiles.ValidatePlayerManifest(tempWorldPath);
-            var sourceManifestSha = _playerProfiles.GetPlayerManifestHash(tempWorldPath);
-            if (!string.Equals(sourceManifestSha, header.PlayerManifestSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Player manifest SHA256 mismatch after extraction.");
-            }
-            _waypointSync.Store.ValidateManifest(tempWorldPath);
-            var waypointManifestSha = _waypointSync.Store.GetManifestHash(tempWorldPath);
-            if (!string.Equals(waypointManifestSha, header.WaypointManifestSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("Waypoint manifest SHA256 mismatch after extraction.");
-            }
 
             StatusChanged?.Invoke("Preparing player profile...");
-            _playerProfiles.PrepareReceivedWorldForIdentity(tempWorldPath, identity);
-            _playerProfiles.ValidatePlayerManifest(tempWorldPath);
-            var installedManifestSha = _playerProfiles.GetPlayerManifestHash(tempWorldPath);
+            await progressChannel.PublishStageAsync(InstallStage, "Подготовка профилей");
+            var stagedWorldPath = tempWorldPath;
+            string sourceManifestSha = "";
+            string waypointManifestSha = "";
+            string installedManifestSha = "";
             var owner = ResolveOwnerIdentity(null, null, settings, identity.IdentityId, identity.IdentityName, header.OwnerIdentityId, header.OwnerIdentityName);
-            if (!_worldMetadata.TryWriteOwnerMetadata(tempWorldPath, owner.id, owner.name, overwriteExistingOwner: false))
+            await RunWithHeartbeatAsync(progressChannel, () =>
             {
-                throw new InvalidOperationException("Could not preserve world creator metadata.");
-            }
-            if (!_worldMetadata.TryWriteCurrentHolderMetadata(tempWorldPath, identity.IdentityId, identity.IdentityName, transferred: true))
-            {
-                throw new InvalidOperationException("Could not update current world holder metadata.");
-            }
+                _playerProfiles.ValidatePlayerManifest(stagedWorldPath);
+                sourceManifestSha = _playerProfiles.GetPlayerManifestHash(stagedWorldPath);
+                if (!string.Equals(sourceManifestSha, header.PlayerManifestSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Player manifest SHA256 mismatch after extraction.");
+                }
+                _waypointSync.Store.ValidateManifest(stagedWorldPath);
+                waypointManifestSha = _waypointSync.Store.GetManifestHash(stagedWorldPath);
+                if (!string.Equals(waypointManifestSha, header.WaypointManifestSha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("Waypoint manifest SHA256 mismatch after extraction.");
+                }
+
+                _playerProfiles.PrepareReceivedWorldForIdentity(stagedWorldPath, identity);
+                _playerProfiles.ValidatePlayerManifest(stagedWorldPath);
+                installedManifestSha = _playerProfiles.GetPlayerManifestHash(stagedWorldPath);
+                if (!_worldMetadata.TryWriteOwnerMetadata(stagedWorldPath, owner.id, owner.name, overwriteExistingOwner: false))
+                {
+                    throw new InvalidOperationException("Could not preserve world creator metadata.");
+                }
+                if (!_worldMetadata.TryWriteCurrentHolderMetadata(stagedWorldPath, identity.IdentityId, identity.IdentityName, transferred: true))
+                {
+                    throw new InvalidOperationException("Could not update current world holder metadata.");
+                }
+            }, token).ConfigureAwait(false);
 
             EnsureMinecraftAvailableForTransfer("receiver");
             journal.State = "Ready";
@@ -757,7 +907,8 @@ public sealed class WorldTransferService : IAsyncDisposable
                 PlayerManifestSha256 = sourceManifestSha,
                 WaypointManifestSha256 = waypointManifestSha
             }, token);
-            var control = await ReadJsonAsync<WorldTransferControl>(stream, token);
+            var control = await ReadControlWatchingProgressAsync(
+                stream, header.TransferId, token).ConfigureAwait(false);
             if (control is null || !HasExpectedProtocol(control.Protocol, control.ProtocolVersion) ||
                 control.TransferId != header.TransferId || control.Command != "Commit")
             {
@@ -767,7 +918,13 @@ public sealed class WorldTransferService : IAsyncDisposable
             journal.State = "CommitReceived";
             WriteJournal(transactionRoot, journal);
             EnsureMinecraftAvailableForTransfer("receiver");
-            var installedWorldPath = InstallReceivedWorld(tempWorldPath, header.WorldName);
+            await progressChannel.PublishStageAsync(InstallStage, "Установка мира");
+            var stagedForInstall = tempWorldPath;
+            var installedWorldPath = "";
+            await RunWithHeartbeatAsync(
+                progressChannel,
+                () => installedWorldPath = InstallReceivedWorld(stagedForInstall, header.WorldName),
+                token).ConfigureAwait(false);
             tempWorldPath = null;
             journal.State = "Installed";
             journal.InstalledWorldPath = installedWorldPath;
@@ -795,6 +952,9 @@ public sealed class WorldTransferService : IAsyncDisposable
             _logger.Warn($"World receive failed: {ex.Message}");
             try
             {
+                // Best effort only: a peer that stopped reading must not be able
+                // to wedge this task, which listener restart and shutdown await.
+                using var rejection = new CancellationTokenSource(RejectionWriteTimeout);
                 await WriteJsonAsync(stream, new WorldTransferAck
                 {
                     Protocol = ProtocolName,
@@ -805,7 +965,7 @@ public sealed class WorldTransferService : IAsyncDisposable
                     Message = ex.Message,
                     WorldSha256 = header?.WorldSha256 ?? string.Empty,
                     WaypointManifestSha256 = header?.WaypointManifestSha256 ?? string.Empty
-                }, CancellationToken.None);
+                }, rejection.Token);
             }
             catch
             {
@@ -813,11 +973,22 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
         finally
         {
-            if (progressStarted) EndProgress();
-            DeleteFileIfExists(receivedPath);
-            DeleteDirectoryIfExists(tempWorldPath);
-            if (transactionRoot is not null) DeleteDirectoryIfExists(transactionRoot);
+            // Cleanup of a multi-GB staging tree can take a while; stay marked
+            // busy until the gate is free so the UI never claims to be idle
+            // while an incoming transfer would still be refused.
+            if (progressStarted) RaiseProgress(0, 0, "Очистка временных файлов");
+            try
+            {
+                DeleteFileIfExists(receivedPath);
+                DeleteDirectoryIfExists(tempWorldPath);
+                if (transactionRoot is not null) DeleteDirectoryIfExists(transactionRoot);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn($"World transfer cleanup failed: {ex.Message}");
+            }
             if (operationAcquired) _transferGate.Release();
+            if (progressStarted) EndProgress();
         }
     }
 
@@ -895,15 +1066,353 @@ public sealed class WorldTransferService : IAsyncDisposable
             Environment.NewLine + string.Join(Environment.NewLine, failures.Take(3)));
     }
 
-    private void RaiseProgress(long current, long total)
+    private void RaiseProgress(long current, long total, string stage = "")
     {
         try
         {
-            ProgressChanged?.Invoke(new WorldTransferProgress(true, current, total));
+            ProgressChanged?.Invoke(new WorldTransferProgress(true, current, total, stage));
         }
         catch
         {
         }
+    }
+
+    private static void ConfigureTransferSocket(Socket socket)
+    {
+        // Detect dead peers at the transport level instead of capping the
+        // transfer duration: a transfer may legitimately run for hours.
+        // A peer that is alive but wedged is caught by PeerIdleTimeout instead.
+        try
+        {
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 30);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 10);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 4);
+        }
+        catch (SocketException)
+        {
+        }
+    }
+
+    // The archive and the extracted world exist side by side before install,
+    // so the receiver needs room for both plus the size the entries declare.
+    internal static void EnsureSufficientDiskSpace(string transactionRoot, long archiveSize, long extractedSize = 0)
+    {
+        var companionSize = extractedSize > 0 ? extractedSize : archiveSize;
+        if (archiveSize < 0 || extractedSize < 0 ||
+            archiveSize > long.MaxValue - companionSize)
+        {
+            throw new InvalidOperationException("The declared world size is not plausible.");
+        }
+
+        var required = archiveSize + companionSize;
+        DriveInfo drive;
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(transactionRoot));
+            if (string.IsNullOrEmpty(root)) return;
+            drive = new DriveInfo(root);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException)
+        {
+            return;
+        }
+
+        if (drive.AvailableFreeSpace < required)
+        {
+            throw new InvalidOperationException(
+                $"Not enough free disk space to receive the world: {FormatGigabytes(required)} GB required, " +
+                $"{FormatGigabytes(drive.AvailableFreeSpace)} GB available on {drive.Name}.");
+        }
+    }
+
+    private static string FormatGigabytes(long bytes) =>
+        (bytes / (1024d * 1024d * 1024d)).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string ReadMessageType(byte[] frame)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(frame);
+            return document.RootElement.TryGetProperty("messageType", out var messageType)
+                ? messageType.GetString() ?? string.Empty
+                : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    // Reads one frame, failing if the peer stays silent past PeerIdleTimeout.
+    // The peer heartbeats every ProgressHeartbeatInterval while it is working,
+    // so only a wedged peer trips this - long transfers never do.
+    private async Task<byte[]> ReadFrameWithIdleTimeoutAsync(
+        Stream stream,
+        CancellationToken token)
+    {
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(token);
+        idle.CancelAfter(_runtimeOptions.PeerIdleTimeout);
+        try
+        {
+            return await PortableProtocol.ReadFrameAsync(stream, idle.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException("The other player stopped responding.");
+        }
+    }
+
+    // Reads frames until a non-progress one arrives, publishing the peer's
+    // progress meanwhile. Progress frames alone cannot keep this alive forever:
+    // a peer that reports no forward movement for StallTimeout is treated as
+    // wedged, which bounds the wait without capping a legitimate transfer.
+    private async Task<byte[]> ReadNonProgressFrameAsync(
+        Stream stream,
+        string transferId,
+        Func<string, string> describeStage,
+        CancellationToken token)
+    {
+        var throttle = new ProgressReceiveThrottle();
+        var stallClock = System.Diagnostics.Stopwatch.StartNew();
+        var lastStage = "";
+        long lastCurrent = -1;
+        while (true)
+        {
+            var frame = await ReadFrameWithIdleTimeoutAsync(stream, token).ConfigureAwait(false);
+            if (ReadMessageType(frame) != ProgressMessageType) return frame;
+
+            var progress = PortableProtocol.Deserialize<WorldTransferProgressFrame>(frame, _jsonOptions);
+            if (progress is null ||
+                !HasExpectedProtocol(progress.Protocol, progress.ProtocolVersion) ||
+                progress.TransferId != transferId)
+            {
+                continue;
+            }
+            if (progress.Current != lastCurrent ||
+                !string.Equals(progress.Stage, lastStage, StringComparison.Ordinal))
+            {
+                lastCurrent = progress.Current;
+                lastStage = progress.Stage;
+                stallClock.Restart();
+            }
+            else if (stallClock.Elapsed > StallTimeout)
+            {
+                throw new TimeoutException("The other player stopped making progress.");
+            }
+            if (throttle.ShouldPublish(progress))
+            {
+                RaiseProgress(progress.Current, progress.Total, describeStage(progress.Stage));
+            }
+        }
+    }
+
+    private async Task<WorldTransferAck?> ReadAckWatchingProgressAsync(
+        Stream stream,
+        string transferId,
+        CancellationToken token)
+    {
+        var frame = await ReadNonProgressFrameAsync(
+            stream, transferId, DescribeRemoteStageForSender, token).ConfigureAwait(false);
+        return PortableProtocol.Deserialize<WorldTransferAck>(frame, _jsonOptions);
+    }
+
+    private async Task<WorldTransferControl?> ReadControlWatchingProgressAsync(
+        Stream stream,
+        string transferId,
+        CancellationToken token)
+    {
+        var frame = await ReadNonProgressFrameAsync(
+            stream, transferId, DescribeRemoteStageForReceiver, token).ConfigureAwait(false);
+        return PortableProtocol.Deserialize<WorldTransferControl>(frame, _jsonOptions);
+    }
+
+    private async Task<WorldTransferHeader> WaitForTransferHeaderAsync(
+        Stream stream,
+        string transferId,
+        CancellationToken token)
+    {
+        var frame = await ReadNonProgressFrameAsync(
+            stream, transferId, DescribeRemoteStageForReceiver, token).ConfigureAwait(false);
+        if (ReadMessageType(frame) != TransferMessageType)
+        {
+            throw new InvalidOperationException("The sender uses an incompatible world transfer protocol.");
+        }
+        var header = PortableProtocol.Deserialize<WorldTransferHeader>(frame, _jsonOptions)
+            ?? throw new InvalidOperationException("Invalid transfer header.");
+        if (!HasExpectedProtocol(header.Protocol, header.ProtocolVersion) ||
+            header.TransferId != transferId)
+        {
+            throw new InvalidOperationException("The sender uses an incompatible world transfer protocol.");
+        }
+        return header;
+    }
+
+    // Caps how often remote frames reach the UI thread: the sending side already
+    // throttles, but a nonconforming peer must not flood the dispatcher queue.
+    private sealed class ProgressReceiveThrottle
+    {
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private TimeSpan _nextAt;
+        private string _stage = "";
+
+        public bool ShouldPublish(WorldTransferProgressFrame frame)
+        {
+            var now = _clock.Elapsed;
+            var stageChanged = !string.Equals(_stage, frame.Stage, StringComparison.Ordinal);
+            if (!stageChanged && now < _nextAt) return false;
+            _stage = frame.Stage;
+            _nextAt = now + TransferProgressChannel.LocalInterval;
+            return true;
+        }
+    }
+
+    private static string DescribeRemoteStageForSender(string stage) => stage switch
+    {
+        ExtractStage => "Распаковка у получателя",
+        VerifyStage => "Проверка у получателя",
+        InstallStage => "Установка у получателя",
+        _ => "Обработка у получателя"
+    };
+
+    private static string DescribeRemoteStageForReceiver(string stage) => stage switch
+    {
+        SnapshotStage => "Копирование у отправителя",
+        ProfileStage => "Профили у отправителя",
+        CompressStage => "Сжатие у отправителя",
+        EscrowStage => "Завершение у отправителя",
+        _ => "Подготовка у отправителя"
+    };
+
+    private sealed class TransferProgressChannel
+    {
+        internal static readonly TimeSpan LocalInterval = TimeSpan.FromMilliseconds(50);
+        private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(250);
+        private readonly WorldTransferService _service;
+        private readonly Stream _peerStream;
+        private readonly string _transferId;
+        private readonly CancellationToken _token;
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private TimeSpan _nextLocalAt;
+        private TimeSpan _nextFrameAt;
+        private string _stage = "";
+        private string _lastFrameStage = "";
+        private long _lastFrameCurrent;
+        private long _lastFrameTotal;
+
+        public TransferProgressChannel(
+            WorldTransferService service,
+            Stream peerStream,
+            string transferId,
+            CancellationToken token)
+        {
+            _service = service;
+            _peerStream = peerStream;
+            _transferId = transferId;
+            _token = token;
+        }
+
+        // Publishes to the local UI and mirrors the same numbers to the peer.
+        public async Task PublishAsync(string stage, string localLabel, long current, long total)
+        {
+            var stageChanged = !string.Equals(_stage, stage, StringComparison.Ordinal);
+            _stage = stage;
+            var final = current >= total;
+            var now = _clock.Elapsed;
+            if (stageChanged || final || now >= _nextLocalAt)
+            {
+                _nextLocalAt = now + LocalInterval;
+                _service.RaiseProgress(current, total, localLabel);
+            }
+            if (stageChanged || final || now >= _nextFrameAt)
+            {
+                await WriteFrameAsync(stage, current, total).ConfigureAwait(false);
+            }
+        }
+
+        // Local-only progress for the network copy: each side already sees
+        // its own byte counters, so no frames are mirrored to the peer.
+        public void PublishLocal(string localLabel, long current, long total)
+        {
+            var now = _clock.Elapsed;
+            if (current < total && now < _nextLocalAt) return;
+            _nextLocalAt = now + LocalInterval;
+            _service.RaiseProgress(current, total, localLabel);
+        }
+
+        // Repeats the last frame so a peer blocked on a read can tell the
+        // difference between "still working" and "wedged" (see PeerIdleTimeout).
+        public async Task HeartbeatAsync()
+        {
+            if (_clock.Elapsed < _nextFrameAt) return;
+            await WriteFrameAsync(_lastFrameStage, _lastFrameCurrent, _lastFrameTotal).ConfigureAwait(false);
+        }
+
+        // Enters a stage before its byte totals are known, so neither side
+        // shows a stale label while a phase is being measured.
+        public async Task PublishStageAsync(string stage, string localLabel)
+        {
+            _stage = stage;
+            _nextLocalAt = _clock.Elapsed + LocalInterval;
+            _service.RaiseProgress(0, 0, localLabel);
+            await WriteFrameAsync(stage, 0, 0).ConfigureAwait(false);
+        }
+
+        private async Task WriteFrameAsync(string stage, long current, long total)
+        {
+            _nextFrameAt = _clock.Elapsed + FrameInterval;
+            _lastFrameStage = stage;
+            _lastFrameCurrent = current;
+            _lastFrameTotal = total;
+            await _service.WriteJsonAsync(_peerStream, new WorldTransferProgressFrame
+            {
+                Protocol = ProtocolName,
+                ProtocolVersion = ProtocolVersion,
+                MessageType = ProgressMessageType,
+                TransferId = _transferId,
+                Stage = stage,
+                Current = current,
+                Total = total
+            }, _token).ConfigureAwait(false);
+        }
+    }
+
+    // Beats the peer's idle timeout while a synchronous phase runs with no
+    // natural progress callbacks (profile validation, manifest hashing).
+    private static async Task RunWithHeartbeatAsync(
+        TransferProgressChannel progress,
+        Action work,
+        CancellationToken token)
+    {
+        var task = Task.Run(work, CancellationToken.None);
+        try
+        {
+            while (!task.IsCompleted)
+            {
+                using var beat = CancellationTokenSource.CreateLinkedTokenSource(token);
+                var delay = Task.Delay(ProgressHeartbeatInterval, beat.Token);
+                var finished = await Task.WhenAny(task, delay).ConfigureAwait(false);
+                beat.Cancel();
+                if (finished == task) break;
+                token.ThrowIfCancellationRequested();
+                await progress.HeartbeatAsync().ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // The work touches files the caller's cleanup deletes, so let it
+            // finish before reporting why the heartbeat stopped.
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+            throw;
+        }
+
+        await task.ConfigureAwait(false);
     }
 
     private void EnsureMinecraftAvailableForTransfer(string role)
@@ -960,9 +1469,16 @@ public sealed class WorldTransferService : IAsyncDisposable
             JsonSerializer.Serialize(journal, _indentedJsonOptions));
     }
 
-    private static void CopyWorldDirectory(string sourceRoot, string destinationRoot, CancellationToken token)
+    private static async Task CopyWorldDirectoryAsync(
+        string sourceRoot,
+        string destinationRoot,
+        Func<long, long, Task> progress,
+        Func<Task> heartbeat,
+        CancellationToken token)
     {
         Directory.CreateDirectory(destinationRoot);
+        var files = new List<(string Source, string Destination)>();
+        long totalBytes = 0;
         var pending = new Stack<(string Source, string Destination)>();
         pending.Push((sourceRoot, destinationRoot));
         while (pending.Count > 0)
@@ -972,6 +1488,9 @@ public sealed class WorldTransferService : IAsyncDisposable
             foreach (var entry in Directory.EnumerateFileSystemEntries(source))
             {
                 token.ThrowIfCancellationRequested();
+                // Walking and stat-ing a huge world can take minutes before the
+                // first byte moves; keep telling the peer we are alive.
+                await heartbeat().ConfigureAwait(false);
                 var name = Path.GetFileName(entry);
                 if (string.Equals(name, "session.lock", StringComparison.OrdinalIgnoreCase)) continue;
                 var target = Path.Combine(destination, name);
@@ -987,9 +1506,197 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }
                 else
                 {
-                    File.Copy(entry, target, overwrite: false);
+                    totalBytes += new FileInfo(entry).Length;
+                    files.Add((entry, target));
                 }
             }
+        }
+
+        long processed = 0;
+        var buffer = new byte[TransferCopyBufferBytes];
+        foreach (var (source, target) in files)
+        {
+            token.ThrowIfCancellationRequested();
+            await using (var input = new FileStream(
+                source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan))
+            await using (var output = new FileStream(
+                target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length))
+            {
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    token.ThrowIfCancellationRequested();
+                    output.Write(buffer, 0, read);
+                    processed += read;
+                    await progress(processed, totalBytes).ConfigureAwait(false);
+                }
+            }
+            File.SetLastWriteTime(target, File.GetLastWriteTime(source));
+        }
+    }
+
+    // Walking a large world can itself outlast the peer's idle timeout, so the
+    // walk beats as it goes instead of after it finishes.
+    private static async Task<List<string>> EnumerateFilesWithHeartbeatAsync(
+        string fullRoot,
+        Func<Task> heartbeat)
+    {
+        var files = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(fullRoot, "*", SearchOption.AllDirectories))
+        {
+            await heartbeat().ConfigureAwait(false);
+            files.Add(file);
+        }
+        files.Sort((left, right) => string.CompareOrdinal(
+            Path.GetRelativePath(fullRoot, left).Replace('\\', '/'),
+            Path.GetRelativePath(fullRoot, right).Replace('\\', '/')));
+        return files;
+    }
+
+    private static readonly HashSet<string> PrecompressedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mca", ".mcc", ".dat", ".dat_old", ".nbt", ".schem",
+        ".png", ".jpg", ".jpeg", ".zip", ".jar", ".gz", ".ogg"
+    };
+
+    // Creates the archive and computes the directory hash in one disk pass.
+    // The hash format must stay byte-identical to HashDirectoryAsync: the
+    // receiver recomputes it over the extracted tree.
+    internal static async Task<string> CreateWorldArchiveWithHashAsync(
+        string sourceRoot,
+        string archivePath,
+        Func<long, long, Task> progress,
+        Func<Task>? heartbeat,
+        CancellationToken token)
+    {
+        heartbeat ??= () => Task.CompletedTask;
+        var fullRoot = Path.GetFullPath(sourceRoot);
+        var files = await EnumerateFilesWithHeartbeatAsync(fullRoot, heartbeat).ConfigureAwait(false);
+        long totalBytes = 0;
+        foreach (var file in files)
+        {
+            await heartbeat().ConfigureAwait(false);
+            totalBytes += new FileInfo(file).Length;
+        }
+
+        long processed = 0;
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
+        // Directory entries carry no bytes and stay out of the hash, but an
+        // empty folder in the world would otherwise be lost in transit.
+        foreach (var directory in Directory.EnumerateDirectories(fullRoot, "*", SearchOption.AllDirectories))
+        {
+            token.ThrowIfCancellationRequested();
+            await heartbeat().ConfigureAwait(false);
+            if (Directory.EnumerateFileSystemEntries(directory).Any()) continue;
+            archive.CreateEntry(Path.GetRelativePath(fullRoot, directory).Replace('\\', '/') + "/");
+        }
+
+        var buffer = new byte[TransferCopyBufferBytes];
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            var relativePath = Path.GetRelativePath(fullRoot, file).Replace('\\', '/');
+            var relativeBytes = Encoding.UTF8.GetBytes(relativePath);
+            AppendInt64(hash, relativeBytes.Length);
+            hash.AppendData(relativeBytes);
+            AppendInt64(hash, new FileInfo(file).Length);
+
+            // Region and NBT files are already deflate/zlib-compressed;
+            // recompressing them costs minutes of CPU for near-zero gain.
+            var level = PrecompressedExtensions.Contains(Path.GetExtension(file))
+                ? CompressionLevel.NoCompression
+                : CompressionLevel.Fastest;
+            var entry = archive.CreateEntry(relativePath, level);
+            var lastWrite = File.GetLastWriteTime(file);
+            if (lastWrite.Year is >= 1980 and <= 2107) entry.LastWriteTime = lastWrite;
+            await using var input = new FileStream(
+                file, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan);
+            await using var output = entry.Open();
+            int read;
+            while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                hash.AppendData(buffer, 0, read);
+                output.Write(buffer, 0, read);
+                processed += read;
+                await progress(processed, totalBytes).ConfigureAwait(false);
+            }
+        }
+
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    internal static async Task ExtractWorldArchiveAsync(
+        string archivePath,
+        string destinationRoot,
+        Func<long, long, Task> progress,
+        Action<long>? checkDiskSpace,
+        CancellationToken token,
+        Func<Task>? heartbeat = null)
+    {
+        heartbeat ??= () => Task.CompletedTask;
+        // Opening a huge archive parses its whole central directory, which can
+        // outlast the peer's idle timeout on slow media.
+        await Task.Yield();
+        var openArchive = Task.Run(() => ZipFile.OpenRead(archivePath));
+        while (!openArchive.IsCompleted)
+        {
+            await Task.WhenAny(openArchive, Task.Delay(ProgressHeartbeatInterval, token)).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            if (!openArchive.IsCompleted) await heartbeat().ConfigureAwait(false);
+        }
+
+        Directory.CreateDirectory(destinationRoot);
+        var fullRoot = Path.GetFullPath(destinationRoot);
+        var rootPrefix = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+            Path.DirectorySeparatorChar;
+        using var archive = await openArchive.ConfigureAwait(false);
+        // Entry streams are capped at the length each entry declares, so the
+        // declared total bounds what extraction can write to disk. Confirm the
+        // disk can hold that total before writing the first byte.
+        long totalBytes = 0;
+        foreach (var entry in archive.Entries)
+        {
+            await heartbeat().ConfigureAwait(false);
+            if (entry.Length < 0 || totalBytes > long.MaxValue - entry.Length)
+            {
+                throw new InvalidDataException("Received archive declares an implausible size.");
+            }
+            totalBytes += entry.Length;
+        }
+        checkDiskSpace?.Invoke(totalBytes);
+
+        long processed = 0;
+        var buffer = new byte[TransferCopyBufferBytes];
+        foreach (var entry in archive.Entries)
+        {
+            token.ThrowIfCancellationRequested();
+            var destination = Path.GetFullPath(Path.Combine(fullRoot, entry.FullName));
+            if (!destination.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("Received archive contains an entry outside the world directory.");
+            }
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Directory.CreateDirectory(destination);
+                continue;
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            await using (var input = entry.Open())
+            await using (var output = new FileStream(
+                destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length))
+            {
+                int read;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    token.ThrowIfCancellationRequested();
+                    output.Write(buffer, 0, read);
+                    processed += read;
+                    await progress(processed, totalBytes).ConfigureAwait(false);
+                }
+            }
+            File.SetLastWriteTime(destination, entry.LastWriteTime.LocalDateTime);
         }
     }
 
@@ -1146,17 +1853,28 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
     }
 
-    private static string HashDirectory(string root)
+    internal static async Task<string> HashDirectoryAsync(
+        string root,
+        Func<long, long, Task>? progress,
+        CancellationToken token,
+        Func<Task>? heartbeat = null)
     {
+        heartbeat ??= () => Task.CompletedTask;
         var fullRoot = Path.GetFullPath(root);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var files = Directory.EnumerateFiles(fullRoot, "*", SearchOption.AllDirectories)
-            .OrderBy(path => Path.GetRelativePath(fullRoot, path).Replace('\\', '/'), StringComparer.Ordinal)
-            .ToList();
-
-        var buffer = new byte[1024 * 1024];
+        var files = await EnumerateFilesWithHeartbeatAsync(fullRoot, heartbeat).ConfigureAwait(false);
+        long totalBytes = 0;
         foreach (var file in files)
         {
+            await heartbeat().ConfigureAwait(false);
+            totalBytes += new FileInfo(file).Length;
+        }
+
+        long processed = 0;
+        var buffer = new byte[TransferCopyBufferBytes];
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
             var relativePath = Path.GetRelativePath(fullRoot, file).Replace('\\', '/');
             var relativeBytes = Encoding.UTF8.GetBytes(relativePath);
             AppendInt64(hash, relativeBytes.Length);
@@ -1165,11 +1883,15 @@ public sealed class WorldTransferService : IAsyncDisposable
             var fileInfo = new FileInfo(file);
             AppendInt64(hash, fileInfo.Length);
 
-            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+            await using var stream = new FileStream(
+                file, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan);
             int read;
             while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
             {
+                token.ThrowIfCancellationRequested();
                 hash.AppendData(buffer, 0, read);
+                processed += read;
+                if (progress is not null) await progress(processed, totalBytes).ConfigureAwait(false);
             }
         }
 
@@ -1183,40 +1905,37 @@ public sealed class WorldTransferService : IAsyncDisposable
         hash.AppendData(bytes);
     }
 
-    private static async Task CopyExactlyWithLimitAsync(Stream input, Stream output, long size, long maxSize, CancellationToken token)
-    {
-        var buffer = new byte[1024 * 1024];
-        long total = 0;
-        while (total < size)
-        {
-            var read = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, size - total)), token);
-            if (read == 0) throw new EndOfStreamException("Transfer ended early.");
-            total += read;
-            if (total > maxSize) throw new InvalidOperationException("Transfer size exceeds configured limit.");
-            await output.WriteAsync(buffer.AsMemory(0, read), token);
-        }
-    }
-
-    private static async Task CopyExactlyWithLimitWithProgressAsync(
+    private static async Task CopyExactlyWithProgressAsync(
         Stream input,
         Stream output,
         long size,
-        long maxSize,
         Action<long> progress,
-        VoiceTransferLimiter limiter,
+        TimeSpan idleTimeout,
         CancellationToken token)
     {
-        var buffer = new byte[VoiceTransferLimiter.TransferBlockSize];
+        var buffer = new byte[TransferCopyBufferBytes];
         long total = 0;
         while (total < size)
         {
-            var read = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, size - total)), token);
+            int read;
+            using (var idle = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                idle.CancelAfter(idleTimeout);
+                try
+                {
+                    read = await input.ReadAsync(
+                        buffer.AsMemory(0, (int)Math.Min(buffer.Length, size - total)),
+                        idle.Token);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    throw new TimeoutException("The other player stopped sending the world.");
+                }
+            }
             if (read == 0) throw new EndOfStreamException("Transfer ended early.");
             total += read;
-            if (total > maxSize) throw new InvalidOperationException("Transfer size exceeds configured limit.");
             await output.WriteAsync(buffer.AsMemory(0, read), token);
             progress(total);
-            await limiter.ThrottleAsync(read, token).ConfigureAwait(false);
         }
     }
 
@@ -1225,10 +1944,10 @@ public sealed class WorldTransferService : IAsyncDisposable
         Stream output,
         long totalSize,
         Action<long> progress,
-        VoiceTransferLimiter limiter,
+        TimeSpan idleTimeout,
         CancellationToken token)
     {
-        var buffer = new byte[VoiceTransferLimiter.TransferBlockSize];
+        var buffer = new byte[TransferCopyBufferBytes];
         long total = 0;
         while (true)
         {
@@ -1236,9 +1955,21 @@ public sealed class WorldTransferService : IAsyncDisposable
             if (read <= 0) break;
             total += read;
             if (total > totalSize) throw new InvalidOperationException("Transfer size exceeds expected archive size.");
-            await output.WriteAsync(buffer.AsMemory(0, read), token);
+            // A receiver that stopped draining keeps the socket alive through
+            // zero-window probes, so bound the write the same way as the read.
+            using (var idle = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                idle.CancelAfter(idleTimeout);
+                try
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read), idle.Token);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    throw new TimeoutException("The other player stopped receiving the world.");
+                }
+            }
             progress(total);
-            await limiter.ThrottleAsync(read, token).ConfigureAwait(false);
         }
 
         if (total != totalSize)
@@ -1286,7 +2017,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         await _listenerGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await StopListenerCoreAsync().ConfigureAwait(false);
+            await StopListenerCoreAsync(waitForReceives: true).ConfigureAwait(false);
         }
         finally
         {
@@ -1298,17 +2029,23 @@ public sealed class WorldTransferService : IAsyncDisposable
     }
 }
 
-public sealed record WorldTransferProgress(bool IsActive, long Current, long Total);
+public sealed record WorldTransferProgress(bool IsActive, long Current, long Total, string Stage = "");
 
 public sealed class WorldTransferRuntimeOptions
 {
     public int Port { get; init; } = WorldTransferService.TransferPort;
     public IPAddress ListenAddress { get; init; } = IPAddress.IPv6Any;
+    public TimeSpan PeerIdleTimeout { get; init; } = WorldTransferService.DefaultPeerIdleTimeout;
     internal void Validate()
     {
         if (Port is < 1 or > 65535)
         {
             throw new ArgumentOutOfRangeException(nameof(Port), "World transfer port must be between 1 and 65535.");
+        }
+        if (PeerIdleTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(PeerIdleTimeout), "Peer idle timeout must be positive.");
         }
         ArgumentNullException.ThrowIfNull(ListenAddress);
     }

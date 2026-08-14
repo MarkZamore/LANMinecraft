@@ -100,6 +100,7 @@ public partial class MainWindow : Window
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
+    private string _transferStage = "";
     private bool _transferActive;
     private bool _hostRttScanInProgress;
     private bool _updateBusy;
@@ -196,7 +197,7 @@ public partial class MainWindow : Window
                 RefreshVoiceSettingsWindow();
             });
             _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _voiceNetwork, _network, _peerRoutes);
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _network, _peerRoutes);
             _transfer.AttachPeerSupportLogService(_peerSupportLogs);
             _updateService = new UpdateService(
                 _paths,
@@ -2436,9 +2437,7 @@ public partial class MainWindow : Window
 
             var settings = RequireSettings();
             SetState("Transferring world");
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
-            cts.CancelAfter(TimeSpan.FromMinutes(30));
-            await RequireTransfer().SendWorldAsync(peer, settings, world.Path, cts.Token);
+            await RequireTransfer().SendWorldAsync(peer, settings, world.Path, _lifetimeCts.Token);
             RequireSettingsService().Save(settings);
             RefreshWorlds();
             SetState("World sent");
@@ -2835,6 +2834,7 @@ public partial class MainWindow : Window
             _transferBytesCurrent = 0;
             _transferBytesTotal = 0;
             _lastTransferSpeedBytesPerSecond = 0;
+            _transferStage = "";
             SetTransferProgressVisible(0, 0);
             if (activeChanged) RefreshUi();
             return;
@@ -2842,7 +2842,10 @@ public partial class MainWindow : Window
 
         var current = progress.Current;
         var total = progress.Total;
-        _lastTransferSpeedBytesPerSecond = _transferRate.Update(current, "world");
+        _transferStage = progress.Stage;
+        _lastTransferSpeedBytesPerSecond = _transferRate.Update(
+            current,
+            string.IsNullOrEmpty(progress.Stage) ? "world" : progress.Stage);
         _transferBytesCurrent = Math.Max(0, current);
         _transferBytesTotal = total;
         SetTransferProgressVisible(_transferBytesCurrent, _transferBytesTotal);
@@ -2854,8 +2857,11 @@ public partial class MainWindow : Window
         if (total <= 0)
         {
             TransferProgressBar.Value = 0;
-            TransferProgressBar.IsIndeterminate = false;
-            TransferProgressText.Text = _transferActive ? "Передача..." : "В ожидании мира";
+            // A phase whose byte total is not known yet still has to look alive.
+            TransferProgressBar.IsIndeterminate = _transferActive;
+            TransferProgressText.Text = !_transferActive
+                ? "В ожидании мира"
+                : string.IsNullOrEmpty(_transferStage) ? "Передача..." : $"{_transferStage}...";
             if (!_transferActive)
             {
                 _lastTransferSpeedBytesPerSecond = 0;
@@ -2868,7 +2874,10 @@ public partial class MainWindow : Window
         var percent = Math.Round(value * 100d / clampedTotal, 1);
         TransferProgressBar.IsIndeterminate = false;
         TransferProgressBar.Value = percent;
-        TransferProgressText.Text = $"{FormatBytes(value)} / {FormatBytes(clampedTotal)} ({FormatBytes((long)_lastTransferSpeedBytesPerSecond)}/с)";
+        var progressText = $"{FormatBytes(value)} / {FormatBytes(clampedTotal)} ({FormatBytes((long)_lastTransferSpeedBytesPerSecond)}/с)";
+        TransferProgressText.Text = string.IsNullOrEmpty(_transferStage)
+            ? progressText
+            : $"{_transferStage}: {progressText}";
     }
 
     private static string FormatBytes(long bytes)

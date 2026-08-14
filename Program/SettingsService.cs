@@ -7,7 +7,6 @@ public sealed class SettingsService
 {
     private readonly AppPaths _paths;
     private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private const long DefaultMaxArchiveBytes = 10L * 1024 * 1024 * 1024;
     private const double MinVoiceMasterVolume = 0d;
     private const double MaxVoiceMasterVolume = 2d;
     private const string DefaultVoicePttMode = "Off";
@@ -83,11 +82,6 @@ public sealed class SettingsService
                 settings.MaxMemoryGb,
                 MemorySizingService.MinMemoryGb,
                 MemorySizingService.MaxMemoryGb);
-        }
-
-        if (settings.MaxArchiveBytes <= 0)
-        {
-            settings.MaxArchiveBytes = DefaultMaxArchiveBytes;
         }
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
