@@ -92,6 +92,151 @@ public sealed class WorldTransferHandshakeTests
         Assert.True(compress.IsActive);
     }
 
+    [Fact]
+    public async Task FullTransfer_ProgressFrameBeforeCommit_IsNotMistakenForCommit()
+    {
+        await using var fixture = ServiceFixture.Create(
+            GetFreeTcpPort(), TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var becameHost = 0;
+        fixture.Service.BecameHost += () => Interlocked.Increment(ref becameHost);
+        await fixture.Service.StartListenerAsync(fixture.Settings, timeout.Token);
+
+        // Build a sender-side world with valid manifests, exactly as SendWorldAsync would.
+        var senderRoot = Path.Combine(
+            Path.GetTempPath(), $"minecraft-world-transfer-sender-{Guid.NewGuid():N}");
+        try
+        {
+            var senderPaths = new AppPaths(senderRoot);
+            senderPaths.Ensure();
+            var senderLogger = new Logger(senderPaths.LogFile);
+            var senderProfiles = new WorldPlayerProfileService(senderPaths, senderLogger);
+            var senderIdentity = new LocalIdentityService(senderPaths)
+                .ResolveContext(new AppSettings { PlayerName = "SenderE2E" });
+            var world = Path.Combine(senderPaths.Worlds, "E2EWorld");
+            Directory.CreateDirectory(Path.Combine(world, "region"));
+            new NbtFile("", new NbtCompoundTag()).Write(Path.Combine(world, "level.dat"));
+            var regionBytes = new byte[256 * 1024];
+            new Random(20260815).NextBytes(regionBytes);
+            File.WriteAllBytes(Path.Combine(world, "region", "r.0.0.mca"), regionBytes);
+
+            senderProfiles.PrepareWorldForOutgoingTransfer(world, senderIdentity);
+            var playerManifestSha = senderProfiles.GetPlayerManifestHash(world);
+            var senderMetadata = new WorldMetadataService();
+            Assert.True(senderMetadata.TryWriteCurrentHolderMetadata(
+                world, senderIdentity.IdentityId, senderIdentity.IdentityName, transferred: false));
+            var waypointStore = new WaypointStoreService(
+                senderMetadata, new WaypointProviderRegistry(senderLogger), senderLogger);
+            waypointStore.EnsureManifest(world);
+            var waypointManifestSha = waypointStore.GetManifestHash(world);
+
+            var archivePath = Path.Combine(senderRoot, "world.zip");
+            var worldSha = await WorldTransferService.CreateWorldArchiveWithHashAsync(
+                world, archivePath, (_, _) => Task.CompletedTask, heartbeat: null, timeout.Token);
+
+            using var client = new TcpClient(AddressFamily.InterNetwork);
+            await client.ConnectAsync(IPAddress.Loopback, fixture.Port, timeout.Token);
+            var stream = client.GetStream();
+            var prepare = NewPrepareHeader();
+            await PortableProtocol.WriteJsonAsync(stream, prepare, JsonOptions, timeout.Token);
+            var preparing = PortableProtocol.Deserialize<WorldTransferAck>(
+                await PortableProtocol.ReadFrameAsync(stream, timeout.Token), JsonOptions);
+            Assert.NotNull(preparing);
+            Assert.True(preparing.Ok);
+
+            var archiveInfo = new FileInfo(archivePath);
+            await PortableProtocol.WriteJsonAsync(stream, new WorldTransferHeader
+            {
+                Protocol = WorldTransferService.ProtocolName,
+                ProtocolVersion = WorldTransferService.ProtocolVersion,
+                MessageType = WorldTransferService.TransferMessageType,
+                TransferId = prepare.TransferId,
+                SenderName = "SenderE2E",
+                SenderIdentityId = senderIdentity.IdentityId,
+                SenderIdentityName = senderIdentity.IdentityName,
+                Size = archiveInfo.Length,
+                WorldSha256 = worldSha,
+                PlayerManifestSha256 = playerManifestSha,
+                WaypointManifestSha256 = waypointManifestSha,
+                FileName = "world.zip",
+                WorldName = "E2EWorld"
+            }, JsonOptions, timeout.Token);
+            await using (var archiveStream = File.OpenRead(archivePath))
+            {
+                await archiveStream.CopyToAsync(stream, timeout.Token);
+            }
+
+            var ready = await ReadNonProgressAckAsync(stream, timeout.Token);
+            Assert.True(ready.Ok, ready.Message);
+            Assert.Equal("Ready", ready.Stage);
+            Assert.Equal(worldSha, ready.WorldSha256);
+
+            // Regression guard: a Progress frame between Ready and Commit used to
+            // deserialize into WorldTransferControl with the default Command and
+            // trigger installation before the sender escrowed its world.
+            await PortableProtocol.WriteJsonAsync(stream, new WorldTransferProgressFrame
+            {
+                Protocol = WorldTransferService.ProtocolName,
+                ProtocolVersion = WorldTransferService.ProtocolVersion,
+                MessageType = WorldTransferService.ProgressMessageType,
+                TransferId = prepare.TransferId,
+                Stage = "Escrow",
+                Current = 0,
+                Total = 0
+            }, JsonOptions, timeout.Token);
+            await Task.Delay(500, timeout.Token);
+            Assert.Equal(0, Volatile.Read(ref becameHost));
+            Assert.False(Directory.Exists(Path.Combine(fixture.Paths.Worlds, "E2EWorld")));
+
+            await PortableProtocol.WriteJsonAsync(stream, new WorldTransferControl
+            {
+                Protocol = WorldTransferService.ProtocolName,
+                ProtocolVersion = WorldTransferService.ProtocolVersion,
+                TransferId = prepare.TransferId,
+                MessageType = WorldTransferService.ControlMessageType,
+                Command = "Commit"
+            }, JsonOptions, timeout.Token);
+
+            var committed = await ReadNonProgressAckAsync(stream, timeout.Token);
+            Assert.True(committed.Ok, committed.Message);
+            Assert.Equal("Committed", committed.Stage);
+            Assert.Equal(worldSha, committed.WorldSha256);
+
+            var installed = Path.Combine(fixture.Paths.Worlds, "E2EWorld");
+            Assert.True(Directory.Exists(installed));
+            Assert.Equal(regionBytes, File.ReadAllBytes(Path.Combine(installed, "region", "r.0.0.mca")));
+            // The Committed ack is written before the receiver raises BecameHost,
+            // so the event may trail the ack by a few milliseconds.
+            await WaitUntilAsync(() => Volatile.Read(ref becameHost) == 1, timeout.Token);
+            await WaitUntilAsync(() => !fixture.Service.IsOperationActive, timeout.Token);
+        }
+        finally
+        {
+            if (Directory.Exists(senderRoot)) Directory.Delete(senderRoot, recursive: true);
+        }
+    }
+
+    private static async Task<WorldTransferAck> ReadNonProgressAckAsync(
+        Stream stream,
+        CancellationToken token)
+    {
+        while (true)
+        {
+            var frame = await PortableProtocol.ReadFrameAsync(stream, token);
+            using (var document = System.Text.Json.JsonDocument.Parse(frame))
+            {
+                if (document.RootElement.TryGetProperty("messageType", out var messageType) &&
+                    messageType.GetString() == WorldTransferService.ProgressMessageType)
+                {
+                    continue;
+                }
+            }
+            var ack = PortableProtocol.Deserialize<WorldTransferAck>(frame, JsonOptions);
+            Assert.NotNull(ack);
+            return ack;
+        }
+    }
+
     private static WorldTransferHeader NewPrepareHeader() => new()
     {
         Protocol = WorldTransferService.ProtocolName,
