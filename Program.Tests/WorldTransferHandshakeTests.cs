@@ -39,7 +39,11 @@ public sealed class WorldTransferHandshakeTests
         Assert.Contains("stopped responding", rejected.Message, StringComparison.OrdinalIgnoreCase);
 
         await WaitUntilAsync(() => !fixture.Service.IsOperationActive, timeout.Token);
-        Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.TransfersRoot));
+        // The transaction root is deleted by a background task after the gate
+        // frees, so poll instead of asserting immediately.
+        await WaitUntilAsync(
+            () => !Directory.EnumerateFileSystemEntries(fixture.TransfersRoot).Any(),
+            timeout.Token);
     }
 
     [Fact]
