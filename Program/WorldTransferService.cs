@@ -1182,15 +1182,15 @@ public sealed class WorldTransferService : IAsyncDisposable
             var frame = await ReadFrameWithIdleTimeoutAsync(stream, token).ConfigureAwait(false);
             if (ReadMessageType(frame) != ProgressMessageType) return frame;
 
+            // Every progress-typed frame counts against the stall bound, but
+            // only a valid frame that actually advances can reset it — else a
+            // stream of malformed frames would keep the gate hostage forever.
             var progress = PortableProtocol.Deserialize<WorldTransferProgressFrame>(frame, _jsonOptions);
-            if (progress is null ||
-                !HasExpectedProtocol(progress.Protocol, progress.ProtocolVersion) ||
-                progress.TransferId != transferId)
-            {
-                continue;
-            }
-            if (progress.Current != lastCurrent ||
-                !string.Equals(progress.Stage, lastStage, StringComparison.Ordinal))
+            var valid = progress is not null &&
+                HasExpectedProtocol(progress.Protocol, progress.ProtocolVersion) &&
+                progress.TransferId == transferId;
+            if (valid && (progress!.Current != lastCurrent ||
+                !string.Equals(progress.Stage, lastStage, StringComparison.Ordinal)))
             {
                 lastCurrent = progress.Current;
                 lastStage = progress.Stage;
@@ -1200,9 +1200,9 @@ public sealed class WorldTransferService : IAsyncDisposable
             {
                 throw new TimeoutException("The other player stopped making progress.");
             }
-            if (throttle.ShouldPublish(progress))
+            if (valid && throttle.ShouldPublish(progress!))
             {
-                RaiseProgress(progress.Current, progress.Total, describeStage(progress.Stage));
+                RaiseProgress(progress!.Current, progress.Total, describeStage(progress.Stage));
             }
         }
     }
@@ -1640,11 +1640,29 @@ public sealed class WorldTransferService : IAsyncDisposable
         // outlast the peer's idle timeout on slow media.
         await Task.Yield();
         var openArchive = Task.Run(() => ZipFile.OpenRead(archivePath));
-        while (!openArchive.IsCompleted)
+        try
         {
-            await Task.WhenAny(openArchive, Task.Delay(ProgressHeartbeatInterval, token)).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-            if (!openArchive.IsCompleted) await heartbeat().ConfigureAwait(false);
+            while (!openArchive.IsCompleted)
+            {
+                await Task.WhenAny(openArchive, Task.Delay(ProgressHeartbeatInterval, token)).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                if (!openArchive.IsCompleted) await heartbeat().ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Abandoning the open would leak the handle on received.zip and
+            // make the caller's cleanup delete fail; dispose it when it lands.
+            _ = openArchive.ContinueWith(
+                completed =>
+                {
+                    if (completed.Status == TaskStatus.RanToCompletion) completed.Result.Dispose();
+                    else _ = completed.Exception;
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            throw;
         }
 
         Directory.CreateDirectory(destinationRoot);
