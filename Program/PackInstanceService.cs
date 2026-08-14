@@ -651,9 +651,9 @@ public sealed class PackInstanceService : IDisposable
 
     private static void SanitizeInstanceForLocalPlay(string gameDir, string buildName)
     {
-        var externalServerHistory = Path.Combine(gameDir, "config", "jei", "world", "server");
-        if (Directory.Exists(externalServerHistory)) Directory.Delete(externalServerHistory, recursive: true);
-
+        // config/jei/world/server holds the player's own bookmarks for peer
+        // worlds - packs never seed it (ShouldExcludeDirectory keeps it out of
+        // the sync), so deleting it here only ever destroyed player data.
         var configRoot = Path.Combine(gameDir, "config");
         if (Directory.Exists(configRoot))
         {

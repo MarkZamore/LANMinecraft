@@ -27,6 +27,7 @@ public sealed class LanRelayService : IAsyncDisposable
     private readonly ILanRelayPeerConnector _peerConnector;
     private readonly PeerRouteResolver _routes;
     private readonly INetworkClock _clock;
+    private readonly LanRelayPortStore? _portStore;
     private readonly SemaphoreSlim _clientRelayGate = new(1, 1);
     private readonly SemaphoreSlim _hostV2CreationGate = new(1, 1);
     private readonly Dictionary<string, ClientRelay> _clientRelays = new(StringComparer.OrdinalIgnoreCase);
@@ -44,12 +45,17 @@ public sealed class LanRelayService : IAsyncDisposable
     private long _resumeFailures;
     private volatile bool _disposed;
 
-    public LanRelayService(Logger logger, ISelectedNetworkTransport network, PeerRouteResolver routes)
+    public LanRelayService(
+        Logger logger,
+        ISelectedNetworkTransport network,
+        PeerRouteResolver routes,
+        LanRelayPortStore? portStore = null)
         : this(
             logger,
             routes,
             new SelectedNetworkLanRelayPeerConnector(network),
-            SystemNetworkClock.Instance)
+            SystemNetworkClock.Instance,
+            portStore)
     {
     }
 
@@ -57,12 +63,14 @@ public sealed class LanRelayService : IAsyncDisposable
         Logger logger,
         PeerRouteResolver routes,
         ILanRelayPeerConnector peerConnector,
-        INetworkClock? clock = null)
+        INetworkClock? clock = null,
+        LanRelayPortStore? portStore = null)
     {
         _logger = logger;
         _routes = routes;
         _peerConnector = peerConnector;
         _clock = clock ?? SystemNetworkClock.Instance;
+        _portStore = portStore;
     }
 
     public event Action<LanRelayDiagnosticEvent>? DiagnosticEvent;
@@ -174,9 +182,18 @@ public sealed class LanRelayService : IAsyncDisposable
             }
             Volatile.Write(ref _clientRelayCount, _clientRelays.Count);
 
-            var preferredLocalPort = previousSessions
+            // Keep the address Minecraft joins identical between sessions, so
+            // per-server mod data (JEI bookmarks) is found again instead of
+            // starting empty: reuse this run's port, then the remembered one,
+            // then a deterministic candidate derived from the peer id.
+            var preferredLocalPorts = new List<int>();
+            var currentRunPort = previousSessions
                 .Select(pair => pair.Value.LocalPort)
                 .FirstOrDefault();
+            if (currentRunPort > 0) preferredLocalPorts.Add(currentRunPort);
+            var rememberedPort = _portStore?.GetRememberedPort(normalizedPeerId) ?? 0;
+            if (rememberedPort > 0) preferredLocalPorts.Add(rememberedPort);
+            preferredLocalPorts.AddRange(LanRelayPortStore.DerivePortCandidates(normalizedPeerId));
             foreach (var previous in previousSessions)
             {
                 await previous.Value.DisposeAsync().ConfigureAwait(false);
@@ -187,7 +204,7 @@ public sealed class LanRelayService : IAsyncDisposable
                 targets,
                 remoteLanPort,
                 lanSessionId,
-                preferredLocalPort,
+                preferredLocalPorts,
                 _logger,
                 _jsonOptions,
                 _peerConnector,
@@ -202,6 +219,13 @@ public sealed class LanRelayService : IAsyncDisposable
                     delta));
             _clientRelays.Add(key, relay);
             Volatile.Write(ref _clientRelayCount, _clientRelays.Count);
+            // Only remember a port we actually asked for: persisting a fallback
+            // port from the OS dynamic range would outrank the stable derived
+            // candidates next session and never recover on its own.
+            if (preferredLocalPorts.Contains(relay.LocalPort))
+            {
+                _portStore?.RememberPort(normalizedPeerId, relay.LocalPort);
+            }
             return new ClientLanRelayInfo(key, relay.LocalPort);
         }
         finally
@@ -1141,7 +1165,7 @@ public sealed class LanRelayService : IAsyncDisposable
             IReadOnlyList<LanRelayTarget> targets,
             int remoteLanPort,
             string lanSessionId,
-            int preferredLocalPort,
+            IReadOnlyList<int> preferredLocalPorts,
             Logger logger,
             JsonSerializerOptions jsonOptions,
             ILanRelayPeerConnector peerConnector,
@@ -1168,7 +1192,7 @@ public sealed class LanRelayService : IAsyncDisposable
             _diagnostic = diagnostic;
             _beforeWriteFrameProvider = beforeWriteFrameProvider;
             _activeV2Delta = activeV2Delta;
-            _listener = StartLocalListener(preferredLocalPort);
+            _listener = StartLocalListener(preferredLocalPorts, logger);
             LocalPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
             _acceptTask = AcceptLoopAsync(_cts.Token);
         }
@@ -1176,10 +1200,13 @@ public sealed class LanRelayService : IAsyncDisposable
         public int LocalPort { get; }
         public string PeerId => _peerId;
 
-        private static TcpListener StartLocalListener(int preferredPort)
+        private static TcpListener StartLocalListener(
+            IReadOnlyList<int> preferredPorts,
+            Logger logger)
         {
-            if (preferredPort is > 0 and <= 65535)
+            foreach (var preferredPort in preferredPorts)
             {
+                if (preferredPort is <= 0 or > 65535) continue;
                 var preferred = new TcpListener(IPAddress.Loopback, preferredPort);
                 try
                 {
@@ -1195,6 +1222,16 @@ public sealed class LanRelayService : IAsyncDisposable
                     preferred.Stop();
                     throw;
                 }
+            }
+
+            // Falling back moves the address Minecraft joins, which resets any
+            // per-server mod data for this peer, so say so instead of failing
+            // silently.
+            if (preferredPorts.Count > 0)
+            {
+                logger.Warn(
+                    "Every preferred LAN relay port was busy; this session uses a temporary port " +
+                    "and per-world mod data such as JEI bookmarks will start empty.");
             }
 
             var fallback = new TcpListener(IPAddress.Loopback, 0);
