@@ -50,7 +50,7 @@ foreach ($property in $state.properties.PSObject.Properties) {
 # so seed the ones this pack resolves to. Existing values always win.
 $srgJar = Join-Path $runtimeRoot "libraries\net\minecraft\client\1.21.1-20240808.144430\client-1.21.1-20240808.144430-srg.jar"
 $clientJar = Join-Path $runtimeRoot "versions\1.21.1\1.21.1.jar"
-$ftbJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\ftb-chunks-neoforge-2101.1.14.jar"
+$ftbJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\ftb-chunks-neoforge-2101.1.20.jar"
 $solarJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\SolarFluxReborn-1.21.1-21.1.8.jar"
 $seed = [ordered]@{
     "lanShareScreenClasses"        = "net/minecraft/client/gui/screens/ShareToLanScreen,foe"
