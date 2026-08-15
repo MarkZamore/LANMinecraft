@@ -8,7 +8,23 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+try { Add-Type -AssemblyName System.IO.Compression.FileSystem } catch { }
+
+# Hashing through .NET keeps this working where Get-FileHash is unavailable,
+# which is the case on the build agent.
+function Get-Sha256([string]$path) {
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($path)
+        try {
+            return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $algorithm.Dispose()
+    }
+}
 $commonRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
 $adaptersRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $commonRoot))
 $programRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $adaptersRoot))
@@ -93,9 +109,9 @@ $asmJars = foreach ($artifact in $asmArtifacts) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Vendored ASM library was not found: $path"
     }
-    $file = Get-Item -LiteralPath $path
-    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($file.Length -ne $artifact.Length -or $hash -ne $artifact.Sha256) {
+    $length = [System.IO.FileInfo]::new($path).Length
+    $hash = Get-Sha256 $path
+    if ($length -ne $artifact.Length -or $hash -ne $artifact.Sha256) {
         throw "Vendored ASM library does not match its pinned bytes: $($artifact.Name)"
     }
     $path
