@@ -147,7 +147,7 @@ public sealed class PackRuntimeService : IDisposable
             retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
             token).ConfigureAwait(false);
         // Mojang's component keeps running the loader installer, which NeoForge
-        // 21.1.224 was built against; only the game moves to the pinned runtime.
+        // 21.1.235 was built against; only the game moves to the pinned runtime.
         var installerJavaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath();
         if (string.IsNullOrWhiteSpace(installerJavaPath) || !File.Exists(installerJavaPath))
         {

@@ -745,6 +745,7 @@ public sealed class ClientBuildViewModel
     public required string Name { get; init; }
     public required string RelativePath { get; init; }
     public required string FullPath { get; init; }
+    public bool IsInstalled { get; init; } = true;
 }
 
 public sealed class WorldTransferHeader

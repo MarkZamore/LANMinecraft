@@ -15,7 +15,7 @@ public sealed class PackInstanceService : IDisposable
     private const int StateSchemaVersion = 1;
     private const string StateFileName = ".portable-instance.json";
 
-    private static readonly HashSet<string> LegacyDirectories = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> LegacyDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mixin.out",
         "blueprints",
@@ -36,7 +36,7 @@ public sealed class PackInstanceService : IDisposable
         "xaero"
     };
 
-    private static readonly HashSet<string> LegacyFiles = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> LegacyFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "command_history.txt",
         "observable_announce",
@@ -586,6 +586,8 @@ public sealed class PackInstanceService : IDisposable
             if (string.Equals(name, "mods", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, clientJarName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, PortablePackSyncService.SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, PortablePackSyncService.SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
                 LegacyDirectories.Contains(name) ||
                 LegacyFiles.Contains(name) ||
                 name.StartsWith("XaeroWaypoints_BACKUP", StringComparison.OrdinalIgnoreCase))

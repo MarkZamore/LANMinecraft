@@ -14,21 +14,21 @@ internal static class ManagedTeleportPackPolicy
     private static readonly ManagedTeleportPackArtifact[] RequiredArtifacts =
     [
         new(
-            "mods/kubejs-neoforge-2101.7.2-build.348.jar",
-            2_240_610,
-            "6ddc6ddd16fabe09e2dd4303c6a598e3c272d6820b5c081f9c53e6b7aa6397fb"),
+            "mods/kubejs-neoforge-2101.7.2-build.368.jar",
+            2_281_720,
+            "28867299e7a9f02cfd74e34745fdbbb073fe4887fddbc98fd6c1ed2e87b01482"),
         new(
-            "mods/ftb-library-neoforge-2101.1.31.jar",
-            1_411_181,
-            "3d44705187cf938842e06d484a93e0491b82b0689785e6da4f7cabe40bd88aeb"),
+            "mods/ftb-library-neoforge-2101.1.33.jar",
+            1_425_984,
+            "6e8f7b57f243caf5cbb2c80387924df7b555b98d0fc6e1e575d4b5d74f5ff2e2"),
         new(
             "mods/XaerosMinimap.jar",
-            2_120_271,
-            "cece6dc6abbfbe4aeb9cd384b75cb687611dabc7ec0ab1dc65ee7da53759a32f"),
+            2_185_409,
+            "b722bcf794288f0ed51165cd1f057fc4505e20abbc723b2e17e900426e443603"),
         new(
-            "mods/ftb-chunks-neoforge-2101.1.14.jar",
-            642_340,
-            "2e6345ecb5a402d7f97005a05bac9507f634d01e4750bab2e47dec00e740c6e5"),
+            "mods/ftb-chunks-neoforge-2101.1.20.jar",
+            655_911,
+            "3bcd6f0032cec7310dc90b02b5a00e4cf1dd7a507f758bb353de864cb5e9241e"),
         new(
             "mods/SolarFluxReborn-1.21.1-21.1.8.jar",
             303_598,
@@ -54,10 +54,10 @@ internal static class ManagedTeleportPackPolicy
         ArgumentNullException.ThrowIfNull(instance);
         if (!string.Equals(descriptor.MinecraftVersion, "1.21.1", StringComparison.Ordinal) ||
             descriptor.Loader.Type != PackLoaderKind.NeoForge ||
-            !string.Equals(descriptor.Loader.Version, "21.1.224", StringComparison.Ordinal))
+            !string.Equals(descriptor.Loader.Version, "21.1.235", StringComparison.Ordinal))
         {
             throw Unsupported(
-                $"expected Minecraft 1.21.1 with NeoForge 21.1.224, found " +
+                $"expected Minecraft 1.21.1 with NeoForge 21.1.235, found " +
                 $"{descriptor.MinecraftVersion} {descriptor.Loader.Type} {descriptor.Loader.Version}");
         }
 
