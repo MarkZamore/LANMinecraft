@@ -28,7 +28,11 @@ internal static class ManagedTeleportPackPolicy
         new(
             "mods/ftb-chunks-neoforge-2101.1.14.jar",
             642_340,
-            "2e6345ecb5a402d7f97005a05bac9507f634d01e4750bab2e47dec00e740c6e5")
+            "2e6345ecb5a402d7f97005a05bac9507f634d01e4750bab2e47dec00e740c6e5"),
+        new(
+            "mods/SolarFluxReborn-1.21.1-21.1.8.jar",
+            303_598,
+            "f84ac97d52f188ea220633fbea8af6e275bb48968202aedd683974b0449f0fba")
     ];
 
     public static bool IsEnabledFor(string? packRelativePath)

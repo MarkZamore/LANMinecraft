@@ -21,12 +21,15 @@ namespace Minecraft;
 
 public sealed class PackRuntimeService : IDisposable
 {
-    private const int RuntimeStateSchemaVersion = 2;
+    // Bumped to 3 when the game moved to the launcher-managed Java 25 runtime:
+    // the recorded java path had to be re-resolved for everyone.
+    internal const int RuntimeStateSchemaVersion = 3;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
     private readonly VoiceNetworkCoordinator? _voiceNetwork;
+    private readonly PortableJavaRuntimeService _javaRuntime;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<PackLoaderKind, IPackLoaderProvider> _providers;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
@@ -39,12 +42,14 @@ public sealed class PackRuntimeService : IDisposable
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null,
-        VoiceNetworkCoordinator? networkCoordinator = null)
+        VoiceNetworkCoordinator? networkCoordinator = null,
+        PortableJavaRuntimeService? javaRuntime = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
         _voiceNetwork = networkCoordinator;
+        _javaRuntime = javaRuntime ?? new PortableJavaRuntimeService(paths, logger, _httpClient);
         IPackLoaderProvider[] providers =
         [
             new VanillaLoaderProvider(),
@@ -98,14 +103,16 @@ public sealed class PackRuntimeService : IDisposable
         var state = ReadState(statePath);
         if (state is not null &&
             string.Equals(state.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(state.JavaRuntimeId, PortableJavaRuntimeService.PinnedRuntimeId, StringComparison.Ordinal) &&
             ValidateSourceClientJarState(sourceClientJar, state) &&
             ValidateState(runtimeRoot, state))
         {
             CleanupLegacyRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
-            var cachedJavaPath = ResolveStatePath(runtimeRoot, state.JavaPathRelativePath);
+            // Repairs a deleted or damaged JDK without paying for a full re-prepare.
+            var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Сборка готова", 1));
-            return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJavaPath, clientJar, descriptor);
+            return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
 
         Directory.CreateDirectory(temporaryRoot);
@@ -139,11 +146,14 @@ public sealed class PackRuntimeService : IDisposable
         await RuntimeRetry.RunAsync(
             retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
             token).ConfigureAwait(false);
-        var javaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath();
-        if (string.IsNullOrWhiteSpace(javaPath) || !File.Exists(javaPath))
+        // Mojang's component keeps running the loader installer, which NeoForge
+        // 21.1.224 was built against; only the game moves to the pinned runtime.
+        var installerJavaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath();
+        if (string.IsNullOrWhiteSpace(installerJavaPath) || !File.Exists(installerJavaPath))
         {
-            throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", javaPath);
+            throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
         }
+        var gameJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
@@ -168,7 +178,7 @@ public sealed class PackRuntimeService : IDisposable
             runtimeRoot,
             temporaryRoot,
             baseVersion.Id,
-            javaPath,
+            installerJavaPath,
             _httpClient,
             launcher,
             progress,
@@ -196,7 +206,8 @@ public sealed class PackRuntimeService : IDisposable
             runtimeRoot,
             descriptor,
             profileId,
-            javaPath,
+            gameJava.JavaWPath,
+            gameJava.RuntimeId,
             sourceClientJar,
             clientFile.Path!,
             requiredFiles,
@@ -208,7 +219,7 @@ public sealed class PackRuntimeService : IDisposable
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");
-        return new PreparedRuntime(runtimeRoot, profileId, javaPath, clientFile.Path!, descriptor);
+        return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor);
     }
 
     private void CleanupTemporaryFiles(string packRelativePath)
@@ -345,6 +356,7 @@ public sealed class PackRuntimeService : IDisposable
         PackRuntimeDescriptor descriptor,
         string profileId,
         string javaPath,
+        string javaRuntimeId,
         string sourceClientJarPath,
         string clientJarPath,
         IReadOnlyCollection<string> requiredFiles,
@@ -356,6 +368,7 @@ public sealed class PackRuntimeService : IDisposable
             DescriptorHash = descriptor.DescriptorHash,
             ProfileId = profileId,
             JavaPathRelativePath = ToRelativePath(runtimeRoot, javaPath),
+            JavaRuntimeId = javaRuntimeId,
             ClientJarRelativePath = ToRelativePath(runtimeRoot, clientJarPath),
             SourceClientJarSizeBytes = new FileInfo(sourceClientJarPath).Length,
             SourceClientJarLastWriteUtcTicks = File.GetLastWriteTimeUtc(sourceClientJarPath).Ticks,
@@ -407,8 +420,10 @@ public sealed class PackRuntimeService : IDisposable
 
         try
         {
-            return File.Exists(ResolveStatePath(runtimeRoot, state.JavaPathRelativePath)) &&
-                   File.Exists(ResolveStatePath(runtimeRoot, state.ClientJarRelativePath));
+            // The game JDK is deliberately not checked here: EnsureAsync repairs
+            // a deleted or damaged install from the cached archive, which is far
+            // cheaper than the full re-prepare a failed validation causes.
+            return File.Exists(ResolveStatePath(runtimeRoot, state.ClientJarRelativePath));
         }
         catch
         {
@@ -601,6 +616,7 @@ public sealed class PackRuntimeService : IDisposable
         public string DescriptorHash { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public string JavaPathRelativePath { get; set; } = "";
+        public string JavaRuntimeId { get; set; } = "";
         public string ClientJarRelativePath { get; set; } = "";
         public long SourceClientJarSizeBytes { get; set; }
         public long SourceClientJarLastWriteUtcTicks { get; set; }

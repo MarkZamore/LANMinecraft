@@ -25,6 +25,7 @@ public enum RuntimePreparationStage
     Idle,
     Checking,
     Downloading,
+    InstallingJava,
     InstallingLoader,
     Verifying,
     Ready,

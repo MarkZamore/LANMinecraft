@@ -146,10 +146,11 @@ public sealed class SupportDiagnosticSnapshotTests
             Path.Combine(runtimeRoot, ".portable-runtime.json"),
             JsonSerializer.Serialize(new
             {
-                schemaVersion = 2,
+                schemaVersion = 3,
                 descriptorHash,
                 profileId,
-                javaPathRelativePath = javaPath.Replace('\\', '/')
+                javaPathRelativePath = javaPath.Replace('\\', '/'),
+                javaRuntimeId = PortableJavaRuntimeService.PinnedRuntimeId
             }));
     }
 

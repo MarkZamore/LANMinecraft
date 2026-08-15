@@ -197,7 +197,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                 "xaero/hud/minimap/waypoint/WaypointTeleport",
                 "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel",
                 "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon",
-                "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket"
+                "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket",
+                "org/zeith/solarflux/client/SolarFluxResourcePack"
             ])
             .ToArray();
         var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, jarClasses);
@@ -226,6 +227,13 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.Contains(
             configuration.Targets,
             target => target.ClassName == "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket");
+
+        Assert.Equal("true", properties["solarFluxSyncEnabled"]);
+        Assert.Equal("org/zeith/solarflux/client/SolarFluxResourcePack", properties["solarFluxPackClasses"]);
+        Assert.Equal("init,listResources,getNamespaces,getResource", properties["solarFluxSyncMethods"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "org/zeith/solarflux/client/SolarFluxResourcePack");
     }
 
     [Fact]
