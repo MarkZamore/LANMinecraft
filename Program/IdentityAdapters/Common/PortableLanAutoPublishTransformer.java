@@ -2,18 +2,18 @@ package minecraft.portable.identity;
 
 import java.lang.instrument.ClassFileTransformer;
 import java.security.ProtectionDomain;
-import jdk.internal.org.objectweb.asm.ClassReader;
-import jdk.internal.org.objectweb.asm.ClassWriter;
-import jdk.internal.org.objectweb.asm.Opcodes;
-import jdk.internal.org.objectweb.asm.tree.ClassNode;
-import jdk.internal.org.objectweb.asm.tree.FrameNode;
-import jdk.internal.org.objectweb.asm.tree.InsnList;
-import jdk.internal.org.objectweb.asm.tree.InsnNode;
-import jdk.internal.org.objectweb.asm.tree.JumpInsnNode;
-import jdk.internal.org.objectweb.asm.tree.LabelNode;
-import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
-import jdk.internal.org.objectweb.asm.tree.MethodNode;
-import jdk.internal.org.objectweb.asm.tree.VarInsnNode;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.VarInsnNode;
 
 public final class PortableLanAutoPublishTransformer implements ClassFileTransformer {
     private static final String HOOKS =
