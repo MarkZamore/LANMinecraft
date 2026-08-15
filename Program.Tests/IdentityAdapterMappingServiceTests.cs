@@ -179,6 +179,53 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             configuration.Targets,
             target => target.ClassName == "net/minecraft/client/gui/screens/ShareToLanScreen");
         Assert.Contains(configuration.Targets, target => target.ClassName == "foe");
+
+        // The Infinity-only teleport patches must stay disabled and untargeted
+        // for every other pack.
+        Assert.Equal("false", properties["ftbTeleportEnabled"]);
+        Assert.DoesNotContain(
+            configuration.Targets,
+            target => target.ClassName.StartsWith("dev/ftb/mods/ftbchunks/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Build_WithTeleportBridge_EmitsFtbTeleportTargets()
+    {
+        var jarClasses = DefaultJarClasses
+            .Concat(
+            [
+                "xaero/hud/minimap/waypoint/WaypointTeleport",
+                "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel",
+                "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon",
+                "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket"
+            ])
+            .ToArray();
+        var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, jarClasses);
+
+        var configuration = service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: true);
+
+        var properties = configuration.Properties;
+        Assert.Equal("true", properties["ftbTeleportEnabled"]);
+        Assert.Equal("true", properties["xaeroWaypointEnabled"]);
+        Assert.Equal(
+            "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel," +
+            "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon," +
+            "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket",
+            properties["ftbTeleportClasses"]);
+        Assert.Equal("hasPermissions", properties["ftbPermissionMethods"]);
+
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "xaero/hud/minimap/waypoint/WaypointTeleport");
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel");
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon");
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket");
     }
 
     [Fact]

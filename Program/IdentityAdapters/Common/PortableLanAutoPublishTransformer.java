@@ -59,6 +59,10 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         }
 
         if (!patched) {
+            // The JVM swallows transformer failures, so without this line the
+            // vanilla settings screen would come back with no explanation.
+            System.err.println(
+                "[PortableIdentity] LAN share screen patch failed for " + className + ".");
             throw unsupported("share screen init was not found");
         }
 
