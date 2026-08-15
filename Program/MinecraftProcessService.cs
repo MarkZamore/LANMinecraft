@@ -161,7 +161,7 @@ public sealed class MinecraftProcessService
                 .EnsureFtbEssentialsAsync(instance, token)
                 .ConfigureAwait(false);
             await _managedComponents
-                .EnsureBumblezoneHotfixAsync(instance, token)
+                .EnsureModHotfixesAsync(instance, token)
                 .ConfigureAwait(false);
             _managedTeleportConfiguration.Apply(
                 instance.GameDirectory,
