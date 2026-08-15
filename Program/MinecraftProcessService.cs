@@ -239,7 +239,7 @@ public sealed class MinecraftProcessService
             Session = session,
             MaximumRamMb = maximumRamMb,
             MinimumRamMb = Math.Min(2048, maximumRamMb),
-            GameLauncherName = "Minecraft Portable",
+            GameLauncherName = "LANMinecraft",
             GameLauncherVersion = "1",
             VersionType = $"{descriptor.Loader.Type} {descriptor.Loader.Version}".Trim(),
             FullScreen = false,

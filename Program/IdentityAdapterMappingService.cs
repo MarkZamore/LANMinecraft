@@ -353,7 +353,7 @@ internal sealed class IdentityAdapterMappingService
 
     private static NotSupportedException Unsupported(PackRuntimeDescriptor descriptor, string reason) => new(
         $"Portable UUID adapter could not be verified for Minecraft {descriptor.MinecraftVersion} " +
-        $"{descriptor.Loader.Type} {descriptor.Loader.Version}: {reason}. Update Minecraft.exe before launching this pack.");
+        $"{descriptor.Loader.Type} {descriptor.Loader.Version}: {reason}. Update LANMinecraft.exe before launching this pack.");
 
     private sealed class Tsrg2Mappings
     {

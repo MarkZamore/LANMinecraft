@@ -52,7 +52,7 @@ function Test-WorktreeIsDirty {
 }
 
 function Get-ExistingExecutableReleaseNumber {
-    $existingExecutable = Join-Path $projectRoot "Minecraft.exe"
+    $existingExecutable = Join-Path $projectRoot "LANMinecraft.exe"
     if (-not (Test-Path -LiteralPath $existingExecutable -PathType Leaf)) {
         return 0
     }
@@ -133,9 +133,9 @@ try {
     & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$PublishDir"
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
 
-    $executable = Join-Path $PublishDir "Minecraft.exe"
+    $executable = Join-Path $PublishDir "LANMinecraft.exe"
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-        throw "Minecraft.exe was not published to $PublishDir."
+        throw "LANMinecraft.exe was not published to $PublishDir."
     }
 } finally {
     & dotnet build-server shutdown | Out-Null
@@ -147,4 +147,4 @@ try {
     }
 }
 
-Write-Host "Published: $(Join-Path $PublishDir 'Minecraft.exe')"
+Write-Host "Published: $(Join-Path $PublishDir 'LANMinecraft.exe')"

@@ -1753,12 +1753,12 @@ public sealed class WorldTransferService : IAsyncDisposable
         Could not connect to player {peerIp}:{_runtimeOptions.Port}.
 
         Check on the receiving computer:
-        1. Minecraft.exe is running.
+        1. LANMinecraft.exe is running.
         2. Both players are in the same virtual or local network.
         3. The player list shows the correct network IP.
         4. Windows Firewall allows incoming TCP connections on port {_runtimeOptions.Port}.
 
-        If Windows asks for Minecraft.exe network access, allow private networks.
+        If Windows asks for LANMinecraft.exe network access, allow private networks.
         """;
     }
 
