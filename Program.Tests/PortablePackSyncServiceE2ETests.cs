@@ -13,8 +13,12 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class PortablePackSyncServiceE2ETests : IDisposable
 {
+    // Mirrors SCAN_ROOTS in the pack repo's tools/generate_manifest.py.
     private static readonly string[] ManifestRoots =
-        ["mods", "config", "kubejs", "scripts", "defaultconfigs", "data"];
+    [
+        "mods", "config", "kubejs", "scripts", "defaultconfigs", "data",
+        "resourcepacks", "shaderpacks", "configureddefaults"
+    ];
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -87,8 +91,12 @@ public sealed class PortablePackSyncServiceE2ETests : IDisposable
         Assert.Equal(PackSyncOutcome.Updated, repaired.Outcome);
         Assert.Equal(1, repaired.FilesChanged);
         Assert.Equal(originalSize, new FileInfo(corrupt).Length);
-        Assert.True(repaired.BytesDownloaded < originalSize + 1024 * 1024,
-            $"single-jar repair downloaded {repaired.BytesDownloaded} bytes");
+        // mods/ ships as hash-bucket chunks, so repairing one jar re-downloads
+        // its chunk - still a small fraction of the pack, never the whole tree.
+        var packBytes = Directory.EnumerateFiles(packDir, "*", SearchOption.AllDirectories)
+            .Sum(path => new FileInfo(path).Length);
+        Assert.True(repaired.BytesDownloaded < packBytes / 10,
+            $"single-jar repair downloaded {repaired.BytesDownloaded} bytes of {packBytes}");
         Assert.Equal(peerWrite, File.GetLastWriteTimeUtc(peer));
 
         // 5. An extra file inside a managed root is deleted without downloads.
