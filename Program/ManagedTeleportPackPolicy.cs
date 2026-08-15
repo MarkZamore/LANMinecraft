@@ -24,7 +24,11 @@ internal static class ManagedTeleportPackPolicy
         new(
             "mods/XaerosMinimap.jar",
             2_120_271,
-            "cece6dc6abbfbe4aeb9cd384b75cb687611dabc7ec0ab1dc65ee7da53759a32f")
+            "cece6dc6abbfbe4aeb9cd384b75cb687611dabc7ec0ab1dc65ee7da53759a32f"),
+        new(
+            "mods/ftb-chunks-neoforge-2101.1.14.jar",
+            642_340,
+            "2e6345ecb5a402d7f97005a05bac9507f634d01e4750bab2e47dec00e740c6e5")
     ];
 
     public static bool IsEnabledFor(string? packRelativePath)
