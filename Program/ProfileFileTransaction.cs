@@ -111,7 +111,7 @@ internal sealed class ProfileFileTransaction : IDisposable
         if (entry.Existed)
         {
             var backupPath = Path.Combine(_transactionRoot, entry.BackupFile);
-            File.Copy(fullPath, backupPath, overwrite: false);
+            CopyWithRetry(fullPath, backupPath);
             File.SetAttributes(backupPath, FileAttributes.Normal);
             entry.LastWriteUtc = File.GetLastWriteTimeUtc(fullPath);
             entry.Attributes = File.GetAttributes(fullPath);
@@ -223,5 +223,24 @@ internal sealed class ProfileFileTransaction : IDisposable
         public string BackupFile { get; set; } = string.Empty;
         public DateTime LastWriteUtc { get; set; }
         public FileAttributes Attributes { get; set; }
+    }
+
+    // A real-time scanner may hold the source for a few milliseconds right
+    // after another write; retry briefly instead of failing the whole launch.
+    private static void CopyWithRetry(string source, string destination)
+    {
+        const int attempts = 6;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Copy(source, destination, overwrite: false);
+                return;
+            }
+            catch (IOException) when (attempt < attempts && !File.Exists(destination))
+            {
+                Thread.Sleep(50 * attempt);
+            }
+        }
     }
 }
