@@ -52,6 +52,8 @@ function Find-JavaTool([string]$name) {
 foreach ($requiredFile in @(
     (Join-Path $commonRoot "PortableIdentityAgent.java"),
     (Join-Path $commonRoot "PortableIdentityReflection.java"),
+    (Join-Path $commonRoot "PortableLanAutoPublishHooks.java"),
+    (Join-Path $commonRoot "PortableLanAutoPublishTransformer.java"),
     (Join-Path $commonRoot "PortableLanTitleHooks.java"),
     (Join-Path $commonRoot "PortableLanTitleTransformer.java"),
     (Join-Path $commonRoot "PortableXaeroWaypointHooks.java"),
