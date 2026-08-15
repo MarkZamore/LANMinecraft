@@ -46,6 +46,7 @@ public partial class MainWindow : Window
     private VirtualNetworkService? _network;
     private PeerRouteResolver? _peerRoutes;
     private PackHashService? _packHash;
+    private PortablePackSyncService? _packSync;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
     private LocalIdentityService? _identityService;
@@ -163,6 +164,7 @@ public partial class MainWindow : Window
             NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
             _networkChangeSubscribed = true;
             _packHash = new PackHashService(_paths);
+            _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
             _identityService = new LocalIdentityService(_paths);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
@@ -621,8 +623,26 @@ public partial class MainWindow : Window
             })
             .ToList();
 
-        var buildPathsMatch = _builds.Select(build => build.RelativePath)
-            .SequenceEqual(builds.Select(build => build.RelativePath), StringComparer.OrdinalIgnoreCase);
+        // The Infinity pack has a built-in sync source, so it is offered even
+        // before it is installed; pressing Play downloads it.
+        if (!builds.Any(build => string.Equals(
+                build.RelativePath,
+                PortablePackSyncService.DefaultPackRelativePath,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            builds.Add(new ClientBuildViewModel
+            {
+                Name = "Infinity (не установлена)",
+                RelativePath = PortablePackSyncService.DefaultPackRelativePath,
+                FullPath = _paths.CombineUnderPacks(PortablePackSyncService.DefaultPackRelativePath),
+                IsInstalled = false
+            });
+        }
+
+        var buildPathsMatch = _builds.Count == builds.Count &&
+            _builds.Zip(builds).All(pair =>
+                string.Equals(pair.First.RelativePath, pair.Second.RelativePath, StringComparison.OrdinalIgnoreCase) &&
+                pair.First.IsInstalled == pair.Second.IsInstalled);
         if (!buildPathsMatch)
         {
             _suppressBuildPersistence = true;
@@ -2248,6 +2268,25 @@ public partial class MainWindow : Window
                 RequireSettingsService().Save(settings);
             }
 
+            var runtimeProgress = new Progress<RuntimePreparationProgress>(ApplyRuntimeProgress);
+            PackSyncResult syncResult;
+            try
+            {
+                syncResult = await RequirePackSync().SyncAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
+            }
+            catch
+            {
+                ApplyRuntimeProgress(new RuntimePreparationProgress(
+                    RuntimePreparationStage.Failed,
+                    "Не удалось подготовить сборку"));
+                throw;
+            }
+            if (syncResult.Warning is not null)
+            {
+                RequireLogger().Warn(syncResult.Warning);
+                SetState(syncResult.Warning);
+            }
+
             await RefreshPackHashAsync();
             if (_localPackHash == "missing")
             {
@@ -2257,7 +2296,6 @@ public partial class MainWindow : Window
             RequireSettingsService().Save(settings);
 
             SetState("Starting client");
-            var runtimeProgress = new Progress<RuntimePreparationProgress>(ApplyRuntimeProgress);
             try
             {
                 await RequireMinecraft().StartClientAsync(settings, null, 0, runtimeProgress, _lifetimeCts.Token);
@@ -2925,6 +2963,7 @@ public partial class MainWindow : Window
         SetProgressActivity(
             RuntimeProgressBar,
             progress.Stage is RuntimePreparationStage.Checking or
+                RuntimePreparationStage.SyncingPack or
                 RuntimePreparationStage.Downloading or
                 RuntimePreparationStage.InstallingJava or
                 RuntimePreparationStage.InstallingLoader or
@@ -2934,7 +2973,8 @@ public partial class MainWindow : Window
                     progress.PhaseIndex <= progress.PhaseCount
             ? $" {progress.PhaseIndex}/{progress.PhaseCount}"
             : string.Empty;
-        var isByteStage = progress.Stage is RuntimePreparationStage.Downloading or
+        var isByteStage = progress.Stage is RuntimePreparationStage.SyncingPack or
+            RuntimePreparationStage.Downloading or
             RuntimePreparationStage.InstallingJava;
         var runtimeSpeed = isByteStage && progress.TotalBytes > 0
             ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.PhaseIndex}/{progress.PhaseCount}")
@@ -2942,6 +2982,9 @@ public partial class MainWindow : Window
         if (!isByteStage) _runtimeRate.Reset();
         RuntimeProgressText.Text = progress.Stage switch
         {
+            RuntimePreparationStage.SyncingPack when progress.TotalBytes > 0 =>
+                $"Обновление сборки: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
+            RuntimePreparationStage.SyncingPack => "Проверка сборки",
             RuntimePreparationStage.Downloading when progress.TotalBytes > 0 =>
                 $"Скачивание файлов{phase}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
             RuntimePreparationStage.Downloading => $"Скачивание файлов{phase}",
@@ -2952,6 +2995,7 @@ public partial class MainWindow : Window
         };
         RuntimeProgressBar.IsIndeterminate = progress.Fraction is null &&
                                              progress.Stage is RuntimePreparationStage.Checking or
+                                                 RuntimePreparationStage.SyncingPack or
                                                  RuntimePreparationStage.Downloading or
                                                  RuntimePreparationStage.InstallingJava or
                                                  RuntimePreparationStage.InstallingLoader or
@@ -3502,6 +3546,8 @@ public partial class MainWindow : Window
     private Logger RequireLogger() => _logger ?? throw new InvalidOperationException("Logger is not initialized.");
     private VirtualNetworkService RequireNetwork() => _network ?? throw new InvalidOperationException("Network service is not initialized.");
     private PackHashService RequirePackHash() => _packHash ?? throw new InvalidOperationException("Pack hash service is not initialized.");
+
+    private PortablePackSyncService RequirePackSync() => _packSync ?? throw new InvalidOperationException("Pack sync service is not initialized.");
     private WorldMetadataService RequireWorldMetadata() => _worldMetadata ?? throw new InvalidOperationException("World metadata service is not initialized.");
     private LocalIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
     private WorldPlayerProfileService RequireWorldPlayerProfiles() => _worldPlayerProfiles ?? throw new InvalidOperationException("World player profile service is not initialized.");
