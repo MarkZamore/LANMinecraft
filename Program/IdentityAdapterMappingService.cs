@@ -20,6 +20,15 @@ internal sealed class IdentityAdapterMappingService
     private const string LanServerEntry =
         "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry";
     private const string LanServer = "net/minecraft/client/server/LanServer";
+    private const string ShareToLanScreen = "net/minecraft/client/gui/screens/ShareToLanScreen";
+    private const string IntegratedServer = "net/minecraft/client/server/IntegratedServer";
+    private const string MinecraftClient = "net/minecraft/client/Minecraft";
+    private const string Gui = "net/minecraft/client/gui/Gui";
+    private const string ChatComponent = "net/minecraft/client/gui/components/ChatComponent";
+    private const string HttpUtil = "net/minecraft/util/HttpUtil";
+    private const string GameType = "net/minecraft/world/level/GameType";
+    private const string PublishCommand = "net/minecraft/server/commands/PublishCommand";
+    private const string WorldData = "net/minecraft/world/level/storage/WorldData";
     private const string TextureUrlChecker = "com/mojang/authlib/yggdrasil/TextureUrlChecker";
     private readonly AppPaths _paths;
 
@@ -52,6 +61,15 @@ internal sealed class IdentityAdapterMappingService
         var screen = mappings.RequireClass(Screen);
         var lanServerEntry = mappings.RequireClass(LanServerEntry);
         var lanServer = mappings.RequireClass(LanServer);
+        var shareScreen = mappings.RequireClass(ShareToLanScreen);
+        var integrated = mappings.RequireClass(IntegratedServer);
+        var minecraftClient = mappings.RequireClass(MinecraftClient);
+        var gui = mappings.RequireClass(Gui);
+        var chatComponent = mappings.RequireClass(ChatComponent);
+        var httpUtil = mappings.RequireClass(HttpUtil);
+        var gameType = mappings.RequireClass(GameType);
+        var publishCommand = mappings.RequireClass(PublishCommand);
+        var worldData = mappings.RequireClass(WorldData);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -70,6 +88,38 @@ internal sealed class IdentityAdapterMappingService
         var sendCommand = clientPacketListener.RequireMethod(
             "sendCommand",
             descriptor => descriptor == "(Ljava/lang/String;)V");
+        var shareInit = shareScreen.RequireMethod("init", descriptor => descriptor == "()V");
+        var publishServer = integrated.RequireMethod(
+            "publishServer",
+            descriptor => descriptor.EndsWith("ZI)Z", StringComparison.Ordinal));
+        var defaultGameType = server.RequireMethod(
+            "getDefaultGameType",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var getWorldData = server.RequireMethod(
+            "getWorldData",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var isPublished = server.RequireMethod("isPublished", descriptor => descriptor == "()Z");
+        var allowCommands = worldData.RequireMethod("isAllowCommands", descriptor => descriptor == "()Z");
+        var availablePort = httpUtil.RequireMethod("getAvailablePort", descriptor => descriptor == "()I");
+        var getInstance = minecraftClient.RequireMethod(
+            "getInstance",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var singleplayerServer = minecraftClient.RequireMethod(
+            "getSingleplayerServer",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var setScreen = minecraftClient.RequireMethod(
+            "setScreen",
+            descriptor => descriptor == $"(L{screen.LeftName};)V");
+        var updateTitle = minecraftClient.RequireMethod("updateTitle", descriptor => descriptor == "()V");
+        var getChat = gui.RequireMethod(
+            "getChat",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var addMessage = chatComponent.RequireMethod(
+            "addMessage",
+            descriptor => descriptor == $"(L{component.LeftName};)V");
+        var publishSuccess = publishCommand.RequireMethod(
+            "getSuccessMessage",
+            descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -139,7 +189,42 @@ internal sealed class IdentityAdapterMappingService
             ["sendUnsignedCommandMethods"] = JoinAliases(
                 "sendUnsignedCommand",
                 sendUnsignedCommand.LeftName),
-            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName)
+            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName),
+            ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
+            ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
+            ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
+            ["publishServerMethods"] = JoinAliases("publishServer", publishServer.LeftName),
+            ["getDefaultGameTypeMethods"] = JoinAliases("getDefaultGameType", defaultGameType.LeftName),
+            ["getWorldDataMethods"] = JoinAliases("getWorldData", getWorldData.LeftName),
+            ["isPublishedMethods"] = JoinAliases("isPublished", isPublished.LeftName),
+            ["worldDataClasses"] = JoinAliases(WorldData, worldData.LeftName),
+            ["isAllowCommandsMethods"] = JoinAliases("isAllowCommands", allowCommands.LeftName),
+            ["httpUtilClasses"] = JoinAliases(
+                HttpUtil.Replace('/', '.'),
+                httpUtil.LeftName.Replace('/', '.')),
+            ["getAvailablePortMethods"] = JoinAliases("getAvailablePort", availablePort.LeftName),
+            ["gameTypeClasses"] = JoinAliases(
+                GameType.Replace('/', '.'),
+                gameType.LeftName.Replace('/', '.')),
+            ["publishCommandClasses"] = JoinAliases(
+                PublishCommand.Replace('/', '.'),
+                publishCommand.LeftName.Replace('/', '.')),
+            ["publishSuccessMethods"] = JoinAliases("getSuccessMessage", publishSuccess.LeftName),
+            ["minecraftClasses"] = JoinAliases(
+                MinecraftClient.Replace('/', '.'),
+                minecraftClient.LeftName.Replace('/', '.')),
+            ["minecraftGetInstanceMethods"] = JoinAliases("getInstance", getInstance.LeftName),
+            ["getSingleplayerServerMethods"] = JoinAliases("getSingleplayerServer", singleplayerServer.LeftName),
+            ["setScreenMethods"] = JoinAliases("setScreen", setScreen.LeftName),
+            ["updateTitleMethods"] = JoinAliases("updateTitle", updateTitle.LeftName),
+            ["minecraftGuiFields"] = JoinAliases("gui", minecraftClient.RequireField("gui")),
+            ["screenClasses"] = JoinAliases(
+                Screen.Replace('/', '.'),
+                screen.LeftName.Replace('/', '.')),
+            ["guiClasses"] = JoinAliases(Gui, gui.LeftName),
+            ["guiChatMethods"] = JoinAliases("getChat", getChat.LeftName),
+            ["chatComponentClasses"] = JoinAliases(ChatComponent, chatComponent.LeftName),
+            ["chatAddMessageMethods"] = JoinAliases("addMessage", addMessage.LeftName)
         };
 
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
@@ -150,6 +235,8 @@ internal sealed class IdentityAdapterMappingService
             playerInfo.LeftName,
             LanServerEntry,
             lanServerEntry.LeftName,
+            ShareToLanScreen,
+            shareScreen.LeftName,
             TextureUrlChecker
         };
         if (enableXaeroWaypointBridge)
@@ -272,7 +359,16 @@ internal sealed class IdentityAdapterMappingService
                 ClientPacketListener,
                 Screen,
                 LanServerEntry,
-                LanServer
+                LanServer,
+                ShareToLanScreen,
+                IntegratedServer,
+                MinecraftClient,
+                Gui,
+                ChatComponent,
+                HttpUtil,
+                GameType,
+                PublishCommand,
+                WorldData
             };
             var classes = new Dictionary<string, Tsrg2Class>(StringComparer.Ordinal);
             Tsrg2Class? current = null;
