@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $commonRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
 $adaptersRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $commonRoot))
 $programRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $adaptersRoot))
@@ -23,9 +24,27 @@ if (-not (Test-Path -LiteralPath $adapterRoot -PathType Container)) {
 }
 
 $manifest = Join-Path $commonRoot "MANIFEST.MF"
+$libRoot = Join-Path $commonRoot "lib"
+$asmLicense = Join-Path $libRoot "LICENSE.asm.txt"
+# The transformers run on the bootstrap class loader, which cannot reach the
+# module-path ASM that NeoForge loads, so ASM is merged into the agent jar.
+# JDK 25 removed jdk.internal.org.objectweb.asm, hence the real library.
+$asmArtifacts = @(
+    [pscustomobject]@{
+        Name   = "asm-9.8.jar"
+        Length = 126113
+        Sha256 = "876eab6a83daecad5ca67eb9fcabb063c97b5aeb8cf1fca7a989ecde17522051"
+    },
+    [pscustomobject]@{
+        Name   = "asm-tree-9.8.jar"
+        Length = 51934
+        Sha256 = "14b7880cb7c85eed101e2710432fc3ffb83275532a6a894dc4c4095d49ad59f1"
+    }
+)
 $buildRoot = Join-Path $programRoot "Build\IdentityAdapters\$AdapterName"
 $stageRoot = Join-Path $buildRoot ("stage-" + [Environment]::ProcessId + "-" + [Guid]::NewGuid().ToString("N"))
 $classes = Join-Path $stageRoot "classes"
+$asmClasses = Join-Path $stageRoot "asm"
 $temporaryJar = Join-Path $stageRoot "portable-identity-adapter.jar"
 $backupJar = Join-Path $stageRoot "previous-portable-identity-adapter.jar"
 
@@ -46,7 +65,7 @@ function Find-JavaTool([string]$name) {
         if ($candidate) { return $candidate.FullName }
     }
 
-    throw "Java 21 $name.exe was not found. Install a JDK 21 or prepare a local runtime first."
+    throw "$name.exe was not found. Install JDK 21 or newer (JAVA_HOME or PATH), or prepare a local pack runtime first."
 }
 
 foreach ($requiredFile in @(
@@ -61,11 +80,25 @@ foreach ($requiredFile in @(
     (Join-Path $commonRoot "PortableXaeroWaypointTransformer.java"),
     (Join-Path $adapterRoot "PortableIdentityHooks.java"),
     (Join-Path $adapterRoot "PortableIdentityTransformer.java"),
-    $manifest
+    $manifest,
+    $asmLicense
 )) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required identity adapter file was not found: $requiredFile"
     }
+}
+
+$asmJars = foreach ($artifact in $asmArtifacts) {
+    $path = Join-Path $libRoot $artifact.Name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Vendored ASM library was not found: $path"
+    }
+    $file = Get-Item -LiteralPath $path
+    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($file.Length -ne $artifact.Length -or $hash -ne $artifact.Sha256) {
+        throw "Vendored ASM library does not match its pinned bytes: $($artifact.Name)"
+    }
+    $path
 }
 
 $javac = Find-JavaTool "javac"
@@ -80,16 +113,39 @@ try {
     New-Item -ItemType Directory -Path $classes -Force | Out-Null
     New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
 
+    # --release (not -source/-target) keeps a JDK 25 javac quiet while still
+    # emitting class files that load on Java 21 and later.
     & $javac `
-        -source 21 `
-        -target 21 `
-        --add-exports "java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED" `
-        --add-exports "java.base/jdk.internal.org.objectweb.asm.tree=ALL-UNNAMED" `
+        --release 21 `
+        -cp ($asmJars -join [System.IO.Path]::PathSeparator) `
         -d $classes `
         @javaFiles
     if ($LASTEXITCODE -ne 0) { throw "Identity adapter javac failed with exit code $LASTEXITCODE." }
 
-    & $jar cfm $temporaryJar $manifest -C $classes .
+    New-Item -ItemType Directory -Path $asmClasses -Force | Out-Null
+    foreach ($asmJar in $asmJars) {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($asmJar)
+        try {
+            foreach ($entry in $archive.Entries) {
+                # module-info.class and META-INF/MANIFEST.MF would collide with
+                # the agent's own manifest and turn the jar into a module.
+                if ($entry.FullName -notlike "org/objectweb/asm/*" -or
+                    -not $entry.FullName.EndsWith(".class")) {
+                    continue
+                }
+                $target = Join-Path $asmClasses ($entry.FullName -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+                New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+            }
+        } finally {
+            $archive.Dispose()
+        }
+    }
+    $licenseTarget = Join-Path $asmClasses "META-INF\LICENSE.asm.txt"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $licenseTarget) -Force | Out-Null
+    Copy-Item -LiteralPath $asmLicense -Destination $licenseTarget -Force
+
+    & $jar cfm $temporaryJar $manifest -C $classes . -C $asmClasses .
     if ($LASTEXITCODE -ne 0) { throw "Identity adapter jar failed with exit code $LASTEXITCODE." }
 
     $destination = [System.IO.Path]::GetFullPath($OutputPath)
