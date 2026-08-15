@@ -618,6 +618,16 @@ internal sealed class NbtCompoundTag : NbtTag
         return (_tags.FirstOrDefault(tag => string.Equals(tag.Name, name, StringComparison.Ordinal))?.Tag as NbtStringTag)?.Value;
     }
 
+    public int? GetInt(string name)
+    {
+        return (_tags.FirstOrDefault(tag => string.Equals(tag.Name, name, StringComparison.Ordinal))?.Tag as NbtIntTag)?.Value;
+    }
+
+    public byte? GetByte(string name)
+    {
+        return (_tags.FirstOrDefault(tag => string.Equals(tag.Name, name, StringComparison.Ordinal))?.Tag as NbtByteTag)?.Value;
+    }
+
     public Guid? GetUuid()
     {
         var uuidTag = _tags.FirstOrDefault(tag => string.Equals(tag.Name, "UUID", StringComparison.Ordinal))?.Tag as NbtIntArrayTag;
@@ -833,6 +843,9 @@ internal sealed class NbtReader
             throw new InvalidDataException("NBT int array length is negative.");
         }
 
+        // Bounds first: a short file claiming a huge array must fail as
+        // truncated data, not as an allocation attempt.
+        EnsureAvailable((long)length * 4);
         var value = new int[length];
         for (var i = 0; i < length; i++)
         {
@@ -850,6 +863,7 @@ internal sealed class NbtReader
             throw new InvalidDataException("NBT long array length is negative.");
         }
 
+        EnsureAvailable((long)length * 8);
         var value = new long[length];
         for (var i = 0; i < length; i++)
         {
@@ -859,8 +873,10 @@ internal sealed class NbtReader
         return value;
     }
 
-    private void EnsureAvailable(int count)
+    private void EnsureAvailable(long count)
     {
+        // long arithmetic: a crafted length near int.MaxValue must not wrap
+        // negative and slip past the bounds check.
         if (_position + count > _bytes.Length)
         {
             throw new EndOfStreamException("Unexpected end of NBT data.");

@@ -44,6 +44,22 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     [Fact]
+    public void JavaCompatibilityArguments_CoverTheJdk25PoliciesAndCompactHeaders()
+    {
+        // The install-time flag probe runs exactly this list. Runtimes that
+        // installed before a flag was added skip the probe via the marker, so
+        // every addition must be a guaranteed option on the pinned JDK.
+        Assert.Equal(
+            [
+                "--illegal-native-access=allow",
+                "--enable-native-access=ALL-UNNAMED",
+                "--sun-misc-unsafe-memory-access=allow",
+                "-XX:+UseCompactObjectHeaders"
+            ],
+            MinecraftProcessService.JavaCompatibilityArguments);
+    }
+
+    [Fact]
     public async Task MissingRuntime_DownloadsVerifiesExtractsAndStripsTheArchiveRoot()
     {
         var archive = BuildArchive();

@@ -25,7 +25,10 @@ public sealed class MinecraftProcessService
     [
         "--illegal-native-access=allow",
         "--enable-native-access=ALL-UNNAMED",
-        "--sun-misc-unsafe-memory-access=allow"
+        "--sun-misc-unsafe-memory-access=allow",
+        // Product flag since JDK 25 (JEP 519): smaller object headers typically
+        // cut a modded heap by 10-20%, which means fewer and shorter G1 cycles.
+        "-XX:+UseCompactObjectHeaders"
     ]);
 
     private readonly AppPaths _paths;
