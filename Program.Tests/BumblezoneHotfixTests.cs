@@ -56,6 +56,39 @@ public sealed class BumblezoneHotfixTests : IDisposable
     }
 
     [Fact]
+    public void PinnedOritechArtifact_MatchesModrinthVersionCXCIlwHu()
+    {
+        Assert.Equal("1.2.5", ManagedComponentService.OritechVersion);
+        Assert.Equal(
+            "oritech-neoforge-1.21.1-1.2.5.jar",
+            ManagedComponentService.OritechFileName);
+        Assert.Equal(
+            "oritech-neoforge-1.21.1-1.2.3.jar",
+            ManagedComponentService.OritechSupersededFileName);
+        Assert.Equal(10_675_443, ManagedComponentService.OritechSizeBytes);
+        Assert.Equal(
+            "e863aa387cec1eca46fa5ca3c3233d4d05399f73017362f23a86fd6533551873",
+            ManagedComponentService.OritechSha256);
+        Assert.Equal(
+            "https://cdn.modrinth.com/data/4sYI62kA/versions/cXCIlwHu/oritech-neoforge-1.21.1-1.2.5.jar",
+            ManagedComponentService.OritechDownloadUri.AbsoluteUri);
+    }
+
+    [Fact]
+    public void DefaultReplacements_CoverBumblezoneAndOritech_AndSpareOritechThings()
+    {
+        var replacements = ManagedComponentService.DefaultModReplacements;
+        Assert.Equal(2, replacements.Count);
+        Assert.Equal(
+            ["the_bumblezone-*.jar", "oritech-*.jar"],
+            replacements.Select(replacement => replacement.VersionScanPattern));
+        // The oritechthings addon must never match the Oritech scan pattern,
+        // or its mere presence would disable the hotfix.
+        Assert.False(System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(
+            "oritech-*.jar", "oritechthings-0.0.42.jar", ignoreCase: true));
+    }
+
+    [Fact]
     public async Task SupersededJar_IsReplacedByVerifiedPinnedBuild()
     {
         var payload = Encoding.UTF8.GetBytes("fixed bumblezone build");
@@ -250,6 +283,62 @@ public sealed class BumblezoneHotfixTests : IDisposable
     }
 
     [Fact]
+    public async Task FirstReplacementFailingOpen_DoesNotSuppressTheSecond()
+    {
+        var bumblezonePayload = Encoding.UTF8.GetBytes("bumblezone fixed build");
+        var oritechPayload = Encoding.UTF8.GetBytes("oritech fixed build");
+        var handler = new RecordingHandler((request, _) =>
+            request.RequestUri!.AbsolutePath.Contains("oritech", StringComparison.Ordinal)
+                ? Task.FromResult(Success(oritechPayload))
+                : Task.FromException<HttpResponseMessage>(
+                    new HttpRequestException("bumblezone source is down")));
+        using var httpClient = new HttpClient(handler);
+        var ftb = new ManagedComponentDescriptor(
+            "ftb-essentials-test", 123456, "ftb-essentials-neoforge-test.jar",
+            [new Uri("https://example.test/ftb-essentials.jar")],
+            1, Convert.ToHexString(SHA256.HashData(new byte[] { 1 })).ToLowerInvariant());
+        var bumblezone = new ManagedModReplacement(
+            new ManagedComponentDescriptor(
+                "the-bumblezone-test", 1111, "the_bumblezone-2.0.0-test.jar",
+                [new Uri("https://example.test/the_bumblezone.jar")],
+                bumblezonePayload.LongLength,
+                Convert.ToHexString(SHA256.HashData(bumblezonePayload)).ToLowerInvariant()),
+            "the_bumblezone-1.0.0-test.jar", "Bumblezone", "2.0.0");
+        var oritech = new ManagedModReplacement(
+            new ManagedComponentDescriptor(
+                "oritech-test", 2222, "oritech-neoforge-2.0.0-test.jar",
+                [new Uri("https://example.test/oritech.jar")],
+                oritechPayload.LongLength,
+                Convert.ToHexString(SHA256.HashData(oritechPayload)).ToLowerInvariant()),
+            "oritech-neoforge-1.0.0-test.jar", "Oritech", "2.0.0");
+        var service = new ManagedComponentService(
+            _paths, _logger, httpClient, ftb, [bumblezone, oritech]);
+        var instance = CreateInstance();
+        var mods = Path.Combine(instance.GameDirectory, "mods");
+        await File.WriteAllTextAsync(
+            Path.Combine(mods, "the_bumblezone-1.0.0-test.jar"), "broken bumblezone");
+        await File.WriteAllTextAsync(
+            Path.Combine(mods, "oritech-neoforge-1.0.0-test.jar"), "broken oritech");
+        // The addon must never match the oritech scan pattern in a real
+        // directory walk, or its presence would disable the hotfix.
+        await File.WriteAllTextAsync(
+            Path.Combine(mods, "oritechthings-0.0.42.jar"), "addon");
+
+        var results = await service.EnsureModHotfixesAsync(instance);
+
+        Assert.Equal(2, results.Count);
+        Assert.False(results[0].Installed);
+        Assert.True(File.Exists(Path.Combine(mods, "the_bumblezone-1.0.0-test.jar")));
+        Assert.True(results[1].Installed);
+        Assert.False(File.Exists(Path.Combine(mods, "oritech-neoforge-1.0.0-test.jar")));
+        Assert.Equal(
+            oritechPayload,
+            await File.ReadAllBytesAsync(Path.Combine(mods, "oritech-neoforge-2.0.0-test.jar")));
+        Assert.Equal("addon", await File.ReadAllTextAsync(
+            Path.Combine(mods, "oritechthings-0.0.42.jar")));
+    }
+
+    [Fact]
     public void DownloadTimeout_ScalesWithArtifactSize()
     {
         var small = new ManagedComponentDescriptor(
@@ -283,9 +372,12 @@ public sealed class BumblezoneHotfixTests : IDisposable
             [new Uri("https://example.test/the_bumblezone.jar")],
             payload.LongLength,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant());
+        var replacement = new ManagedModReplacement(
+            bumblezone, SupersededName, "Bumblezone", "1.0.0");
         return new TestService(
             new ManagedComponentService(
-                _paths, _logger, httpClient, ftb, bumblezone, SupersededName),
+                _paths, _logger, httpClient, ftb, [replacement]),
+            bumblezone,
             bumblezone.FileName);
     }
 
@@ -302,13 +394,19 @@ public sealed class BumblezoneHotfixTests : IDisposable
             Path.Combine(packDirectory, "client.jar"));
     }
 
-    private sealed record TestService(ManagedComponentService Service, string PinnedFileName)
+    private sealed record TestService(
+        ManagedComponentService Service,
+        ManagedComponentDescriptor Descriptor,
+        string PinnedFileName)
     {
-        public string CachePath => Service.BumblezoneCachePath;
+        public string CachePath => Service.CachePathFor(Descriptor);
 
-        public Task<ManagedComponentInstallResult> EnsureBumblezoneHotfixAsync(
-            PackInstanceContext instance) =>
-            Service.EnsureBumblezoneHotfixAsync(instance);
+        public async Task<ManagedComponentInstallResult> EnsureBumblezoneHotfixAsync(
+            PackInstanceContext instance)
+        {
+            var results = await Service.EnsureModHotfixesAsync(instance);
+            return Assert.Single(results);
+        }
     }
 
     private static HttpResponseMessage Success(byte[] payload) =>
