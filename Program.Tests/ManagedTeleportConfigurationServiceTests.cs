@@ -272,6 +272,81 @@ public sealed class ManagedTeleportConfigurationServiceTests
         AssertCommandScriptSafety(script);
     }
 
+    [Fact]
+    public void CasualTeleportPolicy_DisablesSpawnOnlyInSurvivalWorldsWithoutCommands()
+    {
+        using var fixture = new TemporaryTeleportRoot();
+        Write(
+            Path.Combine(fixture.GameDirectory, "config", "ftbessentials.snbt"),
+            FtbConfig);
+
+        var survivalNoCommands = fixture.CreateWorld("SurvivalNoCommands", "Infinity");
+        WriteLevelData(survivalNoCommands, gameType: 0, allowCommands: false);
+        // Pre-existing world config saying "enabled" must flip to disabled —
+        // this is the path every already-created world takes.
+        Write(
+            Path.Combine(survivalNoCommands, "serverconfig", "ftbessentials-server.snbt"),
+            FtbConfig);
+        var survivalWithCommands = fixture.CreateWorld("SurvivalWithCommands", "Infinity");
+        WriteLevelData(survivalWithCommands, gameType: 0, allowCommands: true);
+        var creativeNoCommands = fixture.CreateWorld("CreativeNoCommands", "Infinity");
+        WriteLevelData(creativeNoCommands, gameType: 1, allowCommands: false);
+
+        new ManagedTeleportConfigurationService().Apply(
+            fixture.GameDirectory,
+            fixture.Worlds,
+            "Infinity");
+
+        Assert.False(SpawnEnabledIn(survivalNoCommands));
+        Assert.True(SpawnEnabledIn(survivalWithCommands));
+        Assert.True(SpawnEnabledIn(creativeNoCommands));
+
+        // The instance-wide configs keep spawn on; only the world diverges.
+        var globalConfig = File.ReadAllText(
+            Path.Combine(fixture.GameDirectory, "config", "ftbessentials.snbt"));
+        Assert.Matches(SpawnBlockPattern("true"), globalConfig);
+    }
+
+    [Fact]
+    public void IsCasualTeleportDisabled_FailsOpenOnUnreadableLevelData()
+    {
+        using var fixture = new TemporaryTeleportRoot();
+        var corrupt = fixture.CreateWorld("Corrupt", "Infinity");
+        Assert.False(ManagedTeleportConfigurationService.IsCasualTeleportDisabled(corrupt));
+
+        var missing = Path.Combine(fixture.Worlds, "Missing");
+        Directory.CreateDirectory(missing);
+        Assert.False(ManagedTeleportConfigurationService.IsCasualTeleportDisabled(missing));
+
+        var survival = fixture.CreateWorld("Survival", "Infinity");
+        WriteLevelData(survival, gameType: 0, allowCommands: false);
+        Assert.True(ManagedTeleportConfigurationService.IsCasualTeleportDisabled(survival));
+    }
+
+    private static void WriteLevelData(string worldDirectory, int gameType, bool allowCommands)
+    {
+        var data = new NbtCompoundTag();
+        data.Set("GameType", new NbtIntTag(gameType));
+        data.Set("allowCommands", new NbtByteTag(allowCommands ? (byte)1 : (byte)0));
+        var root = new NbtCompoundTag();
+        root.Set("Data", data);
+        new NbtFile("", root).Write(Path.Combine(worldDirectory, "level.dat"));
+    }
+
+    private static bool SpawnEnabledIn(string worldDirectory)
+    {
+        var contents = File.ReadAllText(Path.Combine(
+            worldDirectory,
+            "serverconfig",
+            "ftbessentials-server.snbt"));
+        if (Regex.IsMatch(contents, SpawnBlockPattern("true"))) return true;
+        Assert.Matches(SpawnBlockPattern("false"), contents);
+        return false;
+    }
+
+    private static string SpawnBlockPattern(string enabled) =>
+        @"spawn:\s*\{\s*cooldown: 10\s*enabled: " + enabled + @"\s*warmup: 0";
+
     private static void AssertCommandScriptSafety(string script)
     {
         Assert.Contains(
@@ -285,6 +360,19 @@ public sealed class ManagedTeleportConfigurationServiceTests
         Assert.Contains("Commands.literal('nether')", script, StringComparison.Ordinal);
         Assert.Contains(
             ".requires(source => source.player != null)",
+            script,
+            StringComparison.Ordinal);
+        // /nether follows the same per-world policy the launcher applies to /spawn.
+        Assert.Contains(
+            ".requires(source => source.player != null && !portableCasualTeleportBlocked(source))",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "String(server.defaultGameType.getName()) === 'survival'",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "!server.worldData.allowCommands",
             script,
             StringComparison.Ordinal);
         Assert.Contains("Number.isFinite", script, StringComparison.Ordinal);

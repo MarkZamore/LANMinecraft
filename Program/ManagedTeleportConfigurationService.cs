@@ -90,6 +90,17 @@ public sealed class ManagedTeleportConfigurationService
                 ["teleportation.warp.enabled"] = "false"
             });
 
+    // In a survival world that disallows commands the convenience teleports are
+    // considered part of the challenge: /spawn is turned off per world here and
+    // the KubeJS script disables /nether under the same condition. The waypoint
+    // teleports stay on because the map UI depends on them.
+    private static readonly IReadOnlyDictionary<string, string> CasualTeleportDisabledOverrides =
+        new ReadOnlyDictionary<string, string>(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["teleportation.spawn.enabled"] = "false"
+            });
+
     private static readonly IReadOnlyDictionary<string, string> XaeroProfileValues =
         new ReadOnlyDictionary<string, string>(
             new Dictionary<string, string>(StringComparer.Ordinal)
@@ -125,7 +136,12 @@ public sealed class ManagedTeleportConfigurationService
         }
     }
 
-    internal static string RewriteFtbEssentialsConfig(string contents)
+    internal static string RewriteFtbEssentialsConfig(string contents) =>
+        RewriteFtbEssentialsConfig(contents, overrides: null);
+
+    internal static string RewriteFtbEssentialsConfig(
+        string contents,
+        IReadOnlyDictionary<string, string>? overrides)
     {
         ArgumentNullException.ThrowIfNull(contents);
         var path = new List<string>();
@@ -165,6 +181,10 @@ public sealed class ManagedTeleportConfigurationService
             {
                 output.Append(content).Append(line.Terminator);
                 continue;
+            }
+            if (overrides?.TryGetValue(fullPath, out var overridden) == true)
+            {
+                replacement = overridden;
             }
             if (!seen.Add(fullPath))
             {
@@ -261,9 +281,12 @@ public sealed class ManagedTeleportConfigurationService
                     File.Exists(worldConfigPath);
                 if (!hasWorldMarker) continue;
 
+                var overrides = IsCasualTeleportDisabled(worldDirectory)
+                    ? CasualTeleportDisabledOverrides
+                    : null;
                 var worldConfig = File.Exists(worldConfigPath)
-                    ? RewriteExistingFtbConfig(worldConfigPath)
-                    : patchedDefaultConfig;
+                    ? RewriteExistingFtbConfig(worldConfigPath, overrides)
+                    : RewriteFtbEssentialsConfig(patchedDefaultConfig, overrides);
                 Plan(planned, worldConfigPath, worldConfig);
             }
         }
@@ -304,10 +327,42 @@ public sealed class ManagedTeleportConfigurationService
             new ReadOnlyCollection<string>(changedPaths));
     }
 
-    private static string RewriteExistingFtbConfig(string path)
+    private static string RewriteExistingFtbConfig(
+        string path,
+        IReadOnlyDictionary<string, string>? overrides = null)
     {
         EnsureOrdinaryFile(path, required: true);
-        return RewriteFtbEssentialsConfig(File.ReadAllText(path));
+        return RewriteFtbEssentialsConfig(File.ReadAllText(path), overrides);
+    }
+
+    /// <summary>
+    /// A survival world with commands disabled keeps its convenience teleports
+    /// off. Unreadable or unexpected level data fails open so a format change
+    /// never takes the commands away from worlds that should have them.
+    /// </summary>
+    internal static bool IsCasualTeleportDisabled(string worldDirectory)
+    {
+        try
+        {
+            var levelPath = Path.Combine(worldDirectory, "level.dat");
+            if (!File.Exists(levelPath)) return false;
+            EnsureOrdinaryFile(levelPath, required: false);
+            var data = NbtFile.Read(levelPath).Root.GetCompound("Data");
+            if (data is null) return false;
+            // GameType 0 is survival; allowCommands is the world's cheats flag.
+            // Both comparisons treat a missing or wrong-typed tag as "keep the
+            // commands", matching the fail-open contract above.
+            return data.GetInt("GameType") == 0 &&
+                   data.GetByte("allowCommands") == 0;
+        }
+        catch (Exception ex) when (
+            ex is IOException or
+                InvalidDataException or
+                UnauthorizedAccessException or
+                EndOfStreamException)
+        {
+            return false;
+        }
     }
 
     private static void PlanXaeroProfiles(

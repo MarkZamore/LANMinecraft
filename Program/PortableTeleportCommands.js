@@ -12,6 +12,22 @@ function portableTeleportFailure(source, message) {
   return 0
 }
 
+// Mirrors the per-world FTB Essentials policy the launcher writes for /spawn:
+// a survival world that disallows commands keeps its convenience teleports
+// off. The waypoint commands stay available because the map UI rides them.
+function portableCasualTeleportBlocked(source) {
+  try {
+    const server = source.server
+    if (server == null) {
+      return false
+    }
+    return String(server.defaultGameType.getName()) === 'survival' &&
+      !server.worldData.allowCommands
+  } catch (error) {
+    return false
+  }
+}
+
 function portableFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value)
 }
@@ -155,7 +171,7 @@ ServerEvents.commandRegistry(event => {
               }))))))
 
   const netherCommand = Commands.literal('nether')
-    .requires(source => source.player != null)
+    .requires(source => source.player != null && !portableCasualTeleportBlocked(source))
     .executes(context => {
       const player = context.source.player
       const level = player.server.getLevel(PORTABLE_NETHER_DIMENSION)
