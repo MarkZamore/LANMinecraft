@@ -23,6 +23,12 @@ public sealed class ManagedComponentService
         "4da8e4d461ceef1a5e6f6705265fe24239b132cdc408eb77787231cb56c219bf";
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
 
+    // The timeout covers the whole body copy, so it has to scale with the
+    // artifact: a flat 45s fits a 200 KB jar but would abort a 69 MB one on
+    // any connection slower than ~12 Mbit/s. The floor assumes 128 KiB/s.
+    internal static TimeSpan DownloadTimeoutFor(ManagedComponentDescriptor component) =>
+        DownloadSourceTimeout + TimeSpan.FromSeconds(component.SizeBytes / (128d * 1024d));
+
     public static Uri FtbEssentialsDownloadUri { get; } = new(
         "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
         UriKind.Absolute);
@@ -52,10 +58,42 @@ public sealed class ManagedComponentService
         FtbEssentialsSha256);
     private static readonly SemaphoreSlim FtbEssentialsGate = new(1, 1);
 
+    // Bumblezone 7.13.2 ships a chunk-packet mixin that crashes the server in
+    // its dimension when ModernFix and Smooth Chunk are also installed - both
+    // are part of the Infinity pack. The mod's own 7.13.5 changelog names the
+    // interaction; 7.15.3 is the latest 1.21.1 build carrying the fix.
+    // Synthetic cache key: Modrinth version ids are strings (jHtMMEiy), but the
+    // cache layout is keyed by number. Encodes the pinned version 7.15.03.
+    public const long BumblezoneCacheFileId = 71503;
+    public const string BumblezoneVersion = "7.15.3";
+    public const string BumblezoneFileName = "the_bumblezone-7.15.3+1.21.1-neoforge.jar";
+    public const string BumblezoneSupersededFileName = "the_bumblezone-7.13.2+1.21.1-neoforge.jar";
+    public const long BumblezoneSizeBytes = 69_672_269;
+    public const string BumblezoneSha256 =
+        "049b688a43886a3a5f70e8c0f195db7e33335e20adc1124c981a377a8b511101";
+
+    public static Uri BumblezoneDownloadUri { get; } = new(
+        "https://cdn.modrinth.com/data/38tpSycf/versions/jHtMMEiy/the_bumblezone-7.15.3%2B1.21.1-neoforge.jar",
+        UriKind.Absolute);
+
+    public static IReadOnlyList<Uri> BumblezoneDownloadUris { get; } =
+        Array.AsReadOnly([BumblezoneDownloadUri]);
+
+    private static readonly ManagedComponentDescriptor BumblezoneHotfix = new(
+        "the-bumblezone",
+        BumblezoneCacheFileId,
+        BumblezoneFileName,
+        BumblezoneDownloadUris,
+        BumblezoneSizeBytes,
+        BumblezoneSha256);
+    private static readonly SemaphoreSlim BumblezoneGate = new(1, 1);
+
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
     private readonly ManagedComponentDescriptor _ftbEssentials;
+    private readonly ManagedComponentDescriptor _bumblezoneHotfix;
+    private readonly string _bumblezoneSupersededFileName;
 
     public ManagedComponentService(
         AppPaths paths,
@@ -69,12 +107,17 @@ public sealed class ManagedComponentService
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient,
-        ManagedComponentDescriptor ftbEssentials)
+        ManagedComponentDescriptor ftbEssentials,
+        ManagedComponentDescriptor? bumblezoneHotfix = null,
+        string? bumblezoneSupersededFileName = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
         _ftbEssentials = ValidateDescriptor(ftbEssentials);
+        _bumblezoneHotfix = ValidateDescriptor(bumblezoneHotfix ?? BumblezoneHotfix);
+        _bumblezoneSupersededFileName =
+            bumblezoneSupersededFileName ?? BumblezoneSupersededFileName;
     }
 
     /// <summary>
@@ -173,6 +216,170 @@ public sealed class ManagedComponentService
             cachePopulated);
     }
 
+    /// <summary>
+    /// Replaces the known-broken Bumblezone build mirrored from the pack with
+    /// the pinned fixed build. A no-op when the instance carries any other
+    /// Bumblezone version, so a manually updated pack is never touched.
+    /// </summary>
+    public async Task<ManagedComponentInstallResult> EnsureBumblezoneHotfixAsync(
+        PackInstanceContext preparedInstance,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(preparedInstance);
+        await BumblezoneGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            return await EnsureBumblezoneHotfixCoreAsync(preparedInstance, token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn(
+                $"Required managed component {_bumblezoneHotfix.Id} could not be prepared; " +
+                $"Minecraft launch must remain blocked: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            BumblezoneGate.Release();
+        }
+    }
+
+    internal string BumblezoneCachePath => GetCachePath(_bumblezoneHotfix);
+
+    private async Task<ManagedComponentInstallResult> EnsureBumblezoneHotfixCoreAsync(
+        PackInstanceContext preparedInstance,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var gameDirectory = ValidatePreparedInstance(preparedInstance);
+        var modsDirectory = Path.Combine(gameDirectory, "mods");
+        EnsureOrdinaryDirectory(modsDirectory);
+
+        var installedPath = Path.Combine(modsDirectory, _bumblezoneHotfix.FileName);
+        var supersededPath = Path.Combine(modsDirectory, _bumblezoneSupersededFileName);
+        var cachePath = GetCachePath(_bumblezoneHotfix);
+        EnsureOrdinaryFileIfPresent(installedPath);
+        EnsureOrdinaryFileIfPresent(supersededPath);
+        EnsureOrdinaryFileIfPresent(cachePath);
+
+        var otherVersion = Directory
+            .EnumerateFiles(modsDirectory, "the_bumblezone-*.jar", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .FirstOrDefault(name =>
+                !string.Equals(name, _bumblezoneHotfix.FileName, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(name, _bumblezoneSupersededFileName, StringComparison.OrdinalIgnoreCase));
+        var supersededPresent = File.Exists(supersededPath);
+        if (otherVersion is not null)
+        {
+            // Someone updated the pack past the pinned build on their own;
+            // installing the pin next to it would duplicate the mod.
+            _logger.Warn(
+                $"Bumblezone hotfix skipped: the instance already carries {otherVersion}.");
+            return NoOpResult(_bumblezoneHotfix, installedPath, cachePath);
+        }
+        if (!supersededPresent && !File.Exists(installedPath))
+        {
+            return NoOpResult(_bumblezoneHotfix, installedPath, cachePath);
+        }
+
+        var downloaded = false;
+        var installed = false;
+        var cachePopulated = false;
+
+        if (IsValidFile(installedPath, _bumblezoneHotfix))
+        {
+            if (!IsValidFile(cachePath, _bumblezoneHotfix))
+            {
+                await AtomicCopyAsync(installedPath, cachePath, _bumblezoneHotfix, token)
+                    .ConfigureAwait(false);
+                cachePopulated = true;
+                _logger.Info("Recovered Bumblezone managed cache from the verified instance JAR.");
+            }
+        }
+        else
+        {
+            try
+            {
+                if (!IsValidFile(cachePath, _bumblezoneHotfix))
+                {
+                    _logger.Info(
+                        $"Downloading Bumblezone {BumblezoneVersion} hotfix " +
+                        $"(replaces {_bumblezoneSupersededFileName}).");
+                    await DownloadToCacheAsync(_bumblezoneHotfix, cachePath, token).ConfigureAwait(false);
+                    downloaded = true;
+                    cachePopulated = true;
+                    _logger.Info("Verified pinned Bumblezone download.");
+                }
+
+                await AtomicCopyAsync(cachePath, installedPath, _bumblezoneHotfix, token)
+                    .ConfigureAwait(false);
+                installed = true;
+                _logger.Info("Installed pinned Bumblezone into the prepared instance.");
+            }
+            catch (Exception ex) when (
+                ex is HttpRequestException or InvalidDataException or IOException &&
+                File.Exists(supersededPath) &&
+                !File.Exists(installedPath))
+            {
+                // Unlike FTB Essentials (200 KB, three mirrors), this is a
+                // 69 MB single-source download: blocking the launch on a failed
+                // fetch would turn a dimension-specific crash into "cannot play
+                // at all" for an offline first run. The instance is still in
+                // its shipped state, so let the game run and retry next launch.
+                _logger.Warn(
+                    $"Bumblezone hotfix could not be prepared ({ex.Message}); Minecraft will run " +
+                    $"with {_bumblezoneSupersededFileName} this session. Entering the Bumblezone " +
+                    "dimension may crash until the hotfix downloads.");
+                return NoOpResult(_bumblezoneHotfix, installedPath, cachePath);
+            }
+        }
+
+        if (supersededPresent)
+        {
+            try
+            {
+                File.Delete(supersededPath);
+                _logger.Info(
+                    $"Removed superseded {_bumblezoneSupersededFileName} from the prepared instance.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Two Bumblezone builds side by side would fail mod loading, so
+                // fail closed and put the instance back the way it was.
+                TryDeleteFile(installedPath);
+                throw new InvalidOperationException(
+                    $"Superseded Bumblezone JAR could not be removed: {ex.Message}", ex);
+            }
+        }
+
+        return new ManagedComponentInstallResult(
+            _bumblezoneHotfix.Id,
+            _bumblezoneHotfix.FileId,
+            installedPath,
+            cachePath,
+            downloaded,
+            installed,
+            cachePopulated);
+    }
+
+    private static ManagedComponentInstallResult NoOpResult(
+        ManagedComponentDescriptor component,
+        string installedPath,
+        string cachePath) =>
+        new(
+            component.Id,
+            component.FileId,
+            installedPath,
+            cachePath,
+            Downloaded: false,
+            Installed: false,
+            CachePopulated: false);
+
     private string ValidatePreparedInstance(PackInstanceContext preparedInstance)
     {
         if (string.IsNullOrWhiteSpace(preparedInstance.GameDirectory))
@@ -226,7 +433,7 @@ public sealed class ManagedComponentService
             try
             {
                 using var sourceTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-                sourceTimeout.CancelAfter(DownloadSourceTimeout);
+                sourceTimeout.CancelAfter(DownloadTimeoutFor(component));
                 var sourceToken = sourceTimeout.Token;
                 _logger.Info(
                     $"Trying official managed-component source {sourceNumber}/" +

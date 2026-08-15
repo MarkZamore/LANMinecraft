@@ -160,6 +160,9 @@ public sealed class MinecraftProcessService
             await _managedComponents
                 .EnsureFtbEssentialsAsync(instance, token)
                 .ConfigureAwait(false);
+            await _managedComponents
+                .EnsureBumblezoneHotfixAsync(instance, token)
+                .ConfigureAwait(false);
             _managedTeleportConfiguration.Apply(
                 instance.GameDirectory,
                 _paths.Worlds,
