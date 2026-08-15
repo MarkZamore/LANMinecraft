@@ -408,7 +408,7 @@ internal sealed class NbtFile
                     StringComparison.OrdinalIgnoreCase)
                     ? Path.Combine(directory, "level.dat_old")
                     : null;
-                File.Replace(temporaryPath, fullPath, backupPath, ignoreMetadataErrors: true);
+                ReplaceWithRetry(temporaryPath, fullPath, backupPath);
             }
             else
             {
@@ -419,6 +419,28 @@ internal sealed class NbtFile
         finally
         {
             if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    // ReplaceFile deletes the previous backup and renames two files in one
+    // shot; a real-time scanner (Defender) that has just opened level.dat_old
+    // or the freshly written temp file makes the whole call fail with
+    // "unable to remove replaced file". The hold lasts milliseconds, so a few
+    // short retries make the launch reliable without weakening atomicity.
+    private static void ReplaceWithRetry(string source, string destination, string? backup)
+    {
+        const int attempts = 6;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Replace(source, destination, backup, ignoreMetadataErrors: true);
+                return;
+            }
+            catch (IOException) when (attempt < attempts)
+            {
+                Thread.Sleep(50 * attempt);
+            }
         }
     }
 }
