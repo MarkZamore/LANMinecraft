@@ -1,4 +1,4 @@
-name: Build Minecraft.exe
+name: Build LANMinecraft.exe
 
 on:
   push:
@@ -42,19 +42,20 @@ jobs:
           '[]' | Set-Content -LiteralPath $basesFile -Encoding UTF8
           "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+          # Reads the manifest first: a base whose assetName predates the
+          # LANMinecraft rename cannot serve as a delta base (players patch a
+          # differently-named executable), so it returns $null and the caller
+          # skips it. Release numbering still continues from the manifest.
           function Get-ValidatedBase([string]$Tag, [string]$Directory) {
             New-Item -ItemType Directory -Path $Directory -Force | Out-Null
             gh release download $Tag `
-              --pattern 'Minecraft.exe' `
               --pattern 'update.json' `
               --dir $Directory `
               --clobber | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Release $Tag could not be downloaded." }
 
-            $exe = Join-Path $Directory 'Minecraft.exe'
             $manifestPath = Join-Path $Directory 'update.json'
-            if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or
-                -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
               throw "Release $Tag is incomplete."
             }
 
@@ -68,6 +69,21 @@ jobs:
                 $size -le 0 -or
                 $releaseNumber -lt 1) {
               throw "Release $Tag manifest is invalid."
+            }
+
+            if ($manifest.assetName -ne 'LANMinecraft.exe') {
+              Write-Host "Release $Tag ships '$($manifest.assetName)'; it predates the rename and is not a delta base."
+              return $null
+            }
+
+            gh release download $Tag `
+              --pattern 'LANMinecraft.exe' `
+              --dir $Directory `
+              --clobber | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Release $Tag executable could not be downloaded." }
+            $exe = Join-Path $Directory 'LANMinecraft.exe'
+            if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+              throw "Release $Tag is incomplete."
             }
             $file = Get-Item -LiteralPath $exe
             $actualSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -95,6 +111,18 @@ jobs:
           $previousDir = Join-Path $env:RUNNER_TEMP 'minecraft-base-latest'
           $previous = Get-ValidatedBase 'latest' $previousDir
           $currentCommit = '${{ github.sha }}'.ToLowerInvariant()
+
+          if ($null -eq $previous) {
+            # Transition release: numbering continues, but no delta bases and
+            # no exe to archive - the next release resumes delta generation.
+            $manifestPath = Join-Path $previousDir 'update.json'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $releaseNumber = [int]$manifest.releaseNumber + 1
+            "RELEASE_NUMBER=$releaseNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Transition release $releaseNumber will be published without deltas."
+            exit 0
+          }
+
           $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
             $previous.releaseNumber
           } else {
@@ -112,6 +140,7 @@ jobs:
             $number = [int]($tag -replace '^update-base-', '')
             if ($number -ge $previous.releaseNumber) { continue }
             $archive = Get-ValidatedBase $tag (Join-Path $env:RUNNER_TEMP "minecraft-$tag")
+            if ($null -eq $archive) { continue }
             if (-not ($bases | Where-Object { $_.sha256 -eq $archive.sha256 })) {
               $bases.Add($archive)
             }
@@ -155,9 +184,9 @@ jobs:
         shell: pwsh
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
-          $exe = Join-Path $artifactDir 'Minecraft.exe'
+          $exe = Join-Path $artifactDir 'LANMinecraft.exe'
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-            throw "Published Minecraft.exe was not found: $exe"
+            throw "Published LANMinecraft.exe was not found: $exe"
           }
 
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -170,12 +199,12 @@ jobs:
           for ($index = 0; $index -lt $bases.Count; $index++) {
             $base = $bases[$index]
             $assetName = if ($index -eq 0) {
-              'Minecraft.bsdiff'
+              'LANMinecraft.bsdiff'
             } else {
-              "Minecraft.from-$($base.releaseNumber).bsdiff"
+              "LANMinecraft.from-$($base.releaseNumber).bsdiff"
             }
             $patch = Join-Path $artifactDir $assetName
-            $roundTrip = Join-Path $env:RUNNER_TEMP "Minecraft.delta-roundtrip-$($base.releaseNumber).exe"
+            $roundTrip = Join-Path $env:RUNNER_TEMP "LANMinecraft.delta-roundtrip-$($base.releaseNumber).exe"
             dotnet run `
               --project Program\Patch\DeltaPatchTool.csproj `
               -c Release `
@@ -219,7 +248,7 @@ jobs:
             releaseNumber = [int]$env:RELEASE_NUMBER
             version = [string]$env:RELEASE_NUMBER
             publishedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-            assetName = 'Minecraft.exe'
+            assetName = 'LANMinecraft.exe'
             sha256 = $hash
             sizeBytes = $size
             deltaPatch = $legacyDelta
@@ -233,18 +262,18 @@ jobs:
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           $files = Get-ChildItem -LiteralPath $artifactDir -File
           $manifest = Get-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Raw | ConvertFrom-Json
-          if ($manifest.schemaVersion -ne 2 -or $manifest.releaseNumber -lt 1 -or $manifest.assetName -ne 'Minecraft.exe') {
+          if ($manifest.schemaVersion -ne 2 -or $manifest.releaseNumber -lt 1 -or $manifest.assetName -ne 'LANMinecraft.exe') {
             throw "Update manifest is invalid."
           }
 
           $patches = @($manifest.deltaPatches)
           if ($patches.Count -gt 2) { throw "More than two delta patches were published." }
-          $expected = @('Minecraft.exe', 'update.json')
+          $expected = @('LANMinecraft.exe', 'update.json')
           foreach ($patch in $patches) {
             if ($patch.algorithm -ne 'bsdiff' -or $patch.algorithmVersion -ne 1) {
               throw "Delta manifest algorithm is invalid."
             }
-            if ($patch.assetName -notmatch '^Minecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$') {
+            if ($patch.assetName -notmatch '^LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$') {
               throw "Delta asset name is invalid: $($patch.assetName)"
             }
             if (-not (Test-Path -LiteralPath (Join-Path $artifactDir $patch.assetName) -PathType Leaf)) {
@@ -261,7 +290,7 @@ jobs:
 
           if ($patches.Count -gt 0 -and
               (-not $manifest.deltaPatch -or
-               $manifest.deltaPatch.assetName -ne 'Minecraft.bsdiff' -or
+               $manifest.deltaPatch.assetName -ne 'LANMinecraft.bsdiff' -or
                $manifest.deltaPatch.sha256 -ne $patches[0].sha256)) {
             throw "Legacy deltaPatch does not match the first direct patch."
           }
@@ -292,7 +321,7 @@ jobs:
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           $assets = @(
-            (Join-Path $artifactDir 'Minecraft.exe'),
+            (Join-Path $artifactDir 'LANMinecraft.exe'),
             (Join-Path $artifactDir 'update.json')
           )
           $assets += Get-ChildItem -LiteralPath $artifactDir -Filter '*.bsdiff' -File |
@@ -308,7 +337,7 @@ jobs:
             @assets `
             --target "${{ github.sha }}" `
             --latest `
-            --title "Latest Minecraft.exe" `
+            --title "Latest LANMinecraft.exe" `
             --notes "Automated build for commit ${{ github.sha }}"
           if ($LASTEXITCODE -ne 0) { throw "Latest release could not be published." }
 

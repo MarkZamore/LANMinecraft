@@ -822,7 +822,7 @@ public sealed class WorldMetadata
     public string BuildRelativePath { get; set; } = "";
     public string PackHash { get; set; } = "";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
-    public string MarkedBy { get; set; } = "Minecraft.exe";
+    public string MarkedBy { get; set; } = "LANMinecraft.exe";
     public string OwnerIdentityId { get; set; } = "";
     public string OwnerIdentityName { get; set; } = "";
     public string CurrentHolderIdentityId { get; set; } = "";

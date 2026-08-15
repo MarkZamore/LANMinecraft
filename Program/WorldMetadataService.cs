@@ -71,7 +71,7 @@ public sealed class WorldMetadataService
             CurrentHolderIdentityName = string.IsNullOrWhiteSpace(context.OwnerIdentityName) ? UnknownOwnerName : context.OwnerIdentityName.Trim(),
             SchemaVersion = CurrentSchemaVersion,
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            MarkedBy = "Minecraft.exe"
+            MarkedBy = "LANMinecraft.exe"
         };
 
         try
@@ -119,7 +119,7 @@ public sealed class WorldMetadataService
                 BuildRelativePath = string.Empty,
                 PackHash = string.Empty,
                 SchemaVersion = CurrentSchemaVersion,
-                MarkedBy = "Minecraft.exe",
+                MarkedBy = "LANMinecraft.exe",
                 CreatedAtUtc = DateTimeOffset.UtcNow
             };
         }
@@ -198,7 +198,7 @@ public sealed class WorldMetadataService
             metadata = new WorldMetadata
             {
                 BuildName = UnknownBuildName,
-                MarkedBy = "Minecraft.exe",
+                MarkedBy = "LANMinecraft.exe",
                 CreatedAtUtc = DateTimeOffset.UtcNow
             };
         }

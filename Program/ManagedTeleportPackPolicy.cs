@@ -167,7 +167,7 @@ internal static class ManagedTeleportPackPolicy
 
     private static NotSupportedException Unsupported(string reason) => new(
         $"The selected Infinity pack is not compatible with the managed teleport feature: {reason}. " +
-        "Restore the original Infinity pack or update Minecraft.exe.");
+        "Restore the original Infinity pack or update LANMinecraft.exe.");
 }
 
 internal sealed record ManagedTeleportPackArtifact(

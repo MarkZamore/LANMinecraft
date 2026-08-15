@@ -90,7 +90,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 throw new NotSupportedException(
                     $"Portable UUID adapter is not compatible with Minecraft {runtime.Descriptor.MinecraftVersion} " +
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}. " +
-                    "Update Minecraft.exe before starting this pack.",
+                    "Update LANMinecraft.exe before starting this pack.",
                     ex);
             }
 

@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <AssemblyName>Minecraft</AssemblyName>
+    <AssemblyName>LANMinecraft</AssemblyName>
     <RootNamespace>Minecraft</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Minecraft.ico</ApplicationIcon>

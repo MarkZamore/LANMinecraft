@@ -16,17 +16,17 @@ public sealed class UpdateService
     public const string RepositoryOwner = "MarkZamore";
     public const string RepositoryName = "Minecraft";
     public const string ReleaseTag = "latest";
-    public const string ExecutableAssetName = "Minecraft.exe";
+    public const string ExecutableAssetName = "LANMinecraft.exe";
     public const string ManifestAssetName = "update.json";
-    public const string DeltaPatchAssetName = "Minecraft.bsdiff";
+    public const string DeltaPatchAssetName = "LANMinecraft.bsdiff";
     public const int ManifestSchemaVersion = 2;
     public const string DeltaPatchAlgorithm = "bsdiff";
     public const int DeltaPatchAlgorithmVersion = 1;
     public const int MaximumDeltaPatches = 2;
     public const string InstallJournalFileName = "install-journal.json";
     public const string InstallScriptFileName = "apply-update.ps1";
-    public const string InstallCandidateFileName = "Minecraft.exe.candidate";
-    public const string InstallBackupFileName = "Minecraft.exe.bak";
+    public const string InstallCandidateFileName = "LANMinecraft.exe.candidate";
+    public const string InstallBackupFileName = "LANMinecraft.exe.bak";
     public const string InstallRestartRequestFileName = "restart-requested";
 
     private const int UpdateCheckAttempts = 3;
