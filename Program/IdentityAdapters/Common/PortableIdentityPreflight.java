@@ -31,6 +31,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableLanTitleTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (isAlias("ftbTeleportClasses", className)) {
+                transformer = new PortableFtbTeleportTransformer();
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 transformer = new PortableXaeroWaypointTransformer();
             } else {
@@ -53,6 +55,8 @@ public final class PortableIdentityPreflight {
                 verifyLanTitleTargets(archive, className);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (isAlias("ftbTeleportClasses", className)) {
+                verifyFtbTeleportTargets(archive, className, transformed);
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
@@ -169,6 +173,47 @@ public final class PortableIdentityPreflight {
 
         readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
         readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
+    }
+
+    private static void verifyFtbTeleportTargets(
+        ZipFile archive,
+        String teleportClass,
+        byte[] transformed) throws Exception {
+        ClassNode original = readClassWithCode(archive, teleportClass);
+        if (countPermissionChecks(original) != 1) {
+            throw new IllegalStateException(
+                "FTB Chunks teleport class " + teleportClass + " does not contain exactly one permission check.");
+        }
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        if (countPermissionChecks(patched) != 0) {
+            throw new IllegalStateException(
+                "FTB Chunks teleport transformer left a permission check in " + teleportClass + ".");
+        }
+    }
+
+    private static ClassNode readClassWithCode(ZipFile archive, String className) throws Exception {
+        ClassNode node = new ClassNode();
+        new ClassReader(readClassBytes(archive, className)).accept(node, 0);
+        return node;
+    }
+
+    private static int countPermissionChecks(ClassNode node) {
+        String[] names = aliases("ftbPermissionMethods");
+        int count = 0;
+        for (MethodNode method : node.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    Arrays.asList(names).contains(call.name) &&
+                    call.desc.equals("(I)Z")) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     private static void verifyXaeroWaypointTargets(

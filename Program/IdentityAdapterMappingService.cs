@@ -7,6 +7,10 @@ namespace Minecraft;
 internal sealed class IdentityAdapterMappingService
 {
     private const string XaeroWaypointTeleport = "xaero/hud/minimap/waypoint/WaypointTeleport";
+    private const string FtbWaypointRowPanel =
+        "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel";
+    private const string FtbWaypointMapIcon = "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon";
+    private const string FtbTeleportFromMapPacket = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket";
     private const string LoginListener = "net/minecraft/server/network/ServerLoginPacketListenerImpl";
     private const string HelloPacket = "net/minecraft/network/protocol/login/ServerboundHelloPacket";
     private const string MinecraftServer = "net/minecraft/server/MinecraftServer";
@@ -176,6 +180,13 @@ internal sealed class IdentityAdapterMappingService
             ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z",
             ["xaeroWaypointEnabled"] =
                 enableXaeroWaypointBridge ? "true" : "false",
+            ["ftbTeleportEnabled"] =
+                enableXaeroWaypointBridge ? "true" : "false",
+            ["ftbTeleportClasses"] = JoinAliases(
+                FtbWaypointRowPanel,
+                FtbWaypointMapIcon,
+                FtbTeleportFromMapPacket),
+            ["ftbPermissionMethods"] = "hasPermissions",
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
             ["xaeroWaypointTeleportMethods"] = "teleportToWaypoint",
             ["xaeroWaypointTeleportDescriptors"] = JoinAliases(
@@ -242,6 +253,9 @@ internal sealed class IdentityAdapterMappingService
         if (enableXaeroWaypointBridge)
         {
             requiredTargets.Add(XaeroWaypointTeleport);
+            requiredTargets.Add(FtbWaypointRowPanel);
+            requiredTargets.Add(FtbWaypointMapIcon);
+            requiredTargets.Add(FtbTeleportFromMapPacket);
         }
         var targets = FindRuntimeTargets(runtime, gameDirectory, requiredTargets);
         if (targets.Count != requiredTargets.Count)
