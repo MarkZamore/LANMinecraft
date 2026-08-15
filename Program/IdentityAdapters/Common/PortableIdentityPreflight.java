@@ -6,11 +6,11 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-import jdk.internal.org.objectweb.asm.ClassReader;
-import jdk.internal.org.objectweb.asm.tree.ClassNode;
-import jdk.internal.org.objectweb.asm.tree.FieldNode;
-import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
-import jdk.internal.org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
 
 public final class PortableIdentityPreflight {
     private PortableIdentityPreflight() {

@@ -198,8 +198,6 @@ public sealed class PortableIdentityAdapterService : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        startInfo.ArgumentList.Add("--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED");
-        startInfo.ArgumentList.Add("--add-exports=java.base/jdk.internal.org.objectweb.asm.tree=ALL-UNNAMED");
         foreach (var pair in properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             startInfo.ArgumentList.Add($"-Dminecraft.portable.identity.{pair.Key}={pair.Value}");
@@ -273,8 +271,6 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            startInfo.ArgumentList.Add("--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED");
-            startInfo.ArgumentList.Add("--add-exports=java.base/jdk.internal.org.objectweb.asm.tree=ALL-UNNAMED");
             startInfo.ArgumentList.Add("-Dminecraft.portable.identity.enabled=true");
             startInfo.ArgumentList.Add($"-Dminecraft.portable.skin.registry={registryPath}");
             foreach (var pair in properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
@@ -335,9 +331,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         var arguments = new List<string>
         {
-            "-Dminecraft.portable.identity.enabled=true",
-            "--add-exports=java.base/jdk.internal.org.objectweb.asm=ALL-UNNAMED",
-            "--add-exports=java.base/jdk.internal.org.objectweb.asm.tree=ALL-UNNAMED"
+            "-Dminecraft.portable.identity.enabled=true"
         };
         arguments.AddRange(properties.OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => $"-Dminecraft.portable.identity.{pair.Key}={pair.Value}"));
