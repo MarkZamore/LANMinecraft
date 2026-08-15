@@ -14,6 +14,20 @@ namespace Minecraft;
 
 public sealed class MinecraftProcessService
 {
+    /// <summary>
+    /// Options the modded stack needs on Java 24 and later. JEP 472 warns on every
+    /// JNI call from unenabled code (LWJGL, JNA and Netty all use it) and JEP 498
+    /// warns once per sun.misc.Unsafe call site, which a 450-mod stack turns into a
+    /// wall of log noise. The runtime service also probes these before installing,
+    /// so a runtime that rejects them fails with a message instead of a silent exit.
+    /// </summary>
+    public static IReadOnlyList<string> JavaCompatibilityArguments { get; } = Array.AsReadOnly<string>(
+    [
+        "--illegal-native-access=allow",
+        "--enable-native-access=ALL-UNNAMED",
+        "--sun-misc-unsafe-memory-access=allow"
+    ]);
+
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly LocalIdentityService _identityService;
@@ -213,6 +227,7 @@ public sealed class MinecraftProcessService
             new($"-Djava.io.tmpdir={javaTempDir}"),
             new($"-Dminecraft.portable.skin.registry={skinRegistryPath}")
         };
+        extraJvmArguments.AddRange(JavaCompatibilityArguments.Select(argument => new MArgument(argument)));
         extraJvmArguments.AddRange(identityJvmArguments.Select(argument => new MArgument(argument)));
         var launchOption = new MLaunchOption
         {
@@ -233,16 +248,37 @@ public sealed class MinecraftProcessService
             launchOption.ServerPort = Math.Clamp(targetPort, 1, 65535);
         }
 
-        using var minecraftProcess = launcher.BuildProcess(profile, launchOption);
+        var minecraftProcess = launcher.BuildProcess(profile, launchOption);
         minecraftProcess.StartInfo.WorkingDirectory = gameDir;
         minecraftProcess.StartInfo.UseShellExecute = false;
         minecraftProcess.StartInfo.CreateNoWindow = true;
         minecraftProcess.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+        // A JVM that refuses an option writes to stderr before log4j exists, so
+        // without these pipes the only trace of the failure would be an exit code.
+        minecraftProcess.StartInfo.RedirectStandardOutput = true;
+        minecraftProcess.StartInfo.RedirectStandardError = true;
         minecraftProcess.StartInfo.Environment["TEMP"] = javaTempDir;
         minecraftProcess.StartInfo.Environment["TMP"] = javaTempDir;
-        if (!minecraftProcess.Start())
+        var startupOutput = new StartupOutputBuffer();
+        minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
+        minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
+
+        var started = false;
+        try
         {
-            throw new InvalidOperationException("Minecraft process could not be started.");
+            if (!minecraftProcess.Start())
+            {
+                throw new InvalidOperationException("Minecraft process could not be started.");
+            }
+            // The pipes must be drained for the whole session or the game blocks
+            // once a buffer fills, so the process outlives this method.
+            minecraftProcess.BeginOutputReadLine();
+            minecraftProcess.BeginErrorReadLine();
+            started = true;
+        }
+        finally
+        {
+            if (!started) minecraftProcess.Dispose();
         }
 
         var processId = minecraftProcess.Id;
@@ -250,13 +286,20 @@ public sealed class MinecraftProcessService
         {
             NotifyClientRunningChanged(true);
         }
-        _ = MonitorClientExitAsync(processId, settings.ClientRelativePath);
+        // The monitor owns the Process object from here on and may dispose it
+        // before the startup window closes, so the exit code travels through
+        // the completion source instead of the Process.
+        var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = MonitorClientExitAsync(minecraftProcess, settings.ClientRelativePath, exitCode);
 
-        await Task.Delay(TimeSpan.FromSeconds(2), token);
-        if (minecraftProcess.HasExited && minecraftProcess.ExitCode != 0)
+        await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
+        token.ThrowIfCancellationRequested();
+        if (exitCode.Task.IsCompletedSuccessfully && exitCode.Task.Result != 0)
         {
             throw new InvalidOperationException(
-                $"Minecraft exited during startup with code {minecraftProcess.ExitCode}." + ReadLatestLogTail(gameDir));
+                $"Minecraft exited during startup with code {exitCode.Task.Result}." +
+                startupOutput.Describe() +
+                ReadLatestLogTail(gameDir));
         }
 
         _logger.Info(string.IsNullOrWhiteSpace(targetHost)
@@ -264,11 +307,15 @@ public sealed class MinecraftProcessService
             : $"Minecraft client started for {targetHost}:{targetPort} with profile {runtime.ProfileId}.");
     }
 
-    private async Task MonitorClientExitAsync(int processId, string packRelativePath)
+    private async Task MonitorClientExitAsync(
+        Process process,
+        string packRelativePath,
+        TaskCompletionSource<int> exitCode)
     {
+        var processId = process.Id;
         try
         {
-            using var process = Process.GetProcessById(processId);
+            using var owned = process;
             using var placementCancellation = new CancellationTokenSource();
             var placementTask = _gameWindowPlacement.TrackAsync(processId, placementCancellation.Token);
             try
@@ -277,6 +324,9 @@ public sealed class MinecraftProcessService
             }
             finally
             {
+                // Published before any cleanup so the launch method never has
+                // to read the Process object this monitor is about to dispose.
+                TryPublishExitCode(process, exitCode);
                 placementCancellation.Cancel();
                 await placementTask.ConfigureAwait(false);
             }
@@ -294,10 +344,59 @@ public sealed class MinecraftProcessService
         }
         finally
         {
+            // A monitor that failed before publishing must still release the
+            // startup wait; 0 keeps the crash path silent rather than inventing
+            // an exit code for a process whose state is unknown.
+            exitCode.TrySetResult(0);
             CleanupJavaTemporaryDirectory(packRelativePath);
             if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
             {
                 NotifyClientRunningChanged(false);
+            }
+        }
+    }
+
+    private static void TryPublishExitCode(Process process, TaskCompletionSource<int> exitCode)
+    {
+        try
+        {
+            exitCode.TrySetResult(process.ExitCode);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Keeps the tail of the game's own console output so a JVM that dies before
+    /// log4j starts still explains itself. Bounded because the game runs for hours.
+    /// </summary>
+    private sealed class StartupOutputBuffer
+    {
+        private const int MaximumCharacters = 8 * 1024;
+        private readonly Lock _gate = new();
+        private readonly StringBuilder _lines = new();
+
+        public void Append(string? line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return;
+            lock (_gate)
+            {
+                _lines.AppendLine(line);
+                if (_lines.Length > MaximumCharacters)
+                {
+                    _lines.Remove(0, _lines.Length - MaximumCharacters);
+                }
+            }
+        }
+
+        public string Describe()
+        {
+            lock (_gate)
+            {
+                return _lines.Length == 0
+                    ? ""
+                    : Environment.NewLine + _lines.ToString().TrimEnd();
             }
         }
     }

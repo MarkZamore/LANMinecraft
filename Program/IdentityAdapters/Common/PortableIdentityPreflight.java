@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
@@ -33,6 +34,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableLanAutoPublishTransformer();
             } else if (isAlias("ftbTeleportClasses", className)) {
                 transformer = new PortableFtbTeleportTransformer();
+            } else if (isAlias("solarFluxPackClasses", className)) {
+                transformer = new PortableSolarFluxSyncTransformer();
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 transformer = new PortableXaeroWaypointTransformer();
             } else {
@@ -57,6 +60,8 @@ public final class PortableIdentityPreflight {
                 verifyLanSharePublishTargets(archive, className, transformed);
             } else if (isAlias("ftbTeleportClasses", className)) {
                 verifyFtbTeleportTargets(archive, className, transformed);
+            } else if (isAlias("solarFluxPackClasses", className)) {
+                verifySolarFluxTargets(className, transformed);
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
@@ -214,6 +219,24 @@ public final class PortableIdentityPreflight {
             }
         }
         return count;
+    }
+
+    private static void verifySolarFluxTargets(String packClass, byte[] transformed) {
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, ClassReader.SKIP_CODE);
+        String[] names = aliases("solarFluxSyncMethods");
+        int synchronizedMethods = 0;
+        for (MethodNode method : patched.methods) {
+            if (Arrays.asList(names).contains(method.name) &&
+                (method.access & Opcodes.ACC_SYNCHRONIZED) != 0) {
+                synchronizedMethods++;
+            }
+        }
+        if (synchronizedMethods != 4) {
+            throw new IllegalStateException(
+                "SolarFlux transformer synchronized " + synchronizedMethods +
+                " methods of " + packClass + " instead of 4.");
+        }
     }
 
     private static void verifyXaeroWaypointTargets(

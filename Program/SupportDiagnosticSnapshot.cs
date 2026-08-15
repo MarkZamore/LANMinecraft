@@ -101,7 +101,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
 {
     private const int DiscoveryPort = 35655;
     private const int MaxCommandOutputCharacters = 2 * 1024 * 1024;
-    private const int RuntimeStateSchemaVersion = 2;
+    private const int RuntimeStateSchemaVersion = 3;
     private const int MaxRuntimeStateBytes = 4 * 1024 * 1024;
     private const int MaxJavaReleaseBytes = 64 * 1024;
     private const string RuntimeStateFileName = ".portable-runtime.json";
