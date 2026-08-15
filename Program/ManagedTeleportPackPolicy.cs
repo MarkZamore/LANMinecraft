@@ -54,10 +54,10 @@ internal static class ManagedTeleportPackPolicy
         ArgumentNullException.ThrowIfNull(instance);
         if (!string.Equals(descriptor.MinecraftVersion, "1.21.1", StringComparison.Ordinal) ||
             descriptor.Loader.Type != PackLoaderKind.NeoForge ||
-            !string.Equals(descriptor.Loader.Version, "21.1.235", StringComparison.Ordinal))
+            !string.Equals(descriptor.Loader.Version, "21.1.244", StringComparison.Ordinal))
         {
             throw Unsupported(
-                $"expected Minecraft 1.21.1 with NeoForge 21.1.235, found " +
+                $"expected Minecraft 1.21.1 with NeoForge 21.1.244, found " +
                 $"{descriptor.MinecraftVersion} {descriptor.Loader.Type} {descriptor.Loader.Version}");
         }
 
