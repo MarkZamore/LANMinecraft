@@ -2926,6 +2926,7 @@ public partial class MainWindow : Window
             RuntimeProgressBar,
             progress.Stage is RuntimePreparationStage.Checking or
                 RuntimePreparationStage.Downloading or
+                RuntimePreparationStage.InstallingJava or
                 RuntimePreparationStage.InstallingLoader or
                 RuntimePreparationStage.Verifying);
         var phase = progress.PhaseCount > 1 &&
@@ -2933,21 +2934,26 @@ public partial class MainWindow : Window
                     progress.PhaseIndex <= progress.PhaseCount
             ? $" {progress.PhaseIndex}/{progress.PhaseCount}"
             : string.Empty;
-        var runtimeSpeed = progress.Stage == RuntimePreparationStage.Downloading && progress.TotalBytes > 0
-            ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.PhaseIndex}/{progress.PhaseCount}")
+        var isByteStage = progress.Stage is RuntimePreparationStage.Downloading or
+            RuntimePreparationStage.InstallingJava;
+        var runtimeSpeed = isByteStage && progress.TotalBytes > 0
+            ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.PhaseIndex}/{progress.PhaseCount}")
             : 0;
-        if (progress.Stage != RuntimePreparationStage.Downloading) _runtimeRate.Reset();
+        if (!isByteStage) _runtimeRate.Reset();
         RuntimeProgressText.Text = progress.Stage switch
         {
             RuntimePreparationStage.Downloading when progress.TotalBytes > 0 =>
                 $"Скачивание файлов{phase}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
             RuntimePreparationStage.Downloading => $"Скачивание файлов{phase}",
+            RuntimePreparationStage.InstallingJava when progress.TotalBytes > 0 =>
+                $"{progress.Message}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
             RuntimePreparationStage.InstallingLoader => progress.Message + phase,
             _ => progress.Message
         };
         RuntimeProgressBar.IsIndeterminate = progress.Fraction is null &&
                                              progress.Stage is RuntimePreparationStage.Checking or
                                                  RuntimePreparationStage.Downloading or
+                                                 RuntimePreparationStage.InstallingJava or
                                                  RuntimePreparationStage.InstallingLoader or
                                                  RuntimePreparationStage.Verifying;
         if (progress.Fraction is not null)

@@ -51,6 +51,7 @@ foreach ($property in $state.properties.PSObject.Properties) {
 $srgJar = Join-Path $runtimeRoot "libraries\net\minecraft\client\1.21.1-20240808.144430\client-1.21.1-20240808.144430-srg.jar"
 $clientJar = Join-Path $runtimeRoot "versions\1.21.1\1.21.1.jar"
 $ftbJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\ftb-chunks-neoforge-2101.1.14.jar"
+$solarJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\SolarFluxReborn-1.21.1-21.1.8.jar"
 $seed = [ordered]@{
     "lanShareScreenClasses"        = "net/minecraft/client/gui/screens/ShareToLanScreen,foe"
     "lanShareInitMethods"          = "init,aT_"
@@ -80,6 +81,9 @@ $seed = [ordered]@{
     "ftbTeleportEnabled"           = "true"
     "ftbTeleportClasses"           = "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen`$RowPanel,dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon,dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket"
     "ftbPermissionMethods"         = "hasPermissions"
+    "solarFluxSyncEnabled"         = "true"
+    "solarFluxPackClasses"         = "org/zeith/solarflux/client/SolarFluxResourcePack"
+    "solarFluxSyncMethods"         = "init,listResources,getNamespaces,getResource"
 }
 foreach ($key in $seed.Keys) {
     if (-not $properties.Contains($key)) { $properties[$key] = $seed[$key] }
@@ -94,7 +98,8 @@ foreach ($extra in @(
     @{ Jar = $clientJar; Class = "foe" },
     @{ Jar = $ftbJar;    Class = 'dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel' },
     @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon" },
-    @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket" }
+    @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket" },
+    @{ Jar = $solarJar;  Class = "org/zeith/solarflux/client/SolarFluxResourcePack" }
 )) {
     if (-not (Test-Path -LiteralPath $extra.Jar -PathType Leaf)) { continue }
     $known = $targets | Where-Object { $_.ClassName -eq $extra.Class }
