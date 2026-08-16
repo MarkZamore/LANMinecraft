@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace Minecraft;
 
@@ -97,9 +97,14 @@ public sealed class PortableIdentity
     public DateTimeOffset CreatedAtUtc { get; set; }
 }
 
+/// <summary>
+/// Who this machine is, in both currencies: the Steam account other launchers
+/// address, and the Minecraft UUID that names progress inside worlds. There is
+/// deliberately no single "identity id" any more - the two are not the same
+/// value, and the compiler should say which one a call site means.
+/// </summary>
 public sealed class LocalIdentityContext
 {
-    public string IdentityId { get; set; } = "";
     public string IdentityName { get; set; } = "";
     public string MinecraftUuid { get; set; } = "";
     public string SessionAccessToken { get; set; } = "";

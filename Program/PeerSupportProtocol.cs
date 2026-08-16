@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -12,7 +12,9 @@ namespace Minecraft;
 internal static class PeerSupportProtocol
 {
     public const string UpgradeProtocolName = "MinecraftPortableDiagnostics";
-    public const int ProtocolVersion = 1;
+
+    /// <summary>2 = identities are SteamID64; 1 was the Minecraft UUID over TLS.</summary>
+    public const int ProtocolVersion = 2;
     public const int MaxFramePayloadBytes = 256 * 1024;
     public const int HeaderSize = 68;
     public const uint MaxLogicalStreamId = 1_000_000;
@@ -102,7 +104,7 @@ internal static class PeerSupportProtocol
             hello.StartedAtUtc > referenceTime.AddDays(7) ||
             !TryNormalizeIdentity(hello.SenderIdentityId, out var senderIdentity) ||
             !TryNormalizeIdentity(hello.RecipientIdentityId, out var recipientIdentity) ||
-            senderIdentity == recipientIdentity)
+            string.Equals(senderIdentity, recipientIdentity, StringComparison.Ordinal))
         {
             throw new InvalidDataException(
                 "The diagnostics hello identity is invalid.");
@@ -376,16 +378,12 @@ internal static class PeerSupportProtocol
         }
     }
 
-    private static bool TryNormalizeIdentity(string? value, out Guid identity)
-    {
-        if (Guid.TryParse(value, out identity) && identity != Guid.Empty)
-        {
-            return true;
-        }
-
-        identity = Guid.Empty;
-        return false;
-    }
+    /// <summary>
+    /// Identities on the wire are SteamID64s: they authorise the session and
+    /// they name a directory under SupportLogs, so nothing else is accepted.
+    /// </summary>
+    private static bool TryNormalizeIdentity(string? value, out string identity) =>
+        SteamId64.TryNormalize(value, out identity);
 
     private static bool TryCompress(byte[] payload, out byte[] compressed)
     {

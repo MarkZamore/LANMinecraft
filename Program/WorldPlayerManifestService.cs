@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -255,7 +255,7 @@ public sealed class WorldPlayerManifestService
     {
         if (identity is null) return null;
         if (Guid.TryParse(identity.MinecraftUuid, out var minecraftUuid)) return minecraftUuid;
-        return Guid.TryParse(identity.IdentityId, out var identityUuid) ? identityUuid : null;
+        return Guid.TryParse(identity.MinecraftUuid, out var identityUuid) ? identityUuid : null;
     }
 
     private static string HashFile(string path)
