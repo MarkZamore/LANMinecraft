@@ -574,6 +574,9 @@ public partial class MainWindow : Window
     private WorldMetadataContext? CreateWorldMetadataContext()
     {
         var owner = GetActiveLocalOwner();
+        var ownerSteamId = _identityService?.IsBound == true
+            ? RequireIdentityService().ResolveContext(RequireSettings()).SteamId64.ToString()
+            : string.Empty;
         if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
         {
             return null;
@@ -585,7 +588,8 @@ public partial class MainWindow : Window
             BuildRelativePath = build.RelativePath,
             PackHash = _localPackHash,
             OwnerIdentityId = owner.id,
-            OwnerIdentityName = owner.name
+            OwnerIdentityName = owner.name,
+            OwnerSteamId64 = ownerSteamId
         };
     }
 
@@ -598,12 +602,14 @@ public partial class MainWindow : Window
                 path,
                 metadataContext.OwnerIdentityId,
                 metadataContext.OwnerIdentityName,
-                overwriteExistingOwner: false);
+                overwriteExistingOwner: false,
+                ownerSteamId64: metadataContext.OwnerSteamId64);
             _ = RequireWorldMetadata().TryWriteCurrentHolderMetadata(
                 path,
                 metadataContext.OwnerIdentityId,
                 metadataContext.OwnerIdentityName,
-                transferred: false);
+                transferred: false,
+                holderSteamId64: metadataContext.OwnerSteamId64);
         }
 
         var buildName = string.IsNullOrWhiteSpace(metadata?.BuildName)
