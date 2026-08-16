@@ -212,20 +212,19 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     [Fact]
-    public void VoiceSettingsXaml_ContainsDiagnosticControlsAtTheEnd()
+    public void MainWindowXaml_HostsTheDiagnosticsPanelInItsOwnColumn()
     {
-        var xamlPath = FindRepositoryFile(
-            "Program",
-            "VoiceSettingsWindow.xaml");
+        var xamlPath = FindRepositoryFile("Program", "MainWindow.xaml");
         var document = XDocument.Load(xamlPath);
         XNamespace presentation =
             "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         XNamespace x =
             "http://schemas.microsoft.com/winfx/2006/xaml";
 
-        Assert.Contains(
-            document.Descendants(presentation + "TextBlock"),
-            element => (string?)element.Attribute("Text") == "Диагностика");
+        var title = document
+            .Descendants(presentation + "TextBlock")
+            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Диагностика");
+        Assert.NotNull(title);
         Assert.Contains(
             document.Descendants(presentation + "TextBlock"),
             element => (string?)element.Attribute("Text") == "Передавать логи");
@@ -233,25 +232,21 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             document.Descendants(),
             element =>
                 element.Name.LocalName == "CenteredDropDown" &&
-                (string?)element.Attribute(x + "Name") ==
-                "DiagnosticLogTargetComboBox");
+                (string?)element.Attribute(x + "Name") == "DiagnosticLogTargetComboBox");
+        Assert.Contains(
+            document.Descendants(presentation + "TextBlock"),
+            element => (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText");
         Assert.Contains(
             document.Descendants(presentation + "Button"),
             element =>
-                (string?)element.Attribute(x + "Name") ==
-                "OpenSupportLogsButton" &&
-                (string?)element.Attribute("Content") ==
-                "Открыть полученные логи");
+                (string?)element.Attribute(x + "Name") == "OpenSupportLogsButton" &&
+                (string?)element.Attribute("Content") == "Открыть полученные логи");
 
-        var diagnosticSection = document
-            .Descendants(presentation + "TextBlock")
-            .Single(element =>
-                (string?)element.Attribute("Text") == "Диагностика")
-            .Parent;
-        Assert.NotNull(diagnosticSection);
-        Assert.DoesNotContain(
-            diagnosticSection.ElementsAfterSelf(),
-            element => element.Name.LocalName is "StackPanel" or "Grid");
+        // The panel owns the right-hand column, so it never competes for space
+        // with the play/pack controls.
+        var panel = title.Parent;
+        Assert.NotNull(panel);
+        Assert.Equal("2", (string?)panel.Attribute("Grid.Column"));
     }
 
     private static string FindRepositoryFile(params string[] relativeParts)
