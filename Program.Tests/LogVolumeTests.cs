@@ -106,7 +106,9 @@ public sealed class LogVolumeTests : IDisposable
     public void TheReportStore_IsBoundedToSomethingASessionCanJustify()
     {
         Assert.True(BugReportService.MaxStoredBytes <= 256L * 1024 * 1024);
-        Assert.True(BugReportService.MaxArchiveBytes <= 32L * 1024 * 1024);
+        // Two ten-mebibyte log tails compress to a fraction of this; the cap is
+        // the point where a report stops being diagnostics and becomes a dump.
+        Assert.True(BugReportService.MaxArchiveBytes <= 64L * 1024 * 1024);
         Assert.Equal(TimeSpan.FromDays(30), BugReportService.Retention);
     }
 

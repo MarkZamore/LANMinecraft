@@ -67,9 +67,22 @@ public sealed record BugReportAck
 public sealed class BugReportService : IPortableProtocolHandler
 {
     /// <summary>Enough of a session to explain a crash, small enough to send in seconds.</summary>
-    internal const long MaxArchiveBytes = 24L * 1024 * 1024;
+    internal const long MaxArchiveBytes = 64L * 1024 * 1024;
     internal const int MaxMessageCharacters = 4000;
-    private const int MaxLogTailBytes = 2 * 1024 * 1024;
+
+    /// <summary>
+    /// The two logs that actually explain a session - the launcher's own and
+    /// the running game's. Ten mebibytes is deep enough to reach past a modded
+    /// startup into what the player was doing; log text compresses roughly ten
+    /// times, so the report still travels in seconds.
+    /// </summary>
+    private const int MaxLiveLogTailBytes = 10 * 1024 * 1024;
+
+    /// <summary>
+    /// Everything else in the bundle is supporting evidence: a rotated archive
+    /// or a crash report, where the interesting part is at the end and short.
+    /// </summary>
+    private const int MaxSupportingLogTailBytes = 2 * 1024 * 1024;
     private static readonly TimeSpan SendTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>Reports older than this have been overtaken by whatever happened since.</summary>
@@ -272,8 +285,11 @@ public sealed class BugReportService : IPortableProtocolHandler
         string message,
         string? environmentJson)
     {
-        var entries = new List<(string Name, string Path)>();
-        if (File.Exists(_paths.LogFile)) entries.Add(("launcher/logs.log", _paths.LogFile));
+        var entries = new List<(string Name, string Path, int MaxBytes)>();
+        if (File.Exists(_paths.LogFile))
+        {
+            entries.Add(("launcher/logs.log", _paths.LogFile, MaxLiveLogTailBytes));
+        }
 
         var instance = _instanceDirectoryProvider();
         if (!string.IsNullOrWhiteSpace(instance) && Directory.Exists(instance))
@@ -282,14 +298,17 @@ public sealed class BugReportService : IPortableProtocolHandler
             if (Directory.Exists(logs))
             {
                 var latest = Path.Combine(logs, "latest.log");
-                if (File.Exists(latest)) entries.Add(("game/latest.log", latest));
+                if (File.Exists(latest))
+                {
+                    entries.Add(("game/latest.log", latest, MaxLiveLogTailBytes));
+                }
                 foreach (var archived in Directory.EnumerateFiles(logs, "*.log.gz")
                              .Select(path => new FileInfo(path))
                              .Where(file => file.LastWriteTimeUtc > _timeProvider.GetUtcNow().AddDays(-1))
                              .OrderByDescending(file => file.LastWriteTimeUtc)
                              .Take(2))
                 {
-                    entries.Add(($"game/{archived.Name}", archived.FullName));
+                    entries.Add(($"game/{archived.Name}", archived.FullName, MaxSupportingLogTailBytes));
                 }
             }
 
@@ -302,7 +321,7 @@ public sealed class BugReportService : IPortableProtocolHandler
                              .OrderByDescending(file => file.LastWriteTimeUtc)
                              .Take(3))
                 {
-                    entries.Add(($"crash-reports/{crash.Name}", crash.FullName));
+                    entries.Add(($"crash-reports/{crash.Name}", crash.FullName, MaxSupportingLogTailBytes));
                 }
             }
         }
@@ -316,11 +335,11 @@ public sealed class BugReportService : IPortableProtocolHandler
                 WriteTextEntry(zip, "environment.json", environmentJson);
                 written.Add("environment.json");
             }
-            foreach (var (name, path) in entries)
+            foreach (var (name, path, maxBytes) in entries)
             {
                 try
                 {
-                    var text = ReadSanitizedTail(path);
+                    var text = ReadSanitizedTail(path, maxBytes);
                     if (text.Length == 0) continue;
                     WriteTextEntry(zip, name, text);
                     written.Add(name);
@@ -360,13 +379,16 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// The end of a log, sanitised. A crash is explained by the last pages, and
     /// a whole modded session is megabytes of startup nobody reads.
     /// </summary>
-    private string ReadSanitizedTail(string path)
+    private string ReadSanitizedTail(string path, int maxBytes)
     {
         using var stream = new FileStream(
             path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        if (stream.Length > MaxLogTailBytes) stream.Seek(-MaxLogTailBytes, SeekOrigin.End);
+        var truncated = stream.Length > maxBytes;
+        if (truncated) stream.Seek(-maxBytes, SeekOrigin.End);
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
         var builder = new StringBuilder();
+        // The first line after a seek is almost always half a line.
+        if (truncated) reader.ReadLine();
         while (reader.ReadLine() is { } line)
         {
             var sanitized = _sanitizer.SanitizeLine(line);
