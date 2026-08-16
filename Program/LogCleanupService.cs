@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -7,6 +7,27 @@ namespace Minecraft;
 public static class LogCleanupService
 {
     private static readonly TimeSpan DiagnosticRetention = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// The running executable's name. It is both the single-file extraction
+    /// directory and the process name, and it changed when the launcher was
+    /// renamed - which is why the previous name's cache was never swept.
+    /// </summary>
+    private static readonly string ExecutableName =
+        Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "LANMinecraft";
+
+    /// <summary>
+    /// Age alone does not bound anything: a week of modded sessions is
+    /// hundreds of megabytes of logs. Each store also gets a size budget, and
+    /// the oldest files go first once it is exceeded.
+    /// </summary>
+    private const long LauncherLogBudgetBytes = 16L * 1024 * 1024;
+    private const long InstanceLogBudgetBytes = 64L * 1024 * 1024;
+
+    /// <summary>The game's own DEBUG copy of a session; see GameLogConfigurationService.</summary>
+    private static readonly string[] DiscardedGameLogNames = ["debug.log"];
+    private static readonly string[] SessionDiagnosticDirectories = ["logs", "debug", "crash-reports"];
+    private const string DiscardedGameLogPattern = "debug-*.log.gz";
 
     public static void RunCleanup(AppPaths paths)
     {
@@ -21,6 +42,7 @@ public static class LogCleanupService
         {
         }
         CleanupDotNetExtractionCache();
+        CleanupRenamedExtractionRoots();
     }
 
     public static void ScheduleCurrentExtractionCleanup(AppPaths paths, int processId)
@@ -35,7 +57,7 @@ public static class LogCleanupService
                           $"$processId = {processId}\r\n" +
                           $"$extractionDir = '{escapedExtractionDir}'\r\n" +
                           "function Test-ExtractionInUse {\r\n" +
-                          "  foreach ($candidate in @(Get-Process -Name 'Minecraft' -ErrorAction SilentlyContinue)) {\r\n" +
+                          $"  foreach ($candidate in @(Get-Process -Name '{ExecutableName}' -ErrorAction SilentlyContinue)) {{\r\n" +
                           "    if ($candidate.Id -eq $processId) { continue }\r\n" +
                           "    try {\r\n" +
                           "      foreach ($module in @($candidate.Modules)) {\r\n" +
@@ -118,6 +140,42 @@ public static class LogCleanupService
             catch
             {
             }
+        }
+
+        EnforceSizeBudget(
+            EnumerateFilesSafe(directory, "logs-*.log", SearchOption.TopDirectoryOnly),
+            LauncherLogBudgetBytes);
+    }
+
+    /// <summary>
+    /// Deletes the oldest files until the rest fit the budget. Nothing else
+    /// bounds a store whose files all arrived within the retention window.
+    /// </summary>
+    private static void EnforceSizeBudget(IEnumerable<FileInfo> files, long budgetBytes)
+    {
+        var ordered = files
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .ToArray();
+        var used = 0L;
+        foreach (var file in ordered)
+        {
+            used += file.Length;
+            if (used > budgetBytes) DeleteFile(file.FullName);
+        }
+    }
+
+    private static FileInfo[] EnumerateFilesSafe(string directory, string pattern, SearchOption option)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(directory, pattern, option)
+                .Select(path => new FileInfo(path))
+                .Where(file => file.Exists)
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 
@@ -234,7 +292,7 @@ public static class LogCleanupService
     internal static void RetainRecentSessionDiagnostics(string gameDirectory)
     {
         var cutoff = DateTime.UtcNow - DiagnosticRetention;
-        foreach (var directoryName in new[] { "logs", "debug", "crash-reports" })
+        foreach (var directoryName in SessionDiagnosticDirectories)
         {
             var directory = Path.Combine(gameDirectory, directoryName);
             if (!Directory.Exists(directory)) continue;
@@ -251,6 +309,32 @@ public static class LogCleanupService
                 {
                 }
             }
+        }
+
+        DiscardGameDebugLogs(Path.Combine(gameDirectory, "logs"));
+        EnforceSizeBudget(
+            SessionDiagnosticDirectories
+                .Select(name => Path.Combine(gameDirectory, name))
+                .Where(Directory.Exists)
+                .SelectMany(directory => EnumerateFilesSafe(directory, "*", SearchOption.AllDirectories)),
+            InstanceLogBudgetBytes);
+    }
+
+    /// <summary>
+    /// The game's DEBUG copy of a session, left over from before the launcher
+    /// configured logging - tens of megabytes that latest.log and the crash
+    /// report already cover.
+    /// </summary>
+    private static void DiscardGameDebugLogs(string logsDirectory)
+    {
+        if (!Directory.Exists(logsDirectory)) return;
+        foreach (var name in DiscardedGameLogNames)
+        {
+            DeleteFile(Path.Combine(logsDirectory, name));
+        }
+        foreach (var file in EnumerateFilesSafe(logsDirectory, DiscardedGameLogPattern, SearchOption.TopDirectoryOnly))
+        {
+            DeleteFile(file.FullName);
         }
     }
 
@@ -272,7 +356,7 @@ public static class LogCleanupService
     {
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var rootWithSlash = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var process in Process.GetProcessesByName("Minecraft"))
+        foreach (var process in Process.GetProcessesByName(ExecutableName))
         {
             using (process)
             {
@@ -323,7 +407,28 @@ public static class LogCleanupService
         return string.IsNullOrWhiteSpace(directoryName) ? null : Path.GetFullPath(Path.Combine(root, directoryName));
     }
 
-    private static string GetExtractionRoot() => Path.Combine(Path.GetTempPath(), ".net", "Minecraft");
+    private static string GetExtractionRoot() =>
+        Path.Combine(Path.GetTempPath(), ".net", ExecutableName);
+
+    /// <summary>
+    /// The single-file host extracts under a directory named after the
+    /// executable, so a rename leaves the whole previous tree behind.
+    /// </summary>
+    private static void CleanupRenamedExtractionRoots()
+    {
+        var dotNetRoot = Path.Combine(Path.GetTempPath(), ".net");
+        if (!Directory.Exists(dotNetRoot)) return;
+        foreach (var directory in Directory.EnumerateDirectories(dotNetRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            var name = Path.GetFileName(directory);
+            if (string.Equals(name, ExecutableName, StringComparison.OrdinalIgnoreCase) ||
+                !name.StartsWith("Minecraft", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            DeleteDirectory(directory);
+        }
+    }
 
     private static void DeleteFile(string path)
     {

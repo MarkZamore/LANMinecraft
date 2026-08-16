@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What the game logs, and how much of it survives.
+
+  Minecraft's own configuration keeps a full DEBUG file (logs/debug.log) that a
+  modded pack fills with tens of megabytes every session - a single chatty mod
+  produced 15 MB of it in one launch here, and none of it is read unless
+  something has already gone wrong. This drops that file, keeps latest.log at
+  INFO with the same layout players and crash reports expect, and bounds the
+  rollovers so a long-running install cannot grow without limit.
+
+  If log4j cannot parse this file it falls back to its own default
+  configuration, so a mistake here costs formatting, never a launch.
+-->
+<Configuration status="WARN" packages="com.mojang.util">
+    <Appenders>
+        <Console name="SysOut" target="SYSTEM_OUT">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %minecraftFormatting{%msg}{strip}%n%tEx"/>
+        </Console>
+        <Queue name="ServerGuiConsole" ignoreExceptions="true">
+            <PatternLayout pattern="[%d{HH:mm:ss} %level]: %minecraftFormatting{%msg}{strip}%n%tEx"/>
+        </Queue>
+        <RollingRandomAccessFile name="File" fileName="logs/latest.log" filePattern="logs/%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %minecraftFormatting{%msg}{strip}%n%tEx"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <OnStartupTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="32 MB"/>
+            </Policies>
+            <!-- Keep a handful of recent sessions, not the whole history. -->
+            <DefaultRolloverStrategy max="5" fileIndex="min">
+                <Delete basePath="logs" maxDepth="1">
+                    <IfFileName glob="*.log.gz"/>
+                    <IfLastModified age="7d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+    </Appenders>
+    <Loggers>
+        <!-- Mixin's own DEBUG stream was the second largest contributor. -->
+        <Logger level="INFO" name="mixin"/>
+        <Logger level="INFO" name="net.minecraft.server.MinecraftServer"/>
+        <Root level="INFO">
+            <AppenderRef ref="SysOut" level="INFO"/>
+            <AppenderRef ref="File"/>
+            <AppenderRef ref="ServerGuiConsole" level="INFO"/>
+        </Root>
+    </Loggers>
+</Configuration>
