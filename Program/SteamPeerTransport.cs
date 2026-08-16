@@ -41,6 +41,14 @@ public sealed class SteamPeerTransport : IPeerTransport
     private const int SendRateMaxBytesPerSecond = 256 * 1024 * 1024;
     private const int SendRateMinBytesPerSecond = 8 * 1024 * 1024;
     private const int SendBufferBytes = 16 * 1024 * 1024;
+
+    // The receiving end sets the real ceiling. Steam will not let a sender get
+    // further ahead than the receiver has buffered for, so a 512 KB default
+    // receive buffer caps a relayed transfer at about that much per round trip
+    // - a few MB/s at relay latency, however high the send rate is allowed to
+    // go. Raising the send rate alone was half an answer.
+    private const int RecvBufferBytes = 16 * 1024 * 1024;
+    private const int RecvBufferMessages = 1024;
     private const int ConnectionTimeoutMilliseconds = 10_000;
 
     private readonly SteamClientService _client;
@@ -177,6 +185,8 @@ public sealed class SteamPeerTransport : IPeerTransport
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, SendRateMaxBytesPerSecond);
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, SendRateMinBytesPerSecond);
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendBufferSize, SendBufferBytes);
+        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_RecvBufferSize, RecvBufferBytes);
+        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_RecvBufferMessages, RecvBufferMessages);
         SetGlobalInt32(
             ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,
             Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_All);
@@ -398,7 +408,13 @@ public sealed class SteamPeerTransport : IPeerTransport
         var route = SteamNetworkingSockets.GetConnectionInfo(connection, out var info)
             ? info.m_idPOPRelay.m_SteamNetworkingPOPID == 0 ? "direct" : "relay"
             : "unknown route";
-        return $"{route}, ping {status.m_nPing} ms";
+        // The rate Steam has actually settled on, which is the only honest
+        // answer to "how fast can this go": the ceiling we ask for is a
+        // permission, the estimator decides what the link really carries.
+        var rate = status.m_nSendRateBytesPerSecond > 0
+            ? $", {status.m_nSendRateBytesPerSecond / (1024d * 1024d):F1} MB/s"
+            : string.Empty;
+        return $"{route}, ping {status.m_nPing} ms{rate}";
     }
 
     public async ValueTask DisposeAsync()
