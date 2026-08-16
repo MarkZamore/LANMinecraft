@@ -300,8 +300,8 @@ public sealed class WorldPlayerProfileService
         {
             var manifestPath = Path.Combine(worldPath, WorldPlayerManifestService.ManifestFileName);
             if (!File.Exists(manifestPath)) return;
-            if (_manifests.Read(worldPath)?.SchemaVersion is not
-                WorldPlayerManifestService.MinimumSupportedSchemaVersion)
+            if (_manifests.Read(worldPath) is not { } previous ||
+                previous.SchemaVersion >= PortableFormat.SchemaVersion)
             {
                 return;
             }
