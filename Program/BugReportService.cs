@@ -78,6 +78,9 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// </summary>
     private const int MaxLiveLogTailBytes = 10 * 1024 * 1024;
 
+    /// <summary>Small enough that the progress line moves, large enough to be free.</summary>
+    private const int SendChunkBytes = 256 * 1024;
+
     /// <summary>
     /// Everything else in the bundle is supporting evidence: a rotated archive
     /// or a crash report, where the interesting part is at the end and short.
@@ -122,7 +125,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     }
 
     /// <summary>Raised when a report arrives, so the window can say so.</summary>
-    public event EventHandler<string>? ReportReceived;
+    public event EventHandler<BugReportArrival>? ReportReceived;
 
     string IPortableProtocolHandler.ProtocolName => BugReportManifest.ProtocolName;
 
@@ -137,6 +140,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     public async Task<BugReportManifest> SendAsync(
         SteamId64 recipient,
         string message,
+        IProgress<BugReportProgress>? progress = null,
         CancellationToken token = default)
     {
         if (!recipient.IsValid) throw new ArgumentException("The recipient is not a Steam account.", nameof(recipient));
@@ -194,7 +198,21 @@ public sealed class BugReportService : IPortableProtocolHandler
 
             await using (var archive = File.OpenRead(archivePath))
             {
-                await archive.CopyToAsync(connection.Stream, timeout.Token).ConfigureAwait(false);
+                // Copied by hand rather than with CopyToAsync so the window can
+                // say how much of it has gone: a report is megabytes over a
+                // Steam relay, and silence for a minute reads as a hang.
+                var buffer = new byte[SendChunkBytes];
+                var sent = 0L;
+                progress?.Report(new BugReportProgress(0, info.Length));
+                while (true)
+                {
+                    var read = await archive.ReadAsync(buffer, timeout.Token).ConfigureAwait(false);
+                    if (read == 0) break;
+                    await connection.Stream.WriteAsync(buffer.AsMemory(0, read), timeout.Token)
+                        .ConfigureAwait(false);
+                    sent += read;
+                    progress?.Report(new BugReportProgress(sent, info.Length));
+                }
             }
             await connection.Stream.FlushAsync(timeout.Token).ConfigureAwait(false);
 
@@ -250,7 +268,12 @@ public sealed class BugReportService : IPortableProtocolHandler
                 token).ConfigureAwait(false);
             _logger.Info($"Bug report {manifest.ReportId} received from {context.PeerId} into {directory}.");
             PruneStoredReports();
-            ReportReceived?.Invoke(this, directory);
+            ReportReceived?.Invoke(this, new BugReportArrival(
+                directory,
+                string.IsNullOrWhiteSpace(manifest.SenderPlayerName)
+                    ? manifest.SenderPersonaName
+                    : manifest.SenderPlayerName,
+                manifest.ArchiveBytes));
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or InvalidOperationException)
         {
@@ -609,6 +632,12 @@ public sealed class BugReportService : IPortableProtocolHandler
 }
 
 /// <summary>What the launcher knows about itself when a report is written.</summary>
+/// <summary>How much of a report has left this machine, and how much there is.</summary>
+public sealed record BugReportProgress(long SentBytes, long TotalBytes);
+
+/// <summary>A report that just arrived: where it is, who sent it, how big it was.</summary>
+public sealed record BugReportArrival(string Directory, string SenderName, long ArchiveBytes);
+
 public sealed record BugReportContext(
     SteamId64 SteamId64,
     string PersonaName,

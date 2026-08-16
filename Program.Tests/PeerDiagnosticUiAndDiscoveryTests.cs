@@ -118,9 +118,6 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .SingleOrDefault(element => (string?)element.Attribute("Text") == "Сообщить о проблеме");
         Assert.NotNull(title);
         Assert.Contains(
-            document.Descendants(presentation + "TextBlock"),
-            element => (string?)element.Attribute("Text") == "Кому отправить");
-        Assert.Contains(
             document.Descendants(),
             element =>
                 element.Name.LocalName == "CenteredDropDown" &&
@@ -133,6 +130,14 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             element =>
                 (string?)element.Attribute(x + "Name") == "SendBugReportButton" &&
                 (string?)element.Attribute("Content") == "Отправить отчёт");
+        // Nothing in the panel explains Steam or offers a folder to browse:
+        // the player picks a friend, says what happened, and presses send.
+        Assert.DoesNotContain(
+            document.Descendants(presentation + "Button"),
+            element => (string?)element.Attribute(x + "Name") == "OpenSupportLogsButton");
+        Assert.DoesNotContain(
+            document.Descendants(presentation + "TextBlock"),
+            element => ((string?)element.Attribute("Text"))?.Contains("через Steam", StringComparison.Ordinal) == true);
         Assert.Contains(
             document.Descendants(presentation + "TextBox"),
             element => (string?)element.Attribute(x + "Name") == "BugReportMessageTextBox");
