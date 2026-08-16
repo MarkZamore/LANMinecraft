@@ -31,13 +31,8 @@ public sealed class AppSettings
     public string SelectedWorldRelativePath { get; set; } = "";
 }
 
-/// <summary>Who diagnostics are streamed to: a Steam friend, or nobody.</summary>
-public sealed record DiagnosticLogTargetOption(SteamId64 SteamId, string DisplayName)
-{
-    public static DiagnosticLogTargetOption Nobody { get; } = new(SteamId64.None, "Никому");
-
-    public bool IsNobody => !SteamId.IsValid;
-}
+/// <summary>A Steam friend a report can be sent to.</summary>
+public sealed record DiagnosticLogTargetOption(SteamId64 SteamId, string DisplayName);
 
 public sealed class WaypointProviderAnnouncement
 {
