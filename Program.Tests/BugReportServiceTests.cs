@@ -53,7 +53,7 @@ public sealed class BugReportServiceTests : IDisposable
             timeout.Token);
 
         Assert.True(SteamId64.TryFrom(ReceiverSteamId, out var recipient));
-        var manifest = await sender.SendAsync(recipient, "Меня выкинуло из игры", timeout.Token);
+        var manifest = await sender.SendAsync(recipient, "Меня выкинуло из игры", progress: null, timeout.Token);
 
         Assert.Equal(SenderSteamId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             manifest.SenderSteamId64);
@@ -93,7 +93,7 @@ public sealed class BugReportServiceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(instance, "logs", "latest.log"), "session\n", timeout.Token);
 
         Assert.True(SteamId64.TryFrom(ReceiverSteamId, out var recipient));
-        await sender.SendAsync(recipient, "   ", timeout.Token);
+        await sender.SendAsync(recipient, "   ", progress: null, timeout.Token);
 
         var report = await WaitForReportAsync(receiver, timeout.Token);
         Assert.Contains("(nothing)", File.ReadAllText(Path.Combine(report, "README.md")),
@@ -122,7 +122,7 @@ public sealed class BugReportServiceTests : IDisposable
         await File.WriteAllTextAsync(senderPaths.LogFile, "launcher started\n", timeout.Token);
 
         Assert.True(SteamId64.TryFrom(ReceiverSteamId, out var recipient));
-        await sender.SendAsync(recipient, "crash", timeout.Token);
+        await sender.SendAsync(recipient, "crash", progress: null, timeout.Token);
 
         var report = await WaitForReportAsync(receiver, timeout.Token);
         var game = File.ReadAllText(Path.Combine(report, "game", "latest.log"));
