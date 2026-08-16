@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace Minecraft;
 
@@ -66,13 +66,20 @@ public static class MemorySizingService
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 
+    /// <summary>
+    /// What a machine can lend the game without starving itself. Limitless 8
+    /// needs about 10 GB of heap just to open a world; on 16 GB of RAM the old
+    /// suggestion of 8 ran a player out of memory before the data packs had
+    /// loaded, and Windows plus Steam are content with the four that 12 leaves.
+    /// </summary>
     public static int GetRecommendedDefaultMemoryGb(ulong totalPhysicalMemoryBytes)
     {
         var installedGb = (int)Math.Round(totalPhysicalMemoryBytes / BytesPerGb, MidpointRounding.AwayFromZero);
         var recommended = installedGb switch
         {
             < 12 => 6,
-            < 24 => 8,
+            < 16 => 8,
+            < 24 => 12,
             _ => 16
         };
         return Math.Clamp(recommended, MinMemoryGb, GetAllowedMaxMemoryGb(totalPhysicalMemoryBytes));

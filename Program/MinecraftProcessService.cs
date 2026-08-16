@@ -181,7 +181,18 @@ public sealed class MinecraftProcessService
             new("-Djava.net.preferIPv4Stack=true"),
             new("-Djava.net.preferIPv6Addresses=false"),
             new($"-Djava.io.tmpdir={javaTempDir}"),
-            new($"-Dminecraft.portable.skin.registry={skinRegistryPath}")
+            new($"-Dminecraft.portable.skin.registry={skinRegistryPath}"),
+            // ModernFix's lazy model loading, as a JVM property. Without it a
+            // player on 8 GB of heap ran out of memory before the world had
+            // finished loading its data packs - the vanilla path holds every
+            // model of 849 mods live at once. It was taken out once on the
+            // suspicion that it live-locked resource loading; a thread dump
+            // later put that on Lightspeed's parallel lookup alone.
+            //
+            // A property rather than the config file because ModernFix rewrites
+            // that file on every launch, so a pack copy can never reach an
+            // instance without the sync flagging it as a local edit.
+            new("-Dmodernfix.config.mixin.perf.dynamic_resources=true")
         };
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
