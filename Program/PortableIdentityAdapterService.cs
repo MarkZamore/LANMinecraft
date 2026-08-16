@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -9,7 +9,11 @@ namespace Minecraft;
 
 public sealed class PortableIdentityAdapterService : IDisposable
 {
-    private const int StateSchemaVersion = 6;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int AdapterCacheGeneration = 6;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     private readonly AppPaths _paths;
@@ -125,7 +129,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
             }).ToList();
             state = new IdentityAdapterState
             {
-                SchemaVersion = StateSchemaVersion,
+                SchemaVersion = AdapterCacheGeneration,
                 DescriptorHash = runtime.Descriptor.DescriptorHash,
                 TargetRoot = targetRoot,
                 XaeroWaypointBridgeEnabled = enableXaeroWaypointBridge,
@@ -346,7 +350,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         bool enableXaeroWaypointBridge,
         string adapterHash)
     {
-        if (state.SchemaVersion != StateSchemaVersion ||
+        if (state.SchemaVersion != AdapterCacheGeneration ||
             !string.Equals(state.DescriptorHash, runtime.Descriptor.DescriptorHash, StringComparison.Ordinal) ||
             !string.Equals(state.TargetRoot, targetRoot, StringComparison.OrdinalIgnoreCase) ||
             state.XaeroWaypointBridgeEnabled != enableXaeroWaypointBridge ||

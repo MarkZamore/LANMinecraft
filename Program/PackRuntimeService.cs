@@ -23,7 +23,11 @@ public sealed class PackRuntimeService : IDisposable
 {
     // Bumped to 3 when the game moved to the launcher-managed Java 25 runtime:
     // the recorded java path had to be re-resolved for everyone.
-    internal const int RuntimeStateSchemaVersion = 3;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    internal const int RuntimeCacheGeneration = 3;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -358,7 +362,7 @@ public sealed class PackRuntimeService : IDisposable
     {
         var state = new RuntimeState
         {
-            SchemaVersion = RuntimeStateSchemaVersion,
+            SchemaVersion = RuntimeCacheGeneration,
             DescriptorHash = descriptor.DescriptorHash,
             ProfileId = profileId,
             JavaPathRelativePath = ToRelativePath(runtimeRoot, javaPath),
@@ -385,7 +389,7 @@ public sealed class PackRuntimeService : IDisposable
 
     private bool ValidateState(string runtimeRoot, RuntimeState state)
     {
-        if (state.SchemaVersion != RuntimeStateSchemaVersion ||
+        if (state.SchemaVersion != RuntimeCacheGeneration ||
             string.IsNullOrWhiteSpace(state.ProfileId) ||
             state.Files.Count == 0)
         {
@@ -574,7 +578,7 @@ public sealed class PackRuntimeService : IDisposable
 
     private sealed class RuntimeState
     {
-        public int SchemaVersion { get; set; } = RuntimeStateSchemaVersion;
+        public int SchemaVersion { get; set; } = RuntimeCacheGeneration;
         public string DescriptorHash { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public string JavaPathRelativePath { get; set; } = "";

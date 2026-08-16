@@ -11,8 +11,8 @@ namespace Minecraft;
 public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHandler
 {
     public const string ProtocolName = "MinecraftPortableWorld";
-    /// <summary>6 = the header carries Steam accounts; 5 was the VPN era.</summary>
-    public const int ProtocolVersion = 6;
+    /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
+    public const int ProtocolVersion = PortableFormat.ProtocolVersion;
     public const string TransferMessageType = "Transfer";
     public const string ProbeMessageType = "Probe";
     public const string PrepareMessageType = "Prepare";

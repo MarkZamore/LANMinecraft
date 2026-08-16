@@ -80,7 +80,11 @@ public sealed record SupportNetworkMetrics(
 public static partial class SupportDiagnosticSnapshotBuilder
 {
     private const int MaxCommandOutputCharacters = 2 * 1024 * 1024;
-    private const int RuntimeStateSchemaVersion = 3;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int RuntimeStateCacheGeneration = 3;
     private const int MaxRuntimeStateBytes = 4 * 1024 * 1024;
     private const int MaxJavaReleaseBytes = 64 * 1024;
     private const string RuntimeStateFileName = ".portable-runtime.json";
@@ -337,7 +341,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
                     RuntimeStateJsonOptions);
             }
             if (state is null ||
-                state.SchemaVersion != RuntimeStateSchemaVersion ||
+                state.SchemaVersion != RuntimeStateCacheGeneration ||
                 !string.Equals(
                     state.DescriptorHash,
                     descriptor.DescriptorHash,
