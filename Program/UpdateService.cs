@@ -221,7 +221,7 @@ public sealed class UpdateService
         }
 
         var message = lastError?.Message ?? "The update service is unavailable.";
-        return UpdateCheckResult.UpToDate(message);
+        return UpdateCheckResult.Unavailable(message);
     }
 
     public async Task<PreparedUpdate> DownloadUpdateAsync(
@@ -1205,6 +1205,13 @@ public sealed class UpdateCheckResult
     }
 
     public bool IsUpdateAvailable { get; }
+
+    /// <summary>
+    /// True when the check itself failed - no network, GitHub unreachable, a
+    /// manifest that would not parse. It is not the same as being up to date,
+    /// and telling a player it is means they never learn an update exists.
+    /// </summary>
+    public bool IsUnavailable { get; private init; }
     public UpdateManifest? Manifest { get; }
     public Uri? ExecutableDownloadUrl { get; }
     public DeltaPatchManifest? DeltaPatch { get; }
@@ -1212,6 +1219,9 @@ public sealed class UpdateCheckResult
     public string Message { get; }
 
     public static UpdateCheckResult UpToDate(string message = "") => new(false, null, null, null, null, message);
+
+    public static UpdateCheckResult Unavailable(string message) =>
+        new(false, null, null, null, null, message) { IsUnavailable = true };
 
     public static UpdateCheckResult Available(
         UpdateManifest manifest,
