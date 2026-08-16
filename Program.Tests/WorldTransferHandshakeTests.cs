@@ -181,7 +181,7 @@ public sealed class WorldTransferHandshakeTests
             senderPaths.Ensure();
             var senderLogger = new Logger(senderPaths.LogFile);
             var senderProfiles = new WorldPlayerProfileService(senderPaths, senderLogger);
-            var senderIdentity = TestIdentity.CreateContext(senderPaths, "SenderE2E", ServiceFixture.SenderSteamId);
+            var senderIdentity = TestIdentity.CreateContext("SenderE2E", ServiceFixture.SenderSteamId);
             var world = Path.Combine(senderPaths.Worlds, "E2EWorld");
             Directory.CreateDirectory(Path.Combine(world, "region"));
             new NbtFile("", new NbtCompoundTag()).Write(Path.Combine(world, "level.dat"));
@@ -391,7 +391,7 @@ public sealed class WorldTransferHandshakeTests
             var senderTransport = network.CreateTransport(SenderSteamId, "Sender");
             network.MakeFriends(ReceiverSteamId, SenderSteamId);
             var metadata = new WorldMetadataService();
-            var identity = TestIdentity.CreateBound(paths, ReceiverSteamId, "Receiver");
+            var identity = TestIdentity.CreateBound(ReceiverSteamId, "Receiver");
             var profiles = new WorldPlayerProfileService(paths, logger);
             var waypoints = new WaypointSyncService(paths, logger, metadata, receiverTransport);
             var skins = new SkinService(paths, logger, receiverTransport);

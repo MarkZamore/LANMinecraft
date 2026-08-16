@@ -354,7 +354,7 @@ public sealed class WorldPlayerProfileService
         }
         if (!Guid.TryParse(identity.MinecraftUuid, out var minecraftUuid) || minecraftUuid != identityUuid)
         {
-            throw new InvalidDataException("Minecraft UUID does not match Minecraft\\Personal\\UUID.json.");
+            throw new InvalidDataException("Minecraft UUID does not match the profile bound to this Steam account.");
         }
         return identityUuid;
     }

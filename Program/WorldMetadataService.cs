@@ -154,39 +154,49 @@ public sealed class WorldMetadataService
         if (!overwriteExistingOwner &&
             !string.IsNullOrWhiteSpace(metadata.OwnerIdentityId))
         {
-            if (string.Equals(metadata.OwnerIdentityId, normalizedOwnerId, StringComparison.OrdinalIgnoreCase))
-            {
-                var changed = false;
-                if (!string.IsNullOrWhiteSpace(normalizedOwnerName) &&
-                    !string.Equals(metadata.OwnerIdentityName, normalizedOwnerName, StringComparison.Ordinal))
-                {
-                    metadata.OwnerIdentityName = normalizedOwnerName;
-                    changed = true;
-                }
+            var ownerIsLocalPlayer = string.Equals(
+                metadata.OwnerIdentityId, normalizedOwnerId, StringComparison.OrdinalIgnoreCase);
+            var changed = false;
 
-                // The owner UUID stays exactly as it is; only the Steam account
-                // behind it is learned, and only from the owner's own machine.
-                if (normalizedOwnerSteamId.Length != 0 &&
-                    string.IsNullOrWhiteSpace(metadata.OwnerSteamId64))
+            // The name is refreshed only from the owner's own machine.
+            if (ownerIsLocalPlayer &&
+                !string.IsNullOrWhiteSpace(normalizedOwnerName) &&
+                !string.Equals(metadata.OwnerIdentityName, normalizedOwnerName, StringComparison.Ordinal))
+            {
+                metadata.OwnerIdentityName = normalizedOwnerName;
+                changed = true;
+            }
+
+            // The owner UUID stays exactly as it is; only the Steam account
+            // behind it is learned - from the owner's own machine, or from the
+            // table of players who predate Steam, which any machine knows.
+            if (string.IsNullOrWhiteSpace(metadata.OwnerSteamId64))
+            {
+                var learnedSteamId = ownerIsLocalPlayer && normalizedOwnerSteamId.Length != 0
+                    ? normalizedOwnerSteamId
+                    : KnownSteamPlayers.TryGetSteamId(metadata.OwnerIdentityId, out var knownOwner)
+                        ? knownOwner.ToString()
+                        : string.Empty;
+                if (learnedSteamId.Length != 0)
                 {
-                    metadata.OwnerSteamId64 = normalizedOwnerSteamId;
+                    metadata.OwnerSteamId64 = learnedSteamId;
                     if (metadata.SchemaVersion < CurrentSchemaVersion)
                     {
                         metadata.SchemaVersion = CurrentSchemaVersion;
                     }
                     changed = true;
                 }
+            }
 
-                if (changed)
+            if (changed)
+            {
+                try
                 {
-                    try
-                    {
-                        AtomicFile.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, _jsonOptions));
-                    }
-                    catch
-                    {
-                        return false;
-                    }
+                    AtomicFile.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, _jsonOptions));
+                }
+                catch
+                {
+                    return false;
                 }
             }
 
@@ -262,7 +272,11 @@ public sealed class WorldMetadataService
         EnsureWorldId(metadata);
         metadata.CurrentHolderIdentityId = string.IsNullOrWhiteSpace(holderId) ? string.Empty : holderId.Trim();
         metadata.CurrentHolderIdentityName = string.IsNullOrWhiteSpace(holderName) ? UnknownOwnerName : holderName.Trim();
-        metadata.CurrentHolderSteamId64 = NormalizeSteamId(holderSteamId64);
+        metadata.CurrentHolderSteamId64 = NormalizeSteamId(holderSteamId64) is { Length: > 0 } holderSteamId
+            ? holderSteamId
+            : KnownSteamPlayers.TryGetSteamId(metadata.CurrentHolderIdentityId, out var knownHolder)
+                ? knownHolder.ToString()
+                : string.Empty;
         if (transferred) metadata.LastSuccessfulTransferUtc = DateTimeOffset.UtcNow;
         try
         {

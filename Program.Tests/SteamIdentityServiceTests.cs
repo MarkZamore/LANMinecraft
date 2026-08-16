@@ -1,278 +1,120 @@
-using System.Text.Json;
-
 namespace Minecraft.Tests;
 
 /// <summary>
-/// Binding a machine to a Steam account is the one migration that can silently
-/// cost a player their quests, teams and homes, so every branch is pinned here:
-/// what happens with and without a legacy UUID.json, when Steam is closed, when
-/// a second account signs in, and when both histories exist.
+/// Which Minecraft UUID a Steam account plays as. There is no state behind
+/// this any more - the answer is a function of the account - so what is pinned
+/// is the function: the three players who predate Steam keep the profiles that
+/// hold their progress in the shared world, everyone else derives, and without
+/// Steam there is no identity at all.
 /// </summary>
-public sealed class SteamIdentityServiceTests : IDisposable
+public sealed class SteamIdentityServiceTests
 {
-    private const ulong FirstAccount = 76561198000000001;
-    private const ulong SecondAccount = 76561198000000002;
-    private static readonly Guid LegacyUuid = new("06c83c9e-980b-47d5-b7be-23d2bb649068");
-
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        $"minecraft-identity-tests-{Guid.NewGuid():N}");
-
-    public void Dispose()
+    [Theory]
+    [InlineData(76561198256236531UL, "06c83c9e-980b-47d5-b7be-23d2bb649068", "MarkZamore")]
+    [InlineData(76561198050776152UL, "f0f5ec1a-14f5-47b6-9e27-b860f62c14e5", "anuvenn")]
+    [InlineData(76561198088743612UL, "a4c56fa5-a630-42a6-9223-d6abfe63b130", "ASSin")]
+    public void APlayerFromBeforeSteam_KeepsTheProfileHoldingTheirProgress(
+        ulong steamId64,
+        string expectedUuid,
+        string name)
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
-    }
+        var service = new SteamIdentityService(new FakeSteamUserSource(steamId64, name));
 
-    [Fact]
-    public async Task AMachineWithHistory_KeepsItsUuidAndBacksTheFileUp()
-    {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        using var service = CreateService(paths, FirstAccount, "MarkZamore");
-
-        var result = await service.EnsureBoundAsync(CancellationToken.None);
+        var result = service.Bind();
 
         Assert.True(result.Bound);
-        Assert.True(result.Migrated);
-        Assert.Equal(IdentityBindingSource.MigratedUuidJson, result.Source);
-        Assert.Equal(LegacyUuid, service.Binding!.PlayerUuid);
-
-        // UUID.json is untouched, and a copy of it exists for rollback.
-        Assert.Equal(LegacyUuid, ReadLegacyIdentity(paths));
-        Assert.NotNull(result.BackupPath);
-        Assert.True(File.Exists(result.BackupPath));
-        Assert.Equal(LegacyUuid, ReadLegacyIdentity(result.BackupPath!));
+        Assert.Equal(IdentityBindingSource.KnownPlayer, result.Source);
+        Assert.Equal(new Guid(expectedUuid), service.Binding!.PlayerUuid);
+        // Their UUID is not what derivation would give - that is the point.
+        Assert.NotEqual(
+            SteamIdentityDerivation.DeriveMinecraftUuid(service.Binding.SteamId64),
+            service.Binding.PlayerUuid);
     }
 
     [Fact]
-    public async Task BindingIsIdempotent_AndSurvivesARestart()
+    public void AnyoneElse_PlaysAsTheProfileDerivedFromTheirAccount()
     {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        using var first = CreateService(paths, FirstAccount, "MarkZamore");
-        await first.EnsureBoundAsync(CancellationToken.None);
-        var afterFirst = File.ReadAllBytes(paths.SteamIdentityFile);
+        const ulong newcomer = 76561198000000001;
+        var service = new SteamIdentityService(new FakeSteamUserSource(newcomer, "Newcomer"));
 
-        var again = await first.EnsureBoundAsync(CancellationToken.None);
-        Assert.True(again.Bound);
-        Assert.False(again.Migrated);
-        Assert.Equal(afterFirst, File.ReadAllBytes(paths.SteamIdentityFile));
-
-        // A fresh launcher process reads the same binding back.
-        using var second = CreateService(paths, FirstAccount, "MarkZamore");
-        var restarted = await second.EnsureBoundAsync(CancellationToken.None);
-        Assert.True(restarted.Bound);
-        Assert.False(restarted.Migrated);
-        Assert.Equal(LegacyUuid, second.Binding!.PlayerUuid);
-        Assert.Single(Directory.GetDirectories(paths.IdentityBackups));
-    }
-
-    [Fact]
-    public async Task AFreshMachine_GetsTheUuidDerivedFromTheSteamAccount()
-    {
-        var paths = CreatePaths();
-        using var service = CreateService(paths, FirstAccount, "anuvenn");
-
-        var result = await service.EnsureBoundAsync(CancellationToken.None);
+        var result = service.Bind();
 
         Assert.True(result.Bound);
-        Assert.False(result.Migrated);
         Assert.Equal(IdentityBindingSource.Derived, result.Source);
-        Assert.True(SteamId64.TryFrom(FirstAccount, out var steamId));
-        var derived = SteamIdentityDerivation.DeriveMinecraftUuid(steamId);
-        Assert.Equal(derived, service.Binding!.PlayerUuid);
-
-        // The legacy file is written once with the same value, so rolling back
-        // to the previous launcher keeps this player's progress too.
-        Assert.True(File.Exists(paths.IdentityFile));
-        Assert.Equal(derived, ReadLegacyIdentity(paths));
+        Assert.True(SteamId64.TryFrom(newcomer, out var steamId));
+        Assert.Equal(SteamIdentityDerivation.DeriveMinecraftUuid(steamId), service.Binding!.PlayerUuid);
     }
 
     [Fact]
-    public async Task WithoutSteam_NothingIsWrittenAndThePlayerIsTold()
+    public void WithoutSteam_ThereIsNoIdentityAndThePlayerIsTold()
     {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        using var service = new SteamIdentityService(paths, new FakeSteamUser());
+        var service = new SteamIdentityService(new FakeSteamUserSource(0));
 
-        var result = await service.EnsureBoundAsync(CancellationToken.None);
+        var result = service.Bind();
 
         Assert.False(result.Bound);
         Assert.False(service.IsBound);
         Assert.Contains("Steam не запущен", result.Message, StringComparison.Ordinal);
-        Assert.False(File.Exists(paths.SteamIdentityFile));
-        Assert.Equal(LegacyUuid, ReadLegacyIdentity(paths));
         Assert.Throws<IdentityUnavailableException>(() => service.ResolveContext(new AppSettings()));
     }
 
     [Fact]
-    public async Task ASecondSteamAccountOnTheSameMachine_GetsItsOwnDerivedProfile()
+    public void TheResolvedContext_CarriesBothIdentities()
     {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        using var first = CreateService(paths, FirstAccount, "MarkZamore");
-        await first.EnsureBoundAsync(CancellationToken.None);
-
-        using var second = CreateService(paths, SecondAccount, "anuvenn");
-        var result = await second.EnsureBoundAsync(CancellationToken.None);
-
-        Assert.True(result.Bound);
-        Assert.Equal(IdentityBindingSource.Derived, result.Source);
-        Assert.NotEqual(LegacyUuid, second.Binding!.PlayerUuid);
-
-        var document = new SteamIdentityStore(paths).TryLoad();
-        Assert.Equal(2, document!.Bindings.Count);
-        Assert.Equal(
-            [LegacyUuid, second.Binding.PlayerUuid],
-            document.Bindings.Select(binding => binding.PlayerUuid));
-    }
-
-    [Theory]
-    [InlineData(IdentityConflictDecision.KeepLegacy)]
-    [InlineData(IdentityConflictDecision.UseDerived)]
-    public async Task WhenBothHistoriesExist_ThePlayerChooses(IdentityConflictDecision decision)
-    {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        Assert.True(SteamId64.TryFrom(FirstAccount, out var steamId));
-        var derived = SteamIdentityDerivation.DeriveMinecraftUuid(steamId);
-        WriteWorldProfile(paths, "Chebupeli", derived);
-        var resolver = new ScriptedResolver(decision);
-        using var service = CreateService(paths, FirstAccount, "MarkZamore", resolver);
-
-        var result = await service.EnsureBoundAsync(CancellationToken.None);
-
-        Assert.True(result.Bound);
-        Assert.True(result.ConflictResolved);
-        Assert.Equal(
-            decision == IdentityConflictDecision.KeepLegacy ? LegacyUuid : derived,
-            service.Binding!.PlayerUuid);
-        Assert.Equal(decision, service.Binding.ConflictDecision);
-        Assert.Equal(LegacyUuid, service.Binding.LegacyPlayerUuid);
-        Assert.Contains("Chebupeli", resolver.LastConflict!.ConflictingWorlds);
-        // Both profiles stay on disk whichever way the player chose.
-        Assert.Equal(LegacyUuid, ReadLegacyIdentity(paths));
-        Assert.True(File.Exists(Path.Combine(paths.Worlds, "Chebupeli", "playerdata", $"{derived:D}.dat")));
-    }
-
-    [Fact]
-    public async Task CancellingTheConflict_LeavesTheMachineUnbound()
-    {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        Assert.True(SteamId64.TryFrom(FirstAccount, out var steamId));
-        WriteWorldProfile(paths, "Chebupeli", SteamIdentityDerivation.DeriveMinecraftUuid(steamId));
-        using var service = CreateService(
-            paths, FirstAccount, "MarkZamore", new ScriptedResolver(IdentityConflictDecision.Cancel));
-
-        var result = await service.EnsureBoundAsync(CancellationToken.None);
-
-        Assert.False(result.Bound);
-        Assert.False(File.Exists(paths.SteamIdentityFile));
-        Assert.Equal(LegacyUuid, ReadLegacyIdentity(paths));
-    }
-
-    [Fact]
-    public async Task ADamagedBindingFile_StopsTheLauncherInsteadOfRebinding()
-    {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        File.WriteAllText(paths.SteamIdentityFile, "{ this is not json");
-        using var service = CreateService(paths, FirstAccount, "MarkZamore");
-
-        await Assert.ThrowsAsync<IdentityUnavailableException>(
-            () => service.EnsureBoundAsync(CancellationToken.None));
-        Assert.Equal("{ this is not json", File.ReadAllText(paths.SteamIdentityFile));
-    }
-
-    [Fact]
-    public async Task AFileFromAnotherSchema_IsNeverOverwritten()
-    {
-        var paths = CreatePaths();
-        var future = """{"schemaVersion":99,"bindings":[]}""";
-        File.WriteAllText(paths.SteamIdentityFile, future);
-        using var service = CreateService(paths, FirstAccount, "MarkZamore");
-
-        var failure = await Assert.ThrowsAsync<IdentityUnavailableException>(
-            () => service.EnsureBoundAsync(CancellationToken.None));
-        Assert.Contains("другой версией лаунчера", failure.Message, StringComparison.Ordinal);
-        Assert.Equal(future, File.ReadAllText(paths.SteamIdentityFile));
-    }
-
-    [Fact]
-    public async Task TheResolvedContext_CarriesBothIdentities()
-    {
-        var paths = CreatePaths();
-        WriteLegacyIdentity(paths, LegacyUuid);
-        using var service = CreateService(paths, FirstAccount, "MarkZamore");
-        await service.EnsureBoundAsync(CancellationToken.None);
+        var service = new SteamIdentityService(new FakeSteamUserSource(76561198256236531, "MarkZamore"));
+        service.Bind();
 
         var context = service.ResolveContext(new AppSettings { PlayerName = "MarkZamore" });
 
-        Assert.Equal(LegacyUuid.ToString("D"), context.MinecraftUuid);
-        Assert.Equal(LegacyUuid, context.PlayerUuid);
-        Assert.Equal(FirstAccount, context.SteamId64.Value);
+        Assert.Equal("06c83c9e-980b-47d5-b7be-23d2bb649068", context.MinecraftUuid);
+        Assert.Equal(new Guid("06c83c9e-980b-47d5-b7be-23d2bb649068"), context.PlayerUuid);
+        Assert.Equal(76561198256236531UL, context.SteamId64.Value);
         Assert.Equal("MarkZamore", context.IdentityName);
         Assert.Equal(40, context.SessionAccessToken.Length);
-        Assert.Equal(IdentityBindingSource.MigratedUuidJson, context.Source);
+        Assert.Equal(IdentityBindingSource.KnownPlayer, context.Source);
     }
 
-    private AppPaths CreatePaths()
+    /// <summary>The same account resolves the same way every time, on any machine.</summary>
+    [Fact]
+    public void BindingIsDeterministic_AndFollowsTheSignedInAccount()
     {
-        var paths = new AppPaths(_root);
-        paths.Ensure();
-        return paths;
+        var source = new SwitchableSteamUser(76561198050776152, "anuvenn");
+        var service = new SteamIdentityService(source);
+        service.Bind();
+        var first = service.Binding!.PlayerUuid;
+
+        service.Bind();
+        Assert.Equal(first, service.Binding!.PlayerUuid);
+
+        source.SteamId64 = 76561198088743612;
+        service.Bind();
+        Assert.Equal(new Guid("a4c56fa5-a630-42a6-9223-d6abfe63b130"), service.Binding!.PlayerUuid);
     }
 
-    private static SteamIdentityService CreateService(
-        AppPaths paths,
-        ulong steamId64,
-        string persona,
-        IIdentityConflictResolver? resolver = null) =>
-        new(paths, new FakeSteamUser(steamId64, persona), null, resolver);
-
-    private static void WriteLegacyIdentity(AppPaths paths, Guid playerUuid) =>
-        File.WriteAllText(paths.IdentityFile, JsonSerializer.Serialize(
-            new PortableIdentity
-            {
-                SchemaVersion = 1,
-                PlayerUuid = playerUuid,
-                CreatedAtUtc = DateTimeOffset.UtcNow
-            },
-            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-
-    private static Guid ReadLegacyIdentity(AppPaths paths) => ReadLegacyIdentity(paths.IdentityFile);
-
-    private static Guid ReadLegacyIdentity(string path) =>
-        JsonSerializer.Deserialize<PortableIdentity>(
-            File.ReadAllText(path),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!.PlayerUuid;
-
-    private static void WriteWorldProfile(AppPaths paths, string worldName, Guid playerUuid)
+    [Fact]
+    public void TheKnownPlayerTable_IsConsistentBothWays()
     {
-        var directory = Path.Combine(paths.Worlds, worldName, "playerdata");
-        Directory.CreateDirectory(directory);
-        File.WriteAllBytes(Path.Combine(directory, $"{playerUuid:D}.dat"), [1, 2, 3]);
+        foreach (var player in KnownSteamPlayers.All)
+        {
+            Assert.True(SteamId64.TryFrom(player.SteamId64, out var steamId));
+            Assert.True(KnownSteamPlayers.TryGetPlayer(steamId, out var byId));
+            Assert.Equal(player.PlayerUuid, byId.PlayerUuid);
+            Assert.True(KnownSteamPlayers.TryGetSteamId(player.PlayerUuid, out var byUuid));
+            Assert.Equal(steamId, byUuid);
+        }
+        Assert.Equal(KnownSteamPlayers.All.Count, KnownSteamPlayers.All.Select(p => p.PlayerUuid).Distinct().Count());
+        Assert.False(KnownSteamPlayers.TryGetSteamId(Guid.NewGuid(), out _));
     }
 
-    private sealed class FakeSteamUser(ulong steamId64 = 0, string personaName = "") : ISteamUserSource
+    private sealed class SwitchableSteamUser(ulong steamId64, string personaName) : ISteamUserSource
     {
+        public ulong SteamId64 { get; set; } = steamId64;
+
         public bool TryGetLocalUser(out ulong id, out string persona)
         {
-            id = steamId64;
+            id = SteamId64;
             persona = personaName;
-            return steamId64 != 0;
-        }
-    }
-
-    private sealed class ScriptedResolver(IdentityConflictDecision decision) : IIdentityConflictResolver
-    {
-        public IdentityConflict? LastConflict { get; private set; }
-
-        public Task<IdentityConflictDecision> ResolveAsync(IdentityConflict conflict, CancellationToken token)
-        {
-            LastConflict = conflict;
-            return Task.FromResult(decision);
+            return SteamId64 != 0;
         }
     }
 }
