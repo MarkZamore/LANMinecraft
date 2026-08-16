@@ -1141,8 +1141,25 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            // The log and the bug report keep the raw text - it is what makes a
+            // failure diagnosable. The player gets a sentence instead: the last
+            // one said "Steam refused a message: k_EResultNoConnection", which
+            // is English, names an internal enum, blames Steam for something
+            // Steam did not do, and leaves out the only thing they want to know
+            // after a failed multi-gigabyte transfer - whether their world
+            // survived. It did: nothing leaves this machine until the far side
+            // has the whole world and says so.
             RequireLogger().Warn(ex.Message);
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(
+                "Передача мира прервалась." + Environment.NewLine +
+                "Ваш мир на месте, ничего не потеряно - можно просто попробовать ещё раз." +
+                Environment.NewLine + Environment.NewLine +
+                "Если обрывается снова, попросите игрока не закрывать Steam и лаунчер " +
+                "и не запускать Minecraft во время передачи." + Environment.NewLine +
+                Environment.NewLine + "Подробности: " + ex.Message,
+                "Minecraft",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
         finally
         {

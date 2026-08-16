@@ -56,3 +56,4 @@ settings.json
 **/*minecraft*client*.jar
 **/*minecraft*server*.jar
 **/server.jar
+Program/*_wpftmp.csproj
