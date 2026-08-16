@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text;
 
 namespace Minecraft;
@@ -30,14 +30,7 @@ internal static class AtomicFile
             {
                 throw new IOException($"Temporary file verification failed: {Path.GetFileName(path)}");
             }
-            if (File.Exists(fullPath))
-            {
-                File.Replace(temporaryPath, fullPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
-            }
-            else
-            {
-                File.Move(temporaryPath, fullPath);
-            }
+            Publish(temporaryPath, fullPath);
         }
         finally
         {
@@ -50,4 +43,39 @@ internal static class AtomicFile
             }
         }
     }
+
+    /// <summary>
+    /// Puts the finished file in place. Anything that opens a file the moment
+    /// it changes - a virus scanner, a folder that syncs to the cloud - holds
+    /// it for a breath, and a single attempt would report that breath as a
+    /// failed save. The last attempt deletes first, which needs no handle of
+    /// its own.
+    /// </summary>
+    private static void Publish(string temporaryPath, string fullPath)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporaryPath, fullPath, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
+                                       attempt < PublishAttempts && !Directory.Exists(fullPath))
+            {
+                Thread.Sleep(PublishRetryDelay * attempt);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
+                                       File.Exists(fullPath))
+            {
+                File.SetAttributes(fullPath, FileAttributes.Normal);
+                File.Delete(fullPath);
+                File.Move(temporaryPath, fullPath);
+                return;
+            }
+        }
+    }
+
+    private const int PublishAttempts = 5;
+    private const int PublishRetryDelay = 120;
 }
