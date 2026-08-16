@@ -155,9 +155,9 @@ public partial class MainWindow : Window
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
-            _settingsService = new SettingsService(_paths);
-            _settings = _settingsService.Load();
             _logger = new Logger(_paths.LogFile);
+            _settingsService = new SettingsService(_paths, _logger);
+            _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
             _network = new VirtualNetworkService(_logger);
             _peerRoutes = new PeerRouteResolver();

@@ -10,6 +10,13 @@ namespace Minecraft;
 
 public sealed class AppSettings
 {
+    /// <summary>
+    /// 1 = the VPN/voice era (no version field on disk); 2 = Steam era. The
+    /// launcher backs a file up once before it first writes the new shape, so
+    /// an older build can be restored by hand.
+    /// </summary>
+    public int SchemaVersion { get; set; } = SettingsService.CurrentSchemaVersion;
+
     public string PlayerName { get; set; } = "";
     public string PreviousPlayerName { get; set; } = "";
 
