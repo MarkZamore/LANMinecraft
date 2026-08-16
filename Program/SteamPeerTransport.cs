@@ -295,6 +295,12 @@ public sealed class SteamPeerTransport : IPeerTransport
                 if (count <= 0) continue;
                 idle = false;
 
+                // A stream disposed between the poll and the write is normal -
+                // the peer hung up, or the protocol finished. It ends that
+                // connection, never the pump every other peer shares.
+                try
+                {
+
                 for (var index = 0; index < count; index++)
                 {
                     try
@@ -322,11 +328,17 @@ public sealed class SteamPeerTransport : IPeerTransport
                     }
                 }
 
-                var flush = channel.Stream.InboundWriter.FlushAsync(_shutdown.Token);
-                if (!flush.IsCompleted)
+                    var flush = channel.Stream.InboundWriter.FlushAsync(_shutdown.Token);
+                    if (!flush.IsCompleted)
+                    {
+                        // The consumer is behind; waiting here is the backpressure.
+                        await flush.ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
                 {
-                    // The consumer is behind; waiting here is the backpressure.
-                    await flush.ConfigureAwait(false);
+                    _logger?.Warn($"Steam connection to {channel.Peer} was closed while receiving: {ex.Message}");
+                    Close(channel.Handle, "receive after close");
                 }
             }
 

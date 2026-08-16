@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Text;
 
@@ -16,6 +16,10 @@ namespace Minecraft;
 ///
 /// A pack that ships its own <c>log4j2.xml</c> keeps it: whoever wrote it knew
 /// what they wanted from their logs.
+///
+/// A mod loader may reconfigure log4j after this file is read, so the cleanup
+/// that removes debug.log on the next launch is the guarantee; this is the
+/// optimisation that keeps it from being written in the first place.
 /// </summary>
 public sealed class GameLogConfigurationService(Logger? logger = null)
 {

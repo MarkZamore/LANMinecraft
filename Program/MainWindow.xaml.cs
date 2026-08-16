@@ -1078,7 +1078,9 @@ public partial class MainWindow : Window
             RequireSettingsService().Save(_settings);
             SetState($"Skin selected ({skin.Model})");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+                                   InvalidDataException or NotSupportedException or
+                                   IdentityUnavailableException)
         {
             RequireLogger().Warn($"Skin selection failed: {ex.Message}");
             MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
