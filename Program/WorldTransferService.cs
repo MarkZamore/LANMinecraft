@@ -59,6 +59,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
     private readonly IPeerTransport _transport;
+    private readonly IWorldTransferConfirmation? _confirmation;
     private readonly WorldTransferRuntimeOptions _runtimeOptions;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly JsonSerializerOptions _indentedJsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -86,7 +87,8 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         WaypointSyncService waypointSync,
         SkinService skinService,
         IPeerTransport transport,
-        WorldTransferRuntimeOptions? runtimeOptions = null)
+        WorldTransferRuntimeOptions? runtimeOptions = null,
+        IWorldTransferConfirmation? confirmation = null)
     {
         _paths = paths;
         _logger = logger;
@@ -98,6 +100,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         _waypointSync = waypointSync;
         _skinService = skinService;
         _transport = transport;
+        _confirmation = confirmation;
         _runtimeOptions = runtimeOptions ?? new WorldTransferRuntimeOptions();
         _runtimeOptions.Validate();
         WorldTransferRecoveryService.Recover(paths, logger);
@@ -519,6 +522,11 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 throw new InvalidOperationException("Another world transfer is already active.");
             }
             EnsureMinecraftAvailableForTransfer("receiver");
+
+            if (!await ConfirmIncomingWorldAsync(stream, header, context, token).ConfigureAwait(false))
+            {
+                return;
+            }
 
             transactionRoot = CreateTransactionDirectory(header.TransferId);
             journal = new WorldTransferJournal
@@ -963,6 +971,64 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         var frame = await ReadNonProgressFrameAsync(
             stream, transferId, DescribeRemoteStageForReceiver, token).ConfigureAwait(false);
         return PortableProtocol.Deserialize<WorldTransferControl>(frame, _jsonOptions);
+    }
+
+    /// <summary>
+    /// Asks the player whether to take this world. Under Steam the sender can
+    /// be any friend running the launcher, which is a wider circle than the
+    /// neighbours on a VPN, so an incoming world is never installed silently.
+    ///
+    /// The sender is waiting on its own idle timeout while this dialog is open,
+    /// so the wait is bounded and a refusal is answered explicitly.
+    /// </summary>
+    private async Task<bool> ConfirmIncomingWorldAsync(
+        Stream stream,
+        WorldTransferHeader header,
+        PeerConnectionContext context,
+        CancellationToken token)
+    {
+        if (_confirmation is null) return true;
+
+        var offer = new WorldTransferOffer(
+            context.PeerId,
+            string.IsNullOrWhiteSpace(context.PersonaName)
+                ? context.PeerId.ToString()
+                : context.PersonaName,
+            string.IsNullOrWhiteSpace(header.SenderName) ? header.SenderIdentityName : header.SenderName,
+            string.IsNullOrWhiteSpace(header.WorldName) ? "мир" : header.WorldName,
+            header.Size);
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(_runtimeOptions.PeerIdleTimeout);
+        bool accepted;
+        try
+        {
+            RaiseProgress(0, 0, "Ожидание подтверждения");
+            accepted = await _confirmation.ConfirmAsync(offer, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            accepted = false;
+        }
+
+        if (accepted)
+        {
+            _logger.Info($"Incoming world from {context.PeerId} was accepted by the player.");
+            return true;
+        }
+
+        _logger.Info($"Incoming world from {context.PeerId} was declined by the player.");
+        await WriteJsonAsync(stream, new WorldTransferAck
+        {
+            Protocol = ProtocolName,
+            ProtocolVersion = ProtocolVersion,
+            Ok = false,
+            Stage = "Rejected",
+            TransferId = header.TransferId,
+            Message = "Получатель отклонил приём мира."
+        }, token).ConfigureAwait(false);
+        StatusChanged?.Invoke("Incoming world declined");
+        return false;
     }
 
     private async Task<WorldTransferHeader> WaitForTransferHeaderAsync(
@@ -1786,6 +1852,23 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 }
 
 public sealed record WorldTransferProgress(bool IsActive, long Current, long Total, string Stage = "");
+
+/// <summary>What the receiving player is asked to accept or decline.</summary>
+public sealed record WorldTransferOffer(
+    SteamId64 SenderSteamId,
+    string SenderPersonaName,
+    string SenderPlayerName,
+    string WorldName,
+    long ArchiveBytes);
+
+/// <summary>
+/// Asks the receiving player about an incoming world. Implemented by the window
+/// with a dialog; a launcher without one accepts, which is what the tests use.
+/// </summary>
+public interface IWorldTransferConfirmation
+{
+    Task<bool> ConfirmAsync(WorldTransferOffer offer, CancellationToken token);
+}
 
 public sealed class WorldTransferRuntimeOptions
 {
