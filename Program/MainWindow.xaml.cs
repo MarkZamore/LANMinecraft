@@ -126,9 +126,7 @@ public partial class MainWindow : Window
                 new WpfIdentityConflictResolver(this));
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             await ConnectSteamAndBindIdentityAsync();
-            // The Steam transport itself lands in the next step; until then the
-            // launcher knows who everyone is but cannot open a stream to them.
-            _peerTransport = new NullPeerTransport();
+            _peerTransport = new SteamPeerTransport(_steamClient, _logger);
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
             _peerDirectory = new SteamPeerDirectory(_steamClient, new SteamworksApiFacade(), _logger);
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
@@ -1287,6 +1285,9 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrEmpty(binding.Message)) _logger?.Info(binding.Message);
             ResolveAndPersistLocalIdentity();
+            // A retry after Steam was fixed has to bring the network up too;
+            // during startup this runs once more, and starting is idempotent.
+            if (_startupComplete) await StartNetworkingAsync().ConfigureAwait(true);
         }
         catch (IdentityUnavailableException ex)
         {
