@@ -27,6 +27,15 @@ public sealed record PackSyncResult(
     string? Warning);
 
 /// <summary>
+/// The pack directory was left holding files from two revisions: the download
+/// succeeded and writing them out did not. Deliberately outside the exception
+/// set that makes a sync fall back to the installed pack.
+/// </summary>
+public sealed class PackApplyFailedException(Exception inner)
+    : InvalidOperationException(
+        "Не удалось записать файлы сборки. Закройте игру и попробуйте ещё раз: " + inner.Message, inner);
+
+/// <summary>
 /// Mirrors a pack directory from a GitHub release manifest: downloads only the
 /// missing or changed files, deletes files the manifest no longer lists, and
 /// never rewrites a file whose content already matches. Packs without a sync
@@ -68,6 +77,8 @@ public sealed partial class PortablePackSyncService
     private const int MaximumParallelDownloads = 4;
     private const int ManifestFetchAttempts = 3;
     private const int AssetDownloadAttempts = 3;
+    private const int ReplaceAttempts = 5;
+    private const int ReplaceRetryDelay = 120;
     private const long ProgressReportIntervalBytes = 4L * 1024 * 1024;
     private static readonly TimeSpan ManifestAttemptTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
@@ -273,7 +284,19 @@ public sealed partial class PortablePackSyncService
                         ExtractAndVerifyStagedSources(
                             manifest, neededAssets, diff.ChangedPaths, stageAssets, stageExtract, token);
                     }
-                    ApplyChanges(packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
+                    try
+                    {
+                        ApplyChanges(
+                            packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                                   or NotSupportedException)
+                    {
+                        // Files have already landed, so the pack is now a mix of
+                        // two revisions. Falling back to "play the local version"
+                        // here would start the game on that mix.
+                        throw new PackApplyFailedException(ex);
+                    }
                     WriteSyncState(statePath, packDir, manifest);
                     WriteSourceMarker(packDir, source);
                 },
@@ -718,13 +741,31 @@ public sealed partial class PortablePackSyncService
     {
         var livePath = Path.Combine(packDir, relativePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(livePath)!);
-        if (File.Exists(livePath))
+        // A pack update replaces hundreds of jars in a burst, and anything that
+        // opens a file as it appears - a virus scanner above all - holds it just
+        // long enough for the replacement to fail. Waiting a moment and trying
+        // again is what makes the difference; the last attempt clears the way by
+        // deleting first, which needs no handle of its own.
+        for (var attempt = 1; ; attempt++)
         {
-            File.Replace(stagedPath, livePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
-        }
-        else
-        {
-            File.Move(stagedPath, livePath);
+            try
+            {
+                File.Move(stagedPath, livePath, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
+                                       attempt < ReplaceAttempts && !Directory.Exists(livePath))
+            {
+                Thread.Sleep(ReplaceRetryDelay * attempt);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
+                                       File.Exists(livePath))
+            {
+                File.SetAttributes(livePath, FileAttributes.Normal);
+                File.Delete(livePath);
+                File.Move(stagedPath, livePath);
+                return;
+            }
         }
     }
 
