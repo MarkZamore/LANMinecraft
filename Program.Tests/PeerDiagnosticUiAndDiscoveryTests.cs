@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Xml.Linq;
 using Minecraft;
 
@@ -20,9 +20,9 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     public void PeerViewModel_AppliesAndClearsDiagnosticCapability()
     {
         var peer = NewPeer();
-        peer.Apply(Presence() with { DiagnosticProtocolVersion = PeerSupportProtocol.ProtocolVersion }, "pack-hash");
+        peer.Apply(Presence() with { DiagnosticProtocolVersion = BugReportManifest.ProtocolVersion }, "pack-hash");
 
-        Assert.Equal(PeerSupportProtocol.ProtocolVersion, peer.DiagnosticProtocolVersion);
+        Assert.Equal(BugReportManifest.ProtocolVersion, peer.DiagnosticProtocolVersion);
         Assert.True(peer.SupportsDiagnosticLogs);
 
         // A peer that stops publishing the capability (or publishes another
@@ -115,11 +115,11 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         var title = document
             .Descendants(presentation + "TextBlock")
-            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Диагностика");
+            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Сообщить о проблеме");
         Assert.NotNull(title);
         Assert.Contains(
             document.Descendants(presentation + "TextBlock"),
-            element => (string?)element.Attribute("Text") == "Передавать логи");
+            element => (string?)element.Attribute("Text") == "Кому отправить");
         Assert.Contains(
             document.Descendants(),
             element =>
@@ -131,8 +131,11 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Contains(
             document.Descendants(presentation + "Button"),
             element =>
-                (string?)element.Attribute(x + "Name") == "OpenSupportLogsButton" &&
-                (string?)element.Attribute("Content") == "Открыть полученные логи");
+                (string?)element.Attribute(x + "Name") == "SendBugReportButton" &&
+                (string?)element.Attribute("Content") == "Отправить отчёт");
+        Assert.Contains(
+            document.Descendants(presentation + "TextBox"),
+            element => (string?)element.Attribute(x + "Name") == "BugReportMessageTextBox");
 
         // The panel owns the right-hand column, so it never competes for space
         // with the play/pack controls.

@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace Minecraft.Tests;
 
@@ -35,6 +35,12 @@ public sealed class MigrationLeftoversTests
         "GlobalPttHotkeyService",
         "SteamIdentityStore",
         "IdentityConflictDialog",
+        // The live log stream, replaced by bug reports.
+        "PeerSupportLogService",
+        "PeerSupportProtocol",
+        "SupportLogStorage",
+        "SupportLogCollector",
+        "SupportLogSpool",
         "EnsureBoundAsync",
         "MigrateLegacyPersonalData",
         "TryImportLegacyRuntime",

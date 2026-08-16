@@ -163,7 +163,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); }
     }
 
-    public bool SupportsDiagnosticLogs => DiagnosticProtocolVersion == PeerSupportProtocol.ProtocolVersion;
+    /// <summary>Whether this peer's launcher can receive a bug report.</summary>
+    public bool SupportsDiagnosticLogs => DiagnosticProtocolVersion == BugReportManifest.ProtocolVersion;
 
     /// <summary>Both names when they differ, because either one may be the familiar one.</summary>
     public string DisplayName
