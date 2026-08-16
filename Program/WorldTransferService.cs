@@ -1,4 +1,5 @@
 ﻿using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Compression;
@@ -34,13 +35,28 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     internal static readonly TimeSpan DefaultPeerIdleTimeout = TimeSpan.FromSeconds(90);
     // A peer that keeps talking but reports no movement for this long is stuck.
     private static readonly TimeSpan StallTimeout = TimeSpan.FromMinutes(30);
-    // A blocked socket write is not the same signal as a silent peer: the
-    // receiver's disk can legitimately stall for minutes while flushing a huge
-    // archive, and its TCP window stays closed the whole time.
-    private static TimeSpan WriteStallTimeout(TimeSpan idleTimeout) => idleTimeout * 8;
+
+    // These two bounds were inverted, and it cost a finished transfer. During
+    // the archive send the sender writes bytes and says nothing else, so a
+    // sender whose write is blocked IS a receiver hearing silence - the same
+    // event, seen from both ends. The sender tolerated a blocked write for
+    // eight times the idle timeout (12 minutes) while the receiver gave up on
+    // silence after 90 seconds, so the receiver always quit first and the
+    // sender only learned of it afterwards, as a refused message. Whoever is
+    // listening has to be the more patient of the two.
+    private static readonly TimeSpan BulkWriteTimeout = TimeSpan.FromMinutes(4);
+    private static readonly TimeSpan BulkReadTimeout = TimeSpan.FromMinutes(6);
+    private static TimeSpan WriteStallTimeout(TimeSpan idleTimeout) =>
+        idleTimeout > BulkWriteTimeout ? idleTimeout : BulkWriteTimeout;
     private static readonly TimeSpan RejectionWriteTimeout = TimeSpan.FromSeconds(5);
     // Steam relays make a first connection slower than a LAN socket ever was.
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>How many times to call before believing the peer is unreachable.</summary>
+    private const int ProbeAttempts = 3;
+
+    /// <summary>Long enough for a cold certificate store to finish loading.</summary>
+    private static readonly TimeSpan ProbeRetryDelay = TimeSpan.FromSeconds(3);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -355,7 +371,15 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 
                     StatusChanged?.Invoke("Sending world archive...");
                     await WriteJsonAsync(stream, header, token);
-                    await using (var file = File.OpenRead(archivePath))
+                    // File.OpenRead gives a 4 KiB synchronous handle. Re-reading a
+                    // multi-GB archive that was written seconds ago in 4 KiB steps,
+                    // while Windows is still flushing its dirty pages for that same
+                    // file, is a long wait with nothing to show for it - and every
+                    // second of it looks to the peer exactly like a dead sender.
+                    await using (var file = new FileStream(
+                        archivePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                        TransferCopyBufferBytes,
+                        FileOptions.SequentialScan | FileOptions.Asynchronous))
                     {
                         await CopyWithProgressAsync(file, stream, fileInfo.Length, current =>
                         {
@@ -589,7 +613,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 await CopyExactlyWithProgressAsync(stream, file, header.Size, current =>
                 {
                     progressChannel.PublishLocal("Получение мира", current, header.Size);
-                }, _runtimeOptions.PeerIdleTimeout, token);
+                }, BulkReadTimeout, token);
             }
 
             tempWorldPath = Path.Combine(transactionRoot, "staging-world");
@@ -825,9 +849,50 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             throw new InvalidOperationException(_transport.UnavailableReason);
         }
 
+        // Steam can refuse the very first call between two launchers that
+        // started seconds apart: the peer's client has not finished loading the
+        // certificate authorities it needs to verify us, and says so as
+        // "Bad cert: CA key ... is not known to us". It heals itself within a
+        // few seconds, and the peer's own call in the other direction usually
+        // gets through while ours is still being refused - which is why this
+        // looked like the receiver was slow to answer. Refusing to try again
+        // turned a two-second condition into a failed transfer and told the
+        // player to go check settings on a machine that was working.
+        Exception? lastFailure = null;
+        for (var attempt = 1; attempt <= ProbeAttempts; attempt++)
+        {
+            try
+            {
+                await ProbeOnceAsync(peer, identity, token).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException
+                                           or InvalidDataException or JsonException)
+            {
+                token.ThrowIfCancellationRequested();
+                lastFailure = ex;
+                _logger.Warn(
+                    $"Probe to {peer.DisplayName} failed on attempt {attempt} of {ProbeAttempts}: {ex.Message}");
+                if (attempt < ProbeAttempts)
+                {
+                    await Task.Delay(ProbeRetryDelay, token).ConfigureAwait(false);
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            BuildPeerConnectionMessage(peer.DisplayName) + Environment.NewLine + lastFailure?.Message,
+            lastFailure);
+    }
+
+    /// <summary>One probe: dial, say hello, and require the peer to agree.</summary>
+    private async Task ProbeOnceAsync(
+        PeerViewModel peer,
+        LocalIdentityContext identity,
+        CancellationToken token)
+    {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeoutCts.CancelAfter(ProbeTimeout);
-        try
         {
             await using var connection = await _transport
                 .ConnectAsync(peer.SteamId, ProtocolName, timeoutCts.Token)
@@ -854,14 +919,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 throw new InvalidOperationException(ack?.Message ?? "receiver did not accept transfer probe");
             }
         }
-        catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException
-                                       or InvalidDataException or JsonException)
-        {
-            token.ThrowIfCancellationRequested();
-            throw new InvalidOperationException(
-                BuildPeerConnectionMessage(peer.DisplayName) + Environment.NewLine + ex.Message,
-                ex);
-        }
+
     }
 
     private void RaiseProgress(long current, long total, string stage = "")
@@ -1830,9 +1888,28 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         // transfer. What is reported is what the queue no longer holds.
         var queued = output as IQueuedByteSink;
         long total = 0;
+        long lastDelivered = 0;
+        var lastProgressAt = Stopwatch.GetTimestamp();
         while (true)
         {
-            var read = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, totalSize - total)), token);
+            // Reading our own archive back was the one wait in this path with
+            // no bound at all. A disk that stops answering looks to the peer
+            // exactly like a sender that died, and nothing here would have said
+            // otherwise.
+            int read;
+            using (var slow = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                slow.CancelAfter(idleTimeout);
+                try
+                {
+                    read = await input.ReadAsync(
+                        buffer.AsMemory(0, (int)Math.Min(buffer.Length, totalSize - total)), slow.Token);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    throw new TimeoutException("Не удалось прочитать подготовленный архив мира с диска.");
+                }
+            }
             if (read <= 0) break;
             total += read;
             if (total > totalSize) throw new InvalidOperationException("Transfer size exceeds expected archive size.");
@@ -1850,7 +1927,25 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     throw new TimeoutException("The other player stopped receiving the world.");
                 }
             }
-            progress(Math.Max(0, total - (queued?.QueuedBytes ?? 0)));
+            var delivered = Math.Max(0, total - (queued?.QueuedBytes ?? 0));
+            progress(delivered);
+
+            // The sender is the only party that can tell "the wire stopped
+            // draining" from "I stopped producing": the peer sees one silence
+            // for both. If nothing has left the queue for as long as the peer
+            // is willing to wait, say so here rather than letting the peer time
+            // out and reporting its hang-up as a refused message.
+            if (delivered > lastDelivered)
+            {
+                lastDelivered = delivered;
+                lastProgressAt = Stopwatch.GetTimestamp();
+            }
+            else if (queued is not null && Stopwatch.GetElapsedTime(lastProgressAt) > idleTimeout)
+            {
+                throw new TimeoutException(
+                    "Steam перестал передавать данные игроку: за " +
+                    $"{idleTimeout.TotalMinutes:F0} мин. очередь отправки не сдвинулась.");
+            }
         }
 
         // Everything written is on the wire by the time the peer acknowledges;

@@ -49,7 +49,16 @@ public sealed class SteamPeerTransport : IPeerTransport
     // go. Raising the send rate alone was half an answer.
     private const int RecvBufferBytes = 16 * 1024 * 1024;
     private const int RecvBufferMessages = 1024;
-    private const int ConnectionTimeoutMilliseconds = 10_000;
+    // Steam's own default is 10 s, so setting 10 s bought nothing while
+    // looking deliberate. A world transfer holds one connection open for many
+    // minutes across a relay, and it has to survive a re-route and a receiver
+    // whose disk stalls, without dying below the transfer's own bounds - the
+    // app-level timeout is the one that can produce a sentence a player can
+    // act on, so Steam must not get there first.
+    private const int ConnectedTimeoutMilliseconds = 60_000;
+
+    /// <summary>First contact is the fragile part; the app allows 30 s too.</summary>
+    private const int InitialTimeoutMilliseconds = 30_000;
 
     private readonly SteamClientService _client;
     private readonly Logger? _logger;
@@ -190,8 +199,8 @@ public sealed class SteamPeerTransport : IPeerTransport
         SetGlobalInt32(
             ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,
             Constants.k_nSteamNetworkingConfig_P2P_Transport_ICE_Enable_All);
-        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutInitial, ConnectionTimeoutMilliseconds);
-        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, ConnectionTimeoutMilliseconds);
+        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutInitial, InitialTimeoutMilliseconds);
+        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, ConnectedTimeoutMilliseconds);
     }
 
     private static void SetGlobalInt32(ESteamNetworkingConfigValue value, int amount)
@@ -383,8 +392,22 @@ public sealed class SteamPeerTransport : IPeerTransport
 
     private void Fail(HSteamNetConnection handle, string reason)
     {
+        // Steam's own account of why a live connection ended used to go only
+        // into the read side's exception and then into CloseConnection, so a
+        // transfer that died mid-flight left nothing behind but the sender's
+        // next write failing with NoConnection - the symptom, on whichever
+        // side happened to notice second. The reason itself is the diagnosis.
+        if (_channels.TryGetValue(handle.m_HSteamNetConnection, out var dying))
+        {
+            _logger?.Warn(
+                $"Steam ended the connection to {dying.Peer}: " +
+                $"{(string.IsNullOrWhiteSpace(reason) ? "no reason given" : reason)} " +
+                $"({DescribeRoute(handle)}).");
+        }
+
         if (_channels.TryRemove(handle.m_HSteamNetConnection, out var channel))
         {
+            channel.Stream.RecordEndReason(reason);
             channel.Stream.CompleteInbound(
                 string.IsNullOrWhiteSpace(reason) ? null : new IOException(reason));
         }
@@ -404,17 +427,24 @@ public sealed class SteamPeerTransport : IPeerTransport
     {
         var status = default(SteamNetConnectionRealTimeStatus_t);
         var lanes = default(SteamNetConnectionRealTimeLaneStatus_t);
-        SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref status, 0, ref lanes);
+        if (SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref status, 0, ref lanes) !=
+            EResult.k_EResultOK)
+        {
+            // Without this the failed call left a zeroed struct behind and the
+            // line went out as a confident "ping 0 ms".
+            return "route unknown";
+        }
+
         var route = SteamNetworkingSockets.GetConnectionInfo(connection, out var info)
             ? info.m_idPOPRelay.m_SteamNetworkingPOPID == 0 ? "direct" : "relay"
             : "unknown route";
-        // The rate Steam has actually settled on, which is the only honest
-        // answer to "how fast can this go": the ceiling we ask for is a
-        // permission, the estimator decides what the link really carries.
-        var rate = status.m_nSendRateBytesPerSecond > 0
-            ? $", {status.m_nSendRateBytesPerSecond / (1024d * 1024d):F1} MB/s"
-            : string.Empty;
-        return $"{route}, ping {status.m_nPing} ms{rate}";
+        // m_nSendRateBytesPerSecond is deliberately absent. It is a permission,
+        // not a measurement: Steam fixes it when the connection is set up and
+        // never revises it, so on every line it printed the configured floor
+        // back at us - the same 8,0 three times running - while reading like
+        // the speed of the link. What the transfer really achieved is measured
+        // where the bytes are, in the world transfer's own progress.
+        return $"{route}, ping {status.m_nPing} ms";
     }
 
     public async ValueTask DisposeAsync()
