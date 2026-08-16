@@ -42,7 +42,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         using (var blockedClient = new HttpClient(CreateReleaseHandler(release)))
         {
             var blockedService = CreateService(blockedClient);
-            await Assert.ThrowsAsync<IOException>(
+            await Assert.ThrowsAsync<PackApplyFailedException>(
                 () => blockedService.SyncAsync(DefaultPack, null, CancellationToken.None));
         }
         Assert.False(PackManifestService.HasManifest(packDir));
@@ -193,6 +193,51 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(packDir, "scripts")));
         Assert.True(File.Exists(Path.Combine(packDir, "xaero", "minimap", "waypoints.txt")));
         AssertFileContent(packDir, mod);
+    }
+
+    [Fact]
+    public async Task ApplyBlocked_FailsLoudly_InsteadOfPretendingToBeOffline()
+    {
+        var first = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v1"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease("rev-1", [first, packManifest], [JarAsset(first), JarAsset(packManifest)]),
+            DefaultPack);
+        var packDir = PackDir(DefaultPack);
+
+        var second = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v2"));
+        using var httpClient = new HttpClient(CreateReleaseHandler(
+            BuildRelease("rev-2", [second, packManifest], [JarAsset(second), JarAsset(packManifest)])));
+        var service = CreateService(httpClient);
+        using var hold = new FileStream(
+            LivePath(packDir, first.Path), FileMode.Open, FileAccess.Read, FileShare.None);
+
+        await Assert.ThrowsAsync<PackApplyFailedException>(
+            () => service.SyncAsync(DefaultPack, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ApplyBlockedBriefly_SucceedsOnRetry()
+    {
+        var first = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v1"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease("rev-1", [first, packManifest], [JarAsset(first), JarAsset(packManifest)]),
+            DefaultPack);
+        var packDir = PackDir(DefaultPack);
+
+        var second = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v2"));
+        using var httpClient = new HttpClient(CreateReleaseHandler(
+            BuildRelease("rev-2", [second, packManifest], [JarAsset(second), JarAsset(packManifest)])));
+        // A scanner that opens the jar and lets go a moment later.
+        var hold = new FileStream(
+            LivePath(packDir, first.Path), FileMode.Open, FileAccess.Read, FileShare.None);
+        using var released = new Timer(_ => hold.Dispose(), null, 200, Timeout.Infinite);
+
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        AssertFileContent(packDir, second);
     }
 
     [Fact]
