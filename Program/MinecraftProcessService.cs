@@ -28,6 +28,7 @@ public sealed class MinecraftProcessService
         "-XX:+UseCompactObjectHeaders"
     ]);
 
+    private readonly GameLogConfigurationService _gameLogConfiguration;
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly IIdentityService _identityService;
@@ -69,6 +70,7 @@ public sealed class MinecraftProcessService
     {
         _paths = paths;
         _logger = logger;
+        _gameLogConfiguration = new GameLogConfigurationService(logger);
         _identityService = identityService;
         _identityAdapter = identityAdapter;
         _playerProfiles = playerProfiles;
@@ -205,6 +207,8 @@ public sealed class MinecraftProcessService
             new($"-Djava.io.tmpdir={javaTempDir}"),
             new($"-Dminecraft.portable.skin.registry={skinRegistryPath}")
         };
+        var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
+        if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
         extraJvmArguments.AddRange(JavaCompatibilityArguments.Select(argument => new MArgument(argument)));
         extraJvmArguments.AddRange(identityJvmArguments.Select(argument => new MArgument(argument)));
         var launchOption = new MLaunchOption

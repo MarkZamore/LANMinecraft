@@ -288,9 +288,8 @@ public sealed class SupportLogCollectorPriorityTests
         await File.WriteAllTextAsync(
             Path.Combine(logs, "latest.log"),
             "CURRENT_LATEST address=10.21.0.3\n");
-        await File.WriteAllTextAsync(
-            Path.Combine(logs, "debug.log"),
-            "CURRENT_DEBUG address=10.21.0.4\n");
+        // The game's DEBUG copy is deliberately never collected; LogVolumeTests
+        // pins that, so the ordering below no longer mentions it.
         await File.WriteAllTextAsync(
             Path.Combine(logs, "other.log"),
             "OTHER_GAME_LOG address=10.21.0.5\n");
@@ -315,8 +314,6 @@ public sealed class SupportLogCollectorPriorityTests
         Assert.True(IndexOf(content, "CURRENT_LAUNCHER") <
                     IndexOf(content, "CURRENT_LATEST"));
         Assert.True(IndexOf(content, "CURRENT_LATEST") <
-                    IndexOf(content, "CURRENT_DEBUG"));
-        Assert.True(IndexOf(content, "CURRENT_DEBUG") <
                     IndexOf(content, "CURRENT_CRASH"));
         Assert.True(IndexOf(content, "CURRENT_CRASH") <
                     IndexOf(content, "OTHER_GAME_LOG"));
