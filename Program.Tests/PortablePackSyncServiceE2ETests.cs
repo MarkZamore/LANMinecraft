@@ -1,14 +1,14 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using Minecraft;
 
 namespace Minecraft.Tests;
 
 /// <summary>
-/// End-to-end sync against the real MarkZamore/InfinityPack pack-latest
+/// End-to-end sync against the real MarkZamore/Infinity pack-latest
 /// release. Downloads the full pack (~1.2 GB), so it only runs when opted in:
 ///   PACKSYNC_E2E=1 dotnet test --filter PortablePackSyncServiceE2ETests
 /// PACKSYNC_E2E_REPO can point at a local checkout of the pack repository to
-/// compare the synced tree against (defaults to the sibling InfinityPack dir);
+/// compare the synced tree against (defaults to the sibling Infinity dir);
 /// when the path does not exist the tree comparison is skipped.
 /// </summary>
 public sealed class PortablePackSyncServiceE2ETests : IDisposable
@@ -54,7 +54,7 @@ public sealed class PortablePackSyncServiceE2ETests : IDisposable
         var repo = Environment.GetEnvironmentVariable("PACKSYNC_E2E_REPO")
             ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Documents", "InfinityPack");
+                "Documents", "Infinity");
         if (Directory.Exists(repo))
         {
             var expected = EnumerateManifestFiles(repo)

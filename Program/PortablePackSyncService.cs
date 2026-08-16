@@ -40,7 +40,7 @@ public sealed partial class PortablePackSyncService
     public const string DefaultPackRelativePath = "Infinity";
 
     public static PackSyncSource DefaultInfinitySource { get; } =
-        new("MarkZamore", "InfinityPack", "pack-latest");
+        new("MarkZamore", "Infinity", "pack-latest");
 
     internal const string OfflineCheckWarning =
         "Не удалось проверить обновления сборки — играем с локальной версией.";
