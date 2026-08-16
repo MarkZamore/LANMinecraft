@@ -70,6 +70,12 @@
         <DataTemplate x:Key="PeerItemTemplate">
             <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
         </DataTemplate>
+        <DataTemplate x:Key="DiagnosticTargetItemTemplate">
+            <TextBlock Text="{Binding DisplayName}"
+                       ToolTip="{Binding DisplayName}"
+                       TextAlignment="Center"
+                       HorizontalAlignment="Stretch"/>
+        </DataTemplate>
         <DataTemplate x:Key="NetworkAddressItemTemplate">
             <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
         </DataTemplate>
@@ -220,11 +226,6 @@
                                 </TextBlock.RenderTransform>
                             </TextBlock>
                         </Button>
-                        <Button x:Name="VoiceSettingsButton" Content="&#xE713;" Width="30" Height="28"
-                                Padding="0" Margin="5,0,0,0"
-                                FontFamily="Segoe Fluent Icons" FontSize="14"
-                                ToolTip="Настройки голосового чата"
-                                Click="VoiceSettingsButton_Click"/>
                     </StackPanel>
                 </Grid>
             </Grid>
@@ -312,23 +313,20 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/>
             </Grid>
 
-            <Grid Grid.Column="2" Grid.Row="0" Grid.RowSpan="8">
-                <TextBlock Text="AI-помощник обученный на вашей сборке Minecraft"
-                           TextWrapping="Wrap" TextAlignment="Center"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                           FontSize="15" FontWeight="SemiBold" Margin="10,10,10,46"/>
-            </Grid>
-            <Grid Grid.Column="2" Grid.Row="6" Height="28"
-                  Margin="0,0,0,8" VerticalAlignment="Top">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="82"/>
-                </Grid.ColumnDefinitions>
-                <TextBox Grid.Column="0" Text="Пока не работает :("
-                         Height="28" IsReadOnly="True" IsEnabled="False" TextAlignment="Left"/>
-                <Button Grid.Column="1" Content="Отправить" Height="28"
-                        IsEnabled="False" Margin="6,0,0,0"/>
-            </Grid>
+            <StackPanel Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="10,0,0,0">
+                <TextBlock Text="Диагностика" Style="{StaticResource SectionTitleStyle}"/>
+                <TextBlock Text="Передавать логи" Margin="0,0,0,4"/>
+                <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
+                                        ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"
+                                        SelectionChanged="DiagnosticLogTargetComboBox_SelectionChanged"/>
+                <TextBlock x:Name="DiagnosticLogStatusText"
+                           TextWrapping="Wrap" Margin="0,8,0,0" MinHeight="34"
+                           VerticalAlignment="Top"/>
+                <Button x:Name="OpenSupportLogsButton"
+                        Content="Открыть полученные логи"
+                        Margin="0,4,0,0"
+                        Click="OpenSupportLogsButton_Click"/>
+            </StackPanel>
 
             <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
                        Text="Лучше TLauncher" HorizontalAlignment="Left" FontSize="11"/>
