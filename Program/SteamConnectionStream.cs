@@ -35,6 +35,17 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private int _disposed;
 
+    /// <summary>
+    /// Steam's account of why this connection ended. It used to reach only the
+    /// reader, as the exception completing the inbound pipe - so a sender,
+    /// which is writing and never reading, saw nothing but its next message
+    /// being refused and reported "k_EResultNoConnection", the symptom.
+    /// </summary>
+    private volatile string? _endReason;
+
+    internal void RecordEndReason(string? reason) =>
+        _endReason = string.IsNullOrWhiteSpace(reason) ? null : reason;
+
     internal SteamConnectionStream(HSteamNetConnection connection, Action onDispose)
     {
         _connection = connection;
@@ -162,7 +173,9 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
                         await Task.Delay(SendRetryDelay, token).ConfigureAwait(false);
                         continue;
                     default:
-                        throw new IOException($"Steam refused a message: {result}.");
+                        throw new IOException(_endReason is null
+                            ? $"Steam refused a message: {result}."
+                            : $"Steam ended the connection: {_endReason}");
                 }
             }
         }
