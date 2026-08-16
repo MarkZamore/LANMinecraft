@@ -17,6 +17,7 @@ public partial class MainWindow : Window
 {
     private const int MinMemoryGb = MemorySizingService.MinMemoryGb;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
+    private static readonly TimeSpan DiagnosticTargetTtl = TimeSpan.FromMinutes(3);
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
@@ -579,7 +580,13 @@ public partial class MainWindow : Window
 
     private List<DiagnosticLogTargetOption> BuildDiagnosticLogTargets()
     {
-        var cutoff = DateTimeOffset.Now - PeerTtl;
+        // Steam serves a friend's presence on its own schedule, and a gap in it
+        // empties the player list for a tick. That is fine for a transfer, which
+        // needs the peer right now, but not for a report: a player types what
+        // happened for a while, and the button must not die under their hands.
+        // A friend who was there a minute ago is still worth offering - and if
+        // they are really gone, the send says so.
+        var cutoff = DateTimeOffset.Now - DiagnosticTargetTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
         foreach (var peer in _peers
                      // A launcher that cannot read the report is not a place to
@@ -2024,15 +2031,22 @@ public partial class MainWindow : Window
                                    !_minecraftPreparing;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
-        PlayerNameTextBox.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
+        // The name and the memory size are read when the game starts, so they
+        // stay editable while the pack downloads - that wait is long, and there
+        // is nothing in it these two could spoil. Once the game holds them, they
+        // are locked.
+        var settingsEnabled = !_busy && !_minecraftRunning;
+        PlayerNameTextBox.IsEnabled = settingsEnabled;
         PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
-        ChangePlayerNameButton.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
+        ChangePlayerNameButton.IsEnabled = settingsEnabled;
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
-        SkinButton.IsEnabled = !_minecraftRunning;
+        // The skin is copied into the instance as the game starts, so a change
+        // made from here on would not reach this session anyway.
+        SkinButton.IsEnabled = !_minecraftRunning && !_minecraftPreparing;
         // A list with nothing to choose between is not a control, it is a
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is
@@ -2041,10 +2055,8 @@ public partial class MainWindow : Window
         // them live let a player change the answer to a question already being
         // acted on - and the transfer would carry on with the old one, which is
         // worse than not offering.
-        WorldComboBox.IsEnabled =
-            interactiveEnabled && !_minecraftPreparing && !_transferActive && _worlds.Count > 1;
-        OnlinePlayerComboBox.IsEnabled =
-            interactiveEnabled && !_minecraftPreparing && !_transferActive && _peers.Count > 0;
+        WorldComboBox.IsEnabled = configurationEnabled && _worlds.Count > 1;
+        OnlinePlayerComboBox.IsEnabled = configurationEnabled && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         TransferButton.IsEnabled = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
@@ -2052,7 +2064,7 @@ public partial class MainWindow : Window
                                    selectedRecipient is not null &&
                                    !selectedRecipient.IsMinecraftRunning &&
                                    !selectedRecipient.IsMinecraftPreparing;
-        MemoryTextBox.IsEnabled = configurationEnabled;
+        MemoryTextBox.IsEnabled = settingsEnabled;
         UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
 
         RefreshDiagnosticsPanel();
