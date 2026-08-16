@@ -52,7 +52,11 @@ public sealed class AppPaths
     public string PackConflicts { get; }
     public string Worlds { get; }
     public string SettingsFile => Path.Combine(Personal, "settings.json");
+    /// <summary>Legacy per-machine identity; read for migration, never rewritten.</summary>
     public string IdentityFile => Path.Combine(Personal, "UUID.json");
+    public string SteamIdentityFile => Path.Combine(Personal, "steam-identity.json");
+    /// <summary>Backups taken before the first write of a new identity schema.</summary>
+    public string IdentityBackups => Path.Combine(Personal, "Backups", "Identity");
     public string NetworkPeersFile => Path.Combine(Personal, "network-peers.json");
     public string PackHashesFile => Path.Combine(Personal, "pack-hashes.json");
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");

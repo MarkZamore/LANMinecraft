@@ -210,4 +210,12 @@ public sealed class LocalIdentityContext
     public string IdentityName { get; set; } = "";
     public string MinecraftUuid { get; set; } = "";
     public string SessionAccessToken { get; set; } = "";
+
+    /// <summary>The Steam account this machine is signed in to; None before the migration.</summary>
+    public SteamId64 SteamId64 { get; set; }
+
+    /// <summary>Same value as <see cref="MinecraftUuid"/>, typed.</summary>
+    public Guid PlayerUuid { get; set; }
+
+    public IdentityBindingSource Source { get; set; } = IdentityBindingSource.MigratedUuidJson;
 }
