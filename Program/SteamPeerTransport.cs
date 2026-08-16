@@ -448,16 +448,70 @@ public sealed class SteamPeerTransport : IPeerTransport
             return "route unknown";
         }
 
-        var route = SteamNetworkingSockets.GetConnectionInfo(connection, out var info)
-            ? info.m_idPOPRelay.m_SteamNetworkingPOPID == 0 ? "direct" : "relay"
-            : "unknown route";
-        // m_nSendRateBytesPerSecond is deliberately absent. It is a permission,
-        // not a measurement: Steam fixes it when the connection is set up and
-        // never revises it, so on every line it printed the configured floor
-        // back at us - the same 8,0 three times running - while reading like
-        // the speed of the link. What the transfer really achieved is measured
-        // where the bytes are, in the world transfer's own progress.
-        return $"{route}, ping {status.m_nPing} ms";
+        // m_nSendRateBytesPerSecond is a permission, not a measurement - Steam
+        // fixes it when the connection is set up and never revises it. It was
+        // dropped from this line for reading like the speed of the link, which
+        // was the wrong lesson: it is the read-back of the one setting that
+        // decides how fast we are allowed to go. If it says 0,04 MB/s when
+        // 8 MB/s was configured, the floor never reached the connection, and
+        // that is a different problem from a slow relay. Named as a permit so
+        // it cannot be mistaken for throughput again.
+        return $"{DescribeConnectionRoute(connection)}, ping {status.m_nPing} ms, " +
+               $"permit {status.m_nSendRateBytesPerSecond / (1024d * 1024d):F2} MiB/s";
+    }
+
+    /// <summary>
+    /// Direct or relayed, and through which of Valve's clusters. The old test
+    /// asked whether a relay POP was set; the connection flags say it outright,
+    /// and the cluster is four packed ASCII bytes - two players in one country
+    /// routed through a far cluster would explain a 100 ms ping by itself.
+    /// </summary>
+    private static string DescribeConnectionRoute(HSteamNetConnection connection)
+    {
+        if (!SteamNetworkingSockets.GetConnectionInfo(connection, out var info)) return "unknown route";
+
+        var relayed = (info.m_nFlags & Constants.k_nSteamNetworkConnectionInfoFlags_Relayed) != 0;
+        var pop = DescribePop(info.m_idPOPRelay.m_SteamNetworkingPOPID);
+        if (relayed) return pop.Length == 0 ? "relay" : $"relay {pop}";
+        return (info.m_nFlags & Constants.k_nSteamNetworkConnectionInfoFlags_Fast) != 0
+            ? "direct/LAN"
+            : "direct";
+    }
+
+    private static string DescribePop(uint pop)
+    {
+        if (pop == 0) return string.Empty;
+        Span<char> name = stackalloc char[4];
+        var length = 0;
+        for (var shift = 24; shift >= 0; shift -= 8)
+        {
+            var c = (char)((pop >> shift) & 0xFF);
+            if (c is >= ' ' and <= '~') name[length++] = c;
+        }
+        return new string(name[..length]).Trim();
+    }
+
+    /// <summary>
+    /// One line of what the wire is actually doing, for the transfer to log
+    /// while it runs. Everything here is measured except the permit; the
+    /// achieved rate is Steam's own five-second average, so sampling it faster
+    /// than that only re-reads the same number.
+    /// </summary>
+    internal static string DescribeLink(HSteamNetConnection connection)
+    {
+        var status = default(SteamNetConnectionRealTimeStatus_t);
+        var lanes = default(SteamNetConnectionRealTimeLaneStatus_t);
+        if (SteamNetworkingSockets.GetConnectionRealTimeStatus(connection, ref status, 0, ref lanes) !=
+            EResult.k_EResultOK)
+        {
+            return "link unreadable";
+        }
+
+        return $"{DescribeConnectionRoute(connection)}, out {status.m_flOutBytesPerSec / (1024d * 1024d):F2} MiB/s, " +
+               $"permit {status.m_nSendRateBytesPerSecond / (1024d * 1024d):F2} MiB/s, " +
+               $"queued {status.m_cbPendingReliable / 1024d:F0} KiB, " +
+               $"unacked {status.m_cbSentUnackedReliable / 1024d:F0} KiB, " +
+               $"ping {status.m_nPing} ms, quality {status.m_flConnectionQualityLocal:F2}";
     }
 
     public async ValueTask DisposeAsync()
