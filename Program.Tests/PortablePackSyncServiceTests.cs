@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -10,7 +10,7 @@ namespace Minecraft.Tests;
 
 public sealed class PortablePackSyncServiceTests : IDisposable
 {
-    private const string InfinityPack = "Infinity";
+    private const string Infinity = "Infinity";
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -30,7 +30,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         var assets = new[] { JarAsset(mod), ZipRootAsset("config", configA, configB), JarAsset(packManifest) };
         var release = BuildRelease("rev-1", [mod, configA, configB, packManifest], assets);
-        var packDir = PackDir(InfinityPack);
+        var packDir = PackDir(Infinity);
 
         // The pack manifest is the "pack is complete" flag, so it must be the
         // very last file the apply writes: block the first placement with a
@@ -43,7 +43,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         {
             var blockedService = CreateService(blockedClient);
             await Assert.ThrowsAsync<IOException>(
-                () => blockedService.SyncAsync(InfinityPack, null, CancellationToken.None));
+                () => blockedService.SyncAsync(Infinity, null, CancellationToken.None));
         }
         Assert.False(PackManifestService.HasManifest(packDir));
         Assert.False(File.Exists(Path.Combine(packDir, PortablePackSyncService.SyncStateFileName)));
@@ -52,7 +52,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
 
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
         Assert.Equal("rev-1", result.Revision);
@@ -82,14 +82,14 @@ public sealed class PortablePackSyncServiceTests : IDisposable
             "rev-1",
             [mod, config, packManifest],
             [JarAsset(mod), ZipRootAsset("config", config), JarAsset(packManifest)]);
-        await InstallAsync(release, InfinityPack);
-        var packDir = PackDir(InfinityPack);
+        await InstallAsync(release, Infinity);
+        var packDir = PackDir(Infinity);
         var timestamps = new[] { mod.Path, config.Path, packManifest.Path }
             .ToDictionary(path => path, path => File.GetLastWriteTimeUtc(LivePath(packDir, path)));
 
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.UpToDate, result.Outcome);
         Assert.Equal(0, result.FilesChanged);
@@ -109,8 +109,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         await InstallAsync(
             BuildRelease("rev-1", [oldMod, packManifest], [JarAsset(oldMod), JarAsset(packManifest)]),
-            InfinityPack);
-        var packDir = PackDir(InfinityPack);
+            Infinity);
+        var packDir = PackDir(Infinity);
         var livePath = LivePath(packDir, oldMod.Path);
         var linkPath = Path.Combine(_root, "hardlink-to-old.jar");
         Assert.True(CreateHardLink(linkPath, livePath, IntPtr.Zero));
@@ -119,7 +119,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var release = BuildRelease("rev-2", [newMod, packManifest], [JarAsset(newMod), JarAsset(packManifest)]);
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.Equal(newMod.Content, File.ReadAllBytes(livePath));
@@ -139,8 +139,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
                 "rev-1",
                 [keptMod, removedMod, packManifest],
                 [JarAsset(keptMod), JarAsset(removedMod), JarAsset(packManifest)]),
-            InfinityPack);
-        var packDir = PackDir(InfinityPack);
+            Infinity);
+        var packDir = PackDir(Infinity);
         File.WriteAllText(Path.Combine(packDir, "mods", "rogue.jar"), "rogue");
         Directory.CreateDirectory(Path.Combine(packDir, "logs"));
         File.WriteAllText(Path.Combine(packDir, "logs", "latest.log"), "log");
@@ -153,7 +153,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
             [JarAsset(keptMod), JarAsset(packManifest)]);
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.Equal(2, result.FilesChanged);
@@ -181,8 +181,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
                 "rev-1",
                 [configA, configB, packManifest],
                 [ZipRootAsset("config", configA, configB), JarAsset(packManifest)]),
-            InfinityPack);
-        var packDir = PackDir(InfinityPack);
+            Infinity);
+        var packDir = PackDir(Infinity);
         var siblingTimestamp = File.GetLastWriteTimeUtc(LivePath(packDir, configB.Path));
 
         var changedA = new PackFile("config/a.toml", Encoding.UTF8.GetBytes("a = 2"));
@@ -192,7 +192,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
             [ZipRootAsset("config", changedA, configB), JarAsset(packManifest)]);
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.Equal(1, result.FilesChanged);
@@ -208,16 +208,16 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         await InstallAsync(
             BuildRelease("rev-1", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]),
-            InfinityPack);
+            Infinity);
 
         var offline = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
         using var offlineClient = new HttpClient(offline);
-        var result = await CreateService(offlineClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(offlineClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.OfflineFallback, result.Outcome);
         Assert.Equal(PortablePackSyncService.OfflineCheckWarning, result.Warning);
-        AssertFileContent(PackDir(InfinityPack), mod);
-        AssertFileContent(PackDir(InfinityPack), packManifest);
+        AssertFileContent(PackDir(Infinity), mod);
+        AssertFileContent(PackDir(Infinity), packManifest);
     }
 
     [Fact]
@@ -228,10 +228,10 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var service = CreateService(offlineClient);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.SyncAsync(InfinityPack, null, CancellationToken.None));
+            () => service.SyncAsync(Infinity, null, CancellationToken.None));
 
         Assert.Equal(PortablePackSyncService.FirstInstallUnavailableMessage, exception.Message);
-        Assert.False(Directory.Exists(PackDir(InfinityPack)));
+        Assert.False(Directory.Exists(PackDir(Infinity)));
     }
 
     [Theory]
@@ -254,9 +254,9 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var service = CreateService(httpClient);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.SyncAsync(InfinityPack, null, CancellationToken.None));
+            () => service.SyncAsync(Infinity, null, CancellationToken.None));
 
-        Assert.False(Directory.Exists(PackDir(InfinityPack)));
+        Assert.False(Directory.Exists(PackDir(Infinity)));
         Assert.False(File.Exists(Path.Combine(PacksDir, "x")));
         Assert.False(File.Exists(Path.Combine(_root, "Minecraft", "x")));
     }
@@ -281,12 +281,12 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         using var httpClient = new HttpClient(handler);
 
         var result = await CreateService(httpClient)
-            .SyncAsync(InfinityPack, null, CancellationToken.None);
+            .SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
         foreach (var file in files)
         {
-            AssertFileContent(PackDir(InfinityPack), file);
+            AssertFileContent(PackDir(Infinity), file);
         }
     }
 
@@ -320,12 +320,12 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         using var httpClient = new HttpClient(handler);
         var service = CreateService(httpClient);
 
-        Assert.Equal(PortablePackSyncService.DefaultInfinitySource, service.TryResolveSource(InfinityPack));
-        var result = await service.SyncAsync(InfinityPack, null, CancellationToken.None);
+        Assert.Equal(PortablePackSyncService.DefaultInfinitySource, service.TryResolveSource(Infinity));
+        var result = await service.SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
         Assert.StartsWith(
-            "https://github.com/MarkZamore/InfinityPack/releases/download/pack-latest/pack-manifest.json",
+            "https://github.com/MarkZamore/Infinity/releases/download/pack-latest/pack-manifest.json",
             handler.RequestUris[0].AbsoluteUri,
             StringComparison.Ordinal);
     }
@@ -369,9 +369,9 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var service = CreateService(httpClient);
 
         await Assert.ThrowsAsync<IOException>(
-            () => service.SyncAsync(InfinityPack, null, CancellationToken.None));
+            () => service.SyncAsync(Infinity, null, CancellationToken.None));
 
-        var packDir = PackDir(InfinityPack);
+        var packDir = PackDir(Infinity);
         Assert.False(PackManifestService.HasManifest(packDir));
         Assert.False(File.Exists(LivePath(packDir, mod.Path)));
         if (Directory.Exists(packDir))
@@ -387,7 +387,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         await InstallAsync(
             BuildRelease("rev-1", [oldMod, packManifest], [JarAsset(oldMod), JarAsset(packManifest)]),
-            InfinityPack);
+            Infinity);
 
         var newMod = new PackFile("mods/foo-1.0.jar", Encoding.UTF8.GetBytes("mod-two"));
         var newAsset = JarAsset(newMod);
@@ -397,11 +397,11 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         release[newAsset.Name] = tampered;
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.OfflineFallback, result.Outcome);
         Assert.Equal(PortablePackSyncService.OfflineSyncWarning, result.Warning);
-        var packDir = PackDir(InfinityPack);
+        var packDir = PackDir(Infinity);
         AssertFileContent(packDir, oldMod);
         AssertFileContent(packDir, packManifest);
         Assert.Empty(Directory.EnumerateFileSystemEntries(packDir, ".pack-sync-stage*"));
@@ -413,8 +413,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var mod = new PackFile("mods/foo-1.0.jar", Encoding.UTF8.GetBytes("mod-one"));
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         var release = BuildRelease("rev-1", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]);
-        await InstallAsync(release, InfinityPack);
-        var packDir = PackDir(InfinityPack);
+        await InstallAsync(release, Infinity);
+        var packDir = PackDir(Infinity);
         // Simulate a run that was killed mid-apply: stale staging plus a live
         // tree that no longer matches the manifest.
         var staleStage = Path.Combine(packDir, ".pack-sync-stage", "deadbeef", "assets");
@@ -424,7 +424,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
 
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(InfinityPack, null, CancellationToken.None);
+        var result = await CreateService(httpClient).SyncAsync(Infinity, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.Equal(1, result.FilesChanged);
@@ -445,7 +445,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         using var httpClient = new HttpClient(handler);
         var progress = new SynchronousProgress();
 
-        await CreateService(httpClient).SyncAsync(InfinityPack, progress, CancellationToken.None);
+        await CreateService(httpClient).SyncAsync(Infinity, progress, CancellationToken.None);
 
         Assert.NotEmpty(progress.Reports);
         Assert.All(progress.Reports, report =>
@@ -543,7 +543,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var manifest = new
         {
             schemaVersion = 1,
-            packId = InfinityPack,
+            packId = Infinity,
             revision,
             files = files
                 .Select(file => new { path = file.Path, sizeBytes = (long)file.Content.Length, sha256 = file.Sha })
