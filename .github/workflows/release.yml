@@ -19,6 +19,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # The release number is the commit count, so the whole history has
+          # to be here - a shallow clone would count one.
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -36,8 +40,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A release is named after the commit it is built from: the number is
+          # how many commits main carries, so a version in a bug report points
+          # straight at a line of history.
+          $commitNumber = [int](git rev-list --count HEAD)
+          if ($commitNumber -lt 1) { throw "The commit count could not be determined." }
           "HAS_PREVIOUS=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_NUMBER=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_NUMBER=$commitNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $basesFile = Join-Path $env:RUNNER_TEMP 'minecraft-delta-bases.json'
           '[]' | Set-Content -LiteralPath $basesFile -Encoding UTF8
           "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -109,7 +118,13 @@ jobs:
           $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
             $previous.releaseNumber
           } else {
-            $previous.releaseNumber + 1
+            $commitNumber
+          }
+          # Updates are offered by number, so it must never walk backwards -
+          # which is what a rewritten history would do.
+          if ($releaseNumber -le $previous.releaseNumber -and $previous.commitSha -ne $currentCommit) {
+            throw ("The commit count $commitNumber is not above the published release " +
+                   "$($previous.releaseNumber); was the history rewritten?")
           }
 
           $bases = [System.Collections.Generic.List[object]]::new()

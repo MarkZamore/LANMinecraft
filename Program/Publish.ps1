@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$SourceRevisionId = "",
     [string]$PublishDir = "",
     [int]$ReleaseNumber = 0,
@@ -72,6 +72,13 @@ function Resolve-ReleaseNumber([string]$revision) {
     $environmentNumber = Get-PositiveInteger $env:RELEASE_NUMBER
     if ($environmentNumber -gt 0) {
         return $environmentNumber
+    }
+
+    # Same rule as the workflow: the release is named after the commit it is
+    # built from, so a version answers "which commit is this?" by itself.
+    $commitNumber = Get-PositiveInteger (& git -C $projectRoot rev-list --count HEAD)
+    if ($commitNumber -gt 0) {
+        return $commitNumber
     }
 
     $isDirty = Test-WorktreeIsDirty
