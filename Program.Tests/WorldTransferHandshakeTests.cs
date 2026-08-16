@@ -72,6 +72,50 @@ public sealed class WorldTransferHandshakeTests
         Assert.False(fixture.Service.IsOperationActive);
     }
 
+    /// <summary>
+    /// Under Steam the sender is any friend running the launcher, so the
+    /// receiving player is asked before a world is taken - and a refusal has to
+    /// be answered, not left to time out.
+    /// </summary>
+    [Fact]
+    public async Task ADeclinedWorld_IsRejectedBeforeAnythingIsWritten()
+    {
+        var confirmation = new ScriptedConfirmation(accept: false);
+        await using var fixture = ServiceFixture.Create(confirmation: confirmation);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await fixture.StartAcceptingAsync(timeout.Token);
+
+        await using var connection = await fixture.ConnectAsSenderAsync(timeout.Token);
+        await PortableProtocol.WriteJsonAsync(
+            connection.Stream, NewPrepareHeader(), JsonOptions, timeout.Token);
+
+        var ack = PortableProtocol.Deserialize<WorldTransferAck>(
+            await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token), JsonOptions);
+        Assert.NotNull(ack);
+        Assert.False(ack.Ok);
+        Assert.Equal("Rejected", ack.Stage);
+        Assert.Contains("отклонил", ack.Message, StringComparison.Ordinal);
+        Assert.NotNull(confirmation.LastOffer);
+        Assert.Equal(ServiceFixture.SenderSteamId, confirmation.LastOffer!.SenderSteamId.Value);
+        Assert.Equal("HandshakeWorld", confirmation.LastOffer.WorldName);
+
+        // Nothing was staged, and the gate is free for the next attempt.
+        await WaitUntilAsync(() => !fixture.Service.IsOperationActive, timeout.Token);
+        Assert.False(Directory.Exists(fixture.TransfersRoot) &&
+                     Directory.EnumerateFileSystemEntries(fixture.TransfersRoot).Any());
+    }
+
+    private sealed class ScriptedConfirmation(bool accept) : IWorldTransferConfirmation
+    {
+        public WorldTransferOffer? LastOffer { get; private set; }
+
+        public Task<bool> ConfirmAsync(WorldTransferOffer offer, CancellationToken token)
+        {
+            LastOffer = offer;
+            return Task.FromResult(accept);
+        }
+    }
+
     [Fact]
     public async Task PrepareHandshake_ForwardsSenderProgressToTheLocalUi()
     {
@@ -331,7 +375,9 @@ public sealed class WorldTransferHandshakeTests
         public AppSettings Settings { get; } = new() { PlayerName = "TransferTest" };
         public string TransfersRoot => Path.Combine(Paths.Personal, "Transfers");
 
-        public static ServiceFixture Create(TimeSpan? idleTimeout = null)
+        public static ServiceFixture Create(
+            TimeSpan? idleTimeout = null,
+            IWorldTransferConfirmation? confirmation = null)
         {
             var root = Path.Combine(
                 Path.GetTempPath(),
@@ -367,7 +413,8 @@ public sealed class WorldTransferHandshakeTests
                 receiverTransport,
                 idleTimeout is null
                     ? new WorldTransferRuntimeOptions()
-                    : new WorldTransferRuntimeOptions { PeerIdleTimeout = idleTimeout.Value });
+                    : new WorldTransferRuntimeOptions { PeerIdleTimeout = idleTimeout.Value },
+                confirmation);
             var router = new PeerConnectionRouter(receiverTransport, logger);
             router.RegisterFallback(service);
             return new ServiceFixture(

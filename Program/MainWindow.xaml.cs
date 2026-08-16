@@ -152,7 +152,9 @@ public partial class MainWindow : Window
                     _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
                 RefreshDiagnosticsPanel();
             });
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport);
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
+                runtimeOptions: null,
+                confirmation: new WpfWorldTransferConfirmation(this));
             _peerRouter.Register(_peerSupportLogs);
             _peerRouter.Register(_waypointSync);
             _peerRouter.Register(_skinService);
