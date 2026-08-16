@@ -28,7 +28,6 @@ public sealed class PackRuntimeService : IDisposable
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
-    private readonly VoiceNetworkCoordinator? _voiceNetwork;
     private readonly PortableJavaRuntimeService _javaRuntime;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<PackLoaderKind, IPackLoaderProvider> _providers;
@@ -42,13 +41,11 @@ public sealed class PackRuntimeService : IDisposable
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null,
-        VoiceNetworkCoordinator? networkCoordinator = null,
         PortableJavaRuntimeService? javaRuntime = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
-        _voiceNetwork = networkCoordinator;
         _javaRuntime = javaRuntime ?? new PortableJavaRuntimeService(paths, logger, _httpClient);
         IPackLoaderProvider[] providers =
         [
@@ -267,8 +264,7 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             phaseIndex,
-            phaseCount,
-            _voiceNetwork);
+            phaseCount);
         if (localOnly)
         {
             parameters.VersionLoader = new LocalJsonVersionLoader(minecraftPath);

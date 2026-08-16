@@ -6,7 +6,6 @@
         WindowStartupLocation="CenterScreen"
         Icon="Minecraft.ico" Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
-        <SolidColorBrush x:Key="VoiceMutedBrush" Color="#C93636"/>
 
         <Style TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -78,24 +77,6 @@
         </DataTemplate>
         <DataTemplate x:Key="NetworkAddressItemTemplate">
             <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
-        </DataTemplate>
-        <DataTemplate x:Key="VoicePeerTemplate">
-            <TextBlock Text="{Binding VoiceDisplayName}" TextAlignment="Left"
-                       HorizontalAlignment="Stretch" Margin="6,0">
-                <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                        <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsSpeaking}" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource ProgressActiveBrush}"/>
-                            </DataTrigger>
-                            <DataTrigger Binding="{Binding IsVoiceMuted}" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource VoiceMutedBrush}"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </TextBlock.Style>
-            </TextBlock>
         </DataTemplate>
     </Window.Resources>
 
@@ -191,46 +172,8 @@
                 </Grid>
             </Grid>
 
-            <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,10">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="Голосовой чат" FontSize="13" FontWeight="SemiBold"
-                           Margin="0,0,0,5"/>
-                <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl x:Name="VoicePeersItemsControl"
-                                      HorizontalContentAlignment="Stretch"
-                                      ItemTemplate="{StaticResource VoicePeerTemplate}"/>
-                    </ScrollViewer>
-                </Border>
-                <Grid Grid.Row="2" Margin="0,5,0,0">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                        <Button x:Name="VoiceJoinButton" Content="&#xE717;" Width="30" Height="28" Padding="0"
-                                FontFamily="Segoe Fluent Icons" FontSize="15" ToolTip="Войти в голосовой канал"
-                                Click="VoiceJoinButton_Click"/>
-                        <Button x:Name="VoiceMuteButton" Content="&#xE720;" Width="30" Height="28" Padding="0"
-                                FontFamily="Segoe Fluent Icons" FontSize="14" ToolTip="Выключить микрофон" Margin="5,0,0,0"
-                                Click="VoiceMuteButton_Click"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                        <Button x:Name="VoiceProtectionButton" Width="30" Height="28" Padding="0"
-                                ToolTip="Буфер включён" Click="VoiceProtectionButton_Click">
-                            <TextBlock x:Name="VoiceProtectionIcon" Text="&#xEA18;"
-                                       FontFamily="Segoe Fluent Icons" FontSize="14"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <TextBlock.RenderTransform>
-                                    <MatrixTransform x:Name="VoiceProtectionIconTransform"/>
-                                </TextBlock.RenderTransform>
-                            </TextBlock>
-                        </Button>
-                    </StackPanel>
-                </Grid>
-            </Grid>
-
-            <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,6">
+            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,6"
+                        VerticalAlignment="Top">
                 <TextBlock Text="Передача мира" Style="{StaticResource SectionTitleStyle}"/>
                 <Grid Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
@@ -338,14 +281,7 @@
                           SelectionChanged="HostComboBox_SelectionChanged"/>
                 <TextBlock x:Name="PackHashText"/>
                 <TextBlock x:Name="TransferStatusText"/>
-                <TextBlock x:Name="VoiceStatusText"/>
                 <TextBox x:Name="LogTextBox"/>
-                <Button x:Name="VoicePttButton"/>
-                <ComboBox x:Name="VoiceInputComboBox" SelectionChanged="VoiceInputComboBox_SelectionChanged"/>
-                <ComboBox x:Name="VoiceOutputComboBox" SelectionChanged="VoiceOutputComboBox_SelectionChanged"/>
-                <Slider x:Name="VoiceMasterVolumeSlider" Minimum="0" Maximum="2"
-                        ValueChanged="VoiceMasterVolumeSlider_ValueChanged"/>
-                <Button x:Name="VoiceDeafenButton" Click="VoiceDeafenButton_Click"/>
             </Grid>
         </Grid>
     </Viewbox>

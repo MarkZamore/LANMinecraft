@@ -21,16 +21,13 @@ public partial class MainWindow : Window
     private const int MinMemoryGb = MemorySizingService.MinMemoryGb;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
-    private static readonly Matrix DisabledVoiceProtectionIconTransform = new(2d, 0d, 0d, 2d, -14.875d, -14d);
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
     private readonly ObservableCollection<PeerViewModel> _hostPeers = new();
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
-    private readonly ObservableCollection<PeerViewModel> _voicePeers = new();
     private readonly ObservableCollection<NetworkAddressOption> _networkAddresses = new();
     private readonly HashSet<string> _knownNetworkAddresses = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, VoicePresenceEntry> _voicePresence = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _networkRefreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly CancellationTokenSource _lifetimeCts = new();
@@ -61,10 +58,7 @@ public partial class MainWindow : Window
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
-    private VoiceChannelService? _voiceChannel;
-    private VoiceNetworkCoordinator? _voiceNetwork;
     private PeerSupportLogService? _peerSupportLogs;
-    private GlobalPttHotkeyService? _pttHotkey;
     private NetworkEnvironmentSnapshot _networkSnapshot = new();
     private NetworkEndpointInfo? _primaryEndpoint;
     private List<NetworkEndpointInfo> _networkEndpoints = [];
@@ -86,18 +80,11 @@ public partial class MainWindow : Window
     private string _pendingNetworkInterfaceId = "";
     private string _pendingNetworkAddress = "";
     private bool _busy;
-    private bool _voiceBusy;
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
-    private bool _suppressVoicePersistence;
     private bool _suppressNetworkAddressSelection;
     private bool _suppressDiagnosticTargetSelection;
-    private string _lastVoicePeerListSignature = "";
-    private string _lastVoiceTransportPeerSignature = "";
-    private PeerViewModel? _localVoicePeer;
-    private bool _voicePttInputPressed;
-    private bool _voicePttToggleActive;
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
@@ -126,7 +113,6 @@ public partial class MainWindow : Window
         OnlinePlayerComboBox.ItemsSource = _peers;
         HostComboBox.ItemsSource = _hostPeers;
         WorldComboBox.ItemsSource = _worlds;
-        VoicePeersItemsControl.ItemsSource = _voicePeers;
         NetworkAddressComboBox.ItemsSource = _networkAddresses;
         _uiTimer.Tick += (_, _) =>
         {
@@ -135,8 +121,6 @@ public partial class MainWindow : Window
             RefreshHostPeers();
             PruneStalePeers();
             RefreshHostLatencies();
-            RefreshVoicePeers();
-            UpdateVoicePeersFromDiscovery();
             RefreshLanAdvertisementState();
             RefreshUi();
             if (IsNetworkSelectionIdle() && _networkSelectionRefreshPending)
@@ -171,11 +155,7 @@ public partial class MainWindow : Window
             ResolveAndPersistLocalIdentity();
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
-            _voiceNetwork = new VoiceNetworkCoordinator();
-            _packRuntimes = new PackRuntimeService(
-                _paths,
-                _logger,
-                networkCoordinator: _voiceNetwork);
+            _packRuntimes = new PackRuntimeService(_paths, _logger);
             _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _network, _peerRoutes);
             _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
             await _skinService.StartAsync(_lifetimeCts.Token);
@@ -205,10 +185,7 @@ public partial class MainWindow : Window
             _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _network, _peerRoutes);
             _transfer.AttachPeerSupportLogService(_peerSupportLogs);
-            _updateService = new UpdateService(
-                _paths,
-                _logger,
-                networkCoordinator: _voiceNetwork);
+            _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
                 PostToUi(() => ApplyTransferProgress(progress));
@@ -241,19 +218,8 @@ public partial class MainWindow : Window
             };
             _lanAdvertisement = new LanAdvertisementService(_logger, _lanRelay, _peerRoutes);
             _lanAdvertisement.Start();
-            _voiceChannel = new VoiceChannelService(
-                _logger,
-                _voiceNetwork,
-                network: _network,
-                routes: _peerRoutes);
-            _voiceChannel.Initialize(_settings);
-            _voiceChannel.SpeakingStateChanged += OnVoiceSpeakingStateChanged;
-            _voiceChannel.PeerPresenceChanged += OnVoicePeerPresenceChanged;
-            _voiceChannel.TrafficProtectionChanged += OnVoiceTrafficProtectionChanged;
-            InitializePttHotkey();
 
             LoadSettingsIntoUi();
-            RefreshVoiceDevices();
             RefreshBuilds();
             CaptureNetworkAddresses(isStartup: true);
             RefreshNetworkEnvironment();
@@ -304,8 +270,6 @@ public partial class MainWindow : Window
         {
             if (_discovery is not null) await _discovery.DisposeAsync();
             if (_lanAdvertisement is not null) await _lanAdvertisement.DisposeAsync();
-            _pttHotkey?.Dispose();
-            if (_voiceChannel is not null) await _voiceChannel.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
             if (_lanRelay is not null) await _lanRelay.DisposeAsync();
@@ -353,9 +317,6 @@ public partial class MainWindow : Window
         try
         {
             PlayerNameTextBox.Text = RequireSettings().PlayerName;
-            VoiceMasterVolumeSlider.Value = settings.VoiceOutputVolume;
-            VoiceMuteButton.Content = "Микрофон";
-            VoiceDeafenButton.Content = "Звук";
         }
         finally
         {
@@ -494,8 +455,7 @@ public partial class MainWindow : Window
         !_busy &&
         !_transferActive &&
         !_minecraftRunning &&
-        !_minecraftPreparing &&
-        _voiceChannel is not { IsJoined: true };
+        !_minecraftPreparing;
 
     private void PersistNetworkAddressSelection(NetworkAddressOption address)
     {
@@ -583,7 +543,6 @@ public partial class MainWindow : Window
                     _lifetimeCts.Token);
             }
 
-            RefreshVoicePeers();
             RefreshLanAdvertisementState();
             RefreshUi();
         }
@@ -742,53 +701,6 @@ public partial class MainWindow : Window
                 _settingsService.Save(_settings);
             }
         }
-    }
-
-    private void RefreshVoiceDevices()
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null)
-        {
-            return;
-        }
-
-        var inputDevices = _voiceChannel.GetInputDevices();
-        var outputDevices = _voiceChannel.GetOutputDevices();
-
-        VoiceInputComboBox.ItemsSource = inputDevices;
-        VoiceOutputComboBox.ItemsSource = outputDevices;
-
-        var selectedInput = inputDevices.FirstOrDefault(device =>
-            string.Equals(device.Id, _settings.VoiceInputDeviceId, StringComparison.OrdinalIgnoreCase));
-        var selectedOutput = outputDevices.FirstOrDefault(device =>
-            string.Equals(device.Id, _settings.VoiceOutputDeviceId, StringComparison.OrdinalIgnoreCase));
-        var actualInput = selectedInput ?? (inputDevices.Count > 0 ? inputDevices[0] : null);
-        var actualOutput = selectedOutput ?? (outputDevices.Count > 0 ? outputDevices[0] : null);
-        var inputId = actualInput?.Id ?? "";
-        var outputId = actualOutput?.Id ?? "";
-        var settingsChanged =
-            !string.Equals(_settings.VoiceInputDeviceId, inputId, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(_settings.VoiceOutputDeviceId, outputId, StringComparison.OrdinalIgnoreCase);
-
-        _suppressVoicePersistence = true;
-        try
-        {
-            VoiceInputComboBox.SelectedItem = actualInput;
-            VoiceOutputComboBox.SelectedItem = actualOutput;
-            _settings.VoiceInputDeviceId = inputId;
-            _settings.VoiceOutputDeviceId = outputId;
-            _voiceChannel.SetDeviceIds(inputId, outputId);
-        }
-        finally
-        {
-            _suppressVoicePersistence = false;
-        }
-
-        if (settingsChanged)
-        {
-            _settingsService.Save(_settings);
-        }
-
-        RefreshDiagnosticsPanel();
     }
 
     /// <summary>
@@ -950,204 +862,6 @@ public partial class MainWindow : Window
         return result;
     }
 
-    internal void SetVoiceInputDevice(VoiceAudioDevice device)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceInputDeviceId = device.Id;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-        RefreshVoiceDevices();
-        RefreshUi();
-    }
-
-    internal void SetVoiceOutputDevice(VoiceAudioDevice device)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceOutputDeviceId = device.Id;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-        RefreshVoiceDevices();
-        RefreshUi();
-    }
-
-    internal void SetVoiceMasterVolume(double volume)
-    {
-        SetVoiceOutputVolume(volume);
-    }
-
-    internal void SetVoiceInputVolume(double volume)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceInputVolume = Math.Clamp(volume, 0d, 2d);
-        _settingsService.Save(_settings);
-        _voiceChannel.SetInputVolume(_settings.VoiceInputVolume);
-        RefreshDiagnosticsPanel();
-    }
-
-    internal void SetVoiceOutputVolume(double volume)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceOutputVolume = Math.Clamp(volume, 0d, 2d);
-        _settings.VoiceMasterVolume = _settings.VoiceOutputVolume;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetOutputVolume(_settings.VoiceOutputVolume);
-        VoiceMasterVolumeSlider.Value = _settings.VoiceOutputVolume;
-        RefreshDiagnosticsPanel();
-    }
-
-    internal void SetVoicePttMode(string mode)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        _settings.VoicePttMode = mode is "Hold" or "Toggle" ? mode : "Off";
-        _voicePttInputPressed = false;
-        _voicePttToggleActive = false;
-        _settingsService.Save(_settings);
-        ApplyVoiceTransmissionState();
-        RefreshDiagnosticsPanel();
-    }
-
-    internal void ToggleVoiceMute()
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceMuted = !_voiceChannel.IsMuted;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetMuted(_settings.VoiceMuted);
-        if (_localVoicePeer is not null)
-        {
-            _localVoicePeer.IsVoiceMuted = _settings.VoiceMuted;
-        }
-        RefreshVoicePeers();
-        RefreshUi();
-    }
-
-    internal void ToggleVoiceDeafen()
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceDeafened = !_settings.VoiceDeafened;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeafened(_settings.VoiceDeafened);
-        RefreshUi();
-    }
-
-    internal void SetVoicePeerVolume(PeerViewModel peer, double volume)
-    {
-        if (_voiceChannel is null) return;
-
-        var peerId = ResolveVoicePeerId(peer);
-        if (string.IsNullOrWhiteSpace(peerId))
-        {
-            return;
-        }
-
-        var clamped = Math.Clamp(volume, 0d, 2d);
-        peer.VoiceVolume = clamped;
-        _voiceChannel.SetPeerVolume(peerId, clamped);
-        RefreshDiagnosticsPanel();
-    }
-
-    internal void SetVoicePushToTalkKey(Key key)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        if (key == Key.None || key == Key.System)
-        {
-            key = Key.V;
-        }
-
-        _settings.VoicePushToTalkKey = key.ToString();
-        _settings.VoicePushToTalkBinding = $"Key:{key}";
-        _settingsService.Save(_settings);
-        _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
-        RefreshDiagnosticsPanel();
-    }
-
-    internal void SetVoicePushToTalkBinding(string binding)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        var parsed = PttInputBinding.Parse(binding);
-        _settings.VoicePushToTalkBinding = parsed.ToString();
-        if (parsed.Kind == PttInputKind.Key)
-        {
-            _settings.VoicePushToTalkKey = parsed.Key.ToString();
-        }
-
-        _voicePttInputPressed = false;
-        _voicePttToggleActive = false;
-        _settingsService.Save(_settings);
-        _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
-        ApplyVoiceTransmissionState();
-        RefreshDiagnosticsPanel();
-    }
-
-    private void InitializePttHotkey()
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _pttHotkey?.Dispose();
-            _pttHotkey = new GlobalPttHotkeyService(_settings.VoicePushToTalkBinding, pressed =>
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    OnVoicePttInput(pressed);
-                }));
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn("Global PTT hotkey unavailable: " + ex.Message);
-        }
-    }
-
-    private void OnVoicePttInput(bool pressed)
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        if (_settings.VoicePttMode == "Hold")
-        {
-            _voicePttInputPressed = pressed;
-            ApplyVoiceTransmissionState();
-            return;
-        }
-
-        if (_settings.VoicePttMode == "Toggle" && pressed)
-        {
-            _voicePttToggleActive = !_voicePttToggleActive;
-            ApplyVoiceTransmissionState();
-        }
-    }
-
-    private void ApplyVoiceTransmissionState()
-    {
-        if (_voiceChannel is null || _settings is null)
-        {
-            return;
-        }
-
-        var shouldTransmit = _settings.VoicePttMode switch
-        {
-            "Hold" => _voicePttInputPressed,
-            "Toggle" => _voicePttToggleActive,
-            _ => true
-        };
-        _voiceChannel.SetPttPressed(shouldTransmit);
-    }
-
     private void RefreshHostPeers()
     {
         var selectedPeerId = GetSelectablePeerId(HostComboBox.SelectedItem as PeerViewModel);
@@ -1176,139 +890,6 @@ public partial class MainWindow : Window
             HostComboBox.SelectedItem = restored ?? _hostPeers[0];
         }
 
-    }
-
-    private void RefreshVoicePeers()
-    {
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(30);
-        foreach (var stale in _voicePresence.Where(pair => pair.Value.LastSeenUtc < cutoff).Select(pair => pair.Key).ToArray())
-        {
-            _voicePresence.Remove(stale);
-        }
-
-        var peers = _voicePresence.Values
-            .OrderByDescending(entry => entry.LastSeenUtc)
-            .ThenBy(entry => entry.Peer.PlayerName, StringComparer.CurrentCultureIgnoreCase)
-            .Select(entry => entry.Peer)
-            .ToList();
-
-        peers.Sort((left, right) =>
-        {
-            if (ReferenceEquals(left, right))
-            {
-                return 0;
-            }
-
-            var seenComparison = right?.LastSeen.CompareTo(left?.LastSeen ?? DateTimeOffset.MinValue) ?? 0;
-            return seenComparison != 0
-                ? seenComparison
-                : string.Compare(
-                    left?.PlayerName,
-                    right?.PlayerName,
-                    StringComparison.OrdinalIgnoreCase);
-        });
-
-        if (_voiceChannel is { IsJoined: true })
-        {
-            var identity = ResolveActiveLocalIdentity();
-            _localVoicePeer ??= new PeerViewModel { IsLocalVoicePeer = true };
-            _localVoicePeer.PlayerName = identity.name;
-            _localVoicePeer.IdentityName = identity.name;
-            _localVoicePeer.IdentityId = identity.id;
-            _localVoicePeer.SetLocalEndpoints(_networkEndpoints, _primaryEndpoint);
-            _localVoicePeer.IsInVoiceChannel = true;
-            _localVoicePeer.IsVoiceMuted = _voiceChannel.IsMuted;
-            _localVoicePeer.LastSeen = DateTimeOffset.Now;
-            peers.Insert(0, _localVoicePeer);
-        }
-        else
-        {
-            _localVoicePeer = null;
-        }
-        var signature = string.Join("|", peers.Select(GetVoicePeerSignature));
-        var shouldRefreshList =
-            !string.Equals(signature, _lastVoicePeerListSignature, StringComparison.Ordinal) ||
-            _voicePeers.Count != peers.Count ||
-            !_voicePeers.Zip(peers).All(pair => ReferenceEquals(pair.First, pair.Second));
-
-        if (shouldRefreshList)
-        {
-            _lastVoicePeerListSignature = signature;
-            _voicePeers.Clear();
-            foreach (var peer in peers)
-            {
-                _voicePeers.Add(peer);
-            }
-        }
-
-        UpdateVoicePeersFromDiscovery();
-        RefreshDiagnosticsPanel();
-    }
-
-    private void UpdateVoicePeersFromDiscovery()
-    {
-        if (_voiceChannel is null)
-        {
-            return;
-        }
-
-        if (!_voiceChannel.IsJoined)
-        {
-            if (_lastVoiceTransportPeerSignature.Length > 0)
-            {
-                _lastVoiceTransportPeerSignature = "";
-                _voiceChannel.UpdatePeers(Array.Empty<VoicePeerCandidate>());
-            }
-            return;
-        }
-
-        var peers = _voicePresence
-            .Where(pair => pair.Value.LastSeenUtc >= DateTimeOffset.UtcNow - TimeSpan.FromSeconds(30))
-            .SelectMany(pair => (_peerRoutes?.GetSendCandidates(pair.Key) ?? [])
-                .Select(endpoint =>
-                new VoicePeerCandidate(
-                    pair.Key,
-                    endpoint.Address,
-                    endpoint.LocalAddress,
-                    endpoint.LocalInterfaceId)))
-            .Where(peer => !string.IsNullOrWhiteSpace(peer.PeerId))
-            .Distinct()
-            .ToArray();
-
-        var signature = string.Join("|", peers.Select(peer =>
-            $"{peer.PeerId}@{peer.Address}:{peer.LocalAddress}:{peer.LocalInterfaceId}"));
-        if (string.Equals(signature, _lastVoiceTransportPeerSignature, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _lastVoiceTransportPeerSignature = signature;
-        _voiceChannel.UpdatePeers(peers);
-    }
-
-    private static string ResolveVoicePeerId(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return "";
-        }
-
-        return Guid.TryParse(peer.IdentityId, out var identity)
-            ? identity.ToString("D")
-            : "";
-    }
-
-    private string GetVoicePeerSignature(PeerViewModel peer)
-    {
-        var peerId = ResolveVoicePeerId(peer);
-        var addresses = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
-            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
-            .Select(endpoint => $"{endpoint.Address}|{endpoint.LocalAddress}|{endpoint.LocalInterfaceId}")
-            .Where(address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(address => address, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return $"{peerId}=>{string.Join(",", addresses)}";
     }
 
     private static string GetSelectablePeerId(PeerViewModel? peer)
@@ -1489,8 +1070,6 @@ public partial class MainWindow : Window
             LanSessionId = _openToLanSessionId,
             LanWorldName = _openToLanWorldName,
             LanRelayProtocolVersion = LanRelayService.ResumableProtocolVersion,
-            IsVoiceChannelActive = _voiceChannel?.IsJoined == true,
-            IsVoiceMuted = _voiceChannel?.IsMuted == true,
             IsMinecraftRunning = _minecraftRunning,
             IsMinecraftPreparing = _minecraftPreparing,
             IsSkinAvailable = skin.IsAvailable,
@@ -1542,7 +1121,6 @@ public partial class MainWindow : Window
     {
         var network = _network?.GetSnapshot() ?? new NetworkEnvironmentSnapshot();
         var routes = _peerRoutes?.Export() ?? new KnownPeerCache();
-        var voice = _voiceNetwork?.Snapshot ?? default;
         var relay = _lanRelay?.GetDiagnosticSnapshot() ??
                     new LanRelayDiagnosticSnapshot(false, string.Empty, 0, 0);
         return SupportDiagnosticSnapshotBuilder.CaptureMetrics(
@@ -1553,7 +1131,6 @@ public partial class MainWindow : Window
             _transfer?.IsOperationActive == true,
             relay.IsHosting,
             relay.ClientRelayCount,
-            voice,
             diagnosticBytesSent: 0,
             diagnosticBytesReceived: 0,
             reconnects: 0,
@@ -1566,8 +1143,6 @@ public partial class MainWindow : Window
         var endpoint = _network?.GetSnapshot().PrimaryEndpoint;
         var relay = _lanRelay?.GetDiagnosticSnapshot();
         var lan = _lanAdvertisement?.GetDiagnosticSnapshot();
-        var voice = _voiceNetwork?.Snapshot ?? default;
-        var voiceDetails = _voiceChannel?.GetDiagnosticSnapshot();
         var identity = _settings is null
             ? (id: string.Empty, name: string.Empty)
             : ResolveActiveLocalIdentity();
@@ -1628,34 +1203,7 @@ public partial class MainWindow : Window
             ["transfer.bytesCurrent"] =
                 Interlocked.Read(ref _transferBytesCurrent).ToString(CultureInfo.InvariantCulture),
             ["transfer.bytesTotal"] =
-                Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture),
-            ["voice.joined"] = voice.IsJoined.ToString(CultureInfo.InvariantCulture),
-            ["voice.connectedPeers"] =
-                voice.ConnectedPeers.ToString(CultureInfo.InvariantCulture),
-            ["voice.rttMs"] = voice.RoundTripMs.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.lossPercent"] =
-                voice.LossPercent.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.jitterMs"] =
-                voice.JitterMs.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.lastPacketError"] = _voiceChannel?.LastPacketError ?? string.Empty,
-            ["voice.routeCount"] =
-                voiceDetails?.RouteCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.decoderCount"] =
-                voiceDetails?.DecoderCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.decodeErrors"] =
-                voiceDetails?.DecodeErrors.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.packetsSent"] =
-                voiceDetails?.Transport.PacketsSent.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.packetsReceived"] =
-                voiceDetails?.Transport.PacketsReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.bytesSent"] =
-                voiceDetails?.Transport.BytesSent.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.bytesReceived"] =
-                voiceDetails?.Transport.BytesReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.transportErrors"] =
-                voiceDetails?.Transport.Errors.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.reconnects"] =
-                voiceDetails?.Transport.ListenerReconnects.ToString(CultureInfo.InvariantCulture) ?? "0"
+                Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture)
         };
 
         if (endpoint is null)
@@ -1781,22 +1329,6 @@ public partial class MainWindow : Window
         return state;
     }
 
-    private void OnVoiceSpeakingStateChanged(string peerId, bool isSpeaking)
-    {
-        PostToUi(() =>
-        {
-            var peer = _voicePeers.FirstOrDefault(item =>
-                string.Equals(ResolveVoicePeerId(item), peerId, StringComparison.OrdinalIgnoreCase));
-            if (peer is null)
-            {
-                return;
-            }
-
-            peer.IsSpeaking = isSpeaking;
-            RefreshDiagnosticsPanel();
-        });
-    }
-
     private void PostToUi(Action action)
     {
         if (_shutdownStarted ||
@@ -1814,43 +1346,6 @@ public partial class MainWindow : Window
             Dispatcher.HasShutdownFinished)
         {
         }
-    }
-
-    private void OnVoicePeerPresenceChanged(string peerId, bool isPresent, bool explicitLeave)
-    {
-        PostToUi(() =>
-        {
-            if (isPresent)
-            {
-                if (_voicePresence.TryGetValue(peerId, out var existing))
-                {
-                    existing.LastSeenUtc = DateTimeOffset.UtcNow;
-                }
-                else
-                {
-                    var peer = _peers.FirstOrDefault(candidate =>
-                        string.Equals(ResolveVoicePeerId(candidate), peerId, StringComparison.OrdinalIgnoreCase));
-                    if (peer is not null)
-                    {
-                        _voicePresence[peerId] = new VoicePresenceEntry(
-                            peer,
-                            DateTimeOffset.UtcNow);
-                    }
-                }
-            }
-            else if (explicitLeave ||
-                     (_voicePresence.TryGetValue(peerId, out var existing) &&
-                      DateTimeOffset.UtcNow - existing.LastSeenUtc >= TimeSpan.FromSeconds(30)))
-            {
-                _voicePresence.Remove(peerId);
-            }
-            RefreshVoicePeers();
-        });
-    }
-
-    private void OnVoiceTrafficProtectionChanged(bool enabled)
-    {
-        PostToUi(RefreshUi);
     }
 
     private void ApplyPeer(PeerAnnouncement announcement)
@@ -1879,27 +1374,11 @@ public partial class MainWindow : Window
 
         peer.Apply(announcement, _localPackHash);
         RequireSkinService().ObservePeer(peer);
-        var voicePeerId = ResolveVoicePeerId(peer);
-        if (!string.IsNullOrWhiteSpace(voicePeerId))
-        {
-            if (announcement.IsVoiceChannelActive)
-            {
-                _voicePresence[voicePeerId] = new VoicePresenceEntry(
-                    peer,
-                    DateTimeOffset.UtcNow);
-            }
-            else
-            {
-                _voicePresence.Remove(voicePeerId);
-            }
-        }
         if (OnlinePlayerComboBox.SelectedItem is null)
         {
             OnlinePlayerComboBox.SelectedItem = peer;
         }
         RefreshHostPeers();
-        RefreshVoicePeers();
-        UpdateVoicePeersFromDiscovery();
         RefreshLanAdvertisementState();
         RefreshDiagnosticsPanel();
         RefreshUi();
@@ -1928,8 +1407,6 @@ public partial class MainWindow : Window
             OnlinePlayerComboBox.SelectedItem = _peers[0];
         }
 
-        RefreshVoicePeers();
-        UpdateVoicePeersFromDiscovery();
         RefreshHostPeers();
         RefreshLanAdvertisementState();
         if (!string.IsNullOrWhiteSpace(_diagnosticLogTargetIdentityId) &&
@@ -3167,149 +2644,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void VoiceJoinButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        await RunVoiceActionAsync(async () =>
-        {
-            if (_voiceChannel.IsJoined)
-            {
-                _voicePttInputPressed = false;
-                _voicePttToggleActive = false;
-                _voiceChannel.SetPttPressed(false);
-                await _voiceChannel.LeaveAsync();
-                RefreshVoicePeers();
-                SetState("Voice channel left");
-                return;
-            }
-
-            EnsureVoiceDevicesSelection();
-            _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-            _voiceChannel.Initialize(_settings);
-            _voiceChannel.SetInputVolume(_settings.VoiceInputVolume);
-            _voiceChannel.SetOutputVolume(_settings.VoiceOutputVolume);
-            _voiceChannel.Join();
-            _voicePttInputPressed = false;
-            _voicePttToggleActive = false;
-            RefreshVoicePeers();
-            UpdateVoicePeersFromDiscovery();
-            ApplyVoiceTransmissionState();
-            SetState("Voice channel joined");
-            await Task.Yield();
-        });
-    }
-
-    private void EnsureVoiceDevicesSelection()
-    {
-        if (_settings is null || _voiceChannel is null) return;
-
-        var input = string.IsNullOrWhiteSpace(_settings.VoiceInputDeviceId)
-            ? VoiceInputComboBox.SelectedItem as VoiceAudioDevice
-            : null;
-        var output = string.IsNullOrWhiteSpace(_settings.VoiceOutputDeviceId)
-            ? VoiceOutputComboBox.SelectedItem as VoiceAudioDevice
-            : null;
-
-        if (input is not null)
-        {
-            _settings.VoiceInputDeviceId = input.Id;
-        }
-
-        if (output is not null)
-        {
-            _settings.VoiceOutputDeviceId = output.Id;
-        }
-
-        _voiceChannel.SetDeviceIds(
-            _settings.VoiceInputDeviceId,
-            _settings.VoiceOutputDeviceId);
-    }
-
-    private void VoiceInputComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressVoicePersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        if (VoiceInputComboBox.SelectedItem is VoiceAudioDevice device)
-        {
-            SetVoiceInputDevice(device);
-        }
-    }
-
-    private void VoiceOutputComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressVoicePersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        if (VoiceOutputComboBox.SelectedItem is VoiceAudioDevice device)
-        {
-            SetVoiceOutputDevice(device);
-        }
-    }
-
-    private void VoiceMasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_suppressTextPersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        SetVoiceMasterVolume(e.NewValue);
-    }
-
-    private void VoiceMuteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        ToggleVoiceMute();
-    }
-
-    private void VoiceProtectionButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is not { IsJoined: true }) return;
-        _voiceChannel.ToggleTrafficProtection();
-        RefreshUi();
-    }
-
-    private void VoiceDeafenButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        ToggleVoiceDeafen();
-    }
-
-    private void VoicePttButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(true);
-    }
-
-    private void VoicePttButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePttButton_LostMouseCapture(object sender, MouseEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePttButton_MouseLeave(object sender, MouseEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePeerVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (sender is not Slider slider || slider.DataContext is not PeerViewModel peer || _voiceChannel is null)
-        {
-            return;
-        }
-
-        var peerId = ResolveVoicePeerId(peer);
-        if (string.IsNullOrWhiteSpace(peerId))
-        {
-            return;
-        }
-
-        SetVoicePeerVolume(peer, e.NewValue);
-    }
-
     private void ApplyMemoryText()
     {
         if (int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb))
@@ -3394,31 +2728,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RunVoiceActionAsync(Func<Task> action)
-    {
-        if (_voiceBusy)
-        {
-            return;
-        }
-
-        _voiceBusy = true;
-        RefreshUi();
-        try
-        {
-            await action();
-        }
-        catch (Exception ex)
-        {
-            RequireLogger().Warn(ex.Message);
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _voiceBusy = false;
-            RefreshUi();
-        }
-    }
-
     private void SetState(string state)
     {
         _state = state;
@@ -3439,7 +2748,6 @@ public partial class MainWindow : Window
                                    !_transferActive &&
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
-        var voiceEnabled = !_voiceBusy && _voiceChannel is not null;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
         PlayerNameTextBox.IsEnabled = configurationEnabled;
@@ -3465,42 +2773,6 @@ public partial class MainWindow : Window
         MemoryTextBox.IsEnabled = configurationEnabled;
         UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
 
-        VoiceJoinButton.IsEnabled = !_voiceBusy && _voiceChannel is not null;
-        VoiceProtectionButton.IsEnabled = _voiceChannel is { IsJoined: true } && !_voiceBusy;
-        VoicePttButton.IsEnabled = _voiceChannel is { IsJoined: true };
-        VoiceInputComboBox.IsEnabled = voiceEnabled;
-        VoiceOutputComboBox.IsEnabled = voiceEnabled;
-        VoiceMasterVolumeSlider.IsEnabled = voiceEnabled;
-        VoiceMuteButton.IsEnabled = _voiceChannel is { IsJoined: true } && !_voiceBusy;
-        VoiceDeafenButton.IsEnabled = _voiceChannel is not null;
-        if (_voiceChannel is not null)
-        {
-            VoiceJoinButton.Content = _voiceChannel.IsJoined ? "\uE778" : "\uE717";
-            VoiceJoinButton.ToolTip = _voiceChannel.IsJoined
-                ? "Выйти из голосового канала"
-                : "Войти в голосовой канал";
-            VoiceMuteButton.Content = _voiceChannel.IsMuted ? "\uE198" : "\uE720";
-            VoiceMuteButton.ToolTip = _voiceChannel.IsMuted ? "Включить микрофон" : "Выключить микрофон";
-            var protectionEnabled = _voiceChannel.IsTrafficProtectionEnabled;
-            VoiceProtectionIcon.Text = protectionEnabled ? "\uEA18" : "\uEB59";
-            VoiceProtectionIconTransform.Matrix = protectionEnabled
-                ? Matrix.Identity
-                : DisabledVoiceProtectionIconTransform;
-            VoiceProtectionButton.ToolTip = _voiceChannel.IsTrafficProtectionEnabled
-                ? "Буфер включён"
-                : "Буфер выключен";
-            VoiceDeafenButton.Content = "Звук";
-        }
-        else
-        {
-            VoiceJoinButton.Content = "\uE717";
-            VoiceMuteButton.Content = "\uE720";
-            VoiceProtectionIcon.Text = "\uEA18";
-            VoiceProtectionIconTransform.Matrix = Matrix.Identity;
-            VoiceProtectionButton.ToolTip = "Буфер включён";
-            VoiceDeafenButton.Content = "Звук";
-        }
-        VoiceStatusText.Text = string.Empty;
         RefreshDiagnosticsPanel();
         RefreshTransferStatus();
     }
@@ -3533,18 +2805,5 @@ public partial class MainWindow : Window
     private WaypointSyncService RequireWaypointSync() => _waypointSync ?? throw new InvalidOperationException("Waypoint sync service is not initialized.");
     private SkinService RequireSkinService() => _skinService ?? throw new InvalidOperationException("Skin service is not initialized.");
 
-    private sealed class VoicePresenceEntry
-    {
-        public VoicePresenceEntry(
-            PeerViewModel peer,
-            DateTimeOffset lastSeenUtc)
-        {
-            Peer = peer;
-            LastSeenUtc = lastSeenUtc;
-        }
-
-        public PeerViewModel Peer { get; }
-        public DateTimeOffset LastSeenUtc { get; set; }
-    }
     private UpdateService RequireUpdateService() => _updateService ?? throw new InvalidOperationException("Update service is not initialized.");
 }

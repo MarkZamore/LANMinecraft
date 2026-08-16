@@ -145,10 +145,9 @@ public sealed class WorldTransferLifecycleTests
             var waypoints = new WaypointSyncService(paths, logger, metadata, network, routes);
             var skins = new SkinService(paths, logger, network, routes);
             var relay = new LanRelayService(logger, network, routes);
-            var voiceNetwork = new VoiceNetworkCoordinator();
             var identityAdapter = new PortableIdentityAdapterService(paths, logger);
             var packInstances = new PackInstanceService(paths, logger);
-            var packRuntimes = new PackRuntimeService(paths, logger, networkCoordinator: voiceNetwork);
+            var packRuntimes = new PackRuntimeService(paths, logger);
             var minecraft = new MinecraftProcessService(
                 paths,
                 logger,

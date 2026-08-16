@@ -13,13 +13,13 @@ namespace Minecraft;
 public sealed class PortableGameInstaller : IGameInstaller
 {
     private const int MaximumParallelDownloads = 4;
+    private const int DownloadBlockBytes = 64 * 1024;
     private readonly HttpClient _httpClient;
     private readonly string _runtimeRoot;
     private readonly string _temporaryRoot;
     private readonly IProgress<RuntimePreparationProgress>? _runtimeProgress;
     private readonly int _phaseIndex;
     private readonly int _phaseCount;
-    private readonly VoiceNetworkCoordinator? _networkCoordinator;
     private long _lastRuntimeProgressTimestamp;
 
     public PortableGameInstaller(
@@ -28,8 +28,7 @@ public sealed class PortableGameInstaller : IGameInstaller
         string temporaryRoot,
         IProgress<RuntimePreparationProgress>? runtimeProgress,
         int phaseIndex,
-        int phaseCount,
-        VoiceNetworkCoordinator? networkCoordinator = null)
+        int phaseCount)
     {
         _httpClient = httpClient;
         _runtimeRoot = Path.GetFullPath(runtimeRoot);
@@ -37,7 +36,6 @@ public sealed class PortableGameInstaller : IGameInstaller
         _runtimeProgress = runtimeProgress;
         _phaseIndex = phaseIndex;
         _phaseCount = phaseCount;
-        _networkCoordinator = networkCoordinator;
     }
 
     public async ValueTask Install(
@@ -62,7 +60,6 @@ public sealed class PortableGameInstaller : IGameInstaller
         var discoveredSizes = new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         long downloadedBytes = 0;
         var completedFiles = 0;
-        using var bandwidthLimiter = _networkCoordinator?.CreateTransferLimiter();
         Interlocked.Exchange(ref _lastRuntimeProgressTimestamp, 0);
         Directory.CreateDirectory(_temporaryRoot);
 
@@ -94,7 +91,6 @@ public sealed class PortableGameInstaller : IGameInstaller
                             !discoveredSizes.TryAdd(file.Path!, discoveredSize)) return;
                         Interlocked.Add(ref totalBytes, discoveredSize);
                     },
-                    bandwidthLimiter,
                     token);
 
                 var completed = Interlocked.Increment(ref completedFiles);
@@ -128,7 +124,6 @@ public sealed class PortableGameInstaller : IGameInstaller
         GameFile file,
         Action<long> reportBytes,
         Action<long> reportDiscoveredSize,
-        VoiceTransferLimiter? bandwidthLimiter,
         CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(file.Url))
@@ -165,16 +160,12 @@ public sealed class PortableGameInstaller : IGameInstaller
                                  1024 * 1024,
                                  FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
-                    var buffer = new byte[VoiceTransferLimiter.TransferBlockSize];
+                    var buffer = new byte[DownloadBlockBytes];
                     while (true)
                     {
                         var read = await input.ReadAsync(buffer.AsMemory(), token);
                         if (read == 0) break;
                         await output.WriteAsync(buffer.AsMemory(0, read), token);
-                        if (bandwidthLimiter is not null)
-                        {
-                            await bandwidthLimiter.ThrottleAsync(read, token).ConfigureAwait(false);
-                        }
                         attemptBytes += read;
                         reportBytes(read);
                     }

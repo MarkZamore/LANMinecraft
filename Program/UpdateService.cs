@@ -41,7 +41,6 @@ public sealed class UpdateService
     private readonly string _currentCommitSha;
     private readonly string? _currentExecutablePath;
     private readonly TimeSpan _checkTimeout;
-    private readonly VoiceNetworkCoordinator? _voiceNetwork;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -54,8 +53,7 @@ public sealed class UpdateService
         HttpClient? httpClient = null,
         string? currentCommitSha = null,
         TimeSpan? checkTimeout = null,
-        string? currentExecutablePath = null,
-        VoiceNetworkCoordinator? networkCoordinator = null)
+        string? currentExecutablePath = null)
     {
         _paths = paths;
         _logger = logger;
@@ -65,7 +63,6 @@ public sealed class UpdateService
         _currentExecutablePath = string.IsNullOrWhiteSpace(currentExecutablePath)
             ? null
             : Path.GetFullPath(currentExecutablePath);
-        _voiceNetwork = networkCoordinator;
     }
 
     public static string CurrentCommitSha => ResolveCurrentCommitSha();
@@ -858,6 +855,8 @@ public sealed class UpdateService
         return new Uri(uri, UriKind.Absolute);
     }
 
+    private const int DownloadBlockBytes = 64 * 1024;
+
     private async Task CopyWithProgressAsync(
         Stream input,
         Stream output,
@@ -865,8 +864,7 @@ public sealed class UpdateService
         IProgress<UpdatePreparationProgress>? progress,
         CancellationToken token)
     {
-        var buffer = new byte[VoiceTransferLimiter.TransferBlockSize];
-        using var limiter = _voiceNetwork?.CreateTransferLimiter();
+        var buffer = new byte[DownloadBlockBytes];
         var lastReportTimestamp = Stopwatch.GetTimestamp();
         long total = 0;
         while (true)
@@ -875,7 +873,6 @@ public sealed class UpdateService
             if (read <= 0) break;
             await output.WriteAsync(buffer.AsMemory(0, read), token);
             total += read;
-            if (limiter is not null) await limiter.ThrottleAsync(read, token).ConfigureAwait(false);
             var now = Stopwatch.GetTimestamp();
             if (expectedSize > 0 &&
                 (total >= expectedSize ||
