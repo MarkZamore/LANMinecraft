@@ -111,9 +111,13 @@ public sealed class SteamPeerDirectory(
             }
         }
 
-        // Anyone we hold a connection to is here, whatever presence says:
-        // during a world transfer the friend list went quiet and the peer
-        // vanished from the window while their world was still arriving.
+        // Anyone we hold a connection to is here, whatever presence says.
+        // Presence is Steam's opinion and it can simply refuse to serve it -
+        // one player's launcher connected twice and sent a bug report while
+        // staying invisible in the other's list, because reading a friend's
+        // rich presence depends on their profile privacy and talking to them
+        // does not. A conversation in progress outranks any opinion about
+        // whether they are there.
         foreach (var connected in transport?.ConnectedPeers ?? [])
         {
             lock (_gate)
@@ -121,8 +125,33 @@ public sealed class SteamPeerDirectory(
                 if (_peers.TryGetValue(connected.Value, out var live))
                 {
                     _peers[connected.Value] = (live.Presence, now);
+                    continue;
                 }
             }
+
+            // Not decodable, but demonstrably here. List them under the name
+            // Steam does give us, with an unknown protocol so nothing assumes
+            // a compatibility it has not seen proof of.
+            var known = friends.FirstOrDefault(friend => friend.SteamId64 == connected.Value);
+            if (!SteamId64.TryFrom(connected.Value, out var connectedId)) continue;
+            var persona = string.IsNullOrWhiteSpace(known.PersonaName)
+                ? connectedId.ToString()
+                : known.PersonaName;
+
+            lock (_gate)
+            {
+                _peers[connected.Value] = (new SteamPeerPresence
+                {
+                    SteamId = connectedId,
+                    PersonaName = persona,
+                    PlayerName = persona,
+                    ProtocolVersion = 0
+                }, now);
+            }
+            changed = true;
+            logger?.Info(
+                $"{persona} is connected to this launcher but Steam will not serve their " +
+                "presence; listing them from the live connection.");
         }
 
         lock (_gate)
