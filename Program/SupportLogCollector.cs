@@ -1553,8 +1553,6 @@ public sealed class SupportLogCollector : IAsyncDisposable
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return segments.Any(segment =>
             ProhibitedDirectoryNames.Contains(segment, StringComparer.OrdinalIgnoreCase) ||
-            segment.Equals("UUID.json", StringComparison.OrdinalIgnoreCase) ||
-            segment.Equals("network-peers.json", StringComparison.OrdinalIgnoreCase) ||
             segment.Equals("settings.json", StringComparison.OrdinalIgnoreCase));
     }
 

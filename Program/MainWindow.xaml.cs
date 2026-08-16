@@ -119,11 +119,7 @@ public partial class MainWindow : Window
                 new SteamNativeLibraryService(_paths, _logger),
                 _logger);
             _steamClient.StatusChanged += (_, status) => PostToUi(() => ApplySteamStatus(status));
-            _identityService = new SteamIdentityService(
-                _paths,
-                new SteamClientUserSource(_steamClient),
-                _logger,
-                new WpfIdentityConflictResolver(this));
+            _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             await ConnectSteamAndBindIdentityAsync();
             _peerTransport = new SteamPeerTransport(_steamClient, _logger);
@@ -216,7 +212,6 @@ public partial class MainWindow : Window
             if (_skinService is not null) await _skinService.DisposeAsync();
             if (_peerTransport is not null) await _peerTransport.DisposeAsync();
             if (_steamClient is not null) await _steamClient.DisposeAsync();
-            _identityService?.Dispose();
             _packInstances?.Dispose();
             _packRuntimes?.Dispose();
             _identityAdapter?.Dispose();
@@ -1035,7 +1030,7 @@ public partial class MainWindow : Window
             SetState("Starting client");
             try
             {
-                await RequireMinecraft().StartClientAsync(settings, null, 0, runtimeProgress, _lifetimeCts.Token);
+                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, _lifetimeCts.Token);
             }
             catch
             {
@@ -1282,7 +1277,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var binding = await _identityService.EnsureBoundAsync(_lifetimeCts.Token).ConfigureAwait(true);
+            var binding = _identityService.Bind();
             if (!binding.Bound)
             {
                 SetSteamMessage(string.IsNullOrEmpty(binding.Message)
@@ -1291,7 +1286,6 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!string.IsNullOrEmpty(binding.Message)) _logger?.Info(binding.Message);
             ResolveAndPersistLocalIdentity();
             // A retry after Steam was fixed has to bring the network up too;
             // during startup this runs once more, and starting is idempotent.

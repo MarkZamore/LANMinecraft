@@ -4,9 +4,7 @@ namespace Minecraft;
 
 /// <summary>
 /// What is left of the pre-Steam identity: the nickname rules the UI enforces.
-/// Choosing the player's UUID now belongs to <see cref="SteamIdentityService"/>,
-/// which reads Minecraft/Personal/UUID.json but never creates one behind the
-/// player's back.
+/// Choosing the player's UUID belongs to <see cref="SteamIdentityService"/>.
 /// </summary>
 public static class LocalIdentityService
 {
@@ -90,13 +88,6 @@ public static class LocalIdentityService
 
 }
 
-public sealed class PortableIdentity
-{
-    public int SchemaVersion { get; set; } = 1;
-    public Guid PlayerUuid { get; set; }
-    public DateTimeOffset CreatedAtUtc { get; set; }
-}
-
 /// <summary>
 /// Who this machine is, in both currencies: the Steam account other launchers
 /// address, and the Minecraft UUID that names progress inside worlds. There is
@@ -109,11 +100,11 @@ public sealed class LocalIdentityContext
     public string MinecraftUuid { get; set; } = "";
     public string SessionAccessToken { get; set; } = "";
 
-    /// <summary>The Steam account this machine is signed in to; None before the migration.</summary>
+    /// <summary>The Steam account this machine is signed in to.</summary>
     public SteamId64 SteamId64 { get; set; }
 
     /// <summary>Same value as <see cref="MinecraftUuid"/>, typed.</summary>
     public Guid PlayerUuid { get; set; }
 
-    public IdentityBindingSource Source { get; set; } = IdentityBindingSource.MigratedUuidJson;
+    public IdentityBindingSource Source { get; set; } = IdentityBindingSource.Derived;
 }
