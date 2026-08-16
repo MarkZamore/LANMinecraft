@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace Minecraft.Tests;
 
@@ -70,7 +70,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
             Path.Combine(paths.Worlds, "Chebupeli", "level.dat"),
             Path.Combine(paths.Personal, "Backups", "Chebupeli-2026-08-15", "level.dat"),
             Path.Combine(paths.Personal, "Instances", "Infinity", "options.txt"),
-            Path.Combine(paths.SupportLogs, "76561198256236531", "session.json")
+            Path.Combine(paths.BugReports, "20260816-120000-76561198256236531-abcd1234", "README.md")
         };
         foreach (var path in kept) WriteFile(path, "keep");
 

@@ -67,8 +67,8 @@ public sealed class AppPaths
     /// </summary>
     public string ProfileTransactions => Path.Combine(Personal, "ProfileTransactions");
 
-    public string SupportLogs => Path.Combine(Personal, "SupportLogs");
-    public string SupportSpool => Path.Combine(Personal, "SupportSpool");
+    /// <summary>Bug reports received from friends, one directory per report.</summary>
+    public string BugReports => Path.Combine(Personal, "BugReports");
     public string LogFile => Path.Combine(Personal, "logs.log");
 
     public void Ensure()
@@ -80,8 +80,7 @@ public sealed class AppPaths
         Directory.CreateDirectory(Personal);
         Directory.CreateDirectory(Instances);
         Directory.CreateDirectory(Worlds);
-        Directory.CreateDirectory(SupportLogs);
-        Directory.CreateDirectory(SupportSpool);
+        Directory.CreateDirectory(BugReports);
         Directory.CreateDirectory(ProfileTransactions);
     }
 

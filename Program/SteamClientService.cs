@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Globalization;
 
 namespace Minecraft;
@@ -67,6 +67,13 @@ public sealed class SteamClientService : IAsyncDisposable
 
     public event EventHandler<SteamClientStatus>? StatusChanged;
     public event EventHandler<IReadOnlyList<SteamFriendInfo>>? FriendsChanged;
+
+    /// <summary>
+    /// The one initialised Steamworks facade. Anything that reads Steam
+    /// state must go through this instance - a second facade is never
+    /// initialised and answers every question with "nothing".
+    /// </summary>
+    public ISteamApiFacade Api => _api;
 
     public SteamClientStatus Status
     {
@@ -154,7 +161,9 @@ public sealed class SteamClientService : IAsyncDisposable
 
     private void StartPump()
     {
-        if (_pump is not null) return;
+        // A pump that died on a Steam failure is replaced when the player
+        // retries; the old thread has already returned.
+        if (_pump is { IsAlive: true }) return;
         _pump = new Thread(PumpLoop)
         {
             IsBackground = true,

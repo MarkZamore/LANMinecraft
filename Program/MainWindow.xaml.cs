@@ -24,7 +24,6 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly CancellationTokenSource _lifetimeCts = new();
-    private readonly SemaphoreSlim _diagnosticLogTargetChangeGate = new(1, 1);
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
     private readonly TransferRateTracker _runtimeRate = new();
@@ -55,14 +54,15 @@ public partial class MainWindow : Window
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
-    private PeerSupportLogService? _peerSupportLogs;
+    private BugReportService? _bugReports;
     private string _localPackHash = "";
     private string _state = "Starting";
     private bool _busy;
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
-    private bool _suppressDiagnosticTargetSelection;
+    private bool _bugReportSending;
+    private string _bugReportStatus = "Отчёт отправляется другу через Steam.";
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
@@ -75,8 +75,6 @@ public partial class MainWindow : Window
     private bool _minecraftPreparing;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
-    private string _diagnosticLogTargetIdentityId = "";
-    private long _diagnosticLogTargetChangeVersion;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -95,6 +93,7 @@ public partial class MainWindow : Window
             RefreshWorlds();
             RefreshSteamPeers();
             PruneStalePeers();
+            RefreshLocalPresence();
             RefreshUi();
         };
     }
@@ -107,8 +106,8 @@ public partial class MainWindow : Window
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
-            DeprecatedFileCleanupService.Run(_paths, _logger);
             _logger = new Logger(_paths.LogFile);
+            DeprecatedFileCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
@@ -125,7 +124,7 @@ public partial class MainWindow : Window
             await ConnectSteamAndBindIdentityAsync();
             _peerTransport = new SteamPeerTransport(_steamClient, _logger);
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
-            _peerDirectory = new SteamPeerDirectory(_steamClient, new SteamworksApiFacade(), _logger);
+            _peerDirectory = new SteamPeerDirectory(_steamClient, _logger);
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
@@ -136,23 +135,22 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
-            _peerSupportLogs = new PeerSupportLogService(
-                _paths,
-                _peerTransport,
-                ResolveActiveLocalIdentity,
-                ResolveCurrentInstanceDirectory,
-                CaptureSupportEnvironmentAsync,
-                CaptureSupportNetworkMetrics);
-            _peerSupportLogs.StateChanged += () => PostToUi(() =>
-            {
-                _diagnosticLogTargetIdentityId =
-                    _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
-                RefreshDiagnosticsPanel();
-            });
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
                 runtimeOptions: null,
                 confirmation: new WpfWorldTransferConfirmation(this));
-            _peerRouter.Register(_peerSupportLogs);
+            _bugReports = new BugReportService(
+                _paths,
+                _logger,
+                _peerTransport,
+                ResolveCurrentInstanceDirectory,
+                CreateBugReportContext);
+            _bugReports.ReportReceived += (_, directory) => PostToUi(() =>
+            {
+                SetBugReportStatus($"Получен отчёт: {Path.GetFileName(directory)}");
+                RefreshDiagnosticsPanel();
+            });
+            _bugReports.PruneStoredReports();
+            _peerRouter.Register(_bugReports);
             _peerRouter.Register(_waypointSync);
             _peerRouter.Register(_skinService);
             _peerRouter.RegisterFallback(_transfer);
@@ -208,7 +206,6 @@ public partial class MainWindow : Window
         {
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
-            if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
             if (_peerTransport is not null) await _peerTransport.DisposeAsync();
@@ -266,6 +263,24 @@ public partial class MainWindow : Window
     /// Re-reads the friends list. Steam serves it from its own cache, so this
     /// is cheap enough for the two-second UI timer that used to poll adapters.
     /// </summary>
+    /// <summary>
+    /// Presence is what friends see; it has to follow the game starting and
+    /// stopping, and it has to be re-set after e4steam clears rich presence
+    /// when a hosted world closes.
+    /// </summary>
+    private void RefreshLocalPresence()
+    {
+        if (_shutdownStarted || !_startupComplete || !IsIdentityBound) return;
+        try
+        {
+            PublishLocalPresence();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IdentityUnavailableException or IOException)
+        {
+            _logger?.Warn($"Steam presence refresh failed: {ex.Message}");
+        }
+    }
+
     private void RefreshSteamPeers()
     {
         if (_shutdownStarted || _peerDirectory is null) return;
@@ -431,110 +446,109 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Pushes the diagnostics state into the panel in the main window. It used
-    /// to live in the voice settings dialog, which is why so many call sites
-    /// refresh it.
+    /// Pushes the bug-report state into the panel in the main window: who can
+    /// receive a report right now, and what happened to the last one.
     /// </summary>
     internal void RefreshDiagnosticsPanel()
     {
         var targets = BuildDiagnosticLogTargets();
-        _suppressDiagnosticTargetSelection = true;
-        try
         {
-            DiagnosticLogTargetComboBox.ItemsSource = targets;
-            DiagnosticLogTargetComboBox.SelectedItem = targets.FirstOrDefault(option =>
-                string.Equals(
-                    option.SteamId.ToString(),
-                    _diagnosticLogTargetIdentityId,
-                    StringComparison.Ordinal)) ??
-                targets.FirstOrDefault(option => option.IsNobody);
-        }
-        finally
-        {
-            _suppressDiagnosticTargetSelection = false;
-        }
-
-        DiagnosticLogStatusText.Text = _peerSupportLogs?.StatusText ?? "Передача логов выключена.";
-        OpenSupportLogsButton.IsEnabled = _peerSupportLogs?.HasReceivedLogs == true;
-    }
-
-    private void DiagnosticLogTargetComboBox_SelectionChanged(
-        object sender,
-        SelectionChangedEventArgs e)
-    {
-        if (_suppressDiagnosticTargetSelection ||
-            DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption option)
-        {
-            return;
-        }
-
-        SetDiagnosticLogTarget(option);
-    }
-
-    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e)
-    {
-        OpenSupportLogsDirectory();
-    }
-
-    internal async void SetDiagnosticLogTarget(DiagnosticLogTargetOption option)
-    {
-        if (_peerSupportLogs is null || _shutdownStarted)
-        {
-            return;
-        }
-
-        var changeVersion = Interlocked.Increment(
-            ref _diagnosticLogTargetChangeVersion);
-        var enteredGate = false;
-        _diagnosticLogTargetIdentityId = option.SteamId.ToString();
-        try
-        {
-            await _diagnosticLogTargetChangeGate.WaitAsync(_lifetimeCts.Token);
-            enteredGate = true;
-            if (changeVersion != Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
+            var selected = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
+            // Rebuilding the list on every tick would close the drop-down the
+            // moment a player opened it.
+            if (!targets.SequenceEqual(
+                    (DiagnosticLogTargetComboBox.ItemsSource as IEnumerable<DiagnosticLogTargetOption>) ?? []))
             {
-                return;
+                DiagnosticLogTargetComboBox.ItemsSource = targets;
+                DiagnosticLogTargetComboBox.SelectedItem =
+                    targets.FirstOrDefault(option => option == selected) ??
+                    targets.FirstOrDefault(option => !option.IsNobody) ??
+                    targets.FirstOrDefault();
             }
+        }
 
-            await _peerSupportLogs.SetTargetAsync(option, _lifetimeCts.Token);
+        var recipient = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
+        SendBugReportButton.IsEnabled =
+            !_bugReportSending && IsIdentityBound && recipient is { IsNobody: false };
+        DiagnosticLogStatusText.Text = _bugReportStatus;
+        OpenSupportLogsButton.IsEnabled = HasReceivedBugReports();
+    }
+
+    private bool HasReceivedBugReports()
+    {
+        try
+        {
+            var reports = _bugReports?.ReportsDirectory;
+            return reports is not null && Directory.Exists(reports) &&
+                   Directory.EnumerateDirectories(reports).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Packs the last of this player's logs, with whatever they typed, and
+    /// sends it to the friend they picked. Nothing streams: the report is a
+    /// snapshot of the moment they noticed something was wrong.
+    /// </summary>
+    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e) =>
+        OpenSupportLogsDirectory();
+
+    private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bugReports is null || _bugReportSending) return;
+        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient ||
+            recipient.IsNobody)
+        {
+            SetBugReportStatus("Выберите, кому отправить отчёт.");
+            return;
+        }
+
+        _bugReportSending = true;
+        SetBugReportStatus($"Отправка отчёта игроку {recipient.DisplayName}…");
+        try
+        {
+            var message = BugReportMessageTextBox.Text;
+            var manifest = await _bugReports
+                .SendAsync(recipient.SteamId, message, _lifetimeCts.Token)
+                .ConfigureAwait(true);
+            BugReportMessageTextBox.Clear();
+            SetBugReportStatus(
+                $"Отчёт отправлен игроку {recipient.DisplayName} " +
+                $"({manifest.ArchiveBytes / 1024} КиБ).");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (changeVersion == Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
-            {
-                _diagnosticLogTargetIdentityId = string.Empty;
-                _logger?.Warn(
-                    $"Diagnostic log sharing could not be changed: {ex.Message}");
-            }
+            _logger?.Warn($"Bug report could not be sent: {ex.Message}");
+            SetBugReportStatus($"Не удалось отправить отчёт: {ex.Message}");
         }
         finally
         {
-            if (enteredGate)
-            {
-                _diagnosticLogTargetChangeGate.Release();
-            }
-            if (changeVersion == Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
-            {
-                RefreshDiagnosticsPanel();
-            }
+            _bugReportSending = false;
+            RefreshDiagnosticsPanel();
         }
+    }
+
+    private void SetBugReportStatus(string message)
+    {
+        _bugReportStatus = message;
+        DiagnosticLogStatusText.Text = message;
     }
 
     internal void OpenSupportLogsDirectory()
     {
-        if (_paths is null) return;
+        if (_paths is null || _bugReports is null) return;
         try
         {
-            Directory.CreateDirectory(_paths.SupportLogs);
+            Directory.CreateDirectory(_bugReports.ReportsDirectory);
             Process.Start(new ProcessStartInfo
             {
-                FileName = _paths.SupportLogs,
+                FileName = _bugReports.ReportsDirectory,
                 UseShellExecute = true
             });
         }
@@ -542,7 +556,7 @@ public partial class MainWindow : Window
                                    InvalidOperationException or
                                    System.ComponentModel.Win32Exception)
         {
-            _logger?.Warn($"Received diagnostic log directory could not be opened: {ex.Message}");
+            _logger?.Warn($"Received bug report directory could not be opened: {ex.Message}");
         }
     }
 
@@ -551,7 +565,7 @@ public partial class MainWindow : Window
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
         foreach (var peer in _peers
-                     .Where(peer => peer.LastSeen >= cutoff && peer.SupportsDiagnosticLogs)
+                     .Where(peer => peer.LastSeen >= cutoff)
                      .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
             result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
@@ -569,14 +583,14 @@ public partial class MainWindow : Window
 
     private WorldMetadataContext? CreateWorldMetadataContext()
     {
-        var owner = GetActiveLocalOwner();
-        var ownerSteamId = _identityService?.IsBound == true
-            ? RequireIdentityService().ResolveContext(RequireSettings()).SteamId64.ToString()
-            : string.Empty;
-        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
+        // Steam decides who the player is; until it has, no world is stamped
+        // with an owner and the list simply shows what is on disk.
+        if (!IsIdentityBound || BuildComboBox.SelectedItem is not ClientBuildViewModel build)
         {
             return null;
         }
+        var owner = GetActiveLocalOwner();
+        var ownerSteamId = RequireIdentityService().ResolveContext(RequireSettings()).SteamId64.ToString();
 
         return new WorldMetadataContext
         {
@@ -628,21 +642,9 @@ public partial class MainWindow : Window
     private async Task StartNetworkingAsync()
     {
         var settings = RequireSettings();
-        if (_peerSupportLogs is not null &&
-            string.IsNullOrWhiteSpace(_peerSupportLogs.CurrentTargetIdentityId))
-        {
-            _diagnosticLogTargetIdentityId = string.Empty;
-        }
-
         if (!IsIdentityBound || _steamClient?.Status.IsReady != true)
         {
             RequireTransfer().StopAcceptingIncomingTransfers();
-            if (_peerSupportLogs is not null)
-            {
-                await _peerSupportLogs
-                    .OnTransportUnavailableAsync("steam_unavailable", _lifetimeCts.Token)
-                    .ConfigureAwait(true);
-            }
             RequireLogger().Warn("Steam is unavailable; network play stays off.");
             return;
         }
@@ -706,8 +708,25 @@ public partial class MainWindow : Window
             HostedWorldId = waypointHost?.WorldId ?? string.Empty,
             WaypointProtocolVersion = WaypointSyncService.ProtocolVersion,
             WaypointProviders = waypointHost?.Providers.ToList() ?? [],
-            DiagnosticProtocolVersion = PeerSupportProtocol.ProtocolVersion
+            // Anyone running this build can receive a bug report.
+            DiagnosticProtocolVersion = BugReportManifest.ProtocolVersion
         });
+    }
+
+    /// <summary>What a report says about the machine it came from.</summary>
+    private BugReportContext CreateBugReportContext()
+    {
+        var settings = RequireSettings();
+        var identity = RequireIdentityService().ResolveContext(settings);
+        return new BugReportContext(
+            identity.SteamId64,
+            _steamClient?.Status.PersonaName ?? string.Empty,
+            identity.IdentityName,
+            identity.MinecraftUuid,
+            BuildVersionText(),
+            settings.ClientRelativePath,
+            _localPackHash,
+            _minecraftRunning);
     }
 
     private string? ResolveCurrentInstanceDirectory()
@@ -742,16 +761,6 @@ public partial class MainWindow : Window
                 _minecraft?.DiagnosticJavaPath),
             token);
     }
-
-    private SupportNetworkMetrics CaptureSupportNetworkMetrics() =>
-        SupportDiagnosticSnapshotBuilder.CaptureMetrics(
-            CaptureSteamDiagnosticContext(),
-            _transfer?.IsOperationActive == true,
-            diagnosticBytesSent: 0,
-            diagnosticBytesReceived: 0,
-            reconnects: 0,
-            decodeErrors: 0,
-            BuildSupportRuntimeState());
 
     private SteamDiagnosticContext CaptureSteamDiagnosticContext()
     {
@@ -892,7 +901,6 @@ public partial class MainWindow : Window
         {
             if (presence.SteamId.Value == localId) continue;
             RequireWaypointSync().ObservePeer(presence);
-            _peerSupportLogs?.ObservePeer(presence);
 
             var peer = _peers.FirstOrDefault(candidate => candidate.SteamId == presence.SteamId);
             if (peer is null)
@@ -932,20 +940,6 @@ public partial class MainWindow : Window
         OnlinePlayerComboBox.SelectedItem =
             FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
 
-        if (_diagnosticLogTargetIdentityId.Length != 0 &&
-            !_peers.Any(peer =>
-                string.Equals(
-                    peer.SteamId.ToString(),
-                    _diagnosticLogTargetIdentityId,
-                    StringComparison.Ordinal) &&
-                peer.SupportsDiagnosticLogs))
-        {
-            _diagnosticLogTargetIdentityId = string.Empty;
-            if (_peerSupportLogs is not null)
-            {
-                SetDiagnosticLogTarget(DiagnosticLogTargetOption.Nobody);
-            }
-        }
         RefreshDiagnosticsPanel();
     }
 
@@ -1438,7 +1432,7 @@ public partial class MainWindow : Window
     private (string id, string name) GetActiveLocalOwner()
     {
         var settings = RequireSettings();
-        if (_identityService is null) return ("", Environment.UserName);
+        if (_identityService is not { IsBound: true }) return ("", Environment.UserName);
         var resolved = _identityService.ResolveContext(settings);
         return (resolved.MinecraftUuid, resolved.IdentityName);
     }
@@ -1446,7 +1440,7 @@ public partial class MainWindow : Window
     private (string id, string name) ResolveActiveLocalIdentity()
     {
         var settings = RequireSettings();
-        if (_identityService is null)
+        if (_identityService is not { IsBound: true })
         {
             return (
                 string.IsNullOrWhiteSpace(settings.LocalIdentityId) ? string.Empty : settings.LocalIdentityId.Trim(),

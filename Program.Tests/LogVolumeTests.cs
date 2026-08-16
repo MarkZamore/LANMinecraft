@@ -99,56 +99,15 @@ public sealed class LogVolumeTests : IDisposable
     }
 
     /// <summary>
-    /// A received bundle is diagnostics, not a backup: the store is bounded so
-    /// a friend who streams for hours cannot fill the disk.
+    /// A received report is diagnostics, not a backup: the store is bounded so
+    /// a friend who sends one after every crash cannot fill the disk.
     /// </summary>
     [Fact]
-    public void TheDiagnosticsStore_IsBoundedToSomethingASessionCanJustify()
+    public void TheReportStore_IsBoundedToSomethingASessionCanJustify()
     {
-        Assert.True(SupportLogStorage.MaxTotalBytes <= 1024L * 1024 * 1024);
-        Assert.True(SupportLogStorage.MaxSessionBytes <= 256L * 1024 * 1024);
-        Assert.Equal(TimeSpan.FromDays(7), SupportLogStorage.Retention);
-    }
-
-    /// <summary>
-    /// Whatever the game is configured to write, the launcher only offers a
-    /// friend the files that explain a problem.
-    /// </summary>
-    [Fact]
-    public async Task OnlyUsefulFiles_AreStreamedToAFriend()
-    {
-        var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Infinity");
-        var logs = Path.Combine(instance, "logs");
-        Directory.CreateDirectory(logs);
-        await File.WriteAllTextAsync(Path.Combine(logs, "latest.log"), "LATEST_MARKER\n");
-        await File.WriteAllTextAsync(Path.Combine(logs, "debug.log"), "DEBUG_MARKER\n");
-        await File.WriteAllTextAsync(paths.LogFile, "LAUNCHER_MARKER\n");
-
-        await using var collector = new SupportLogCollector(
-            paths,
-            SupportLogSanitizer.CreateDefault(paths),
-            () => instance);
-        await collector.StartAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-
-        var seen = new List<SupportLogCollectorItem>();
-        while (await collector.Items.WaitToReadAsync(timeout.Token))
-        {
-            while (collector.Items.TryRead(out var item))
-            {
-                seen.Add(item);
-                if (item.Kind == SupportLogCollectorItemKind.SnapshotCompleted) goto drained;
-            }
-        }
-
-        drained:
-        Assert.Contains(seen, item => item.Text.Contains("LATEST_MARKER", StringComparison.Ordinal));
-        Assert.Contains(seen, item => item.Text.Contains("LAUNCHER_MARKER", StringComparison.Ordinal));
-        Assert.DoesNotContain(seen, item => item.Text.Contains("DEBUG_MARKER", StringComparison.Ordinal));
-        Assert.DoesNotContain(
-            seen,
-            item => item.LogicalName.Contains("debug", StringComparison.OrdinalIgnoreCase));
+        Assert.True(BugReportService.MaxStoredBytes <= 256L * 1024 * 1024);
+        Assert.True(BugReportService.MaxArchiveBytes <= 32L * 1024 * 1024);
+        Assert.Equal(TimeSpan.FromDays(30), BugReportService.Retention);
     }
 
     /// <summary>

@@ -247,16 +247,27 @@
                 <Button x:Name="RetrySteamButton" Content="Повторить" Margin="0,4,0,12"
                         HorizontalAlignment="Left" Padding="10,2"
                         Click="RetrySteamButton_Click"/>
-                <TextBlock Text="Диагностика" Style="{StaticResource SectionTitleStyle}"/>
-                <TextBlock Text="Передавать логи" Margin="0,0,0,4"/>
+                <TextBlock Text="Сообщить о проблеме" Style="{StaticResource SectionTitleStyle}"/>
+                <TextBlock Text="Кому отправить" Margin="0,0,0,4"/>
                 <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
-                                        ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"
-                                        SelectionChanged="DiagnosticLogTargetComboBox_SelectionChanged"/>
+                                        ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"/>
+                <TextBlock Text="Что случилось (необязательно)" Margin="0,8,0,4"/>
+                <TextBox x:Name="BugReportMessageTextBox"
+                         Height="86"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Top"
+                         MaxLength="4000"/>
+                <Button x:Name="SendBugReportButton"
+                        Content="Отправить отчёт"
+                        Margin="0,6,0,0"
+                        Click="SendBugReportButton_Click"/>
                 <TextBlock x:Name="DiagnosticLogStatusText"
                            TextWrapping="Wrap" Margin="0,8,0,0" MinHeight="34"
                            VerticalAlignment="Top"/>
                 <Button x:Name="OpenSupportLogsButton"
-                        Content="Открыть полученные логи"
+                        Content="Открыть полученные отчёты"
                         Margin="0,4,0,0"
                         Click="OpenSupportLogsButton_Click"/>
             </StackPanel>
