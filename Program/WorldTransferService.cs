@@ -419,7 +419,15 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 }
                 catch
                 {
-                    if (journal.State != "CommitSent" && Directory.Exists(escrowPath) && !Directory.Exists(worldDir))
+                    // Once Commit is on the wire the receiver may already have
+                    // the world; putting the sender's copy back would leave two
+                    // copies of one world diverging. Before that point the
+                    // escrow is simply the source world, and it comes home.
+                    var pastThePointOfNoReturn =
+                        journal.State is "CommitSent" or "Committed";
+                    if (!pastThePointOfNoReturn &&
+                        Directory.Exists(escrowPath) &&
+                        !Directory.Exists(worldDir))
                     {
                         Directory.Move(escrowPath, worldDir);
                     }
@@ -435,7 +443,8 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     // only copy of the world - keep it for startup recovery.
                     var escrowStillHoldsWorld = !completed &&
                         Directory.Exists(escrowPath) && !Directory.Exists(worldDir);
-                    if ((completed || journal.State != "CommitSent") && !escrowStillHoldsWorld)
+                    if ((completed || journal.State is not ("CommitSent" or "Committed")) &&
+                        !escrowStillHoldsWorld)
                     {
                         ScheduleTransactionCleanup(transactionRoot);
                     }

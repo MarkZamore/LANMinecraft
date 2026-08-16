@@ -1746,7 +1746,9 @@ public partial class MainWindow : Window
                         UpdateProgressBar.IsIndeterminate = false;
                         UpdateProgressBar.Value = 0;
                         SetProgressActivity(UpdateProgressBar, active: false);
-                        UpdateProgressText.Text = "Вы на последней версии";
+                        UpdateProgressText.Text = result.IsUnavailable
+                            ? "Не удалось проверить обновления"
+                            : "Вы на последней версии";
                     });
                 }
             }
