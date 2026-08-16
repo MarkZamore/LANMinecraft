@@ -290,7 +290,11 @@ internal sealed class FakeSteamApi : ISteamApiFacade
         return true;
     }
 
-    public string GetFriendRichPresence(ulong steamId64, string key) => string.Empty;
+    /// <summary>What each friend publishes, keyed by account and presence key.</summary>
+    public Dictionary<(ulong SteamId64, string Key), string> FriendPresence { get; } = [];
+
+    public string GetFriendRichPresence(ulong steamId64, string key) =>
+        Initialized && FriendPresence.TryGetValue((steamId64, key), out var value) ? value : string.Empty;
 
     public bool RequestFriendRichPresence(ulong steamId64) => Initialized;
 }

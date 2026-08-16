@@ -151,6 +151,10 @@ public sealed class SteamClientService : IAsyncDisposable
             _api.InitRelayNetworkAccess();
             var steamId = _api.GetLocalSteamId();
             var persona = _api.GetPersonaName();
+            // Read the friend list before anyone is told the session is ready:
+            // it is what decides who may connect, so an empty one for the first
+            // seconds means refusing friends and showing nobody online.
+            RefreshFriends();
             StartPump();
             _logger?.Info($"Steam connected as {persona} ({steamId}).");
             return Publish(new SteamClientStatus(
