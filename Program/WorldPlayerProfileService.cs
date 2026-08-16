@@ -170,6 +170,17 @@ public sealed class WorldPlayerProfileService
             return;
         }
 
+        // No profile under this UUID: a genuinely new player starting their
+        // first character, or an account nobody expected. Both are legitimate;
+        // the difference matters enough to say out loud, because the second one
+        // looks exactly like losing everything.
+        if (HasOtherPlayerProfiles(worldPath, canonicalUuid))
+        {
+            _logger?.Warn(
+                $"World {Path.GetFileName(worldPath)} has no profile for {FormatUuid(canonicalUuid)}; " +
+                "this Steam account starts as a new character while the other profiles stay untouched.");
+        }
+
         if (data?.Remove("Player") == true)
         {
             WriteLevel(level, levelPath, transaction);
@@ -346,15 +357,21 @@ public sealed class WorldPlayerProfileService
         return Path.Combine(worldPath, "playerdata", $"{FormatUuid(uuid)}.dat");
     }
 
+    /// <summary>True when the world holds somebody else's playerdata.</summary>
+    private static bool HasOtherPlayerProfiles(string worldPath, Guid canonicalUuid)
+    {
+        var playerData = Path.Combine(worldPath, "playerdata");
+        if (!Directory.Exists(playerData)) return false;
+        return Directory.EnumerateFiles(playerData, "*.dat")
+            .Select(path => Path.GetFileNameWithoutExtension(path))
+            .Any(name => Guid.TryParse(name, out var uuid) && uuid != canonicalUuid);
+    }
+
     private static Guid GetCanonicalIdentityUuid(LocalIdentityContext identity)
     {
         if (!Guid.TryParse(identity.MinecraftUuid, out var identityUuid) || identityUuid == Guid.Empty)
         {
             throw new InvalidDataException("Portable identity UUID is missing or invalid.");
-        }
-        if (!Guid.TryParse(identity.MinecraftUuid, out var minecraftUuid) || minecraftUuid != identityUuid)
-        {
-            throw new InvalidDataException("Minecraft UUID does not match the profile bound to this Steam account.");
         }
         return identityUuid;
     }

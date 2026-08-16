@@ -1,4 +1,4 @@
-namespace Minecraft.Tests;
+﻿namespace Minecraft.Tests;
 
 /// <summary>
 /// Rich presence is the whole discovery mechanism now, and Steam caps what fits
@@ -80,14 +80,35 @@ public sealed class SteamPresenceTests
     }
 
     [Fact]
-    public void AFriendOnAnotherProtocolVersion_IsIgnored()
+    /// <summary>
+    /// A friend on another version used to disappear from the list, so both
+    /// players concluded the other was offline. They are listed, marked
+    /// incompatible, and the name says which side has to act.
+    /// </summary>
+    public void AFriendOnAnotherProtocolVersion_IsListedAsNeedingAnUpdate()
     {
         var encoded = SteamPresenceCodec.Encode(SamplePresence())
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         encoded["lanmc_v"] = "999";
 
         Assert.True(SteamId64.TryFrom(PeerId, out var peer));
-        Assert.Null(SteamPresenceCodec.TryDecode(peer, "anuvenn", key => encoded[key]));
+        var decoded = SteamPresenceCodec.TryDecode(peer, "anuvenn", key => encoded[key]);
+
+        Assert.NotNull(decoded);
+        Assert.Equal(999, decoded.ProtocolVersion);
+        var viewModel = new PeerViewModel { SteamId = peer };
+        viewModel.Apply(decoded, "pack-hash");
+        Assert.False(viewModel.IsCompatible);
+        Assert.False(viewModel.SupportsDiagnosticLogs);
+        Assert.Contains("обновить", viewModel.DisplayName, StringComparison.Ordinal);
+    }
+
+    /// <summary>A friend who is not running this launcher at all is not a peer.</summary>
+    [Fact]
+    public void AFriendWithoutTheMarker_IsNotAPeerAtAll()
+    {
+        Assert.True(SteamId64.TryFrom(PeerId, out var peer));
+        Assert.Null(SteamPresenceCodec.TryDecode(peer, "anuvenn", _ => ""));
     }
 
     [Fact]

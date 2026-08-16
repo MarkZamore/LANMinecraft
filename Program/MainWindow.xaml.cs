@@ -566,7 +566,9 @@ public partial class MainWindow : Window
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
         foreach (var peer in _peers
-                     .Where(peer => peer.LastSeen >= cutoff)
+                     // A launcher that cannot read the report is not a place to
+                     // send one; the list already says why it is missing.
+                     .Where(peer => peer.LastSeen >= cutoff && peer.SupportsDiagnosticLogs)
                      .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
             result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
@@ -1104,6 +1106,12 @@ public partial class MainWindow : Window
             if (OnlinePlayerComboBox.SelectedItem is not PeerViewModel peer)
             {
                 throw new InvalidOperationException("Choose an online player.");
+            }
+            if (!peer.IsCompatible)
+            {
+                throw new InvalidOperationException(
+                    $"{peer.PersonaName} использует другую версию лаунчера. " +
+                    "Мир можно передать только после того, как оба обновятся.");
             }
             if (peer.IsMinecraftRunning || peer.IsMinecraftPreparing)
             {

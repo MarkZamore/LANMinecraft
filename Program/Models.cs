@@ -64,6 +64,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _skinSha256 = "";
     private string _skinModel = "classic";
     private string _hostedWorldId = "";
+    private int _protocolVersion;
     private int _waypointProtocolVersion;
     private IReadOnlyList<WaypointProviderAnnouncement> _waypointProviders = [];
     private int _diagnosticProtocolVersion;
@@ -139,6 +140,19 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set => Set(ref _hostedWorldId, value ?? "");
     }
 
+    /// <summary>The launcher protocol the peer publishes in its presence.</summary>
+    public int ProtocolVersion
+    {
+        get => _protocolVersion;
+        set
+        {
+            if (!Set(ref _protocolVersion, value)) return;
+            OnPropertyChanged(nameof(IsCompatible));
+            OnPropertyChanged(nameof(SupportsDiagnosticLogs));
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
+
     public int WaypointProtocolVersion
     {
         get => _waypointProtocolVersion;
@@ -163,8 +177,11 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); }
     }
 
-    /// <summary>Whether this peer's launcher can receive a bug report.</summary>
-    public bool SupportsDiagnosticLogs => DiagnosticProtocolVersion == BugReportManifest.ProtocolVersion;
+    /// <summary>False while the two launchers cannot understand each other.</summary>
+    public bool IsCompatible => PortableFormat.CanSpeak(ProtocolVersion);
+
+    public bool SupportsDiagnosticLogs =>
+        IsCompatible && PortableFormat.CanSpeak(DiagnosticProtocolVersion) && DiagnosticProtocolVersion > 0;
 
     /// <summary>Both names when they differ, because either one may be the familiar one.</summary>
     public string DisplayName
@@ -173,13 +190,15 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         {
             var minecraftName = string.IsNullOrWhiteSpace(PlayerName) ? "" : PlayerName.Trim();
             var steamName = string.IsNullOrWhiteSpace(PersonaName) ? "" : PersonaName.Trim();
-            if (minecraftName.Length == 0) return steamName.Length == 0 ? "Неизвестный игрок" : steamName;
-            if (steamName.Length == 0 ||
-                string.Equals(minecraftName, steamName, StringComparison.OrdinalIgnoreCase))
-            {
-                return minecraftName;
-            }
-            return $"{minecraftName} ({steamName})";
+            var name = minecraftName.Length == 0
+                ? steamName.Length == 0 ? "Неизвестный игрок" : steamName
+                : steamName.Length == 0 ||
+                  string.Equals(minecraftName, steamName, StringComparison.OrdinalIgnoreCase)
+                    ? minecraftName
+                    : $"{minecraftName} ({steamName})";
+            // Saying it in the list is the only way the pair of them find out
+            // which side has to update.
+            return IsCompatible ? name : $"{name} — нужно обновить лаунчер";
         }
     }
 
@@ -215,6 +234,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         SkinSha256 = presence.SkinSha256;
         SkinModel = presence.SkinModel;
         HostedWorldId = presence.HostedWorldId;
+        ProtocolVersion = presence.ProtocolVersion;
         WaypointProtocolVersion = presence.WaypointProtocolVersion;
         WaypointProviders = presence.WaypointProviders;
         DiagnosticProtocolVersion = presence.DiagnosticProtocolVersion;
