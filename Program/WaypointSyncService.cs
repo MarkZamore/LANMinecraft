@@ -870,7 +870,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
         {
             if (!File.Exists(path)) return new WaypointLocalState();
             var state = JsonSerializer.Deserialize<WaypointLocalState>(File.ReadAllText(path), _jsonOptions);
-            if (state?.SchemaVersion != 1) return new WaypointLocalState();
+            if (state is null || !PortableFormat.CanRead(state.SchemaVersion)) return new WaypointLocalState();
             state.Providers = new Dictionary<string, WaypointLocalProviderState>(state.Providers, StringComparer.OrdinalIgnoreCase);
             return state;
         }
@@ -1192,7 +1192,7 @@ public sealed record WaypointHostAdvertisement(
 
 public sealed class WaypointLocalState
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = PortableFormat.SchemaVersion;
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public Dictionary<string, WaypointLocalProviderState> Providers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
