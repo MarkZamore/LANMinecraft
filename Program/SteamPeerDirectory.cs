@@ -1,4 +1,4 @@
-namespace Minecraft;
+﻿namespace Minecraft;
 
 /// <summary>
 /// Who else is playing right now: Steam friends whose launcher publishes the
@@ -11,9 +11,10 @@ namespace Minecraft;
 /// </summary>
 public sealed class SteamPeerDirectory(
     SteamClientService client,
-    ISteamApiFacade api,
     Logger? logger = null)
 {
+    private readonly ISteamApiFacade api = client.Api;
+
     /// <summary>How long a peer survives after its keys stop being readable.</summary>
     internal static readonly TimeSpan PresenceGrace = TimeSpan.FromSeconds(60);
 
