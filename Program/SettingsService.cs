@@ -11,10 +11,6 @@ public sealed class SettingsService
     private readonly AppPaths _paths;
     private readonly Logger? _logger;
     private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private const double MinVoiceMasterVolume = 0d;
-    private const double MaxVoiceMasterVolume = 2d;
-    private const string DefaultVoicePttMode = "Off";
-    private const string DefaultVoicePushToTalkBinding = "Key:V";
 
     public SettingsService(AppPaths paths, Logger? logger = null)
     {
@@ -98,38 +94,8 @@ public sealed class SettingsService
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
         settings.SkinPath = settings.SkinPath?.Trim() ?? "";
         settings.SelectedWorldRelativePath = settings.SelectedWorldRelativePath?.Trim() ?? "";
-        settings.VoiceInputDeviceId = settings.VoiceInputDeviceId?.Trim() ?? "";
-        settings.VoiceOutputDeviceId = settings.VoiceOutputDeviceId?.Trim() ?? "";
-        settings.VoicePushToTalkKey = string.IsNullOrWhiteSpace(settings.VoicePushToTalkKey)
-            ? "V"
-            : settings.VoicePushToTalkKey.Trim();
-        settings.VoiceMasterVolume = Math.Clamp(settings.VoiceMasterVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
-        settings.VoicePttMode = NormalizePttMode(settings.VoicePttMode);
-        settings.VoicePushToTalkBinding = NormalizePttBinding(settings.VoicePushToTalkBinding, settings.VoicePushToTalkKey);
-        settings.VoiceInputVolume = Math.Clamp(settings.VoiceInputVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
-        settings.VoiceOutputVolume = Math.Clamp(settings.VoiceOutputVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
 
         return settings;
-    }
-
-    private static string NormalizePttMode(string? value)
-    {
-        var mode = value?.Trim();
-        return mode is "Off" or "Hold" or "Toggle" ? mode : DefaultVoicePttMode;
-    }
-
-    private static string NormalizePttBinding(string? value, string? legacyKey)
-    {
-        var binding = value?.Trim();
-        if (!string.IsNullOrWhiteSpace(binding) &&
-            (binding.StartsWith("Key:", StringComparison.OrdinalIgnoreCase) ||
-             binding.StartsWith("Mouse:", StringComparison.OrdinalIgnoreCase)))
-        {
-            return binding;
-        }
-
-        var key = string.IsNullOrWhiteSpace(legacyKey) ? "V" : legacyKey.Trim();
-        return string.IsNullOrWhiteSpace(key) ? DefaultVoicePushToTalkBinding : $"Key:{key}";
     }
 
     private static AppSettings CreateSafeDefaults()
