@@ -17,7 +17,7 @@ public sealed class UpdateChainIdentityTests
         Assert.Equal("LANMinecraft.bsdiff", UpdateService.DeltaPatchAssetName);
         Assert.Equal("LANMinecraft.exe.candidate", UpdateService.InstallCandidateFileName);
         Assert.Equal("LANMinecraft.exe.bak", UpdateService.InstallBackupFileName);
-        Assert.Equal("Minecraft", UpdateService.RepositoryName);
+        Assert.Equal("LANMinecraft", UpdateService.RepositoryName);
     }
 
     [Fact]
