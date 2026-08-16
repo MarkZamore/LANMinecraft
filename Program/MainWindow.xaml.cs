@@ -476,6 +476,10 @@ public partial class MainWindow : Window
             }
         }
 
+        // "Никому" on its own is the same kind of dead list: there is no
+        // friend to send a report to, so there is nothing to pick.
+        DiagnosticLogTargetComboBox.IsEnabled = targets.Any(option => !option.IsNobody);
+
         var recipient = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
         SendBugReportButton.IsEnabled =
             !_bugReportSending && IsIdentityBound && recipient is { IsNobody: false };
@@ -2029,7 +2033,11 @@ public partial class MainWindow : Window
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
         SkinButton.IsEnabled = !_minecraftRunning;
-        WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 0;
+        // A list with nothing to choose between is not a control, it is a
+        // label that opens. One world is the answer already; the drop-down
+        // stays readable and stays selected, it just stops pretending there is
+        // a decision here - the same way the player list does with nobody in it.
+        WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 1;
         OnlinePlayerComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
