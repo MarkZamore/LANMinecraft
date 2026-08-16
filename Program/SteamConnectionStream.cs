@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.InteropServices;
@@ -16,7 +16,7 @@ namespace Minecraft;
 /// Reading is fed by the transport's pump thread rather than pulled here:
 /// Steam delivers messages per connection, and only one thread may drain them.
 /// </summary>
-internal sealed class SteamConnectionStream : Stream
+internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
 {
     /// <summary>
     /// Steam's own message limit is 512 KiB; half of that keeps each send well
@@ -172,6 +172,9 @@ internal sealed class SteamConnectionStream : Stream
             ArrayPool<byte>.Shared.Return(buffer);
         }
     }
+
+    /// <summary>What Steam has taken from us and not yet put on the wire.</summary>
+    public long QueuedBytes => GetPendingReliableBytes();
 
     private int GetPendingReliableBytes()
     {

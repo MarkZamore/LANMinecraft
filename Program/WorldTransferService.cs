@@ -282,6 +282,12 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                         FileName = "world.zip",
                         WorldName = worldName
                     }, token);
+
+                    // From here the wait is a person, not the network: the
+                    // receiver is looking at a dialog. Saying "подключение"
+                    // made a friend taking their time look like a stall.
+                    StatusChanged?.Invoke("Waiting for the receiver to accept...");
+                    RaiseProgress(0, 0, "Ожидание ответа получателя");
                     var preparedFrame = await ReadFrameWithIdleTimeoutAsync(stream, token).ConfigureAwait(false);
                     var prepared = PortableProtocol.Deserialize<WorldTransferAck>(preparedFrame, _jsonOptions);
                     if (prepared is null || !HasExpectedProtocol(prepared.Protocol, prepared.ProtocolVersion) ||
@@ -1818,6 +1824,11 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         CancellationToken token)
     {
         var buffer = new byte[TransferCopyBufferBytes];
+        // Writing to a Steam connection returns once the bytes are queued, so
+        // counting writes measured how fast this machine can fill a buffer -
+        // several times the real rate, and a progress bar that ran ahead of the
+        // transfer. What is reported is what the queue no longer holds.
+        var queued = output as IQueuedByteSink;
         long total = 0;
         while (true)
         {
@@ -1839,8 +1850,12 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     throw new TimeoutException("The other player stopped receiving the world.");
                 }
             }
-            progress(total);
+            progress(Math.Max(0, total - (queued?.QueuedBytes ?? 0)));
         }
+
+        // Everything written is on the wire by the time the peer acknowledges;
+        // the last report is the whole archive rather than the queue's view.
+        progress(total);
 
         if (total != totalSize)
         {
