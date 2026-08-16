@@ -53,7 +53,7 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly MinecraftProcessService _minecraft;
     private readonly SettingsService _settingsService;
     private readonly WorldMetadataService _worldMetadata;
-    private readonly LocalIdentityService _identityService;
+    private readonly IIdentityService _identityService;
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
@@ -85,7 +85,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         MinecraftProcessService minecraft,
         SettingsService settingsService,
         WorldMetadataService worldMetadata,
-        LocalIdentityService identityService,
+        IIdentityService identityService,
         WorldPlayerProfileService playerProfiles,
         WaypointSyncService waypointSync,
         SkinService skinService,

@@ -137,7 +137,7 @@ public sealed class WorldTransferLifecycleTests
             var network = new BlockingNetworkTransport(endpoint);
             var routes = new PeerRouteResolver();
             var metadata = new WorldMetadataService();
-            var identity = new LocalIdentityService(paths);
+            var identity = TestIdentity.CreateBound(paths);
             var profiles = new WorldPlayerProfileService(paths, logger);
             var waypoints = new WaypointSyncService(paths, logger, metadata, network, routes);
             var skins = new SkinService(paths, logger, network, routes);
