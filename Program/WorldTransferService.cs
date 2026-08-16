@@ -616,7 +616,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 await CopyExactlyWithProgressAsync(stream, file, header.Size, current =>
                 {
                     progressChannel.PublishLocal("Получение мира", current, header.Size);
-                }, BulkReadTimeout, token);
+                }, BulkReadTimeout, _logger.Info, token);
             }
 
             tempWorldPath = Path.Combine(transactionRoot, "staging-world");
@@ -1848,10 +1848,13 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         long size,
         Action<long> progress,
         TimeSpan idleTimeout,
+        Action<string> log,
         CancellationToken token)
     {
         var buffer = new byte[TransferCopyBufferBytes];
         long total = 0;
+        var lastSampleAt = Stopwatch.GetTimestamp();
+        var receivedAtLastSample = 0L;
         while (total < size)
         {
             int read;
@@ -1873,6 +1876,20 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             total += read;
             await output.WriteAsync(buffer.AsMemory(0, read), token);
             progress(total);
+
+            // The receiving end used to say nothing between accepting a world
+            // and finishing it, so a transfer that crawled for half an hour
+            // left one side with a detailed account and the other with silence.
+            var sinceSample = Stopwatch.GetElapsedTime(lastSampleAt);
+            if (sinceSample >= LinkSampleInterval)
+            {
+                var moved = total - receivedAtLastSample;
+                lastSampleAt = Stopwatch.GetTimestamp();
+                receivedAtLastSample = total;
+                log($"Receiving world: {total / (1024d * 1024d):F0} of {size / (1024d * 1024d):F0} MiB, " +
+                    $"app {moved / sinceSample.TotalSeconds / (1024d * 1024d):F2} MiB/s" +
+                    (input is IQueuedByteSink link ? $" [{link.DescribeLink()}]" : "") + ".");
+            }
         }
     }
 

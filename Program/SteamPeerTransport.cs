@@ -1,6 +1,7 @@
 ﻿using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.IO.Pipelines;
 using System.IO;
 using System.Runtime.InteropServices;
 using Steamworks;
@@ -336,6 +337,17 @@ public sealed class SteamPeerTransport : IPeerTransport
             var idle = true;
             foreach (var channel in _channels.Values)
             {
+                // Skip a channel whose reader is still behind rather than
+                // waiting on it here. Steam keeps that connection's own receive
+                // buffer filling and applies the backpressure per connection,
+                // which is what backpressure is supposed to mean; awaiting in
+                // the shared loop applied it to every peer at once.
+                if (!channel.PendingFlush.IsCompleted)
+                {
+                    idle = false;
+                    continue;
+                }
+
                 var count = SteamNetworkingSockets.ReceiveMessagesOnConnection(
                     channel.Handle, messages, messages.Length);
                 if (count <= 0) continue;
@@ -375,10 +387,16 @@ public sealed class SteamPeerTransport : IPeerTransport
                 }
 
                     var flush = channel.Stream.InboundWriter.FlushAsync(_shutdown.Token);
-                    if (!flush.IsCompleted)
+                    if (flush.IsCompleted)
                     {
-                        // The consumer is behind; waiting here is the backpressure.
-                        await flush.ConfigureAwait(false);
+                        _ = flush.Result;
+                    }
+                    else
+                    {
+                        // Remembered, not awaited: the next pass skips this
+                        // channel until its reader catches up and services
+                        // everyone else meanwhile.
+                        channel.PendingFlush = flush;
                     }
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
@@ -511,7 +529,12 @@ public sealed class SteamPeerTransport : IPeerTransport
                $"permit {status.m_nSendRateBytesPerSecond / (1024d * 1024d):F2} MiB/s, " +
                $"queued {status.m_cbPendingReliable / 1024d:F0} KiB, " +
                $"unacked {status.m_cbSentUnackedReliable / 1024d:F0} KiB, " +
-               $"ping {status.m_nPing} ms, quality {status.m_flConnectionQualityLocal:F2}";
+               $"ping {status.m_nPing} ms, " +
+               // Local quality watches what arrives here, which for a sender is
+               // only acks - nearly blind to loss on the path our bytes take.
+               // Remote quality is the peer's view of that path and the one
+               // number that says whether the wire is dropping what we send.
+               $"quality in {status.m_flConnectionQualityLocal:F2} out {status.m_flConnectionQualityRemote:F2}";
     }
 
     public async ValueTask DisposeAsync()
@@ -545,6 +568,15 @@ public sealed class SteamPeerTransport : IPeerTransport
     private sealed class PeerChannel(HSteamNetConnection handle, SteamId64 peer, bool isIncoming)
     {
         private SteamConnectionStream? _stream;
+
+        /// <summary>
+        /// A flush this channel's reader has not caught up with yet. It is kept
+        /// per channel so a peer nobody is reading cannot stop the pump for
+        /// everyone else - which is what happened while a world transfer sat
+        /// beside two idle connections to the same player and stopped being
+        /// drained at all.
+        /// </summary>
+        public ValueTask<FlushResult> PendingFlush { get; set; }
 
         public HSteamNetConnection Handle { get; } = handle;
         public SteamId64 Peer { get; } = peer;
