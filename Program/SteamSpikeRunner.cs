@@ -37,13 +37,13 @@ internal static class SteamSpikeRunner
     private static Callback<SteamNetConnectionStatusChangedCallback_t>? _statusCallback;
     private static StreamWriter? _transcript;
 
-    public static bool TryRun(IReadOnlyList<string> arguments)
+    public static bool TryRun(string[] arguments)
     {
-        var index = arguments.ToList().FindIndex(argument =>
+        var index = Array.FindIndex(arguments, argument =>
             string.Equals(argument, Argument, StringComparison.OrdinalIgnoreCase));
         if (index < 0) return false;
 
-        var mode = index + 1 < arguments.Count ? arguments[index + 1] : "probe";
+        var mode = index + 1 < arguments.Length ? arguments[index + 1] : "probe";
         var rest = arguments.Skip(index + 2).ToArray();
         AllocConsole();
         Console.OutputEncoding = Encoding.UTF8;
@@ -104,7 +104,7 @@ internal static class SteamSpikeRunner
         return true;
     }
 
-    private static void RunProbe(ISteamApiFacade api)
+    private static void RunProbe(SteamworksApiFacade api)
     {
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTimeOffset.UtcNow < deadline)
@@ -123,7 +123,7 @@ internal static class SteamSpikeRunner
         }
     }
 
-    private static void RunListen(ISteamApiFacade api)
+    private static void RunListen(SteamworksApiFacade api)
     {
         RegisterStatusCallback();
         _listenSocket = SteamNetworkingSockets.CreateListenSocketP2P(LauncherVirtualPort, 0, null);
@@ -159,15 +159,15 @@ internal static class SteamSpikeRunner
         }
     }
 
-    private static void RunConnect(ISteamApiFacade api, IReadOnlyList<string> arguments)
+    private static void RunConnect(SteamworksApiFacade api, string[] arguments)
     {
-        if (arguments.Count == 0 || !ulong.TryParse(arguments[0], NumberStyles.None, CultureInfo.InvariantCulture, out var peer))
+        if (arguments.Length == 0 || !ulong.TryParse(arguments[0], NumberStyles.None, CultureInfo.InvariantCulture, out var peer))
         {
             Log("usage: --steam-spike connect <friendSteamId64> [megabytes]");
             return;
         }
 
-        var megabytes = arguments.Count > 1 &&
+        var megabytes = arguments.Length > 1 &&
                         int.TryParse(arguments[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : 64;
@@ -195,7 +195,7 @@ internal static class SteamSpikeRunner
         Log("FAIL: connection did not reach Connected within the timeout.");
     }
 
-    private static void SendPayload(ISteamApiFacade api, int megabytes)
+    private static void SendPayload(SteamworksApiFacade api, int megabytes)
     {
         var payload = new byte[ChunkBytes];
         Random.Shared.NextBytes(payload);
@@ -251,7 +251,7 @@ internal static class SteamSpikeRunner
         }
     }
 
-    private static void RunPresence(ISteamApiFacade api)
+    private static void RunPresence(SteamworksApiFacade api)
     {
         api.SetRichPresence("lanmc", "1");
         api.SetRichPresence("lanmc_v", "1");

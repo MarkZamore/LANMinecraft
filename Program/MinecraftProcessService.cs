@@ -169,6 +169,15 @@ public sealed class MinecraftProcessService
             throw new InvalidOperationException("Pack manifest changed while its runtime was being prepared. Start the game again.");
         }
         var instance = await _packInstances.PrepareAsync(settings.ClientRelativePath, token);
+        // PackInstanceService mirrors the pack over the instance mods folder and
+        // deletes anything the pack does not carry, so launcher-owned JARs have
+        // to be (re)installed after every prepare - the order here is load-bearing.
+        if (SteamPlayPolicy.IsSupported(descriptor))
+        {
+            await _managedComponents
+                .EnsureSteamTransportModAsync(instance, token)
+                .ConfigureAwait(false);
+        }
         var managedTeleportEnabled =
             ManagedTeleportPackPolicy.IsEnabledFor(settings.ClientRelativePath);
         if (managedTeleportEnabled)
