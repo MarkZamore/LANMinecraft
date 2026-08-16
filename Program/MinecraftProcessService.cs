@@ -37,7 +37,6 @@ public sealed class MinecraftProcessService
     private readonly PackInstanceService _packInstances;
     private readonly PackRuntimeService _packRuntimes;
     private readonly ManagedComponentService _managedComponents;
-    private readonly ManagedTeleportConfigurationService _managedTeleportConfiguration;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
@@ -65,8 +64,7 @@ public sealed class MinecraftProcessService
         PackRuntimeService packRuntimes,
         WaypointSyncService waypointSync,
         SkinService skinService,
-        ManagedComponentService? managedComponents = null,
-        ManagedTeleportConfigurationService? managedTeleportConfiguration = null)
+        ManagedComponentService? managedComponents = null)
     {
         _paths = paths;
         _logger = logger;
@@ -77,8 +75,6 @@ public sealed class MinecraftProcessService
         _packInstances = packInstances;
         _packRuntimes = packRuntimes;
         _managedComponents = managedComponents ?? new ManagedComponentService(paths, logger);
-        _managedTeleportConfiguration =
-            managedTeleportConfiguration ?? new ManagedTeleportConfigurationService();
         _waypointSync = waypointSync;
         _skinService = skinService;
         _gameWindowPlacement = new MinecraftWindowPlacementService(paths, logger);
@@ -146,28 +142,8 @@ public sealed class MinecraftProcessService
                 .EnsureSteamTransportModAsync(instance, token)
                 .ConfigureAwait(false);
         }
-        var managedTeleportEnabled =
-            ManagedTeleportPackPolicy.IsEnabledFor(settings.ClientRelativePath);
-        if (managedTeleportEnabled)
-        {
-            ManagedTeleportPackPolicy.Validate(descriptor, instance);
-            await _managedComponents
-                .EnsureFtbEssentialsAsync(instance, token)
-                .ConfigureAwait(false);
-            await _managedComponents
-                .EnsureModHotfixesAsync(instance, token)
-                .ConfigureAwait(false);
-            _managedTeleportConfiguration.Apply(
-                instance.GameDirectory,
-                _paths.Worlds,
-                settings.ClientRelativePath);
-        }
         var identityJvmArguments = await _identityAdapter
-            .PrepareJvmArgumentsAsync(
-                runtime,
-                instance.GameDirectory,
-                managedTeleportEnabled,
-                token)
+            .PrepareJvmArgumentsAsync(runtime, instance.GameDirectory, token)
             .ConfigureAwait(false);
         var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
         var gameDir = instance.GameDirectory;

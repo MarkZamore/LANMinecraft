@@ -5,9 +5,7 @@ namespace Minecraft;
 /// <summary>
 /// Decides which packs get the Steam transport mod. Play over Steam needs
 /// e4steam inside the game, and e4steam is a NeoForge mod declared for
-/// Minecraft [1.20.2, 26.3); every pack in that range is served, which is
-/// deliberately wider than <see cref="ManagedTeleportPackPolicy"/> (that one
-/// gates Infinity-only gameplay extras).
+/// Minecraft [1.20.2, 26.3); every pack in that range is served.
 /// </summary>
 public static class SteamPlayPolicy
 {

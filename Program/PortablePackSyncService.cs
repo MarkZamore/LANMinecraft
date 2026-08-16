@@ -37,10 +37,17 @@ public sealed partial class PortablePackSyncService
     public const string SourceMarkerFileName = "portable-pack-source.json";
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string PackManifestAssetName = "pack-manifest.json";
-    public const string DefaultPackRelativePath = "Infinity";
+    public const string DefaultPackRelativePath = "LL8";
 
-    public static PackSyncSource DefaultInfinitySource { get; } =
-        new("MarkZamore", "Infinity", "pack-latest");
+    public static PackSyncSource DefaultPackSource { get; } =
+        new("MarkZamore", "LL8", "pack-latest");
+
+    /// <summary>
+    /// Repositories the built-in pack was published from before the rename.
+    /// A marker naming one of them inside the default pack folder is what the
+    /// rename left behind, not a source the player chose.
+    /// </summary>
+    private static readonly string[] LegacyDefaultSourceRepos = ["Infinity", "InfinityPack"];
 
     internal const string OfflineCheckWarning =
         "Не удалось проверить обновления сборки — играем с локальной версией.";
@@ -88,10 +95,18 @@ public sealed partial class PortablePackSyncService
         _freeSpaceProbe = freeSpaceProbe ?? HasFreeSpace;
     }
 
+    internal static bool IsLegacyDefaultSource(PackSyncSource source) =>
+        string.Equals(source.Owner, DefaultPackSource.Owner, StringComparison.OrdinalIgnoreCase) &&
+        LegacyDefaultSourceRepos.Contains(source.Repo, StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsDefaultPack(string packRelativePath) =>
+        string.Equals(packRelativePath, DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Reads the pack's source marker. An invalid marker makes the pack custom
-    /// (never synced); an absent marker falls back to the built-in Infinity
-    /// source only for the Infinity pack.
+    /// (never synced); an absent marker falls back to the built-in source only
+    /// for the default pack, and so does a marker the rename left pointing at
+    /// the pack's former repository.
     /// </summary>
     public PackSyncSource? TryResolveSource(string packRelativePath)
     {
@@ -101,17 +116,20 @@ public sealed partial class PortablePackSyncService
         {
             try
             {
-                var marker = JsonSerializer.Deserialize<SourceMarkerDto>(File.ReadAllText(markerPath), JsonOptions);
-                if (marker is null ||
-                    marker.SchemaVersion != SourceMarkerCacheGeneration ||
-                    !IsValidSourceIdentifier(marker.Owner) ||
-                    !IsValidSourceIdentifier(marker.Repo) ||
-                    !IsValidSourceIdentifier(marker.Tag))
+                var marker = ReadSourceMarker(File.ReadAllText(markerPath));
+                if (marker is null)
                 {
                     _logger.Warn($"Pack sync source marker is invalid; the pack is treated as custom: {markerPath}");
                     return null;
                 }
-                return new PackSyncSource(marker.Owner!, marker.Repo!, marker.Tag!);
+                if (IsDefaultPack(packRelativePath) && IsLegacyDefaultSource(marker))
+                {
+                    _logger.Info(
+                        $"Pack sync source marker still names {marker.Repo}; " +
+                        $"the built-in {DefaultPackRelativePath} source is used and the marker is rewritten.");
+                    return DefaultPackSource;
+                }
+                return marker;
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -120,9 +138,25 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return string.Equals(packRelativePath, DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase)
-            ? DefaultInfinitySource
-            : null;
+        return IsDefaultPack(packRelativePath) ? DefaultPackSource : null;
+    }
+
+    /// <summary>
+    /// Stamps the built-in source on the default pack folder. A marker naming
+    /// anyone else - or one this build cannot read - is the player's own and
+    /// stays, so a custom pack is never repointed at the built-in release.
+    /// </summary>
+    public void EnsureDefaultSourceMarker(string packRelativePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
+        var packDir = _paths.CombineUnderPacks(packRelativePath);
+        var markerPath = Path.Combine(packDir, SourceMarkerFileName);
+        if (File.Exists(markerPath))
+        {
+            var marker = TryReadSourceMarker(markerPath);
+            if (marker is null || !IsLegacyDefaultSource(marker)) return;
+        }
+        WriteSourceMarker(packDir, DefaultPackSource);
     }
 
     public async Task<PackSyncResult> SyncAsync(
@@ -241,7 +275,7 @@ public sealed partial class PortablePackSyncService
                     }
                     ApplyChanges(packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
                     WriteSyncState(statePath, packDir, manifest);
-                    WriteSourceMarkerIfAbsent(packDir, source);
+                    WriteSourceMarker(packDir, source);
                 },
                 token).ConfigureAwait(false);
         }
@@ -540,17 +574,20 @@ public sealed partial class PortablePackSyncService
         return new PackSyncDiff(state.Revision, changedPaths, FindExtras(packDir, manifest));
     }
 
+    /// <summary>
+    /// Everything a synced pack ships is listed in its manifest, so anything
+    /// else under the pack directory is what the pack used to be. Leaving such
+    /// a folder behind would also make this machine hash a different pack than
+    /// a fresh install of the same revision, and peers compare that hash.
+    /// </summary>
     private static List<string> FindExtras(string packDir, ValidatedManifest manifest)
     {
         var extras = new List<string>();
         if (!Directory.Exists(packDir)) return extras;
-        var managedRoots = new HashSet<string>(
-            manifest.Files.Select(file => FirstSegment(file.Path)),
-            StringComparer.OrdinalIgnoreCase);
         foreach (var entry in Directory.EnumerateFileSystemEntries(packDir))
         {
             var name = Path.GetFileName(entry);
-            if (!managedRoots.Contains(name) || IsProtectedRootName(name)) continue;
+            if (IsProtectedRootName(name) || IsStagingEntryName(name)) continue;
             if (File.Exists(entry))
             {
                 if (!manifest.FilesByPath.ContainsKey(name)) extras.Add(name);
@@ -711,10 +748,14 @@ public sealed partial class PortablePackSyncService
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, JsonOptions));
     }
 
-    private static void WriteSourceMarkerIfAbsent(string packDir, PackSyncSource source)
+    /// <summary>
+    /// Writes the marker unless it already names this source; the rewrite is
+    /// what retires a marker left pointing at the pack's former repository.
+    /// </summary>
+    private static void WriteSourceMarker(string packDir, PackSyncSource source)
     {
         var markerPath = Path.Combine(packDir, SourceMarkerFileName);
-        if (File.Exists(markerPath)) return;
+        if (TryReadSourceMarker(markerPath) == source) return;
         AtomicFile.WriteAllText(markerPath, JsonSerializer.Serialize(
             new SourceMarkerDto
             {
@@ -724,6 +765,30 @@ public sealed partial class PortablePackSyncService
                 Tag = source.Tag
             },
             JsonOptions));
+    }
+
+    private static PackSyncSource? TryReadSourceMarker(string markerPath)
+    {
+        try
+        {
+            return File.Exists(markerPath) ? ReadSourceMarker(File.ReadAllText(markerPath)) : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static PackSyncSource? ReadSourceMarker(string json)
+    {
+        var marker = JsonSerializer.Deserialize<SourceMarkerDto>(json, JsonOptions);
+        return marker is null ||
+               marker.SchemaVersion != SourceMarkerCacheGeneration ||
+               !IsValidSourceIdentifier(marker.Owner) ||
+               !IsValidSourceIdentifier(marker.Repo) ||
+               !IsValidSourceIdentifier(marker.Tag)
+            ? null
+            : new PackSyncSource(marker.Owner!, marker.Repo!, marker.Tag!);
     }
 
     private SyncStateDto ReadSyncState(string statePath)
@@ -950,11 +1015,9 @@ public sealed partial class PortablePackSyncService
         PackInstanceService.InstanceOwnedDirectories.Contains(name) ||
         PackInstanceService.InstanceOwnedFiles.Contains(name);
 
-    private static string FirstSegment(string path)
-    {
-        var separator = path.IndexOf('/', StringComparison.Ordinal);
-        return separator < 0 ? path : path[..separator];
-    }
+    /// <summary>A sync in flight, or one interrupted and swept on the next start.</summary>
+    private static bool IsStagingEntryName(string name) =>
+        name.StartsWith(StagingDirectoryName, StringComparison.OrdinalIgnoreCase);
 
     private static string HashFile(string path)
     {

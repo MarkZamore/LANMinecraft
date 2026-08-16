@@ -55,7 +55,7 @@ public sealed class PackInstanceService : IDisposable
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions StateJsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true
@@ -213,7 +213,7 @@ public sealed class PackInstanceService : IDisposable
         SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
-        AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
+        AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, StateJsonOptions));
         return new PackInstanceContext(packDir, gameDir, clientJar);
     }
 
@@ -543,13 +543,67 @@ public sealed class PackInstanceService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Deletes instance files and drops them from the recorded pack-file map.
+    /// Both halves matter: the removed teleport layer rewrote these pack files,
+    /// so a state that still remembers its edits makes the three-way merge read
+    /// the pack's own copies as local modifications and divert them to
+    /// PackConflicts instead of installing them.
+    /// </summary>
+    internal static void ForgetInstanceFiles(
+        string gameDirectory,
+        string packRelativePath,
+        IReadOnlyCollection<string> relativePaths,
+        Logger? logger)
+    {
+        foreach (var relativePath in relativePaths)
+        {
+            DeleteInstanceFile(gameDirectory, relativePath, logger);
+        }
+
+        var statePath = Path.Combine(gameDirectory, StateFileName);
+        if (!File.Exists(statePath)) return;
+        try
+        {
+            var state = JsonSerializer.Deserialize<InstanceState>(File.ReadAllText(statePath), StateJsonOptions);
+            if (state is null) return;
+            var files = new Dictionary<string, SourceFileState>(state.Files, StringComparer.OrdinalIgnoreCase);
+            foreach (var relativePath in relativePaths)
+            {
+                files.Remove(NormalizeRelativePath(relativePath));
+            }
+            state.Files = files;
+            state.PackRelativePath = packRelativePath;
+            AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, StateJsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            logger?.Warn($"Pack instance state still records the removed files: {ex.Message}");
+        }
+    }
+
+    private static void DeleteInstanceFile(string gameDirectory, string relativePath, Logger? logger)
+    {
+        var path = Path.Combine(gameDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        try
+        {
+            if (!File.Exists(path)) return;
+            File.Delete(path);
+            DeleteEmptyParents(Path.GetDirectoryName(path), gameDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger?.Warn($"Instance file {relativePath} could not be removed: {ex.Message}");
+        }
+    }
+
     private InstanceState ReadState(string statePath, string packRelativePath)
     {
         try
         {
             if (File.Exists(statePath))
             {
-                var state = JsonSerializer.Deserialize<InstanceState>(File.ReadAllText(statePath), _jsonOptions);
+                var state = JsonSerializer.Deserialize<InstanceState>(File.ReadAllText(statePath), StateJsonOptions);
                 if (state?.SchemaVersion == StateCacheGeneration)
                 {
                     state.Files = new Dictionary<string, SourceFileState>(state.Files, StringComparer.OrdinalIgnoreCase);
