@@ -1,4 +1,4 @@
-name: Build LANMinecraft.exe
+﻿name: Build LANMinecraft.exe
 
 on:
   push:
@@ -42,10 +42,9 @@ jobs:
           '[]' | Set-Content -LiteralPath $basesFile -Encoding UTF8
           "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          # Reads the manifest first: a base whose assetName predates the
-          # LANMinecraft rename cannot serve as a delta base (players patch a
-          # differently-named executable), so it returns $null and the caller
-          # skips it. Release numbering still continues from the manifest.
+          # Downloads a previous release and proves its executable is the one
+          # its manifest describes, so a delta is only ever built against bytes
+          # players actually have.
           function Get-ValidatedBase([string]$Tag, [string]$Directory) {
             New-Item -ItemType Directory -Path $Directory -Force | Out-Null
             gh release download $Tag `
@@ -69,11 +68,6 @@ jobs:
                 $size -le 0 -or
                 $releaseNumber -lt 1) {
               throw "Release $Tag manifest is invalid."
-            }
-
-            if ($manifest.assetName -ne 'LANMinecraft.exe') {
-              Write-Host "Release $Tag ships '$($manifest.assetName)'; it predates the rename and is not a delta base."
-              return $null
             }
 
             gh release download $Tag `
@@ -112,17 +106,6 @@ jobs:
           $previous = Get-ValidatedBase 'latest' $previousDir
           $currentCommit = '${{ github.sha }}'.ToLowerInvariant()
 
-          if ($null -eq $previous) {
-            # Transition release: numbering continues, but no delta bases and
-            # no exe to archive - the next release resumes delta generation.
-            $manifestPath = Join-Path $previousDir 'update.json'
-            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-            $releaseNumber = [int]$manifest.releaseNumber + 1
-            "RELEASE_NUMBER=$releaseNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            Write-Host "Transition release $releaseNumber will be published without deltas."
-            exit 0
-          }
-
           $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
             $previous.releaseNumber
           } else {
@@ -140,7 +123,6 @@ jobs:
             $number = [int]($tag -replace '^update-base-', '')
             if ($number -ge $previous.releaseNumber) { continue }
             $archive = Get-ValidatedBase $tag (Join-Path $env:RUNNER_TEMP "minecraft-$tag")
-            if ($null -eq $archive) { continue }
             if (-not ($bases | Where-Object { $_.sha256 -eq $archive.sha256 })) {
               $bases.Add($archive)
             }
@@ -240,8 +222,6 @@ jobs:
             })
           }
 
-          $legacyDelta = if ($deltaManifests.Count -gt 0) { $deltaManifests[0] } else { $null }
-
           $manifest = [ordered]@{
             schemaVersion = 2
             commitSha = '${{ github.sha }}'
@@ -251,7 +231,6 @@ jobs:
             assetName = 'LANMinecraft.exe'
             sha256 = $hash
             sizeBytes = $size
-            deltaPatch = $legacyDelta
             deltaPatches = @($deltaManifests)
           }
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Encoding UTF8
@@ -288,13 +267,6 @@ jobs:
             throw "Release contents are invalid. Missing: $missing; unexpected: $unexpected"
           }
 
-          if ($patches.Count -gt 0 -and
-              (-not $manifest.deltaPatch -or
-               $manifest.deltaPatch.assetName -ne 'LANMinecraft.bsdiff' -or
-               $manifest.deltaPatch.sha256 -ne $patches[0].sha256)) {
-            throw "Legacy deltaPatch does not match the first direct patch."
-          }
-
       - name: Archive previous base
         if: env.HAS_PREVIOUS == 'true' && env.PREVIOUS_COMMIT != github.sha
         shell: pwsh
@@ -328,18 +300,50 @@ jobs:
             Sort-Object Name |
             Select-Object -ExpandProperty FullName
 
-          if (gh release view latest 2>$null) {
-            gh release delete latest --cleanup-tag --yes
-          } elseif (git ls-remote --exit-code --tags origin refs/tags/latest 2>$null) {
-            git push origin --delete latest
+          # The release is replaced in place, never deleted first: every
+          # launcher finds its update through this one tag, and a failed
+          # re-create would leave all of them with nothing to check.
+          $exists = $false
+          gh release view latest *> $null
+          if ($LASTEXITCODE -eq 0) { $exists = $true }
+
+          if (-not $exists) {
+            if (git ls-remote --exit-code --tags origin refs/tags/latest 2>$null) {
+              git push origin --delete latest
+            }
+            gh release create latest `
+              @assets `
+              --target "${{ github.sha }}" `
+              --latest `
+              --title "Latest LANMinecraft.exe" `
+              --notes "Automated build for commit ${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) { throw "Latest release could not be published." }
           }
-          gh release create latest `
-            @assets `
-            --target "${{ github.sha }}" `
-            --latest `
-            --title "Latest LANMinecraft.exe" `
-            --notes "Automated build for commit ${{ github.sha }}"
-          if ($LASTEXITCODE -ne 0) { throw "Latest release could not be published." }
+          else {
+            # update.json is the pointer, so it goes last: until it names the
+            # new build, a launcher checking mid-publish simply keeps the one
+            # it has.
+            $payload = @($assets | Where-Object { [System.IO.Path]::GetFileName($_) -ne 'update.json' })
+            gh release upload latest @payload --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Release assets could not be uploaded." }
+
+            $keep = @($assets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+            $stale = (gh release view latest --json assets | ConvertFrom-Json).assets |
+              Where-Object { $_.name -notin $keep }
+            foreach ($asset in $stale) {
+              gh release delete-asset latest $asset.name --yes
+              if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
+            }
+
+            gh release upload latest (Join-Path $artifactDir 'update.json') --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Update manifest could not be published." }
+
+            gh release edit latest `
+              --target "${{ github.sha }}" `
+              --title "Latest LANMinecraft.exe" `
+              --notes "Automated build for commit ${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) { throw "Latest release could not be retargeted." }
+          }
 
           $archiveTags = (gh release list --limit 100 --json tagName | ConvertFrom-Json).tagName |
             Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |

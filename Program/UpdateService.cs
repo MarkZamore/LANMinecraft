@@ -7,11 +7,12 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using BsDiff;
 
 namespace Minecraft;
 
-public sealed class UpdateService
+public sealed partial class UpdateService
 {
     public const string RepositoryOwner = "MarkZamore";
     public const string RepositoryName = "Minecraft";
@@ -489,7 +490,6 @@ public sealed class UpdateService
         try
         {
             var candidates = manifest.DeltaPatches
-                .Concat(manifest.DeltaPatch is null ? [] : [manifest.DeltaPatch])
                 .Where(delta => string.Equals(
                     NormalizeSha(delta.BaseCommitSha),
                     _currentCommitSha,
@@ -717,21 +717,13 @@ public sealed class UpdateService
             throw new InvalidOperationException("Update manifest contains an invalid SHA-256.");
         }
 
-        if (manifest.DeltaPatch is not null)
-        {
-            ValidateDeltaPatchManifest(
-                manifest.DeltaPatch,
-                manifest.CommitSha,
-                requireExactAssetName: true);
-        }
-
         if (manifest.DeltaPatches.Count > MaximumDeltaPatches)
         {
             throw new InvalidOperationException("Update manifest contains too many delta patches.");
         }
         foreach (var delta in manifest.DeltaPatches)
         {
-            ValidateDeltaPatchManifest(delta, manifest.CommitSha, requireExactAssetName: false);
+            ValidateDeltaPatchManifest(delta, manifest.CommitSha);
         }
         if (manifest.DeltaPatches
             .GroupBy(delta => NormalizeSha(delta.BaseSha256), StringComparer.OrdinalIgnoreCase)
@@ -741,10 +733,7 @@ public sealed class UpdateService
         }
     }
 
-    private static void ValidateDeltaPatchManifest(
-        DeltaPatchManifest delta,
-        string targetCommitSha,
-        bool requireExactAssetName)
+    private static void ValidateDeltaPatchManifest(DeltaPatchManifest delta, string targetCommitSha)
     {
         if (!string.Equals(delta.Algorithm, DeltaPatchAlgorithm, StringComparison.Ordinal))
         {
@@ -759,15 +748,11 @@ public sealed class UpdateService
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base commit.");
         }
-        if (requireExactAssetName && !string.Equals(delta.AssetName, DeltaPatchAssetName, StringComparison.Ordinal))
+        if (!IsSafeDeltaAssetName(delta.AssetName))
         {
             throw new InvalidOperationException("Update manifest contains an unexpected delta asset name.");
         }
-        if (!IsSafeDeltaAssetName(delta.AssetName))
-        {
-            throw new InvalidOperationException("Update manifest contains an invalid delta asset name.");
-        }
-        if (!requireExactAssetName && delta.BaseReleaseNumber < 1)
+        if (delta.BaseReleaseNumber < 1)
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base release number.");
         }
@@ -779,17 +764,18 @@ public sealed class UpdateService
         ValidateSha256(delta.Sha256, "delta patch");
     }
 
-    private static bool IsSafeDeltaAssetName(string? assetName)
-    {
-        if (string.IsNullOrWhiteSpace(assetName) ||
-            !assetName.EndsWith(".bsdiff", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(Path.GetFileName(assetName), assetName, StringComparison.Ordinal) ||
-            assetName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        {
-            return false;
-        }
-        return true;
-    }
+    /// <summary>
+    /// A patch asset is downloaded and applied to this executable, so its name
+    /// has to be one this build publishes: the direct patch, or a patch from a
+    /// numbered older release. Anything else names somebody else's file.
+    /// </summary>
+    private static bool IsSafeDeltaAssetName(string? assetName) =>
+        !string.IsNullOrWhiteSpace(assetName) &&
+        string.Equals(Path.GetFileName(assetName), assetName, StringComparison.Ordinal) &&
+        DeltaAssetNamePattern().IsMatch(assetName);
+
+    [GeneratedRegex(@"^LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$", RegexOptions.CultureInvariant)]
+    private static partial Regex DeltaAssetNamePattern();
 
     private static void ValidateSha256(string? value, string description)
     {
@@ -1126,7 +1112,6 @@ public sealed class UpdateManifest
     public string AssetName { get; set; } = UpdateService.ExecutableAssetName;
     public string Sha256 { get; set; } = "";
     public long SizeBytes { get; set; }
-    public DeltaPatchManifest? DeltaPatch { get; set; }
     public List<DeltaPatchManifest> DeltaPatches { get; set; } = [];
 }
 
