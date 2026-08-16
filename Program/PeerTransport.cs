@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft;
 
@@ -31,9 +31,9 @@ public sealed class PeerConnection(PeerConnectionContext context, Stream stream)
 
 /// <summary>
 /// How the launcher reaches another launcher. The VPN era spread this across
-/// ISelectedNetworkTransport (sockets bound to the chosen adapter),
-/// PeerRouteResolver (identity to IP) and a per-protocol accept loop; a peer is
-/// now just a Steam account, and everything above the stream stays the same.
+/// three pieces - sockets bound to a chosen adapter, a table mapping identities
+/// to addresses, and a per-protocol accept loop; a peer is now just a Steam
+/// account, and everything above the stream stays the same.
 /// </summary>
 public interface IPeerTransport : IAsyncDisposable
 {

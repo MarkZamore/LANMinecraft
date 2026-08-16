@@ -1,7 +1,6 @@
 ﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -480,18 +479,6 @@ internal sealed record PeerSupportUpgradeFrame
 
     [JsonRequired]
     public int Version { get; init; } = PeerSupportProtocol.ProtocolVersion;
-}
-
-internal sealed record PortableConnectionContext(
-    IPAddress RemoteAddress,
-    int RemotePort,
-    IPAddress LocalAddress,
-    int LocalPort,
-    string LocalInterfaceId,
-    int LocalInterfaceIndex,
-    DateTimeOffset AcceptedAtUtc)
-{
-    public bool IsRemoteLoopback => IPAddress.IsLoopback(RemoteAddress);
 }
 
 internal sealed record PeerSupportHello
