@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace Minecraft;
@@ -81,7 +81,13 @@ public static class WorldTransferRecoveryService
             {
                 throw new DirectoryNotFoundException($"Uncertain committed transfer has no escrow world: {journal.EscrowPath}");
             }
-            logger.Warn($"Transfer {journal.TransferId} has an uncertain remote commit; its source world remains in escrow.");
+            // The receiver may or may not have installed it. Restoring would
+            // risk two copies of one world diverging, so the copy stays put -
+            // but the player is told where it is and how to take it back.
+            WriteEscrowReadme(logger, journal);
+            logger.Warn(
+                $"Мир «{Path.GetFileName(journal.SourceWorldPath)}» остался в папке {journal.EscrowPath}: " +
+                "получатель не подтвердил приём. Если мир ему не дошёл, перенесите эту папку в Minecraft\\Worlds.");
             return;
         }
 
@@ -96,6 +102,40 @@ public static class WorldTransferRecoveryService
             Directory.Move(journal.EscrowPath, journal.SourceWorldPath);
         }
         DeleteDirectoryIfExists(transactionRoot);
+    }
+
+    /// <summary>
+    /// Explains, next to the world itself, what this folder is - the one place
+    /// a player looking for their missing world will actually read.
+    /// </summary>
+    private static void WriteEscrowReadme(Logger logger, WorldTransferJournal journal)
+    {
+        try
+        {
+            var readme = Path.Combine(
+                Path.GetDirectoryName(journal.EscrowPath) ?? journal.EscrowPath,
+                "ЧТО-ЭТО-ЗА-ПАПКА.txt");
+            if (File.Exists(readme)) return;
+            var world = Path.GetFileName(journal.SourceWorldPath);
+            var text = string.Join(
+                Environment.NewLine,
+                $"Здесь лежит мир «{world}».",
+                "",
+                "Он передавался другому игроку, и связь оборвалась ровно в тот момент, когда",
+                "уже нельзя было понять, дошёл он или нет. Лаунчер не стал возвращать его сам:",
+                "если у друга мир открылся, две копии начали бы расходиться.",
+                "",
+                "Спросите друга, появился ли у него этот мир.",
+                "  • Появился — эту папку можно удалить.",
+                "  • Не появился — перенесите папку с миром в Minecraft\\Worlds,",
+                "    и он вернётся в список миров.",
+                "");
+            File.WriteAllText(readme, text, new System.Text.UTF8Encoding(true));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.Warn($"Escrow note could not be written: {ex.Message}");
+        }
     }
 
     private static void ValidateJournalPaths(AppPaths paths, WorldTransferJournal journal)
