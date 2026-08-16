@@ -494,7 +494,6 @@ public sealed partial class UpdateService
                     NormalizeSha(delta.BaseCommitSha),
                     _currentCommitSha,
                     StringComparison.OrdinalIgnoreCase))
-                .DistinctBy(delta => $"{NormalizeSha(delta.BaseSha256)}|{delta.AssetName}", StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (candidates.Length == 0) return null;
 
