@@ -26,6 +26,13 @@ public interface IQueuedByteSink
 {
     /// <summary>Bytes accepted from the writer but not yet delivered to the peer.</summary>
     long QueuedBytes { get; }
+
+    /// <summary>
+    /// What the wire is doing right now, for a transfer to log while it runs.
+    /// Nothing in this launcher had ever measured its own throughput, so every
+    /// question about speed was answered with arithmetic on configured values.
+    /// </summary>
+    string DescribeLink();
 }
 
 /// <summary>One duplex conversation with a peer, framed by PortableProtocol.</summary>
