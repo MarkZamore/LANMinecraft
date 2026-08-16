@@ -23,7 +23,6 @@ public partial class MainWindow : Window
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
-    private readonly ObservableCollection<PeerViewModel> _hostPeers = new();
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly ObservableCollection<NetworkAddressOption> _networkAddresses = new();
@@ -53,8 +52,6 @@ public partial class MainWindow : Window
     private WaypointSyncService? _waypointSync;
     private SkinService? _skinService;
     private PeerDiscoveryService? _discovery;
-    private LanAdvertisementService? _lanAdvertisement;
-    private LanRelayService? _lanRelay;
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
@@ -64,16 +61,6 @@ public partial class MainWindow : Window
     private List<NetworkEndpointInfo> _networkEndpoints = [];
     private string _localPackHash = "";
     private string _state = "Starting";
-    private int? _openToLanPort;
-    private string _openToLanSessionId = "";
-    private string _openToLanWorldName = "";
-    private long _openToLanLogPosition;
-    private int? _pendingOpenToLanPort;
-    private long _pendingOpenToLanGeneration;
-    private long _activeOpenToLanGeneration;
-    private DateTimeOffset _pendingOpenToLanSince;
-    private DateTimeOffset? _openToLanListenerMissingSince;
-    private bool _openToLanCloseObserved;
     private bool _networkRefreshInProgress;
     private bool _networkChangeSubscribed;
     private bool _networkSelectionRefreshPending;
@@ -90,7 +77,6 @@ public partial class MainWindow : Window
     private double _lastTransferSpeedBytesPerSecond;
     private string _transferStage = "";
     private bool _transferActive;
-    private bool _hostRttScanInProgress;
     private bool _updateBusy;
     private bool _isEditingPlayerName;
     private bool _startupComplete;
@@ -111,17 +97,13 @@ public partial class MainWindow : Window
         _windowPlacement.Apply(this);
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
-        HostComboBox.ItemsSource = _hostPeers;
         WorldComboBox.ItemsSource = _worlds;
         NetworkAddressComboBox.ItemsSource = _networkAddresses;
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
             RefreshWorlds();
-            RefreshHostPeers();
             PruneStalePeers();
-            RefreshHostLatencies();
-            RefreshLanAdvertisementState();
             RefreshUi();
             if (IsNetworkSelectionIdle() && _networkSelectionRefreshPending)
             {
@@ -159,12 +141,6 @@ public partial class MainWindow : Window
             _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _network, _peerRoutes);
             _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
             await _skinService.StartAsync(_lifetimeCts.Token);
-            _lanRelay = new LanRelayService(
-                _logger,
-                _network,
-                _peerRoutes,
-                new LanRelayPortStore(_paths, _logger));
-            _lanRelay.SetLocalIdentity(ResolveActiveLocalIdentity().id);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
@@ -182,8 +158,7 @@ public partial class MainWindow : Window
                     _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
                 RefreshDiagnosticsPanel();
             });
-            _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _network, _peerRoutes);
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _network, _peerRoutes);
             _transfer.AttachPeerSupportLogService(_peerSupportLogs);
             _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
@@ -216,14 +191,11 @@ public partial class MainWindow : Window
                     ApplyPeer(announcement);
                 });
             };
-            _lanAdvertisement = new LanAdvertisementService(_logger, _lanRelay, _peerRoutes);
-            _lanAdvertisement.Start();
 
             LoadSettingsIntoUi();
             RefreshBuilds();
             CaptureNetworkAddresses(isStartup: true);
             RefreshNetworkEnvironment();
-            RefreshHostPeers();
             RefreshMemoryText(saveIfChanged: true);
             RefreshWorlds();
             InitializeUpdateUi();
@@ -269,10 +241,8 @@ public partial class MainWindow : Window
         try
         {
             if (_discovery is not null) await _discovery.DisposeAsync();
-            if (_lanAdvertisement is not null) await _lanAdvertisement.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
-            if (_lanRelay is not null) await _lanRelay.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
             _packInstances?.Dispose();
@@ -543,7 +513,6 @@ public partial class MainWindow : Window
                     _lifetimeCts.Token);
             }
 
-            RefreshLanAdvertisementState();
             RefreshUi();
         }
         finally
@@ -862,36 +831,6 @@ public partial class MainWindow : Window
         return result;
     }
 
-    private void RefreshHostPeers()
-    {
-        var selectedPeerId = GetSelectablePeerId(HostComboBox.SelectedItem as PeerViewModel);
-        var selectedCandidates = GetSelectedPeerAddresses(HostComboBox.SelectedItem as PeerViewModel);
-        var hosts = _peers
-            .Where(peer => peer.IsHost)
-            .OrderByDescending(peer => peer.LastSeen)
-            .ThenBy(peer => peer.LastRttMs ?? int.MaxValue)
-            .ThenBy(peer => peer.PlayerName, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
-
-        _hostPeers.Clear();
-        foreach (var host in hosts)
-        {
-            _hostPeers.Add(host);
-        }
-
-        if (_hostPeers.Count == 0)
-        {
-            HostComboBox.SelectedItem = null;
-        }
-        else
-        {
-            var restored = FindMatchingPeer(_hostPeers, selectedPeerId, selectedCandidates)
-                ?? _hostPeers.FirstOrDefault();
-            HostComboBox.SelectedItem = restored ?? _hostPeers[0];
-        }
-
-    }
-
     private static string GetSelectablePeerId(PeerViewModel? peer)
     {
         if (peer is null)
@@ -920,8 +859,7 @@ public partial class MainWindow : Window
     private static PeerViewModel? FindMatchingPeer(
         ObservableCollection<PeerViewModel> peers,
         string selectedPeerId,
-        string[]? selectedAddresses = null,
-        bool requireHost = false)
+        string[]? selectedAddresses = null)
     {
         if (peers.Count == 0)
         {
@@ -945,7 +883,7 @@ public partial class MainWindow : Window
 
         var selectedSet = new HashSet<string>(selectedAddresses, StringComparer.OrdinalIgnoreCase);
         var byCandidates = peers.FirstOrDefault(peer =>
-            peer.GetCandidateAddresses(requireHost).Any(address => selectedSet.Contains(address)));
+            peer.GetCandidateAddresses().Any(address => selectedSet.Contains(address)));
         if (byCandidates is not null)
         {
             return byCandidates;
@@ -1046,13 +984,9 @@ public partial class MainWindow : Window
     {
         var settings = RequireSettings();
         var identity = ResolveActiveLocalIdentity();
-        _lanRelay?.SetLocalIdentity(identity.id);
-        RefreshOpenToLanState();
-        var openToLanPort = _openToLanPort;
-        _lanRelay?.SetHostSession(openToLanPort, _openToLanSessionId);
         var identityContext = RequireIdentityService().ResolveContext(settings);
         RequireWaypointSync().UpdateHostingState(
-            openToLanPort.HasValue,
+            false,
             settings.ClientRelativePath,
             _localPackHash,
             identityContext);
@@ -1064,12 +998,7 @@ public partial class MainWindow : Window
             PlayerName = identity.name,
             IdentityId = identity.id,
             IdentityName = identity.name,
-            IsHost = openToLanPort.HasValue,
             PackHash = _localPackHash,
-            ServerPort = openToLanPort ?? 0,
-            LanSessionId = _openToLanSessionId,
-            LanWorldName = _openToLanWorldName,
-            LanRelayProtocolVersion = LanRelayService.ResumableProtocolVersion,
             IsMinecraftRunning = _minecraftRunning,
             IsMinecraftPreparing = _minecraftPreparing,
             IsSkinAvailable = skin.IsAvailable,
@@ -1121,16 +1050,14 @@ public partial class MainWindow : Window
     {
         var network = _network?.GetSnapshot() ?? new NetworkEnvironmentSnapshot();
         var routes = _peerRoutes?.Export() ?? new KnownPeerCache();
-        var relay = _lanRelay?.GetDiagnosticSnapshot() ??
-                    new LanRelayDiagnosticSnapshot(false, string.Empty, 0, 0);
         return SupportDiagnosticSnapshotBuilder.CaptureMetrics(
             network,
             routes,
             routes.Peers.Count,
             _discovery?.IsRunning == true,
             _transfer?.IsOperationActive == true,
-            relay.IsHosting,
-            relay.ClientRelayCount,
+            false,
+            0,
             diagnosticBytesSent: 0,
             diagnosticBytesReceived: 0,
             reconnects: 0,
@@ -1141,8 +1068,6 @@ public partial class MainWindow : Window
     private Dictionary<string, string> BuildSupportRuntimeState()
     {
         var endpoint = _network?.GetSnapshot().PrimaryEndpoint;
-        var relay = _lanRelay?.GetDiagnosticSnapshot();
-        var lan = _lanAdvertisement?.GetDiagnosticSnapshot();
         var identity = _settings is null
             ? (id: string.Empty, name: string.Empty)
             : ResolveActiveLocalIdentity();
@@ -1179,25 +1104,6 @@ public partial class MainWindow : Window
                 PeerDiscoveryService.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
             ["discovery.running"] =
                 (_discovery?.IsRunning == true).ToString(CultureInfo.InvariantCulture),
-            ["lan.hostSessionId"] = relay?.LanSessionId ?? string.Empty,
-            ["lan.hostPort"] =
-                relay?.LocalMinecraftPort.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["lan.relayProtocolVersion"] =
-                LanRelayService.ResumableProtocolVersion.ToString(CultureInfo.InvariantCulture),
-            ["lan.clientRelays"] =
-                relay?.ClientRelayCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.activeResumableTunnels"] =
-                relay?.ActiveResumableTunnels.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.transportDrops"] =
-                relay?.TransportDrops.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeAttempts"] =
-                relay?.ResumeAttempts.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeSuccesses"] =
-                relay?.ResumeSuccesses.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeFailures"] =
-                relay?.ResumeFailures.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.remoteSessions"] =
-                lan?.RemoteSessionCount.ToString(CultureInfo.InvariantCulture) ?? "0",
             ["transfer.active"] =
                 (_transfer?.IsOperationActive == true).ToString(CultureInfo.InvariantCulture),
             ["transfer.bytesCurrent"] =
@@ -1216,48 +1122,6 @@ public partial class MainWindow : Window
             state[pair.Key] = pair.Value;
         }
         return state;
-    }
-
-    private void OnLanRelayDiagnosticEvent(LanRelayDiagnosticEvent value)
-    {
-        var details = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["phase"] = value.Phase,
-            ["role"] = value.Role,
-            ["tunnelId"] = value.TunnelId,
-            ["lanSessionId"] = value.LanSessionId,
-            ["direction"] = value.Direction,
-            ["localRelayPort"] =
-                value.LocalRelayPort.ToString(CultureInfo.InvariantCulture),
-            ["hostMinecraftPort"] =
-                value.HostMinecraftPort.ToString(CultureInfo.InvariantCulture),
-            ["outboundProducedOffset"] =
-                value.OutboundProducedOffset.ToString(CultureInfo.InvariantCulture),
-            ["outboundAcknowledgedOffset"] =
-                value.OutboundAcknowledgedOffset.ToString(CultureInfo.InvariantCulture),
-            ["inboundReceivedOffset"] =
-                value.InboundReceivedOffset.ToString(CultureInfo.InvariantCulture),
-            ["bufferedBytes"] =
-                value.BufferedBytes.ToString(CultureInfo.InvariantCulture),
-            ["attempt"] = value.Attempt.ToString(CultureInfo.InvariantCulture),
-            ["downtimeMs"] =
-                value.Downtime.TotalMilliseconds.ToString(
-                    "F0",
-                    CultureInfo.InvariantCulture),
-            ["error"] = value.Error,
-            ["terminalReason"] = value.TerminalReason
-        };
-        _peerSupportLogs?.PublishRuntimeEvent(
-            $"lan_relay.{value.Phase}",
-            value.PeerIdentityId,
-            value.RemoteAddress,
-            value.LocalAddress,
-            value.LocalInterfaceId,
-            value.TerminalReason.Length > 0
-                ? value.TerminalReason
-                : value.Error,
-            details,
-            value.AtUtc);
     }
 
     private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState(
@@ -1315,12 +1179,6 @@ public partial class MainWindow : Window
                 peer.LastSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
             state[$"{prefix}.rttMs"] =
                 peer.LastRttMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            state[$"{prefix}.isHost"] = peer.IsHost.ToString(CultureInfo.InvariantCulture);
-            state[$"{prefix}.lanSessionId"] = peer.LanSessionId.Length <= 128
-                ? peer.LanSessionId
-                : peer.LanSessionId[..128];
-            state[$"{prefix}.lanRelayProtocolVersion"] =
-                peer.LanRelayProtocolVersion.ToString(CultureInfo.InvariantCulture);
             state[$"{prefix}.diagnosticCompatible"] =
                 peer.SupportsDiagnosticLogs.ToString(CultureInfo.InvariantCulture);
         }
@@ -1378,8 +1236,6 @@ public partial class MainWindow : Window
         {
             OnlinePlayerComboBox.SelectedItem = peer;
         }
-        RefreshHostPeers();
-        RefreshLanAdvertisementState();
         RefreshDiagnosticsPanel();
         RefreshUi();
     }
@@ -1407,8 +1263,6 @@ public partial class MainWindow : Window
             OnlinePlayerComboBox.SelectedItem = _peers[0];
         }
 
-        RefreshHostPeers();
-        RefreshLanAdvertisementState();
         if (!string.IsNullOrWhiteSpace(_diagnosticLogTargetIdentityId) &&
             !_peers.Any(peer =>
                 string.Equals(
@@ -1427,261 +1281,6 @@ public partial class MainWindow : Window
         RefreshDiagnosticsPanel();
     }
 
-    private void RefreshLanAdvertisementState()
-    {
-        if (_lanAdvertisement is null || _settings is null) return;
-        _lanAdvertisement.Update(
-            _openToLanPort,
-            _openToLanSessionId,
-            string.IsNullOrWhiteSpace(_openToLanWorldName) ? "Minecraft LAN" : _openToLanWorldName,
-            string.IsNullOrWhiteSpace(_settings.PlayerName) ? "Minecraft" : _settings.PlayerName,
-            _networkEndpoints,
-            _peers);
-    }
-
-    private void RefreshHostLatencies()
-    {
-        if (_hostRttScanInProgress) return;
-
-        var hostPeers = _peers
-            .Where(peer => peer.IsHost && peer.ServerPort > 0)
-            .ToList();
-        if (hostPeers.Count == 0) return;
-
-        _hostRttScanInProgress = true;
-        _ = UpdateHostLatenciesAsync(hostPeers);
-    }
-
-    private async Task UpdateHostLatenciesAsync(IReadOnlyList<PeerViewModel> hostPeers)
-    {
-        try
-        {
-            var probes = hostPeers.Select(async peer =>
-            {
-                var peerPort = Math.Clamp(peer.ServerPort, 1, 65535);
-                var result = await ProbeHostEndpointAsync(
-                    peer,
-                    WorldTransferService.TransferPort,
-                    attempts: 1,
-                    timeout: TimeSpan.FromMilliseconds(600));
-
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    var current = _peers.FirstOrDefault(item =>
-                        item.IsHost &&
-                        item.ServerPort == peerPort &&
-                        (
-                            !string.IsNullOrWhiteSpace(peer.IdentityId)
-                                ? string.Equals(item.IdentityId, peer.IdentityId, StringComparison.OrdinalIgnoreCase)
-                                : string.Equals(item.NetworkAddress, peer.NetworkAddress, StringComparison.OrdinalIgnoreCase)));
-                    if (current is null) return;
-
-                    current.LastRttMs = result.Reachability.IsReachable ? result.Reachability.RoundTripMs : null;
-                    if (result.Reachability.IsReachable)
-                    {
-                        current.NetworkAddress = result.Address;
-                        current.LastRttAt = DateTimeOffset.Now;
-                    }
-                    else if (current.LastRttAt == default)
-                    {
-                        current.LastRttAt = DateTimeOffset.UtcNow;
-                    }
-                });
-            });
-
-            await Task.WhenAll(probes);
-            await Dispatcher.InvokeAsync(RefreshHostPeers);
-        }
-        finally
-        {
-            _hostRttScanInProgress = false;
-        }
-    }
-
-    private void RefreshOpenToLanState()
-    {
-        var detection = DetectOpenToLanPort();
-        var port = detection.Port;
-
-        if (_openToLanPort == port &&
-            (!port.HasValue || _activeOpenToLanGeneration == detection.Generation))
-        {
-            if (port.HasValue && string.IsNullOrWhiteSpace(_openToLanWorldName))
-            {
-                _openToLanWorldName = LanWorldInfoService.FindActiveWorldName(_paths?.Worlds);
-            }
-            return;
-        }
-
-        var previousPort = _openToLanPort;
-        _openToLanPort = port;
-        if (port.HasValue)
-        {
-            if (!previousPort.HasValue || previousPort.Value != port.Value ||
-                _activeOpenToLanGeneration != detection.Generation)
-            {
-                _openToLanSessionId = Guid.NewGuid().ToString("N");
-                _activeOpenToLanGeneration = detection.Generation;
-                _openToLanWorldName = LanWorldInfoService.FindActiveWorldName(_paths?.Worlds);
-            }
-            RequireLogger().Info(
-                $"Minecraft Open to LAN session {_openToLanSessionId} detected on port {port.Value} " +
-                $"for world '{_openToLanWorldName}'.");
-            SetState($"LAN open: {port.Value}");
-        }
-        else
-        {
-            _openToLanSessionId = "";
-            _openToLanWorldName = "";
-            _activeOpenToLanGeneration = 0;
-            if (_state.StartsWith("LAN open:", StringComparison.OrdinalIgnoreCase))
-            {
-                SetState("Minecraft");
-                RequireLogger().Info("Minecraft Open to LAN is no longer detected.");
-            }
-        }
-    }
-
-    private LanPortDetection DetectOpenToLanPort()
-    {
-        if (_paths is null || _settings is null) return LanPortDetection.None;
-        if (!_minecraftRunning)
-        {
-            ResetPendingLanDetection();
-            return LanPortDetection.None;
-        }
-
-        var logPath = Path.Combine(_paths.CombineUnderInstances(_settings.ClientRelativePath), "logs", "latest.log");
-        if (File.Exists(logPath))
-        {
-            try
-            {
-                using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                if (stream.Length < _openToLanLogPosition)
-                {
-                    _openToLanLogPosition = 0;
-                }
-
-                stream.Seek(_openToLanLogPosition, SeekOrigin.Begin);
-                using var reader = new StreamReader(stream);
-                while (!reader.EndOfStream)
-                {
-                    var line = reader.ReadLine();
-                    if (line is null) continue;
-                    if (TryParseOpenToLanPort(line, out var parsedPort))
-                    {
-                        _pendingOpenToLanPort = parsedPort;
-                        _pendingOpenToLanSince = DateTimeOffset.UtcNow;
-                        _pendingOpenToLanGeneration++;
-                        _openToLanCloseObserved = false;
-                        continue;
-                    }
-
-                    if (LanClosedRegex().IsMatch(line))
-                    {
-                        _openToLanCloseObserved = true;
-                        _pendingOpenToLanPort = null;
-                        _openToLanListenerMissingSince = null;
-                    }
-                }
-
-                _openToLanLogPosition = stream.Position;
-            }
-            catch (IOException)
-            {
-                return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-            }
-        }
-
-        if (_openToLanCloseObserved)
-        {
-            _openToLanCloseObserved = false;
-            return LanPortDetection.None;
-        }
-
-        var candidatePort = _pendingOpenToLanPort ?? _openToLanPort;
-        var candidateGeneration = _pendingOpenToLanPort.HasValue
-            ? _pendingOpenToLanGeneration
-            : _activeOpenToLanGeneration;
-        if (!candidatePort.HasValue) return LanPortDetection.None;
-
-        if (_minecraft?.OwnsTcpListener(candidatePort.Value) == true)
-        {
-            _pendingOpenToLanPort = candidatePort;
-            _openToLanListenerMissingSince = null;
-            return new LanPortDetection(candidatePort, candidateGeneration);
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        if (_pendingOpenToLanPort.HasValue && now - _pendingOpenToLanSince < TimeSpan.FromSeconds(5))
-        {
-            return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-        }
-
-        _openToLanListenerMissingSince ??= now;
-        if (_openToLanPort.HasValue && now - _openToLanListenerMissingSince < TimeSpan.FromSeconds(3))
-        {
-            return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-        }
-
-        RequireLogger().Info(
-            $"Detected stale LAN port {candidatePort.Value}; the active Minecraft process does not own it.");
-        _pendingOpenToLanPort = null;
-        _openToLanListenerMissingSince = null;
-        return LanPortDetection.None;
-    }
-
-    private void ResetPendingLanDetection()
-    {
-        _pendingOpenToLanPort = null;
-        _pendingOpenToLanSince = default;
-        _openToLanListenerMissingSince = null;
-        _openToLanCloseObserved = false;
-    }
-
-    private static bool TryParseOpenToLanPort(string line, out int port)
-    {
-        port = 0;
-        if (!line.Contains("Started serving on", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var index = line.IndexOf("Started serving on", StringComparison.OrdinalIgnoreCase);
-        var tail = line[(index + "Started serving on".Length)..];
-        if (string.IsNullOrWhiteSpace(tail))
-        {
-            return false;
-        }
-
-        var matches = OpenToLanPortNumberRegex().Matches(tail);
-        for (var i = matches.Count - 1; i >= 0; i--)
-        {
-            if (!int.TryParse(matches[i].Value, out var candidate))
-            {
-                continue;
-            }
-
-            if (candidate is > 0 and <= 65535)
-            {
-                port = candidate;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    [GeneratedRegex("\\b\\d{2,5}\\b", RegexOptions.IgnoreCase)]
-    private static partial Regex OpenToLanPortNumberRegex();
-
-    [GeneratedRegex("Stopping (?:singleplayer )?server", RegexOptions.IgnoreCase)]
-    private static partial Regex LanClosedRegex();
-
     private readonly record struct LanPortDetection(int? Port, long Generation)
     {
         public static LanPortDetection None { get; } = new(null, 0);
@@ -1695,7 +1294,6 @@ public partial class MainWindow : Window
             if (!isRunning)
             {
                 RefreshWorlds();
-                RefreshOpenToLanState();
             }
             RefreshUi();
         });
@@ -2314,11 +1912,6 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
-    private void HostComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        RefreshUi();
-    }
-
     private void WorldComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_paths is not null && _settings is not null && _settingsService is not null &&
@@ -2756,7 +2349,6 @@ public partial class MainWindow : Window
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 0;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        HostComboBox.IsEnabled = configurationEnabled && _hostPeers.Count > 0;
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
         SkinButton.IsEnabled = !_minecraftRunning;

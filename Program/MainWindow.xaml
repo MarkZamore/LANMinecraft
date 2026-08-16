@@ -277,8 +277,6 @@
                        HorizontalAlignment="Right" TextAlignment="Right" FontSize="11"/>
 
             <Grid Visibility="Collapsed">
-                <ComboBox x:Name="HostComboBox" DisplayMemberPath="HostDisplayName"
-                          SelectionChanged="HostComboBox_SelectionChanged"/>
                 <TextBlock x:Name="PackHashText"/>
                 <TextBlock x:Name="TransferStatusText"/>
                 <TextBox x:Name="LogTextBox"/>

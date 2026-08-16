@@ -88,7 +88,6 @@ public sealed class WorldTransferLifecycleTests
         private readonly string _root;
         private readonly WaypointSyncService _waypoints;
         private readonly SkinService _skins;
-        private readonly LanRelayService _relay;
         private readonly PackRuntimeService _packRuntimes;
 
         private ServiceFixture(
@@ -98,7 +97,6 @@ public sealed class WorldTransferLifecycleTests
             BlockingNetworkTransport network,
             WaypointSyncService waypoints,
             SkinService skins,
-            LanRelayService relay,
             PackRuntimeService packRuntimes,
             WorldTransferService service)
         {
@@ -108,7 +106,6 @@ public sealed class WorldTransferLifecycleTests
             Network = network;
             _waypoints = waypoints;
             _skins = skins;
-            _relay = relay;
             _packRuntimes = packRuntimes;
             Service = service;
         }
@@ -144,7 +141,6 @@ public sealed class WorldTransferLifecycleTests
             var profiles = new WorldPlayerProfileService(paths, logger);
             var waypoints = new WaypointSyncService(paths, logger, metadata, network, routes);
             var skins = new SkinService(paths, logger, network, routes);
-            var relay = new LanRelayService(logger, network, routes);
             var identityAdapter = new PortableIdentityAdapterService(paths, logger);
             var packInstances = new PackInstanceService(paths, logger);
             var packRuntimes = new PackRuntimeService(paths, logger);
@@ -168,7 +164,6 @@ public sealed class WorldTransferLifecycleTests
                 profiles,
                 waypoints,
                 skins,
-                relay,
                 network,
                 routes,
                 new WorldTransferRuntimeOptions
@@ -183,7 +178,6 @@ public sealed class WorldTransferLifecycleTests
                 network,
                 waypoints,
                 skins,
-                relay,
                 packRuntimes,
                 service);
         }
@@ -194,7 +188,6 @@ public sealed class WorldTransferLifecycleTests
             await Service.DisposeAsync();
             await _waypoints.DisposeAsync();
             await _skins.DisposeAsync();
-            await _relay.DisposeAsync();
             _packRuntimes.Dispose();
             if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
         }

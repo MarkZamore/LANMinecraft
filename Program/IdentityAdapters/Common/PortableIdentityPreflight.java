@@ -28,11 +28,7 @@ public final class PortableIdentityPreflight {
             byte[] original = readClassBytes(archive, className);
 
             ClassFileTransformer transformer;
-            if (isAlias("lanEntryClasses", className)) {
-                transformer = new PortableLanTitleTransformer();
-            } else if (isAlias("lanShareScreenClasses", className)) {
-                transformer = new PortableLanAutoPublishTransformer();
-            } else if (isAlias("ftbTeleportClasses", className)) {
+            if (isAlias("ftbTeleportClasses", className)) {
                 transformer = new PortableFtbTeleportTransformer();
             } else if (isAlias("solarFluxPackClasses", className)) {
                 transformer = new PortableSolarFluxSyncTransformer();
@@ -54,10 +50,6 @@ public final class PortableIdentityPreflight {
             new ClassReader(transformed);
             if (isAlias("loginClasses", className)) {
                 verifyHookTargets(archive, className);
-            } else if (isAlias("lanEntryClasses", className)) {
-                verifyLanTitleTargets(archive, className);
-            } else if (isAlias("lanShareScreenClasses", className)) {
-                verifyLanSharePublishTargets(archive, className, transformed);
             } else if (isAlias("ftbTeleportClasses", className)) {
                 verifyFtbTeleportTargets(archive, className, transformed);
             } else if (isAlias("solarFluxPackClasses", className)) {
@@ -96,88 +88,6 @@ public final class PortableIdentityPreflight {
 
         ClassNode component = readClass(archive, alias("componentClasses", mappingIndex).replace('.', '/'));
         requireMethod(component, "componentLiteralMethods", 1);
-    }
-
-    private static void verifyLanTitleTargets(ZipFile archive, String entryClass) throws Exception {
-        int mappingIndex = aliasIndex("lanEntryClasses", entryClass);
-        ClassNode entry = readClass(archive, entryClass);
-        requireField(entry, "lanServerFields");
-        requireField(entry, "lanHeaderFields");
-        requireMethod(entry, "lanRenderMethods", 10);
-
-        ClassNode lanServer = readClass(archive, alias("lanServerClasses", mappingIndex));
-        requireMethod(lanServer, "lanMotdMethods", 0);
-
-        ClassNode component = readClass(archive, alias("componentClasses", mappingIndex).replace('.', '/'));
-        requireMethod(component, "componentLiteralMethods", 1);
-
-        String encoded = "MinecraftPortable:VGVzdCBXb3JsZA:UGxheWVy";
-        if (!"Player".equals(PortableLanTitleHooks.resolveSubtitle(encoded)) ||
-            !"ordinary motd".equals(PortableLanTitleHooks.resolveSubtitle("ordinary motd"))) {
-            throw new IllegalStateException("Portable LAN metadata decoding failed.");
-        }
-    }
-
-    private static void verifyLanSharePublishTargets(
-        ZipFile archive,
-        String screenClass,
-        byte[] transformed) throws Exception {
-        int mappingIndex = aliasIndex("lanShareScreenClasses", screenClass);
-        ClassNode screen = readClass(archive, screenClass);
-        requireMethod(screen, "lanShareInitMethods", 0);
-
-        ClassNode patched = new ClassNode();
-        new ClassReader(transformed).accept(patched, 0);
-        int hookCalls = 0;
-        for (MethodNode method : patched.methods) {
-            for (var instruction = method.instructions.getFirst();
-                 instruction != null;
-                 instruction = instruction.getNext()) {
-                if (instruction instanceof MethodInsnNode call &&
-                    call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks") &&
-                    call.name.equals("autoPublish") &&
-                    call.desc.equals("(Ljava/lang/Object;)Z")) {
-                    hookCalls++;
-                }
-            }
-        }
-        if (hookCalls != 1) {
-            throw new IllegalStateException(
-                "LAN share screen transformer inserted " + hookCalls + " publish hooks instead of 1.");
-        }
-
-        ClassNode integrated = readClass(archive, alias("integratedServerClasses", mappingIndex));
-        requireMethod(integrated, "publishServerMethods", 3);
-
-        ClassNode server = readClass(archive, alias("serverClasses", mappingIndex));
-        requireMethod(server, "getWorldDataMethods", 0);
-        requireMethod(server, "isPublishedMethods", 0);
-        requireMethod(server, "getDefaultGameTypeMethods", 0);
-
-        ClassNode worldData = readClass(archive, alias("worldDataClasses", mappingIndex));
-        requireMethod(worldData, "isAllowCommandsMethods", 0);
-
-        ClassNode httpUtil = readClass(archive, alias("httpUtilClasses", mappingIndex).replace('.', '/'));
-        requireMethod(httpUtil, "getAvailablePortMethods", 0);
-
-        ClassNode minecraft = readClass(archive, alias("minecraftClasses", mappingIndex).replace('.', '/'));
-        requireMethod(minecraft, "minecraftGetInstanceMethods", 0);
-        requireMethod(minecraft, "getSingleplayerServerMethods", 0);
-        requireMethod(minecraft, "setScreenMethods", 1);
-        requireMethod(minecraft, "updateTitleMethods", 0);
-        requireField(minecraft, "minecraftGuiFields");
-
-        ClassNode gui = readClass(archive, alias("guiClasses", mappingIndex));
-        requireMethod(gui, "guiChatMethods", 0);
-
-        ClassNode chat = readClass(archive, alias("chatComponentClasses", mappingIndex));
-        requireMethod(chat, "chatAddMessageMethods", 1);
-
-        ClassNode publishCommand = readClass(archive, alias("publishCommandClasses", mappingIndex).replace('.', '/'));
-        requireMethod(publishCommand, "publishSuccessMethods", 1);
-
-        readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
-        readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
     }
 
     private static void verifyFtbTeleportTargets(

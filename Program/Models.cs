@@ -110,8 +110,6 @@ public sealed class PeerEndpointInfo
     public string LocalAddress { get; set; } = "";
     public string LocalInterfaceId { get; set; } = "";
     public string AddressFamily { get; set; } = "";
-    public bool IsHost { get; set; }
-    public int ServerPort { get; set; }
     public DateTimeOffset LastSeen { get; set; }
 }
 
@@ -159,12 +157,7 @@ public sealed class PeerAnnouncement
     public string LocalInterfaceId { get; set; } = "";
 
     public bool IsDirectedReply { get; set; }
-    public bool IsHost { get; set; }
     public string PackHash { get; set; } = "";
-    public int ServerPort { get; set; }
-    public string LanSessionId { get; set; } = "";
-    public string LanWorldName { get; set; } = "";
-    public int LanRelayProtocolVersion { get; set; }
     public bool IsMinecraftRunning { get; set; }
     public bool IsMinecraftPreparing { get; set; }
     public bool IsSkinAvailable { get; set; }
@@ -192,12 +185,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _primaryEndpointKey = "";
     private string _identityId = "";
     private string _identityName = "";
-    private bool _isHost;
     private string _packHash = "";
-    private int _serverPort;
-    private string _lanSessionId = "";
-    private string _lanWorldName = "";
-    private int _lanRelayProtocolVersion;
     private bool _isMinecraftRunning;
     private bool _isMinecraftPreparing;
     private bool _isSkinAvailable;
@@ -221,7 +209,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             if (Set(ref _playerName, value))
             {
                 OnPropertyChanged(nameof(DisplayName));
-                OnPropertyChanged(nameof(HostDisplayName));
             }
         }
     }
@@ -234,7 +221,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             if (Set(ref _networkAddress, value))
             {
                 OnPropertyChanged(nameof(DisplayName));
-                OnPropertyChanged(nameof(HostDisplayName));
             }
         }
     }
@@ -249,18 +235,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     {
         get => _identityName;
         set => Set(ref _identityName, value);
-    }
-
-    public bool IsHost
-    {
-        get => _isHost;
-        set
-        {
-            if (Set(ref _isHost, value))
-            {
-                OnPropertyChanged(nameof(HostDisplayName));
-            }
-        }
     }
 
     public string PackHash { get => _packHash; set { if (Set(ref _packHash, value)) OnPropertyChanged(nameof(PackStatus)); } }
@@ -295,26 +269,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set => Set(ref _skinModel, string.Equals(value, "slim", StringComparison.OrdinalIgnoreCase) ? "slim" : "classic");
     }
 
-    public int ServerPort
-    {
-        get => _serverPort;
-        set
-        {
-            if (Set(ref _serverPort, value))
-            {
-                OnPropertyChanged(nameof(HostDisplayName));
-            }
-        }
-    }
-    public string LanSessionId { get => _lanSessionId; set => Set(ref _lanSessionId, value ?? ""); }
-    public string LanWorldName { get => _lanWorldName; set => Set(ref _lanWorldName, value ?? ""); }
-    public int LanRelayProtocolVersion
-    {
-        get => _lanRelayProtocolVersion;
-        set => Set(ref _lanRelayProtocolVersion, value);
-    }
-    public bool SupportsResumableLanRelay =>
-        LanRelayProtocolVersion >= LanRelayService.ResumableProtocolVersion;
     public DateTimeOffset LastSeen { get => _lastSeen; set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); } }
     public string LocalPackHash { get => _localPackHash; set { if (Set(ref _localPackHash, value)) OnPropertyChanged(nameof(PackStatus)); } }
     public int? LastRttMs
@@ -324,7 +278,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         {
             if (Set(ref _lastRttMs, value))
             {
-                OnPropertyChanged(nameof(HostDisplayName));
                 OnPropertyChanged(nameof(RttDisplay));
             }
         }
@@ -379,21 +332,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         }
     }
 
-    public string HostDisplayName
-    {
-        get
-        {
-            var baseName = DisplayName;
-            if (IsHost && ServerPort > 0)
-            {
-                var hostName = $"{baseName}:{ServerPort}";
-                return LastRttMs is null ? $"{hostName} (—)" : $"{hostName} ({LastRttMs} ms)";
-            }
-
-            return baseName;
-        }
-    }
-
     public string PackStatus
     {
         get
@@ -425,9 +363,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         DiagnosticLogProtocolVersion = announcement.DiagnosticLogProtocolVersion;
         DiagnosticTlsFingerprint = announcement.DiagnosticTlsFingerprint;
         PackHash = announcement.PackHash;
-        LanSessionId = announcement.LanSessionId;
-        LanWorldName = announcement.LanWorldName;
-        LanRelayProtocolVersion = announcement.LanRelayProtocolVersion;
         LocalPackHash = localPackHash;
         var now = DateTimeOffset.Now;
         LastSeen = now;
@@ -449,8 +384,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             endpoint.AddressFamily = observedAddress.AddressFamily == AddressFamily.InterNetworkV6
                 ? "IPv6"
                 : "IPv4";
-            endpoint.IsHost = announcement.IsHost;
-            endpoint.ServerPort = announcement.ServerPort;
             endpoint.LastSeen = now;
         }
 
@@ -549,16 +482,15 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         NotifyAddressDisplayChanged();
     }
 
-    public IReadOnlyList<string> GetCandidateAddresses(bool requireHost = false)
-        => GetCandidateEndpoints(requireHost)
+    public IReadOnlyList<string> GetCandidateAddresses()
+        => GetCandidateEndpoints()
             .Select(endpoint => endpoint.Address)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    private PeerEndpointInfo[] GetCandidateEndpoints(bool requireHost = false)
+    private PeerEndpointInfo[] GetCandidateEndpoints()
     {
         return _endpoints.Values
-            .Where(endpoint => !requireHost || endpoint.IsHost)
             .OrderByDescending(endpoint => endpoint.Address.Equals(NetworkAddress, StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(endpoint => endpoint.LastSeen)
             .GroupBy(
@@ -571,26 +503,17 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private void SelectPrimaryEndpoint()
     {
         var primary = _endpoints.Values
-            .OrderByDescending(endpoint => endpoint.IsHost)
-            .ThenByDescending(endpoint => endpoint.LastSeen)
+            .OrderByDescending(endpoint => endpoint.LastSeen)
             .FirstOrDefault();
         if (primary is null)
         {
             _primaryEndpointKey = "";
             NetworkAddress = "";
-            IsHost = false;
-            ServerPort = 0;
             return;
         }
 
         _primaryEndpointKey = GetEndpointKey(primary.Address, primary.LocalInterfaceId);
         NetworkAddress = primary.Address;
-        IsHost = _endpoints.Values.Any(endpoint => endpoint.IsHost);
-        ServerPort = _endpoints.Values
-            .Where(endpoint => endpoint.IsHost && endpoint.ServerPort is > 0 and <= 65535)
-            .OrderByDescending(endpoint => endpoint.LastSeen)
-            .Select(endpoint => endpoint.ServerPort)
-            .FirstOrDefault();
     }
 
     private static bool IsSameDisplayGroup(PeerEndpointInfo left, PeerEndpointInfo right)
@@ -622,7 +545,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(AddressDisplay));
         OnPropertyChanged(nameof(DisplayName));
-        OnPropertyChanged(nameof(HostDisplayName));
     }
 
     private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

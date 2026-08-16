@@ -9,7 +9,7 @@ namespace Minecraft;
 
 public sealed class PortableIdentityAdapterService : IDisposable
 {
-    private const int StateSchemaVersion = 5;
+    private const int StateSchemaVersion = 6;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     private readonly AppPaths _paths;

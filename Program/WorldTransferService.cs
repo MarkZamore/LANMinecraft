@@ -57,7 +57,6 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
-    private readonly LanRelayService _lanRelay;
     private readonly ISelectedNetworkTransport _network;
     private readonly PeerRouteResolver _routes;
     private readonly WorldTransferRuntimeOptions _runtimeOptions;
@@ -90,7 +89,6 @@ public sealed class WorldTransferService : IAsyncDisposable
         WorldPlayerProfileService playerProfiles,
         WaypointSyncService waypointSync,
         SkinService skinService,
-        LanRelayService lanRelay,
         ISelectedNetworkTransport network,
         PeerRouteResolver routes,
         WorldTransferRuntimeOptions? runtimeOptions = null)
@@ -104,7 +102,6 @@ public sealed class WorldTransferService : IAsyncDisposable
         _playerProfiles = playerProfiles;
         _waypointSync = waypointSync;
         _skinService = skinService;
-        _lanRelay = lanRelay;
         _network = network;
         _routes = routes;
         _runtimeOptions = runtimeOptions ?? new WorldTransferRuntimeOptions();
@@ -664,15 +661,6 @@ public sealed class WorldTransferService : IAsyncDisposable
             if (string.Equals(protocol, SkinService.ProtocolName, StringComparison.Ordinal))
             {
                 await _skinService.HandleIncomingAsync(stream, initialFrame, token).ConfigureAwait(false);
-                return;
-            }
-            if (string.Equals(protocol, LanRelayService.ProtocolName, StringComparison.Ordinal))
-            {
-                await _lanRelay.HandleIncomingAsync(
-                    stream,
-                    initialFrame,
-                    CreatePortableConnectionContext(client),
-                    token).ConfigureAwait(false);
                 return;
             }
             if (string.Equals(

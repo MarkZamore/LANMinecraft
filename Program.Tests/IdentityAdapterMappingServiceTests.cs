@@ -132,53 +132,35 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
     }
 
     [Fact]
-    public void Build_EmitsGoldenLanSharePublishAliases()
+    public void Build_EmitsGoldenIdentityAliases()
     {
         var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, DefaultJarClasses);
 
         var configuration = service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: false);
 
         var properties = configuration.Properties;
-        Assert.Equal("net/minecraft/client/gui/screens/ShareToLanScreen,foe", properties["lanShareScreenClasses"]);
-        Assert.Equal("init,aT_", properties["lanShareInitMethods"]);
-        Assert.Equal("net/minecraft/client/server/IntegratedServer,guo", properties["integratedServerClasses"]);
-        Assert.Equal("publishServer,a", properties["publishServerMethods"]);
-        Assert.Equal("getDefaultGameType,u_", properties["getDefaultGameTypeMethods"]);
-        Assert.Equal("getWorldData,bb", properties["getWorldDataMethods"]);
-        Assert.Equal("isPublished,r", properties["isPublishedMethods"]);
-        Assert.Equal("net/minecraft/world/level/storage/WorldData,erl", properties["worldDataClasses"]);
-        Assert.Equal("isAllowCommands,m", properties["isAllowCommandsMethods"]);
-        Assert.Equal("net.minecraft.util.HttpUtil,ayf", properties["httpUtilClasses"]);
-        Assert.Equal("getAvailablePort,a", properties["getAvailablePortMethods"]);
-        Assert.Equal("net.minecraft.world.level.GameType,dct", properties["gameTypeClasses"]);
-        Assert.Equal("net.minecraft.server.commands.PublishCommand,ans", properties["publishCommandClasses"]);
-        Assert.Equal("getSuccessMessage,a", properties["publishSuccessMethods"]);
-        Assert.Equal("net.minecraft.client.Minecraft,fgo", properties["minecraftClasses"]);
-        Assert.Equal("getInstance,Q", properties["minecraftGetInstanceMethods"]);
-        Assert.Equal("getSingleplayerServer,V", properties["getSingleplayerServerMethods"]);
-        Assert.Equal("setScreen,a", properties["setScreenMethods"]);
-        Assert.Equal("updateTitle,d", properties["updateTitleMethods"]);
-        Assert.Equal("gui,l", properties["minecraftGuiFields"]);
-        Assert.Equal("net.minecraft.client.gui.screens.Screen,fod", properties["screenClasses"]);
-        Assert.Equal("net/minecraft/client/gui/Gui,fhy", properties["guiClasses"]);
-        Assert.Equal("getChat,d", properties["guiChatMethods"]);
-        Assert.Equal("net/minecraft/client/gui/components/ChatComponent,fin", properties["chatComponentClasses"]);
-        Assert.Equal("addMessage,a", properties["chatAddMessageMethods"]);
 
         // MinecraftServer is not obfuscated, so the alias list collapses to a
         // single entry — the preflight's clamped alias lookup depends on it.
         Assert.Equal("net/minecraft/server/MinecraftServer", properties["serverClasses"]);
 
-        // Pin a few pre-existing aliases so version drift in the shared classes
-        // fails loudly here rather than at launch preflight.
+        // Pin the aliases the identity and skin patches rely on, so version
+        // drift fails loudly here rather than at launch preflight.
         Assert.Equal("net/minecraft/server/network/ServerLoginPacketListenerImpl,arw", properties["loginClasses"]);
         Assert.Equal("literal,b", properties["componentLiteralMethods"]);
         Assert.Equal("net.minecraft.network.chat.Component,wz", properties["componentClasses"]);
 
-        Assert.Contains(
+        // The LAN sharing patches are gone with the VPN transport: neither the
+        // aliases nor the targets may come back.
+        Assert.DoesNotContain(
+            properties.Keys,
+            key => key.StartsWith("lan", StringComparison.Ordinal) ||
+                   key.StartsWith("publish", StringComparison.Ordinal) ||
+                   key is "integratedServerClasses" or "httpUtilClasses" or "getAvailablePortMethods");
+        Assert.DoesNotContain(
             configuration.Targets,
-            target => target.ClassName == "net/minecraft/client/gui/screens/ShareToLanScreen");
-        Assert.Contains(configuration.Targets, target => target.ClassName == "foe");
+            target => target.ClassName.Contains("ShareToLanScreen", StringComparison.Ordinal) ||
+                      target.ClassName.Contains("NetworkServerEntry", StringComparison.Ordinal));
 
         // The Infinity-only teleport patches must stay disabled and untargeted
         // for every other pack.
@@ -236,26 +218,4 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             target => target.ClassName == "org/zeith/solarflux/client/SolarFluxResourcePack");
     }
 
-    [Fact]
-    public void Build_WithoutShareScreenInitMapping_Throws()
-    {
-        var withoutInit = GoldenMappings.Replace("\taT_ ()V init", "\taT_ ()V initRenamed", StringComparison.Ordinal);
-        var (service, runtime, gameDirectory) = CreateFixture(withoutInit, DefaultJarClasses);
-
-        Assert.Throws<InvalidDataException>(
-            () => service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: false));
-    }
-
-    [Fact]
-    public void Build_WithoutShareScreenClassInJars_Throws()
-    {
-        var jarClasses = DefaultJarClasses
-            .Where(className => className is not "net/minecraft/client/gui/screens/ShareToLanScreen" and not "foe")
-            .ToArray();
-        var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, jarClasses);
-
-        var exception = Assert.Throws<NotSupportedException>(
-            () => service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: false));
-        Assert.Contains("required runtime classes are absent", exception.Message, StringComparison.Ordinal);
-    }
 }
