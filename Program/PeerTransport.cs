@@ -17,6 +17,17 @@ public sealed record PeerConnectionContext(
         new(peer, personaName, isFriend, DateTimeOffset.UtcNow);
 }
 
+/// <summary>
+/// A stream that hands bytes to a transport which delivers them later. Writing
+/// to one returns as soon as the bytes are queued, so a caller measuring
+/// progress by what it has written measures its own speed, not the wire's.
+/// </summary>
+public interface IQueuedByteSink
+{
+    /// <summary>Bytes accepted from the writer but not yet delivered to the peer.</summary>
+    long QueuedBytes { get; }
+}
+
 /// <summary>One duplex conversation with a peer, framed by PortableProtocol.</summary>
 public sealed class PeerConnection(PeerConnectionContext context, Stream stream) : IAsyncDisposable
 {
