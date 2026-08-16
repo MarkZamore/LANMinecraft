@@ -166,4 +166,4 @@ Push в `main` запускает GitHub Actions. Workflow собирает пр
 
 В Git хранятся только исходники `Program`, workflow и корневой `.gitignore`. Папка `Minecraft`, готовый `LANMinecraft.exe`, modpacks, client/server jar, runtime, миры, логи и персональные файлы игнорируются.
 
-Лицензия исходников приложения: MIT. Лицензия Steamworks SDK — соглашение Valve, см. `Program\Native\LICENSE.steamworks.txt`.
+Лицензия исходников приложения: MIT. Условия Steamworks SDK — соглашение Valve, см. `Program\Native\LICENSE.steamworks-net.txt`.
