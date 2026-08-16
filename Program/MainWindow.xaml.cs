@@ -112,6 +112,7 @@ public partial class MainWindow : Window
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
+            LegacyPackMigrationService.Run(_paths, _settings, _settingsService, _logger);
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
@@ -332,7 +333,7 @@ public partial class MainWindow : Window
             })
             .ToList();
 
-        // The Infinity pack has a built-in sync source, so it is offered even
+        // The built-in pack has a sync source of its own, so it is offered even
         // before it is installed; pressing Play downloads it.
         if (!builds.Any(build => string.Equals(
                 build.RelativePath,
@@ -341,7 +342,7 @@ public partial class MainWindow : Window
         {
             builds.Add(new ClientBuildViewModel
             {
-                Name = "Infinity (не установлена)",
+                Name = $"{PortablePackSyncService.DefaultPackRelativePath} (не установлена)",
                 RelativePath = PortablePackSyncService.DefaultPackRelativePath,
                 FullPath = _paths.CombineUnderPacks(PortablePackSyncService.DefaultPackRelativePath),
                 IsInstalled = false

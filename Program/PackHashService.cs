@@ -53,7 +53,7 @@ public sealed class PackHashService : IDisposable
     private string CalculateCore(string clientDir, CancellationToken token)
     {
         var cache = ReadCache();
-        var packKey = Path.GetRelativePath(_paths.Packs, clientDir).Replace('\\', '/').ToLowerInvariant();
+        var packKey = PackKey(clientDir);
         cache.Packs.TryGetValue(packKey, out var previousPack);
         var currentFiles = new Dictionary<string, CachedPackFile>(StringComparer.OrdinalIgnoreCase);
         var records = new List<string>();
@@ -93,6 +93,21 @@ public sealed class PackHashService : IDisposable
         WriteCache(cache);
         return hash;
     }
+
+    /// <summary>
+    /// Drops a pack's cached file hashes. The cache is keyed by pack folder, so
+    /// a renamed pack would otherwise leave an entry nothing can ever hit again.
+    /// </summary>
+    internal void ForgetPack(string packRelativePath)
+    {
+        var key = PackKey(_paths.CombineUnderPacks(packRelativePath));
+        var cache = ReadCache();
+        if (!cache.Packs.Remove(key)) return;
+        WriteCache(cache);
+    }
+
+    private string PackKey(string clientDir) =>
+        Path.GetRelativePath(_paths.Packs, clientDir).Replace('\\', '/').ToLowerInvariant();
 
     private IEnumerable<string> EnumerateIncludedFiles(string clientDir)
     {

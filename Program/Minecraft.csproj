@@ -37,8 +37,6 @@
     <Resource Include="Minecraft.ico" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
-    <EmbeddedResource Include="PortableTeleportCommands.js"
-                      LogicalName="Minecraft.PortableTeleportCommands.js" />
     <!-- Keeps the game from writing a full DEBUG copy of every session; see
          GameLogConfigurationService. -->
     <EmbeddedResource Include="GameLogConfiguration.xml"

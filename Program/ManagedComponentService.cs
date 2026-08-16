@@ -14,13 +14,6 @@ namespace Minecraft;
 /// </summary>
 public sealed class ManagedComponentService
 {
-    public const long FtbEssentialsCurseForgeProjectId = 410811;
-    public const long FtbEssentialsCurseForgeFileId = 7608733;
-    public const string FtbEssentialsVersion = "2101.1.9";
-    public const string FtbEssentialsFileName = "ftb-essentials-neoforge-2101.1.9.jar";
-    public const long FtbEssentialsSizeBytes = 209459;
-    public const string FtbEssentialsSha256 =
-        "4da8e4d461ceef1a5e6f6705265fe24239b132cdc408eb77787231cb56c219bf";
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
 
     // The timeout covers the whole body copy, so it has to scale with the
@@ -29,43 +22,13 @@ public sealed class ManagedComponentService
     internal static TimeSpan DownloadTimeoutFor(ManagedComponentDescriptor component) =>
         DownloadSourceTimeout + TimeSpan.FromSeconds(component.SizeBytes / (128d * 1024d));
 
-    public static Uri FtbEssentialsDownloadUri { get; } = new(
-        "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
-        UriKind.Absolute);
-
-    public static Uri FtbEssentialsEdgeDownloadUri { get; } = new(
-        "https://edge.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
-        UriKind.Absolute);
-
-    public static Uri FtbEssentialsCurseForgeDownloadUri { get; } = new(
-        "https://www.curseforge.com/api/v1/mods/410811/files/7608733/download",
-        UriKind.Absolute);
-
-    public static IReadOnlyList<Uri> FtbEssentialsDownloadUris { get; } =
-        Array.AsReadOnly(
-        [
-            FtbEssentialsDownloadUri,
-            FtbEssentialsEdgeDownloadUri,
-            FtbEssentialsCurseForgeDownloadUri
-        ]);
-
-    private static readonly ManagedComponentDescriptor FtbEssentials = new(
-        "ftb-essentials",
-        FtbEssentialsCurseForgeFileId,
-        FtbEssentialsFileName,
-        FtbEssentialsDownloadUris,
-        FtbEssentialsSizeBytes,
-        FtbEssentialsSha256);
-    private static readonly SemaphoreSlim FtbEssentialsGate = new(1, 1);
-
     // e4steam carries the multiplayer session over Steam's peer-to-peer
-    // network; without it a Steam-era pack cannot host or join at all, so it
-    // is required for every NeoForge pack the launcher supports (see
-    // SteamPlayPolicy) rather than only for Infinity. Upstream releases live
-    // on GitHub; CurseForge mirrors the identical file (same SHA-256) on the
-    // same CDN the FTB Essentials pin already uses.
-    // Synthetic cache key: the upstream has no numeric file id, so the pinned
-    // version 0.2.4 is encoded the way the Bumblezone hotfix encodes its own.
+    // network; without it a pack cannot host or join at all, so it is required
+    // for every NeoForge pack the launcher supports (see SteamPlayPolicy).
+    // Upstream releases live on GitHub; CurseForge mirrors the identical file
+    // (same SHA-256) on its own CDN.
+    // Synthetic cache key: the cache layout is keyed by number and the upstream
+    // has no numeric file id, so the pinned version 0.2.4 is encoded as one.
     public const long E4steamCacheFileId = 20400;
     public const string E4steamVersion = "0.2.4";
     public const string E4steamFileName = "e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar";
@@ -96,82 +59,16 @@ public sealed class ManagedComponentService
         E4steamSha256);
     private static readonly SemaphoreSlim E4steamGate = new(1, 1);
 
-    // Bumblezone 7.13.2 ships a chunk-packet mixin that crashes the server in
-    // its dimension when ModernFix and Smooth Chunk are also installed - both
-    // are part of the Infinity pack. The mod's own 7.13.5 changelog names the
-    // interaction; 7.15.3 is the latest 1.21.1 build carrying the fix.
-    // Synthetic cache key: Modrinth version ids are strings (jHtMMEiy), but the
-    // cache layout is keyed by number. Encodes the pinned version 7.15.03.
-    public const long BumblezoneCacheFileId = 71503;
-    public const string BumblezoneVersion = "7.15.3";
-    public const string BumblezoneFileName = "the_bumblezone-7.15.3+1.21.1-neoforge.jar";
-    public const string BumblezoneSupersededFileName = "the_bumblezone-7.13.2+1.21.1-neoforge.jar";
-    public const long BumblezoneSizeBytes = 69_672_269;
-    public const string BumblezoneSha256 =
-        "049b688a43886a3a5f70e8c0f195db7e33335e20adc1124c981a377a8b511101";
-
-    public static Uri BumblezoneDownloadUri { get; } = new(
-        "https://cdn.modrinth.com/data/38tpSycf/versions/jHtMMEiy/the_bumblezone-7.15.3%2B1.21.1-neoforge.jar",
-        UriKind.Absolute);
-
-    public static IReadOnlyList<Uri> BumblezoneDownloadUris { get; } =
-        Array.AsReadOnly([BumblezoneDownloadUri]);
-
-    private static readonly ManagedComponentDescriptor BumblezoneHotfix = new(
-        "the-bumblezone",
-        BumblezoneCacheFileId,
-        BumblezoneFileName,
-        BumblezoneDownloadUris,
-        BumblezoneSizeBytes,
-        BumblezoneSha256);
-
-    // Oritech 1.2.3's Promethium Pickaxe area mode re-posts the block-break
-    // event from inside its own break handler, recursing until the server
-    // dies with "Recursion depth became negative". Fixed upstream in 1.2.5
-    // ("Fix promethium pickaxe crash with recursive permission checks on
-    // neoforge"), the closest release to the pack's build.
-    public const long OritechCacheFileId = 10205;
-    public const string OritechVersion = "1.2.5";
-    public const string OritechFileName = "oritech-neoforge-1.21.1-1.2.5.jar";
-    public const string OritechSupersededFileName = "oritech-neoforge-1.21.1-1.2.3.jar";
-    public const long OritechSizeBytes = 10_675_443;
-    public const string OritechSha256 =
-        "e863aa387cec1eca46fa5ca3c3233d4d05399f73017362f23a86fd6533551873";
-
-    public static Uri OritechDownloadUri { get; } = new(
-        "https://cdn.modrinth.com/data/4sYI62kA/versions/cXCIlwHu/oritech-neoforge-1.21.1-1.2.5.jar",
-        UriKind.Absolute);
-
-    private static readonly ManagedComponentDescriptor OritechHotfix = new(
-        "oritech",
-        OritechCacheFileId,
-        OritechFileName,
-        Array.AsReadOnly([OritechDownloadUri]),
-        OritechSizeBytes,
-        OritechSha256);
-
-    internal static IReadOnlyList<ManagedModReplacement> DefaultModReplacements { get; } =
-        Array.AsReadOnly(
-        [
-            new ManagedModReplacement(
-                BumblezoneHotfix, BumblezoneSupersededFileName, "Bumblezone", BumblezoneVersion),
-            new ManagedModReplacement(
-                OritechHotfix, OritechSupersededFileName, "Oritech", OritechVersion)
-        ]);
-    private static readonly SemaphoreSlim ModReplacementGate = new(1, 1);
-
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
-    private readonly ManagedComponentDescriptor _ftbEssentials;
     private readonly ManagedComponentDescriptor _e4steam;
-    private readonly ManagedModReplacement[] _modReplacements;
 
     public ManagedComponentService(
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null)
-        : this(paths, logger, httpClient, FtbEssentials)
+        : this(paths, logger, httpClient, E4steam)
     {
     }
 
@@ -179,59 +76,18 @@ public sealed class ManagedComponentService
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient,
-        ManagedComponentDescriptor ftbEssentials,
-        IReadOnlyList<ManagedModReplacement>? modReplacements = null,
-        ManagedComponentDescriptor? e4steam = null)
+        ManagedComponentDescriptor e4steam)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
-        _ftbEssentials = ValidateDescriptor(ftbEssentials);
-        _e4steam = ValidateDescriptor(e4steam ?? E4steam);
-        _modReplacements = (modReplacements ?? DefaultModReplacements)
-            .Select(replacement => replacement with
-            {
-                Component = ValidateDescriptor(replacement.Component)
-            })
-            .ToArray();
-    }
-
-    /// <summary>
-    /// Ensures the pinned FTB Essentials artifact is installed in
-    /// <paramref name="preparedInstance"/>. This call never accepts an unverified JAR.
-    /// </summary>
-    public async Task<ManagedComponentInstallResult> EnsureFtbEssentialsAsync(
-        PackInstanceContext preparedInstance,
-        CancellationToken token = default)
-    {
-        ArgumentNullException.ThrowIfNull(preparedInstance);
-        await FtbEssentialsGate.WaitAsync(token).ConfigureAwait(false);
-        try
-        {
-            return await EnsureFtbEssentialsCoreAsync(preparedInstance, token)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn(
-                $"Required managed component {_ftbEssentials.Id} could not be prepared; " +
-                $"Minecraft launch must remain blocked: {ex.Message}");
-            throw;
-        }
-        finally
-        {
-            FtbEssentialsGate.Release();
-        }
+        _e4steam = ValidateDescriptor(e4steam);
     }
 
     /// <summary>
     /// Ensures the pinned e4steam artifact is installed in
     /// <paramref name="preparedInstance"/>. Steam play is impossible without
-    /// it, so - like FTB Essentials - a failure here fails the launch closed.
+    /// it, so a failure here fails the launch closed.
     /// </summary>
     public async Task<ManagedComponentInstallResult> EnsureSteamTransportModAsync(
         PackInstanceContext preparedInstance,
@@ -267,18 +123,6 @@ public sealed class ManagedComponentService
     }
 
     internal string E4steamCachePath => GetCachePath(_e4steam);
-
-    internal string FtbEssentialsCachePath => GetCachePath(_ftbEssentials);
-
-    private Task<ManagedComponentInstallResult> EnsureFtbEssentialsCoreAsync(
-        PackInstanceContext preparedInstance,
-        CancellationToken token) =>
-        EnsureRequiredComponentCoreAsync(
-            _ftbEssentials,
-            ["ftb-essentials"],
-            $"FTB Essentials {FtbEssentialsVersion} (CurseForge file {FtbEssentialsCurseForgeFileId})",
-            preparedInstance,
-            token);
 
     /// <summary>
     /// Converges one launch-critical JAR in the instance: keep a verified copy,
@@ -345,185 +189,6 @@ public sealed class ManagedComponentService
             cachePopulated);
     }
 
-    /// <summary>
-    /// Replaces known-broken pack builds mirrored into the instance with their
-    /// pinned fixed builds. Each replacement is a no-op when the instance
-    /// carries any other version of that mod, so a manually updated pack is
-    /// never touched.
-    /// </summary>
-    public async Task<IReadOnlyList<ManagedComponentInstallResult>> EnsureModHotfixesAsync(
-        PackInstanceContext preparedInstance,
-        CancellationToken token = default)
-    {
-        ArgumentNullException.ThrowIfNull(preparedInstance);
-        await ModReplacementGate.WaitAsync(token).ConfigureAwait(false);
-        try
-        {
-            var results = new List<ManagedComponentInstallResult>(_modReplacements.Length);
-            foreach (var replacement in _modReplacements)
-            {
-                try
-                {
-                    results.Add(await EnsureModReplacementCoreAsync(
-                        replacement, preparedInstance, token).ConfigureAwait(false));
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(
-                        $"Required managed component {replacement.Component.Id} could not be " +
-                        $"prepared; Minecraft launch must remain blocked: {ex.Message}");
-                    throw;
-                }
-            }
-            return results;
-        }
-        finally
-        {
-            ModReplacementGate.Release();
-        }
-    }
-
-    internal string CachePathFor(ManagedComponentDescriptor component) => GetCachePath(component);
-
-    private async Task<ManagedComponentInstallResult> EnsureModReplacementCoreAsync(
-        ManagedModReplacement replacement,
-        PackInstanceContext preparedInstance,
-        CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        var component = replacement.Component;
-        var gameDirectory = ValidatePreparedInstance(preparedInstance);
-        var modsDirectory = Path.Combine(gameDirectory, "mods");
-        EnsureOrdinaryDirectory(modsDirectory);
-
-        var installedPath = Path.Combine(modsDirectory, component.FileName);
-        var supersededPath = Path.Combine(modsDirectory, replacement.SupersededFileName);
-        var cachePath = GetCachePath(component);
-        EnsureOrdinaryFileIfPresent(installedPath);
-        EnsureOrdinaryFileIfPresent(supersededPath);
-        EnsureOrdinaryFileIfPresent(cachePath);
-
-        var otherVersion = Directory
-            .EnumerateFiles(modsDirectory, replacement.VersionScanPattern, SearchOption.TopDirectoryOnly)
-            .Select(Path.GetFileName)
-            .FirstOrDefault(name =>
-                !string.Equals(name, component.FileName, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(name, replacement.SupersededFileName, StringComparison.OrdinalIgnoreCase));
-        var supersededPresent = File.Exists(supersededPath);
-        if (otherVersion is not null)
-        {
-            // Someone updated the pack past the pinned build on their own;
-            // installing the pin next to it would duplicate the mod.
-            _logger.Warn(
-                $"{replacement.DisplayName} hotfix skipped: the instance already carries {otherVersion}.");
-            return NoOpResult(component, installedPath, cachePath);
-        }
-        if (!supersededPresent && !File.Exists(installedPath))
-        {
-            return NoOpResult(component, installedPath, cachePath);
-        }
-
-        var downloaded = false;
-        var installed = false;
-        var cachePopulated = false;
-
-        if (IsValidFile(installedPath, component))
-        {
-            if (!IsValidFile(cachePath, component))
-            {
-                await AtomicCopyAsync(installedPath, cachePath, component, token)
-                    .ConfigureAwait(false);
-                cachePopulated = true;
-                _logger.Info(
-                    $"Recovered {replacement.DisplayName} managed cache from the verified instance JAR.");
-            }
-        }
-        else
-        {
-            try
-            {
-                if (!IsValidFile(cachePath, component))
-                {
-                    _logger.Info(
-                        $"Downloading {replacement.DisplayName} {replacement.Version} hotfix " +
-                        $"(replaces {replacement.SupersededFileName}).");
-                    await DownloadToCacheAsync(component, cachePath, token).ConfigureAwait(false);
-                    downloaded = true;
-                    cachePopulated = true;
-                    _logger.Info($"Verified pinned {replacement.DisplayName} download.");
-                }
-
-                await AtomicCopyAsync(cachePath, installedPath, component, token)
-                    .ConfigureAwait(false);
-                installed = true;
-                _logger.Info(
-                    $"Installed pinned {replacement.DisplayName} into the prepared instance.");
-            }
-            catch (Exception ex) when (
-                ex is HttpRequestException or InvalidDataException or IOException &&
-                File.Exists(supersededPath) &&
-                !File.Exists(installedPath))
-            {
-                // Unlike FTB Essentials (200 KB, three mirrors), these are
-                // large single-source downloads: blocking the launch on a
-                // failed fetch would turn a feature-specific crash into
-                // "cannot play at all" for an offline first run. The instance
-                // is still in its shipped state, so let the game run and retry
-                // next launch.
-                _logger.Warn(
-                    $"{replacement.DisplayName} hotfix could not be prepared ({ex.Message}); " +
-                    $"Minecraft will run with {replacement.SupersededFileName} this session, " +
-                    "and its known crash stays possible until the hotfix downloads.");
-                return NoOpResult(component, installedPath, cachePath);
-            }
-        }
-
-        if (supersededPresent)
-        {
-            try
-            {
-                File.Delete(supersededPath);
-                _logger.Info(
-                    $"Removed superseded {replacement.SupersededFileName} from the prepared instance.");
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // Two builds of the same mod side by side would fail mod
-                // loading, so fail closed and put the instance back the way
-                // it was.
-                TryDeleteFile(installedPath);
-                throw new InvalidOperationException(
-                    $"Superseded {replacement.DisplayName} JAR could not be removed: {ex.Message}", ex);
-            }
-        }
-
-        return new ManagedComponentInstallResult(
-            component.Id,
-            component.FileId,
-            installedPath,
-            cachePath,
-            downloaded,
-            installed,
-            cachePopulated);
-    }
-
-    private static ManagedComponentInstallResult NoOpResult(
-        ManagedComponentDescriptor component,
-        string installedPath,
-        string cachePath) =>
-        new(
-            component.Id,
-            component.FileId,
-            installedPath,
-            cachePath,
-            Downloaded: false,
-            Installed: false,
-            CachePopulated: false);
-
     private string ValidatePreparedInstance(PackInstanceContext preparedInstance)
     {
         if (string.IsNullOrWhiteSpace(preparedInstance.GameDirectory))
@@ -552,10 +217,7 @@ public sealed class ManagedComponentService
     /// </summary>
     public static string? PinnedCacheFileId(string componentId) => componentId switch
     {
-        "ftb-essentials" => FtbEssentialsCurseForgeFileId.ToString(CultureInfo.InvariantCulture),
         "e4steam" => E4steamCacheFileId.ToString(CultureInfo.InvariantCulture),
-        "the-bumblezone" => BumblezoneCacheFileId.ToString(CultureInfo.InvariantCulture),
-        "oritech" => OritechCacheFileId.ToString(CultureInfo.InvariantCulture),
         "java-runtime" => PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_'),
         _ => null
     };
@@ -1059,14 +721,3 @@ internal sealed record ManagedComponentDescriptor(
     long SizeBytes,
     string Sha256);
 
-internal sealed record ManagedModReplacement(
-    ManagedComponentDescriptor Component,
-    string SupersededFileName,
-    string DisplayName,
-    string Version)
-{
-    // "the_bumblezone-7.13.2+...jar" -> "the_bumblezone-*.jar": any other
-    // build of the same mod means a manual update the hotfix must respect.
-    public string VersionScanPattern =>
-        SupersededFileName[..SupersededFileName.IndexOf('-', StringComparison.Ordinal)] + "-*.jar";
-}

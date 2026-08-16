@@ -31,7 +31,7 @@ if (-not $StateJson -or -not (Test-Path -LiteralPath $StateJson -PathType Leaf))
     throw "adapter-state.json was not found. Launch the game once so the launcher derives the mappings."
 }
 
-$runtimeRoot = Join-Path $projectRoot "Minecraft\Launcher\Runtimes\Infinity"
+$runtimeRoot = Join-Path $projectRoot "Minecraft\Launcher\Runtimes\LL8"
 if (-not $JavaHome) {
     $JavaHome = Join-Path $runtimeRoot "runtime\windows-x64\java-runtime-delta"
 }
@@ -46,39 +46,9 @@ foreach ($property in $state.properties.PSObject.Properties) {
     $properties[$property.Name] = [string]$property.Value
 }
 
-# Aliases added after the state file was written stay absent until the next launch,
-# so seed the ones this pack resolves to. Existing values always win.
-$srgJar = Join-Path $runtimeRoot "libraries\net\minecraft\client\1.21.1-20240808.144430\client-1.21.1-20240808.144430-srg.jar"
-$clientJar = Join-Path $runtimeRoot "versions\1.21.1\1.21.1.jar"
-$ftbJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\ftb-chunks-neoforge-2101.1.20.jar"
-$solarJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\SolarFluxReborn-1.21.1-21.1.8.jar"
-$seed = [ordered]@{
-    "ftbTeleportEnabled"           = "true"
-    "ftbTeleportClasses"           = "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen`$RowPanel,dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon,dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket"
-    "ftbPermissionMethods"         = "hasPermissions"
-    "solarFluxSyncEnabled"         = "true"
-    "solarFluxPackClasses"         = "org/zeith/solarflux/client/SolarFluxResourcePack"
-    "solarFluxSyncMethods"         = "init,listResources,getNamespaces,getResource"
-}
-foreach ($key in $seed.Keys) {
-    if (-not $properties.Contains($key)) { $properties[$key] = $seed[$key] }
-}
-
 $targets = [System.Collections.Generic.List[object]]::new()
 foreach ($target in $state.targets) {
     $targets.Add([pscustomobject]@{ JarPath = [string]$target.jarPath; ClassName = [string]$target.className })
-}
-foreach ($extra in @(
-    @{ Jar = $ftbJar;    Class = 'dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel' },
-    @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon" },
-    @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket" },
-    @{ Jar = $solarJar;  Class = "org/zeith/solarflux/client/SolarFluxResourcePack" }
-)) {
-    if (-not (Test-Path -LiteralPath $extra.Jar -PathType Leaf)) { continue }
-    $known = $targets | Where-Object { $_.ClassName -eq $extra.Class }
-    if (-not $known) {
-        $targets.Add([pscustomobject]@{ JarPath = $extra.Jar; ClassName = $extra.Class })
-    }
 }
 
 $propertyArguments = foreach ($key in $properties.Keys) { "-Dminecraft.portable.identity.$key=$($properties[$key])" }

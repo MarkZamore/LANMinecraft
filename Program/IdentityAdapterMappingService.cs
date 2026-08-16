@@ -30,10 +30,7 @@ internal sealed class IdentityAdapterMappingService
         _paths = paths;
     }
 
-    public IdentityAdapterConfiguration Build(
-        PreparedRuntime runtime,
-        string gameDirectory,
-        bool enableXaeroWaypointBridge)
+    public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
         var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
         if (mappingPath is null)
@@ -110,17 +107,16 @@ internal sealed class IdentityAdapterMappingService
             ["textureUrlCheckerClasses"] = TextureUrlChecker,
             ["textureUrlCheckerMethods"] = "isAllowedTextureDomain",
             ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z",
-            ["xaeroWaypointEnabled"] =
-                enableXaeroWaypointBridge ? "true" : "false",
-            ["ftbTeleportEnabled"] =
-                enableXaeroWaypointBridge ? "true" : "false",
+            // The agent reads one fixed property set, so the transformers the
+            // launcher no longer drives keep their keys and stay switched off.
+            ["xaeroWaypointEnabled"] = "false",
+            ["ftbTeleportEnabled"] = "false",
             ["ftbTeleportClasses"] = JoinAliases(
                 FtbWaypointRowPanel,
                 FtbWaypointMapIcon,
                 FtbTeleportFromMapPacket),
             ["ftbPermissionMethods"] = "hasPermissions",
-            ["solarFluxSyncEnabled"] =
-                enableXaeroWaypointBridge ? "true" : "false",
+            ["solarFluxSyncEnabled"] = "false",
             ["solarFluxPackClasses"] = SolarFluxResourcePack,
             ["solarFluxSyncMethods"] = "init,listResources,getNamespaces,getResource",
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
@@ -147,14 +143,6 @@ internal sealed class IdentityAdapterMappingService
             playerInfo.LeftName,
             TextureUrlChecker
         };
-        if (enableXaeroWaypointBridge)
-        {
-            requiredTargets.Add(XaeroWaypointTeleport);
-            requiredTargets.Add(FtbWaypointRowPanel);
-            requiredTargets.Add(FtbWaypointMapIcon);
-            requiredTargets.Add(FtbTeleportFromMapPacket);
-            requiredTargets.Add(SolarFluxResourcePack);
-        }
         var targets = FindRuntimeTargets(runtime, gameDirectory, requiredTargets);
         if (targets.Count != requiredTargets.Count)
         {

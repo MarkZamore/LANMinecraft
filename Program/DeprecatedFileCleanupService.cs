@@ -74,10 +74,7 @@ public static class DeprecatedFileCleanupService
     private static readonly string[] KeptComponentIds =
     [
         "java-runtime",
-        "e4steam",
-        "ftb-essentials",
-        "the-bumblezone",
-        "oritech"
+        "e4steam"
     ];
 
     public static void Run(AppPaths paths, Logger? logger = null)

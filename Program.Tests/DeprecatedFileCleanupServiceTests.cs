@@ -91,15 +91,25 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         var paths = CreatePaths();
         var components = Path.Combine(paths.Launcher, "ManagedComponents");
         var pinned = ManagedComponentService.PinnedCacheFileId("e4steam")!;
+        var runtime = ManagedComponentService.PinnedCacheFileId("java-runtime")!;
         WriteFile(Path.Combine(components, "e4steam", pinned, "e4steam.jar"), "current");
         WriteFile(Path.Combine(components, "e4steam", "19999", "e4steam-old.jar"), "superseded");
+        WriteFile(Path.Combine(components, "java-runtime", runtime, "runtime.zip"), "current");
         WriteFile(Path.Combine(components, "tiptothescales", "1234", "mod.jar"), "no longer pinned");
+        // The teleport layer's pins went with the layer itself.
+        WriteFile(Path.Combine(components, "ftb-essentials", "7608733", "ftb.jar"), "unpinned");
+        WriteFile(Path.Combine(components, "the-bumblezone", "71503", "bumblezone.jar"), "unpinned");
+        WriteFile(Path.Combine(components, "oritech", "10205", "oritech.jar"), "unpinned");
 
         DeprecatedFileCleanupService.Run(paths);
 
         Assert.True(File.Exists(Path.Combine(components, "e4steam", pinned, "e4steam.jar")));
+        Assert.True(File.Exists(Path.Combine(components, "java-runtime", runtime, "runtime.zip")));
         Assert.False(Directory.Exists(Path.Combine(components, "e4steam", "19999")));
         Assert.False(Directory.Exists(Path.Combine(components, "tiptothescales")));
+        Assert.False(Directory.Exists(Path.Combine(components, "ftb-essentials")));
+        Assert.False(Directory.Exists(Path.Combine(components, "the-bumblezone")));
+        Assert.False(Directory.Exists(Path.Combine(components, "oritech")));
     }
 
     [Fact]

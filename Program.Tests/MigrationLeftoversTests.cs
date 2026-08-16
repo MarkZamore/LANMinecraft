@@ -47,6 +47,16 @@ public sealed class MigrationLeftoversTests
         "MigrateLegacyRegistry",
         "MigrateLegacyState",
         "TryBackUpBeforeMigration",
+        // The teleport layer the built-in pack alone ever had, and the mods it
+        // pinned. The pack keeps its own copies now; e4steam is the only pin.
+        "ManagedTeleportPackPolicy",
+        "ManagedTeleportConfigurationService",
+        "EnsureFtbEssentialsAsync",
+        "EnsureModHotfixesAsync",
+        "Bumblezone",
+        "Oritech",
+        "PortableTeleportCommands",
+        "enableXaeroWaypointBridge",
     ];
 
     [Theory]
