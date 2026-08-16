@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -304,7 +304,7 @@ public sealed class WorldPlayerProfileService
 
     private static Guid GetCanonicalIdentityUuid(LocalIdentityContext identity)
     {
-        if (!Guid.TryParse(identity.IdentityId, out var identityUuid) || identityUuid == Guid.Empty)
+        if (!Guid.TryParse(identity.MinecraftUuid, out var identityUuid) || identityUuid == Guid.Empty)
         {
             throw new InvalidDataException("Portable identity UUID is missing or invalid.");
         }
