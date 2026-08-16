@@ -183,7 +183,7 @@ public sealed class WorldTransferLifecycleTests
             var senderTransport = network.CreateTransport(SenderSteamId, "Sender");
             network.MakeFriends(ReceiverSteamId, SenderSteamId);
             var metadata = new WorldMetadataService();
-            var identity = TestIdentity.CreateBound(paths, ReceiverSteamId, "Receiver");
+            var identity = TestIdentity.CreateBound(ReceiverSteamId, "Receiver");
             var profiles = new WorldPlayerProfileService(paths, logger);
             var waypoints = new WaypointSyncService(paths, logger, metadata, receiverTransport);
             var skins = new SkinService(paths, logger, receiverTransport);

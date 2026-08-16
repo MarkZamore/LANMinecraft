@@ -53,11 +53,14 @@ public sealed class WorldPlayerManifestService
                 LastKnownName = isCurrentHolder && currentHolder is not null
                     ? currentHolder.IdentityName
                     : existing?.LastKnownName ?? string.Empty,
-                // Only the player at this machine can tell us their own Steam
-                // account; everyone else's is whatever the file already knew.
-                SteamId64 = isCurrentHolder && currentHolder is not null
-                    ? NormalizeSteamId(currentHolder.SteamId64.ToString()) ?? existing?.SteamId64
-                    : existing?.SteamId64,
+                // The three players who predate Steam are known everywhere; for
+                // anyone else only their own machine can say, and other copies
+                // keep whatever the file already knew.
+                SteamId64 = KnownSteamPlayers.TryGetSteamId(uuid, out var knownSteamId)
+                    ? knownSteamId.ToString()
+                    : isCurrentHolder && currentHolder is not null
+                        ? NormalizeSteamId(currentHolder.SteamId64.ToString()) ?? existing?.SteamId64
+                        : existing?.SteamId64,
                 Files = files
             });
         }

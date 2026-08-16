@@ -126,7 +126,7 @@ public sealed class WorldSteamSchemaTests : IDisposable
     {
         var paths = CreatePaths();
         var world = CreateWorld(paths, "Chebupeli");
-        var identity = TestIdentity.CreateContext(paths, "MarkZamore", OwnerSteamId);
+        var identity = TestIdentity.CreateContext("MarkZamore", OwnerSteamId);
         WritePlayerProfile(world, identity.PlayerUuid);
         var manifests = new WorldPlayerManifestService();
 
@@ -164,7 +164,7 @@ public sealed class WorldSteamSchemaTests : IDisposable
     {
         var paths = CreatePaths();
         var world = CreateWorld(paths, "Future");
-        var identity = TestIdentity.CreateContext(paths, "MarkZamore", OwnerSteamId);
+        var identity = TestIdentity.CreateContext("MarkZamore", OwnerSteamId);
         WritePlayerProfile(world, identity.PlayerUuid);
         var manifests = new WorldPlayerManifestService();
         manifests.Write(world, identity);

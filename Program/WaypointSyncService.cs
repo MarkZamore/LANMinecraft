@@ -275,7 +275,12 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
     /// e4steam's own address changes every session, so this stays stable per
     /// Steam account instead.
     /// </summary>
-    internal static string HostFolderToken(SteamId64 peer) => $"s-{peer}";
+    /// <summary>
+    /// An invalid account would produce the bare prefix "s-", which every host
+    /// would then share; there is no folder for a peer we cannot name.
+    /// </summary>
+    internal static string HostFolderToken(SteamId64 peer) =>
+        peer.IsValid ? $"s-{peer}" : string.Empty;
 
     private static string RemoteKey(string worldId, SteamId64 host) => $"{worldId}|{host}";
 
@@ -383,7 +388,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
             lock (_stateGate)
             {
                 hosted = _hostedSession
-                    ?? throw new InvalidOperationException("No LAN world is currently available for waypoint synchronization.");
+                    ?? throw new InvalidOperationException("No shared world is currently available for waypoint synchronization.");
             }
             if (!string.Equals(hosted.WorldId, request.WorldId, StringComparison.OrdinalIgnoreCase))
             {

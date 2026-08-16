@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 
 namespace Minecraft;
@@ -9,10 +9,10 @@ namespace Minecraft;
 /// namespace, so the same Steam account produces the same UUID on any machine
 /// and no state has to travel with the player.
 ///
-/// Players who already have <c>Minecraft/Personal/UUID.json</c> keep that UUID
-/// instead: their quests, teams, homes and inventories live under it inside
-/// every world, and much of that data is written by mods the launcher does not
-/// track, so re-keying it would quietly lose progress.
+/// The three players who predate Steam keep the UUIDs their progress already
+/// lives under instead (<see cref="KnownSteamPlayers"/>): quests, teams, homes
+/// and inventories are written by mods the launcher does not track, so
+/// re-keying them would quietly lose progress.
 /// </summary>
 public static class SteamIdentityDerivation
 {
