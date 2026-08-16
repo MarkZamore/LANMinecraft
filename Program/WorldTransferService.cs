@@ -44,6 +44,9 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     // silence after 90 seconds, so the receiver always quit first and the
     // sender only learned of it afterwards, as a refused message. Whoever is
     // listening has to be the more patient of the two.
+    /// <summary>Matches Steam's own averaging window; faster tells you nothing new.</summary>
+    private static readonly TimeSpan LinkSampleInterval = TimeSpan.FromSeconds(5);
+
     private static readonly TimeSpan BulkWriteTimeout = TimeSpan.FromMinutes(4);
     private static readonly TimeSpan BulkReadTimeout = TimeSpan.FromMinutes(6);
     private static TimeSpan WriteStallTimeout(TimeSpan idleTimeout) =>
@@ -384,7 +387,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                         await CopyWithProgressAsync(file, stream, fileInfo.Length, current =>
                         {
                             progress.PublishLocal("Отправка мира", current, fileInfo.Length);
-                        }, WriteStallTimeout(_runtimeOptions.PeerIdleTimeout), token);
+                        }, WriteStallTimeout(_runtimeOptions.PeerIdleTimeout), _logger.Info, token);
                     }
 
                     var ready = await ReadAckWatchingProgressAsync(stream, transferId, token);
@@ -1879,6 +1882,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         long totalSize,
         Action<long> progress,
         TimeSpan idleTimeout,
+        Action<string> log,
         CancellationToken token)
     {
         var buffer = new byte[TransferCopyBufferBytes];
@@ -1890,6 +1894,12 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         long total = 0;
         long lastDelivered = 0;
         var lastProgressAt = Stopwatch.GetTimestamp();
+        // Steam averages its own throughput over five seconds, so sampling
+        // faster re-reads the same number. One line every five seconds over a
+        // ten-minute transfer is a hundred and twenty lines, which is a cheap
+        // price for finally knowing what the wire did.
+        var lastSampleAt = Stopwatch.GetTimestamp();
+        var deliveredAtLastSample = 0L;
         while (true)
         {
             // Reading our own archive back was the one wait in this path with
@@ -1939,6 +1949,20 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             {
                 lastDelivered = delivered;
                 lastProgressAt = Stopwatch.GetTimestamp();
+            }
+
+            var sinceSample = Stopwatch.GetElapsedTime(lastSampleAt);
+            if (queued is not null && sinceSample >= LinkSampleInterval)
+            {
+                var moved = delivered - deliveredAtLastSample;
+                lastSampleAt = Stopwatch.GetTimestamp();
+                deliveredAtLastSample = delivered;
+                log($"Sending world: {delivered / (1024d * 1024d):F0} of {totalSize / (1024d * 1024d):F0} MiB, " +
+                    $"app {moved / sinceSample.TotalSeconds / (1024d * 1024d):F2} MiB/s [{queued.DescribeLink()}].");
+            }
+
+            if (delivered > lastDelivered)
+            {
             }
             else if (queued is not null && Stopwatch.GetElapsedTime(lastProgressAt) > idleTimeout)
             {

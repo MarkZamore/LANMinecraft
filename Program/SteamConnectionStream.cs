@@ -189,6 +189,8 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     /// <summary>What Steam has taken from us and not yet put on the wire.</summary>
     public long QueuedBytes => GetPendingReliableBytes();
 
+    public string DescribeLink() => SteamPeerTransport.DescribeLink(_connection);
+
     private int GetPendingReliableBytes()
     {
         var status = default(SteamNetConnectionRealTimeStatus_t);
