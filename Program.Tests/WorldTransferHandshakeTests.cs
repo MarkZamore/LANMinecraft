@@ -115,8 +115,7 @@ public sealed class WorldTransferHandshakeTests
             senderPaths.Ensure();
             var senderLogger = new Logger(senderPaths.LogFile);
             var senderProfiles = new WorldPlayerProfileService(senderPaths, senderLogger);
-            var senderIdentity = new LocalIdentityService(senderPaths)
-                .ResolveContext(new AppSettings { PlayerName = "SenderE2E" });
+            var senderIdentity = TestIdentity.CreateContext(senderPaths, "SenderE2E");
             var world = Path.Combine(senderPaths.Worlds, "E2EWorld");
             Directory.CreateDirectory(Path.Combine(world, "region"));
             new NbtFile("", new NbtCompoundTag()).Write(Path.Combine(world, "level.dat"));
@@ -323,7 +322,7 @@ public sealed class WorldTransferHandshakeTests
             var network = new LoopbackNetworkTransport(endpoint);
             var routes = new PeerRouteResolver();
             var metadata = new WorldMetadataService();
-            var identity = new LocalIdentityService(paths);
+            var identity = TestIdentity.CreateBound(paths);
             var profiles = new WorldPlayerProfileService(paths, logger);
             var waypoints = new WaypointSyncService(paths, logger, metadata, network, routes);
             var skins = new SkinService(paths, logger, network, routes);

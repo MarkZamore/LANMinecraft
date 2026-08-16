@@ -257,6 +257,12 @@
             </Grid>
 
             <StackPanel Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="10,0,0,0">
+                <TextBlock Text="Steam" Style="{StaticResource SectionTitleStyle}"/>
+                <TextBlock x:Name="SteamStatusText" TextWrapping="Wrap" MinHeight="34"
+                           Text="Подключение к Steam…"/>
+                <Button x:Name="RetrySteamButton" Content="Повторить" Margin="0,4,0,12"
+                        HorizontalAlignment="Left" Padding="10,2"
+                        Click="RetrySteamButton_Click"/>
                 <TextBlock Text="Диагностика" Style="{StaticResource SectionTitleStyle}"/>
                 <TextBlock Text="Передавать логи" Margin="0,0,0,4"/>
                 <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"

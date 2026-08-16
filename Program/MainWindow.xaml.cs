@@ -45,7 +45,8 @@ public partial class MainWindow : Window
     private PortablePackSyncService? _packSync;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
-    private LocalIdentityService? _identityService;
+    private SteamClientService? _steamClient;
+    private SteamIdentityService? _identityService;
     private PortableIdentityAdapterService? _identityAdapter;
     private PackInstanceService? _packInstances;
     private PackRuntimeService? _packRuntimes;
@@ -132,9 +133,18 @@ public partial class MainWindow : Window
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
-            _identityService = new LocalIdentityService(_paths);
+            _steamClient = new SteamClientService(
+                new SteamworksApiFacade(),
+                new SteamNativeLibraryService(_paths, _logger),
+                _logger);
+            _steamClient.StatusChanged += (_, status) => PostToUi(() => ApplySteamStatus(status));
+            _identityService = new SteamIdentityService(
+                _paths,
+                new SteamClientUserSource(_steamClient),
+                _logger,
+                new WpfIdentityConflictResolver(this));
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
-            ResolveAndPersistLocalIdentity();
+            await ConnectSteamAndBindIdentityAsync();
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
             _packRuntimes = new PackRuntimeService(_paths, _logger);
@@ -245,6 +255,8 @@ public partial class MainWindow : Window
             if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
+            if (_steamClient is not null) await _steamClient.DisposeAsync();
+            _identityService?.Dispose();
             _packInstances?.Dispose();
             _packRuntimes?.Dispose();
             _identityAdapter?.Dispose();
@@ -1691,6 +1703,75 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
+    /// <summary>
+    /// Connects to Steam and binds this machine's account to the profile its
+    /// progress lives under. A closed or signed-out Steam is a status with a
+    /// "Повторить" button, never a startup failure - but nothing that needs an
+    /// identity (playing, transferring, diagnostics) runs until it succeeds.
+    /// </summary>
+    private async Task ConnectSteamAndBindIdentityAsync()
+    {
+        if (_steamClient is null || _identityService is null) return;
+
+        var status = await _steamClient.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
+        ApplySteamStatus(status);
+        if (!status.IsReady) return;
+
+        try
+        {
+            var binding = await _identityService.EnsureBoundAsync(_lifetimeCts.Token).ConfigureAwait(true);
+            if (!binding.Bound)
+            {
+                SetSteamMessage(string.IsNullOrEmpty(binding.Message)
+                    ? SteamIdentityService.SteamUnavailableMessage
+                    : binding.Message);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(binding.Message)) _logger?.Info(binding.Message);
+            ResolveAndPersistLocalIdentity();
+        }
+        catch (IdentityUnavailableException ex)
+        {
+            _logger?.Warn($"Identity binding failed: {ex.Message}");
+            SetSteamMessage(ex.Message);
+        }
+        finally
+        {
+            RefreshUi();
+        }
+    }
+
+    /// <summary>Re-runs the whole Steam handshake after the player fixes Steam.</summary>
+    private async void RetrySteamButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetrySteamButton.IsEnabled = false;
+        try
+        {
+            await ConnectSteamAndBindIdentityAsync();
+        }
+        finally
+        {
+            RetrySteamButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplySteamStatus(SteamClientStatus status)
+    {
+        SetSteamMessage(status.Message);
+        RetrySteamButton.Visibility = status.IsReady && IsIdentityBound
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        RefreshUi();
+    }
+
+    private void SetSteamMessage(string message)
+    {
+        SteamStatusText.Text = message;
+    }
+
+    private bool IsIdentityBound => _identityService?.IsBound == true;
+
     private void ResolveAndPersistLocalIdentity()
     {
         if (_identityService is null || _settings is null || _settingsService is null) return;
@@ -2336,16 +2417,18 @@ public partial class MainWindow : Window
         if (_settings is null) return;
 
         RefreshPlayerIdentityDisplay();
-        var interactiveEnabled = !_busy;
+        // Everything that touches a world needs to know who the player is, and
+        // that answer comes from Steam; without it only the settings stay live.
+        var interactiveEnabled = !_busy && IsIdentityBound;
         var configurationEnabled = interactiveEnabled &&
                                    !_transferActive &&
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
-        PlayerNameTextBox.IsEnabled = configurationEnabled;
-        PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !configurationEnabled;
-        ChangePlayerNameButton.IsEnabled = configurationEnabled;
+        PlayerNameTextBox.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
+        PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
+        ChangePlayerNameButton.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 0;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -2389,7 +2472,7 @@ public partial class MainWindow : Window
 
     private PortablePackSyncService RequirePackSync() => _packSync ?? throw new InvalidOperationException("Pack sync service is not initialized.");
     private WorldMetadataService RequireWorldMetadata() => _worldMetadata ?? throw new InvalidOperationException("World metadata service is not initialized.");
-    private LocalIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
+    private SteamIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
     private WorldPlayerProfileService RequireWorldPlayerProfiles() => _worldPlayerProfiles ?? throw new InvalidOperationException("World player profile service is not initialized.");
     private PeerDiscoveryService RequireDiscovery() => _discovery ?? throw new InvalidOperationException("Peer discovery is not initialized.");
     private MinecraftProcessService RequireMinecraft() => _minecraft ?? throw new InvalidOperationException("Minecraft service is not initialized.");

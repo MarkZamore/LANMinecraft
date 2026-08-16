@@ -79,8 +79,13 @@ public sealed class SteamIdentityServiceTests : IDisposable
         Assert.False(result.Migrated);
         Assert.Equal(IdentityBindingSource.Derived, result.Source);
         Assert.True(SteamId64.TryFrom(FirstAccount, out var steamId));
-        Assert.Equal(SteamIdentityDerivation.DeriveMinecraftUuid(steamId), service.Binding!.PlayerUuid);
-        Assert.False(File.Exists(paths.IdentityFile));
+        var derived = SteamIdentityDerivation.DeriveMinecraftUuid(steamId);
+        Assert.Equal(derived, service.Binding!.PlayerUuid);
+
+        // The legacy file is written once with the same value, so rolling back
+        // to the previous launcher keeps this player's progress too.
+        Assert.True(File.Exists(paths.IdentityFile));
+        Assert.Equal(derived, ReadLegacyIdentity(paths));
     }
 
     [Fact]

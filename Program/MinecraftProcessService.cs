@@ -33,7 +33,7 @@ public sealed class MinecraftProcessService
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
-    private readonly LocalIdentityService _identityService;
+    private readonly IIdentityService _identityService;
     private readonly PortableIdentityAdapterService _identityAdapter;
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly PackInstanceService _packInstances;
@@ -87,7 +87,7 @@ public sealed class MinecraftProcessService
     public MinecraftProcessService(
         AppPaths paths,
         Logger logger,
-        LocalIdentityService identityService,
+        IIdentityService identityService,
         PortableIdentityAdapterService identityAdapter,
         WorldPlayerProfileService playerProfiles,
         PackInstanceService packInstances,
