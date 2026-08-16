@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -48,10 +48,14 @@ public sealed partial class PortablePackSyncService
         "Не удалось обновить сборку — играем с локальной версией.";
     internal const string FirstInstallUnavailableMessage =
         "Сборка ещё не установлена, а сервер сборки недоступен. Проверьте интернет и попробуйте снова.";
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
 
-    private const int SourceMarkerSchemaVersion = 1;
-    private const int RemoteManifestSchemaVersion = 1;
-    private const int SyncStateSchemaVersion = 1;
+    private const int SourceMarkerCacheGeneration = 1;
+    private const int RemoteManifestCacheGeneration = 1;
+    private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
     private const int MaximumParallelDownloads = 4;
@@ -99,7 +103,7 @@ public sealed partial class PortablePackSyncService
             {
                 var marker = JsonSerializer.Deserialize<SourceMarkerDto>(File.ReadAllText(markerPath), JsonOptions);
                 if (marker is null ||
-                    marker.SchemaVersion != SourceMarkerSchemaVersion ||
+                    marker.SchemaVersion != SourceMarkerCacheGeneration ||
                     !IsValidSourceIdentifier(marker.Owner) ||
                     !IsValidSourceIdentifier(marker.Repo) ||
                     !IsValidSourceIdentifier(marker.Tag))
@@ -691,7 +695,7 @@ public sealed partial class PortablePackSyncService
     {
         var state = new SyncStateDto
         {
-            SchemaVersion = SyncStateSchemaVersion,
+            SchemaVersion = SyncStateCacheGeneration,
             Revision = manifest.Revision
         };
         foreach (var file in manifest.Files)
@@ -714,7 +718,7 @@ public sealed partial class PortablePackSyncService
         AtomicFile.WriteAllText(markerPath, JsonSerializer.Serialize(
             new SourceMarkerDto
             {
-                SchemaVersion = SourceMarkerSchemaVersion,
+                SchemaVersion = SourceMarkerCacheGeneration,
                 Owner = source.Owner,
                 Repo = source.Repo,
                 Tag = source.Tag
@@ -729,7 +733,7 @@ public sealed partial class PortablePackSyncService
             if (File.Exists(statePath))
             {
                 var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(statePath), JsonOptions);
-                if (state?.SchemaVersion == SyncStateSchemaVersion)
+                if (state?.SchemaVersion == SyncStateCacheGeneration)
                 {
                     state.Files = new Dictionary<string, SyncStateFileDto>(state.Files, StringComparer.OrdinalIgnoreCase);
                     return state;
@@ -745,11 +749,11 @@ public sealed partial class PortablePackSyncService
 
     private static ValidatedManifest ValidateRemoteManifest(RemoteManifestDto manifest, string packDir)
     {
-        if (manifest.SchemaVersion != RemoteManifestSchemaVersion)
+        if (manifest.SchemaVersion != RemoteManifestCacheGeneration)
         {
             throw new InvalidDataException(
                 $"Unsupported pack sync manifest schemaVersion {manifest.SchemaVersion}; " +
-                $"expected {RemoteManifestSchemaVersion}.");
+                $"expected {RemoteManifestCacheGeneration}.");
         }
         if (manifest.Files is not { Count: > 0 })
         {
@@ -943,8 +947,8 @@ public sealed partial class PortablePackSyncService
 
     private static bool IsProtectedRootName(string name) =>
         IsServiceRelativePath(name) ||
-        PackInstanceService.LegacyDirectories.Contains(name) ||
-        PackInstanceService.LegacyFiles.Contains(name);
+        PackInstanceService.InstanceOwnedDirectories.Contains(name) ||
+        PackInstanceService.InstanceOwnedFiles.Contains(name);
 
     private static string FirstSegment(string path)
     {

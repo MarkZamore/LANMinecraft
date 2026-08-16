@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.NetworkInformation;
@@ -13,10 +13,25 @@ public sealed record SupportDiagnosticSnapshotRequest(
     AppPaths Paths,
     string PackRelativePath,
     string PackHash,
-    NetworkEnvironmentSnapshot Network,
-    KnownPeerCache Routes,
+    SteamDiagnosticContext Steam,
     IReadOnlyDictionary<string, string> RuntimeState,
     string? JavaExecutable = null);
+
+/// <summary>
+/// The Steam side of a support bundle: who is signed in and which friends are
+/// reachable. It replaces the interface list, route table and neighbour dump
+/// the VPN transport needed to explain itself.
+/// </summary>
+public sealed record SteamDiagnosticContext(
+    string SteamId64,
+    string PersonaName,
+    string Availability,
+    int FriendCount,
+    int PeerCount)
+{
+    public static SteamDiagnosticContext Unavailable { get; } =
+        new(string.Empty, string.Empty, "NotStarted", 0, 0);
+}
 
 public sealed record SupportEnvironmentSnapshot(
     DateTimeOffset CapturedAtUtc,
@@ -29,38 +44,14 @@ public sealed record SupportEnvironmentSnapshot(
     string PackName,
     string PackHash,
     IReadOnlyList<SupportModSnapshot> Mods,
-    NetworkEndpointInfo? SelectedEndpoint,
-    IReadOnlyList<SupportInterfaceSnapshot> Interfaces,
-    KnownPeerCache Routes,
+    SteamDiagnosticContext Steam,
     IReadOnlyDictionary<string, string> RuntimeState,
-    string RouteTable,
-    string NeighborTable,
     string SocketTable);
 
 public sealed record SupportModSnapshot(
     string FileName,
     long Size,
     string Version);
-
-public sealed record SupportInterfaceSnapshot(
-    string Id,
-    string Name,
-    string Description,
-    string Type,
-    string Status,
-    long Speed,
-    bool ReceiveOnly,
-    bool SupportsMulticast,
-    IReadOnlyList<string> Addresses,
-    IReadOnlyList<string> Gateways,
-    int Ipv4Index,
-    int Ipv6Index,
-    int SystemFlags,
-    bool IsSelected,
-    bool IsHardware,
-    bool IsFilterInterface,
-    bool IsEndpointInterface,
-    bool HasDefaultRoute);
 
 internal sealed record SupportVersionFallback(
     string MinecraftVersion,
@@ -73,22 +64,11 @@ internal sealed record SupportVersionFallback(
 
 public sealed record SupportNetworkMetrics(
     DateTimeOffset CapturedAtUtc,
-    string SelectedInterfaceId,
-    string SelectedAddress,
-    string NetworkFingerprint,
-    int ConfirmedPeerCount,
-    int RouteCandidateCount,
-    IReadOnlyList<NetworkEndpointInfo> AvailableEndpoints,
-    KnownPeerCache RouteCandidates,
-    bool DiscoveryRunning,
+    string SteamId64,
+    string SteamAvailability,
+    int FriendCount,
+    int PeerCount,
     bool TransferActive,
-    bool LanHosted,
-    int RelayCount,
-    bool VoiceJoined,
-    int VoicePeerCount,
-    double VoiceRoundTripMs,
-    double VoiceLossPercent,
-    double VoiceJitterMs,
     long DiagnosticBytesSent,
     long DiagnosticBytesReceived,
     long DiagnosticReconnects,
@@ -99,9 +79,12 @@ public sealed record SupportNetworkMetrics(
 
 public static partial class SupportDiagnosticSnapshotBuilder
 {
-    private const int DiscoveryPort = 35655;
     private const int MaxCommandOutputCharacters = 2 * 1024 * 1024;
-    private const int RuntimeStateSchemaVersion = 3;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int RuntimeStateCacheGeneration = 3;
     private const int MaxRuntimeStateBytes = 4 * 1024 * 1024;
     private const int MaxJavaReleaseBytes = 64 * 1024;
     private const string RuntimeStateFileName = ".portable-runtime.json";
@@ -118,10 +101,8 @@ public static partial class SupportDiagnosticSnapshotBuilder
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Paths);
-        ArgumentNullException.ThrowIfNull(request.Network);
-        ArgumentNullException.ThrowIfNull(request.Routes);
+        ArgumentNullException.ThrowIfNull(request.Steam);
 
-        var selected = request.Network.PrimaryEndpoint;
         var packRelativePath = request.PackRelativePath ?? string.Empty;
         var versionFallback = ResolveReadOnlyVersionFallback(
             request.Paths,
@@ -129,14 +110,15 @@ public static partial class SupportDiagnosticSnapshotBuilder
         var runtimeState = MergeRuntimeVersionFallback(
             request.RuntimeState,
             versionFallback);
+        // The socket table still helps with "the game cannot reach anything"
+        // reports; the route, ARP and interface dumps described a transport
+        // that no longer exists.
         var commands = await Task.WhenAll(
-            RunSystemCommandAsync("route.exe", "PRINT", selected?.NetworkAddress, token),
-            RunSystemCommandAsync("arp.exe", "-a", selected?.NetworkAddress, token),
-            RunSystemCommandAsync("netstat.exe", "-ano", selected?.NetworkAddress, token),
+            RunSystemCommandAsync("netstat.exe", "-ano", token),
             ReadJavaVersionAsync(request.JavaExecutable, token)).ConfigureAwait(false);
-        var javaVersion = string.IsNullOrWhiteSpace(commands[3])
+        var javaVersion = string.IsNullOrWhiteSpace(commands[1])
             ? versionFallback.JavaVersion
-            : commands[3];
+            : commands[1];
 
         return new SupportEnvironmentSnapshot(
             DateTimeOffset.UtcNow,
@@ -151,24 +133,14 @@ public static partial class SupportDiagnosticSnapshotBuilder
                 Path.AltDirectorySeparatorChar)) ?? string.Empty,
             request.PackHash ?? string.Empty,
             ReadMods(request.Paths, packRelativePath),
-            selected,
-            CaptureInterfaces(selected),
-            request.Routes,
+            request.Steam,
             runtimeState,
-            commands[0],
-            commands[1],
-            FilterSocketTable(commands[2], selected?.NetworkAddress));
+            commands[0]);
     }
 
     public static SupportNetworkMetrics CaptureMetrics(
-        NetworkEnvironmentSnapshot network,
-        KnownPeerCache routes,
-        int confirmedPeerCount,
-        bool discoveryRunning,
+        SteamDiagnosticContext steam,
         bool transferActive,
-        bool lanHosted,
-        int relayCount,
-        VoiceNetworkSnapshot voice,
         long diagnosticBytesSent,
         long diagnosticBytesReceived,
         long reconnects,
@@ -178,26 +150,11 @@ public static partial class SupportDiagnosticSnapshotBuilder
         var process = Process.GetCurrentProcess();
         return new SupportNetworkMetrics(
             DateTimeOffset.UtcNow,
-            network.PrimaryEndpoint?.InterfaceId ?? string.Empty,
-            network.PrimaryEndpoint?.NetworkAddress ?? string.Empty,
-            network.TopologyFingerprint,
-            Math.Max(0, confirmedPeerCount),
-            routes.Peers.Sum(peer => peer.Endpoints.Count(endpoint => endpoint.IsConfirmed)),
-            (network.AvailableEndpoints.Count == 0
-                    ? network.Endpoints
-                    : network.AvailableEndpoints)
-                .Take(64)
-                .ToArray(),
-            BoundRoutes(routes),
-            discoveryRunning,
+            steam.SteamId64,
+            steam.Availability,
+            Math.Max(0, steam.FriendCount),
+            Math.Max(0, steam.PeerCount),
             transferActive,
-            lanHosted,
-            Math.Max(0, relayCount),
-            voice.IsJoined,
-            Math.Max(0, voice.ConnectedPeers),
-            Math.Max(0, voice.RoundTripMs),
-            Math.Clamp(voice.LossPercent, 0, 100),
-            Math.Max(0, voice.JitterMs),
             Math.Max(0, diagnosticBytesSent),
             Math.Max(0, diagnosticBytesReceived),
             Math.Max(0, reconnects),
@@ -209,102 +166,10 @@ public static partial class SupportDiagnosticSnapshotBuilder
                 : new Dictionary<string, string>(state, StringComparer.Ordinal));
     }
 
-    private static KnownPeerCache BoundRoutes(KnownPeerCache routes) =>
-        new()
-        {
-            SchemaVersion = routes.SchemaVersion,
-            Peers = routes.Peers
-                .Take(64)
-                .Select(peer => new KnownPeerIdentityRecord
-                {
-                    IdentityId = peer.IdentityId,
-                    PlayerName = Truncate(peer.PlayerName, 128),
-                    Endpoints = peer.Endpoints
-                        .Take(8)
-                        .Select(endpoint => new KnownPeerEndpointRecord
-                        {
-                            Address = endpoint.Address,
-                            LocalAddress = endpoint.LocalAddress,
-                            LocalInterfaceId = endpoint.LocalInterfaceId,
-                            LastSeenUtc = endpoint.LastSeenUtc,
-                            LastSuccessUtc = endpoint.LastSuccessUtc,
-                            IsObserved = endpoint.IsObserved,
-                            IsConfirmed = endpoint.IsConfirmed,
-                            FailureScore = endpoint.FailureScore
-                        })
-                        .ToList()
-                })
-                .ToList()
-        };
-
     private static string Truncate(string? value, int maximumLength) =>
         string.IsNullOrEmpty(value) || value.Length <= maximumLength
             ? value ?? string.Empty
             : value[..maximumLength];
-
-    private static List<SupportInterfaceSnapshot> CaptureInterfaces(
-        NetworkEndpointInfo? selected)
-    {
-        var result = new List<SupportInterfaceSnapshot>();
-        foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces()
-                     .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
-        {
-            try
-            {
-                var properties = networkInterface.GetIPProperties();
-                var endpoint = selected is not null &&
-                               string.Equals(
-                                   selected.InterfaceId,
-                                   networkInterface.Id,
-                                   StringComparison.OrdinalIgnoreCase)
-                    ? selected
-                    : null;
-                var ipv4Index = TryGetInterfaceIndex(
-                    properties,
-                    System.Net.Sockets.AddressFamily.InterNetwork);
-                var ipv6Index = TryGetInterfaceIndex(
-                    properties,
-                    System.Net.Sockets.AddressFamily.InterNetworkV6);
-                var interfaceIndex = ipv4Index > 0 ? ipv4Index : ipv6Index;
-                var systemFlags = OperatingSystem.IsWindows()
-                    ? WindowsNetworkEnvironment.GetInterfaceFlagsForDiagnostics(
-                        interfaceIndex,
-                        networkInterface.NetworkInterfaceType)
-                    : IsPhysicalType(networkInterface.NetworkInterfaceType)
-                        ? WindowsNetworkEnvironment.InterfaceFlagHardware
-                        : 0;
-                result.Add(new SupportInterfaceSnapshot(
-                    networkInterface.Id,
-                    networkInterface.Name,
-                    networkInterface.Description,
-                    networkInterface.NetworkInterfaceType.ToString(),
-                    networkInterface.OperationalStatus.ToString(),
-                    networkInterface.Speed,
-                    networkInterface.IsReceiveOnly,
-                    networkInterface.SupportsMulticast,
-                    properties.UnicastAddresses
-                        .Select(address => $"{address.Address}/{address.PrefixLength}")
-                        .OrderBy(value => value, StringComparer.Ordinal)
-                        .ToArray(),
-                    properties.GatewayAddresses
-                        .Select(gateway => gateway.Address.ToString())
-                        .OrderBy(value => value, StringComparer.Ordinal)
-                        .ToArray(),
-                    ipv4Index,
-                    ipv6Index,
-                    systemFlags,
-                    endpoint is not null,
-                    (systemFlags & WindowsNetworkEnvironment.InterfaceFlagHardware) != 0,
-                    (systemFlags & WindowsNetworkEnvironment.InterfaceFlagFilter) != 0,
-                    (systemFlags & WindowsNetworkEnvironment.InterfaceFlagEndpoint) != 0,
-                    endpoint?.HasDefaultRoute ?? properties.GatewayAddresses.Count > 0));
-            }
-            catch (NetworkInformationException)
-            {
-            }
-        }
-        return result;
-    }
 
     private static SupportModSnapshot[] ReadMods(
         AppPaths paths,
@@ -476,7 +341,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
                     RuntimeStateJsonOptions);
             }
             if (state is null ||
-                state.SchemaVersion != RuntimeStateSchemaVersion ||
+                state.SchemaVersion != RuntimeStateCacheGeneration ||
                 !string.Equals(
                     state.DescriptorHash,
                     descriptor.DescriptorHash,
@@ -732,7 +597,6 @@ public static partial class SupportDiagnosticSnapshotBuilder
     private static async Task<string> RunSystemCommandAsync(
         string executableName,
         string arguments,
-        string? selectedAddress,
         CancellationToken token)
     {
         if (!OperatingSystem.IsWindows()) return string.Empty;
@@ -744,12 +608,9 @@ public static partial class SupportDiagnosticSnapshotBuilder
             includeStandardError: false,
             token).ConfigureAwait(false);
 
-        if (!string.Equals(executableName, "netstat.exe", StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(selectedAddress))
-        {
-            return output;
-        }
-        return FilterSocketTable(output, selectedAddress);
+        return string.Equals(executableName, "netstat.exe", StringComparison.OrdinalIgnoreCase)
+            ? FilterSocketTable(output)
+            : output;
     }
 
     private static async Task<string> RunCommandAsync(
@@ -798,21 +659,19 @@ public static partial class SupportDiagnosticSnapshotBuilder
         }
     }
 
-    private static string FilterSocketTable(string output, string? selectedAddress)
+    /// <summary>
+    /// Only this process's own sockets are worth keeping: Steam picks its relay
+    /// ports at runtime, so there is no fixed port to grep for any more.
+    /// </summary>
+    private static string FilterSocketTable(string output)
     {
         if (string.IsNullOrWhiteSpace(output)) return string.Empty;
         var processId = Environment.ProcessId.ToString(
             System.Globalization.CultureInfo.InvariantCulture);
-        var selected = selectedAddress?.Trim() ?? string.Empty;
         return string.Join(
             Environment.NewLine,
             output.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-                .Where(line =>
-                    line.Contains($":{WorldTransferService.TransferPort}", StringComparison.Ordinal) ||
-                    line.Contains($":{DiscoveryPort}", StringComparison.Ordinal) ||
-                    (!string.IsNullOrWhiteSpace(selected) &&
-                     line.Contains(selected, StringComparison.OrdinalIgnoreCase)) ||
-                    line.TrimEnd().EndsWith(processId, StringComparison.Ordinal))
+                .Where(line => line.TrimEnd().EndsWith(processId, StringComparison.Ordinal))
                 .Take(4096));
     }
 

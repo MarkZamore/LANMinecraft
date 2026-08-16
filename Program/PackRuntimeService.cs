@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
@@ -23,12 +23,15 @@ public sealed class PackRuntimeService : IDisposable
 {
     // Bumped to 3 when the game moved to the launcher-managed Java 25 runtime:
     // the recorded java path had to be re-resolved for everyone.
-    internal const int RuntimeStateSchemaVersion = 3;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    internal const int RuntimeCacheGeneration = 3;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
-    private readonly VoiceNetworkCoordinator? _voiceNetwork;
     private readonly PortableJavaRuntimeService _javaRuntime;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<PackLoaderKind, IPackLoaderProvider> _providers;
@@ -42,13 +45,11 @@ public sealed class PackRuntimeService : IDisposable
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null,
-        VoiceNetworkCoordinator? networkCoordinator = null,
         PortableJavaRuntimeService? javaRuntime = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
-        _voiceNetwork = networkCoordinator;
         _javaRuntime = javaRuntime ?? new PortableJavaRuntimeService(paths, logger, _httpClient);
         IPackLoaderProvider[] providers =
         [
@@ -96,7 +97,6 @@ public sealed class PackRuntimeService : IDisposable
         var temporaryRoot = Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads", SafePackName(packRelativePath));
         _paths.EnsureUnderRoot(temporaryRoot);
         Directory.CreateDirectory(runtimeRoot);
-        TryImportLegacyRuntime(runtimeRoot);
 
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Checking, "Проверка файлов"));
         var statePath = Path.Combine(runtimeRoot, RuntimeStateFileName);
@@ -107,7 +107,7 @@ public sealed class PackRuntimeService : IDisposable
             ValidateSourceClientJarState(sourceClientJar, state) &&
             ValidateState(runtimeRoot, state))
         {
-            CleanupLegacyRuntimeFiles(runtimeRoot, state);
+            CleanupUntrackedRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
@@ -213,8 +213,7 @@ public sealed class PackRuntimeService : IDisposable
             requiredFiles,
             token);
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(newState, _jsonOptions));
-        CleanupLegacyRuntimeFiles(runtimeRoot, newState);
-        CleanupLegacyLauncherRoot();
+        CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Сборка готова", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
@@ -267,8 +266,7 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             phaseIndex,
-            phaseCount,
-            _voiceNetwork);
+            phaseCount);
         if (localOnly)
         {
             parameters.VersionLoader = new LocalJsonVersionLoader(minecraftPath);
@@ -364,7 +362,7 @@ public sealed class PackRuntimeService : IDisposable
     {
         var state = new RuntimeState
         {
-            SchemaVersion = RuntimeStateSchemaVersion,
+            SchemaVersion = RuntimeCacheGeneration,
             DescriptorHash = descriptor.DescriptorHash,
             ProfileId = profileId,
             JavaPathRelativePath = ToRelativePath(runtimeRoot, javaPath),
@@ -391,7 +389,7 @@ public sealed class PackRuntimeService : IDisposable
 
     private bool ValidateState(string runtimeRoot, RuntimeState state)
     {
-        if (state.SchemaVersion != RuntimeStateSchemaVersion ||
+        if (state.SchemaVersion != RuntimeCacheGeneration ||
             string.IsNullOrWhiteSpace(state.ProfileId) ||
             state.Files.Count == 0)
         {
@@ -452,43 +450,11 @@ public sealed class PackRuntimeService : IDisposable
         }
     }
 
-    private void TryImportLegacyRuntime(string runtimeRoot)
-    {
-        if (File.Exists(Path.Combine(runtimeRoot, RuntimeStateFileName)) ||
-            Directory.EnumerateFileSystemEntries(runtimeRoot).Any())
-        {
-            return;
-        }
-
-        var legacyEntries = new[] { "libraries", "assets", "natives", "versions", "java21-windows-x86-64" };
-        var moved = false;
-        foreach (var name in legacyEntries)
-        {
-            var source = Path.Combine(_paths.Launcher, name);
-            var destination = Path.Combine(runtimeRoot, name);
-            if (!Directory.Exists(source) || Directory.Exists(destination)) continue;
-            Directory.Move(source, destination);
-            moved = true;
-        }
-        if (moved) _logger.Info("Legacy fixed runtime moved into the selected pack runtime for verification and reuse.");
-    }
-
-    private void CleanupLegacyLauncherRoot()
-    {
-        var fileNames = new[]
-        {
-            "Start-MinecraftFromLauncher.ps1", "Start-Minecraft.ps1", "Start-Minecraft.cmd",
-            "standalone-classpath.txt", "standalone-jvmargs.txt", "standalone-clientargs.txt",
-            "minecraft-window-icon.jar",
-            "launcher-bootstrap-manifest.json", "runtime-bootstrap-manifest.json", "bootstrap-manifest.json"
-        };
-        foreach (var name in fileNames)
-        {
-            TryDeleteFile(Path.Combine(_paths.Launcher, name));
-        }
-    }
-
-    private static void CleanupLegacyRuntimeFiles(string runtimeRoot, RuntimeState state)
+    /// <summary>
+    /// Removes what preparation leaves behind and does not track: the loader
+    /// installer jar and any runtime directory the state no longer references.
+    /// </summary>
+    private static void CleanupUntrackedRuntimeFiles(string runtimeRoot, RuntimeState state)
     {
         foreach (var directoryName in new[] { "java21-windows-x86-64", "natives" })
         {
@@ -499,10 +465,10 @@ public sealed class PackRuntimeService : IDisposable
             if (!isTracked) TryDeleteDirectory(Path.Combine(runtimeRoot, directoryName));
         }
 
-        var legacyNeoForgeRoot = Path.Combine(runtimeRoot, "libraries", "net", "neoforged", "neoforge");
-        if (!Directory.Exists(legacyNeoForgeRoot)) return;
+        var neoForgeRoot = Path.Combine(runtimeRoot, "libraries", "net", "neoforged", "neoforge");
+        if (!Directory.Exists(neoForgeRoot)) return;
         foreach (var installer in Directory.EnumerateFiles(
-                     legacyNeoForgeRoot,
+                     neoForgeRoot,
                      "neoforge-*-installer.jar",
                      SearchOption.AllDirectories))
         {
@@ -612,7 +578,7 @@ public sealed class PackRuntimeService : IDisposable
 
     private sealed class RuntimeState
     {
-        public int SchemaVersion { get; set; } = RuntimeStateSchemaVersion;
+        public int SchemaVersion { get; set; } = RuntimeCacheGeneration;
         public string DescriptorHash { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public string JavaPathRelativePath { get; set; } = "";

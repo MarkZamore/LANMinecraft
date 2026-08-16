@@ -1,11 +1,26 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace Minecraft;
 
+/// <summary>
+/// A write-ahead journal for the handful of files a launch rewrites inside a
+/// world (level.dat, playerdata, the player manifest). A crash between two of
+/// those writes leaves a world half-converted, which is what recovery repairs.
+/// </summary>
 internal sealed class ProfileFileTransaction : IDisposable
 {
-    private const int SchemaVersion = 1;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    private const int SchemaVersion = PortableFormat.SchemaVersion;
+    private const string QuarantineDirectoryName = "Quarantine";
+    private static readonly TimeSpan QuarantineRetention = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// A journal older than this is not replayed. Recovery restores files as
+    /// they were when the transaction started, so an ancient journal would roll
+    /// a world back over everything played since.
+    /// </summary>
+    private static readonly TimeSpan MaximumReplayAge = TimeSpan.FromDays(2);
     private static readonly JsonSerializerOptions ReadJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly AppPaths _paths;
     private readonly string _transactionRoot;
@@ -18,7 +33,7 @@ internal sealed class ProfileFileTransaction : IDisposable
     private ProfileFileTransaction(AppPaths paths, string operation)
     {
         _paths = paths;
-        var root = Path.Combine(paths.Personal, "Temp", "ProfileTransactions");
+        var root = paths.ProfileTransactions;
         paths.EnsureUnderRoot(root);
         Directory.CreateDirectory(root);
         _transactionRoot = Path.Combine(root, Guid.NewGuid().ToString("N"));
@@ -29,7 +44,9 @@ internal sealed class ProfileFileTransaction : IDisposable
             SchemaVersion = SchemaVersion,
             Operation = operation,
             State = "Active",
-            CreatedAtUtc = DateTimeOffset.UtcNow
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            OwnerProcessId = Environment.ProcessId,
+            OwnerProcessStartedAtUtc = ProcessStartedAtUtc(Environment.ProcessId)
         };
         PersistJournal();
     }
@@ -39,14 +56,27 @@ internal sealed class ProfileFileTransaction : IDisposable
         return new ProfileFileTransaction(paths, operation);
     }
 
+    /// <summary>
+    /// Replays whatever a previous run left behind. A journal is only replayed
+    /// when its owner is gone and it is recent; anything else is left alone
+    /// (another launcher is still using it) or set aside for a human to look at.
+    /// Nothing here throws: a damaged journal must never be the reason the
+    /// launcher refuses to start.
+    /// </summary>
     public static void RecoverPending(AppPaths paths, Logger? logger)
     {
-        var root = Path.Combine(paths.Personal, "Temp", "ProfileTransactions");
+        var root = paths.ProfileTransactions;
         if (!Directory.Exists(root)) return;
-        var failures = new List<string>();
 
-        foreach (var transactionRoot in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly).ToArray())
+        foreach (var transactionRoot in Directory
+                     .EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly)
+                     .Where(directory => !string.Equals(
+                         Path.GetFileName(directory),
+                         QuarantineDirectoryName,
+                         StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
         {
+            var name = Path.GetFileName(transactionRoot);
             try
             {
                 var journalPath = Path.Combine(transactionRoot, "transaction.json");
@@ -56,42 +86,130 @@ internal sealed class ProfileFileTransaction : IDisposable
                     continue;
                 }
 
-                var journal = JsonSerializer.Deserialize<ProfileTransactionJournal>(File.ReadAllText(journalPath), ReadJsonOptions)
+                var journal = JsonSerializer.Deserialize<ProfileTransactionJournal>(
+                                  File.ReadAllText(journalPath), ReadJsonOptions)
                     ?? throw new InvalidDataException("Profile transaction journal is empty.");
-                if (journal.SchemaVersion != SchemaVersion)
+
+                if (!PortableFormat.CanRead(journal.SchemaVersion))
                 {
-                    throw new InvalidDataException($"Unsupported profile transaction schema {journal.SchemaVersion}.");
+                    // Written by a newer build; that build owns its own repair.
+                    logger?.Warn(
+                        $"Player profile transaction {name} uses format {journal.SchemaVersion}; leaving it untouched.");
+                    continue;
                 }
 
-                if (!string.Equals(journal.State, "Committed", StringComparison.Ordinal))
+                if (IsOwnerAlive(journal))
                 {
-                    RestoreEntries(paths, transactionRoot, journal.Entries);
-                    logger?.Warn($"Recovered interrupted player profile transaction {Path.GetFileName(transactionRoot)}.");
+                    logger?.Info($"Player profile transaction {name} belongs to a running launcher; skipped.");
+                    continue;
                 }
+
+                if (string.Equals(journal.State, "Committed", StringComparison.Ordinal))
+                {
+                    Directory.Delete(transactionRoot, recursive: true);
+                    continue;
+                }
+
+                var age = DateTimeOffset.UtcNow - journal.CreatedAtUtc;
+                if (journal.CreatedAtUtc == default || age > MaximumReplayAge || age < -MaximumReplayAge)
+                {
+                    logger?.Warn(
+                        $"Player profile transaction {name} is {age.TotalDays:F1} days old; " +
+                        "it is set aside instead of replayed.");
+                    Quarantine(root, transactionRoot, logger);
+                    continue;
+                }
+
+                RestoreEntries(paths, transactionRoot, journal.Entries);
+                logger?.Warn($"Recovered interrupted player profile transaction {name}.");
                 Directory.Delete(transactionRoot, recursive: true);
             }
             catch (Exception ex)
             {
-                logger?.Warn($"Could not recover player profile transaction {Path.GetFileName(transactionRoot)}: {ex.Message}");
-                failures.Add($"{Path.GetFileName(transactionRoot)}: {ex.Message}");
+                logger?.Warn($"Could not recover player profile transaction {name}: {ex.Message}");
+                Quarantine(root, transactionRoot, logger);
             }
         }
 
-        if (failures.Count > 0)
-        {
-            throw new InvalidOperationException(
-                "Minecraft cannot continue because an interrupted player profile transaction could not be recovered:\n" +
-                string.Join("\n", failures));
-        }
+        PruneQuarantine(root, logger);
+    }
 
-        if (Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).Any())
+    /// <summary>
+    /// Moves a transaction nobody can replay out of the way. The backups stay
+    /// on disk - they may be the only copy of a player's data - but they no
+    /// longer block startup or get retried on every launch.
+    /// </summary>
+    private static void Quarantine(string root, string transactionRoot, Logger? logger)
+    {
+        try
         {
-            Directory.Delete(root);
-            var parent = Path.GetDirectoryName(root);
-            if (parent is not null && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any())
+            if (!Directory.Exists(transactionRoot)) return;
+            var quarantine = Path.Combine(root, QuarantineDirectoryName);
+            Directory.CreateDirectory(quarantine);
+            var target = Path.Combine(
+                quarantine,
+                $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Path.GetFileName(transactionRoot)}");
+            if (Directory.Exists(target)) return;
+            Directory.Move(transactionRoot, target);
+            logger?.Warn($"Player profile transaction moved to {target}.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger?.Warn($"Player profile transaction could not be set aside: {ex.Message}");
+        }
+    }
+
+    /// <summary>Backups are full copies of world files; they do not live forever.</summary>
+    private static void PruneQuarantine(string root, Logger? logger)
+    {
+        var quarantine = Path.Combine(root, QuarantineDirectoryName);
+        if (!Directory.Exists(quarantine)) return;
+        var cutoff = DateTime.UtcNow - QuarantineRetention;
+        foreach (var directory in Directory.EnumerateDirectories(quarantine).ToArray())
+        {
+            try
             {
-                Directory.Delete(parent);
+                if (Directory.GetLastWriteTimeUtc(directory) > cutoff) continue;
+                Directory.Delete(directory, recursive: true);
+                logger?.Info($"Removed an expired player profile transaction backup: {Path.GetFileName(directory)}.");
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// True while the launcher that opened the journal is still running, which
+    /// is what stops a second instance from rolling back a live transaction.
+    /// </summary>
+    private static bool IsOwnerAlive(ProfileTransactionJournal journal)
+    {
+        if (journal.OwnerProcessId <= 0) return false;
+        if (journal.OwnerProcessId == Environment.ProcessId) return true;
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(journal.OwnerProcessId);
+            // The id may have been reused since; the start time settles it.
+            return journal.OwnerProcessStartedAtUtc == default ||
+                   Math.Abs((process.StartTime.ToUniversalTime() - journal.OwnerProcessStartedAtUtc).TotalSeconds) < 2;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static DateTime ProcessStartedAtUtc(int processId)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(processId);
+            return process.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            return default;
         }
     }
 
@@ -192,14 +310,11 @@ internal sealed class ProfileFileTransaction : IDisposable
         }
     }
 
+    // The root itself stays: it is a fixed launcher directory now, not a
+    // temporary one, and deleting it would take the quarantine with it.
     private void DeleteTransactionDirectory()
     {
         if (Directory.Exists(_transactionRoot)) Directory.Delete(_transactionRoot, recursive: true);
-        var root = Path.GetDirectoryName(_transactionRoot);
-        if (root is not null && Directory.Exists(root) && !Directory.EnumerateFileSystemEntries(root).Any())
-        {
-            Directory.Delete(root);
-        }
     }
 
     private void EnsureActive()
@@ -213,6 +328,13 @@ internal sealed class ProfileFileTransaction : IDisposable
         public string Operation { get; set; } = string.Empty;
         public string State { get; set; } = "Active";
         public DateTimeOffset CreatedAtUtc { get; set; }
+
+        /// <summary>Who is writing it; a live owner is never rolled back by anyone else.</summary>
+        public int OwnerProcessId { get; set; }
+
+        /// <summary>Process ids are reused, so the start time identifies the owner.</summary>
+        public DateTime OwnerProcessStartedAtUtc { get; set; }
+
         public List<ProfileTransactionEntry> Entries { get; set; } = [];
     }
 

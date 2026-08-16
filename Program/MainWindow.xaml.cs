@@ -1,8 +1,5 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -21,20 +18,12 @@ public partial class MainWindow : Window
     private const int MinMemoryGb = MemorySizingService.MinMemoryGb;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
-    private static readonly Matrix DisabledVoiceProtectionIconTransform = new(2d, 0d, 0d, 2d, -14.875d, -14d);
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
-    private readonly ObservableCollection<PeerViewModel> _hostPeers = new();
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
-    private readonly ObservableCollection<PeerViewModel> _voicePeers = new();
-    private readonly ObservableCollection<NetworkAddressOption> _networkAddresses = new();
-    private readonly HashSet<string> _knownNetworkAddresses = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, VoicePresenceEntry> _voicePresence = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly DispatcherTimer _networkRefreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly CancellationTokenSource _lifetimeCts = new();
-    private readonly SemaphoreSlim _diagnosticLogTargetChangeGate = new(1, 1);
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
     private readonly TransferRateTracker _runtimeRate = new();
@@ -43,67 +32,42 @@ public partial class MainWindow : Window
     private AppSettings? _settings;
     private SettingsService? _settingsService;
     private Logger? _logger;
-    private VirtualNetworkService? _network;
-    private PeerRouteResolver? _peerRoutes;
     private PackHashService? _packHash;
     private PortablePackSyncService? _packSync;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
-    private LocalIdentityService? _identityService;
+    private SteamClientService? _steamClient;
+    private SteamIdentityService? _identityService;
     private PortableIdentityAdapterService? _identityAdapter;
     private PackInstanceService? _packInstances;
     private PackRuntimeService? _packRuntimes;
     private WaypointSyncService? _waypointSync;
     private SkinService? _skinService;
-    private PeerDiscoveryService? _discovery;
-    private LanAdvertisementService? _lanAdvertisement;
-    private LanRelayService? _lanRelay;
+
+    [SuppressMessage(
+        "Performance",
+        "CA1859",
+        Justification = "The concrete transport is chosen at startup; every consumer takes the seam.")]
+    private IPeerTransport? _peerTransport;
+    private PeerConnectionRouter? _peerRouter;
+    private SteamPeerDirectory? _peerDirectory;
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
-    private VoiceChannelService? _voiceChannel;
-    private VoiceNetworkCoordinator? _voiceNetwork;
-    private PeerSupportLogService? _peerSupportLogs;
-    private VoiceSettingsWindow? _voiceSettingsWindow;
-    private GlobalPttHotkeyService? _pttHotkey;
-    private NetworkEnvironmentSnapshot _networkSnapshot = new();
-    private NetworkEndpointInfo? _primaryEndpoint;
-    private List<NetworkEndpointInfo> _networkEndpoints = [];
+    private BugReportService? _bugReports;
     private string _localPackHash = "";
     private string _state = "Starting";
-    private int? _openToLanPort;
-    private string _openToLanSessionId = "";
-    private string _openToLanWorldName = "";
-    private long _openToLanLogPosition;
-    private int? _pendingOpenToLanPort;
-    private long _pendingOpenToLanGeneration;
-    private long _activeOpenToLanGeneration;
-    private DateTimeOffset _pendingOpenToLanSince;
-    private DateTimeOffset? _openToLanListenerMissingSince;
-    private bool _openToLanCloseObserved;
-    private bool _networkRefreshInProgress;
-    private bool _networkChangeSubscribed;
-    private bool _networkSelectionRefreshPending;
-    private string _pendingNetworkInterfaceId = "";
-    private string _pendingNetworkAddress = "";
     private bool _busy;
-    private bool _voiceBusy;
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
-    private bool _suppressVoicePersistence;
-    private bool _suppressNetworkAddressSelection;
-    private string _lastVoicePeerListSignature = "";
-    private string _lastVoiceTransportPeerSignature = "";
-    private PeerViewModel? _localVoicePeer;
-    private bool _voicePttInputPressed;
-    private bool _voicePttToggleActive;
+    private bool _bugReportSending;
+    private string _bugReportStatus = "Отчёт отправляется другу через Steam.";
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
     private string _transferStage = "";
     private bool _transferActive;
-    private bool _hostRttScanInProgress;
     private bool _updateBusy;
     private bool _isEditingPlayerName;
     private bool _startupComplete;
@@ -111,8 +75,6 @@ public partial class MainWindow : Window
     private bool _minecraftPreparing;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
-    private string _diagnosticLogTargetIdentityId = "";
-    private long _diagnosticLogTargetChangeVersion;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -124,27 +86,16 @@ public partial class MainWindow : Window
         _windowPlacement.Apply(this);
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
-        HostComboBox.ItemsSource = _hostPeers;
         WorldComboBox.ItemsSource = _worlds;
-        VoicePeersItemsControl.ItemsSource = _voicePeers;
-        NetworkAddressComboBox.ItemsSource = _networkAddresses;
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
             RefreshWorlds();
-            RefreshHostPeers();
+            RefreshSteamPeers();
             PruneStalePeers();
-            RefreshHostLatencies();
-            RefreshVoicePeers();
-            UpdateVoicePeersFromDiscovery();
-            RefreshLanAdvertisementState();
+            RefreshLocalPresence();
             RefreshUi();
-            if (IsNetworkSelectionIdle() && _networkSelectionRefreshPending)
-            {
-                _ = RefreshNetworkAdaptersSafelyAsync(forceRestart: false);
-            }
         };
-        _networkRefreshTimer.Tick += NetworkRefreshTimer_Tick;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -155,60 +106,56 @@ public partial class MainWindow : Window
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
-            _settingsService = new SettingsService(_paths);
-            _settings = _settingsService.Load();
             _logger = new Logger(_paths.LogFile);
+            DeprecatedFileCleanupService.Run(_paths, _logger);
+            _settingsService = new SettingsService(_paths, _logger);
+            _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
-            _network = new VirtualNetworkService(_logger);
-            _peerRoutes = new PeerRouteResolver();
-            NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
-            _networkChangeSubscribed = true;
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
-            _identityService = new LocalIdentityService(_paths);
+            _steamClient = new SteamClientService(
+                new SteamworksApiFacade(),
+                new SteamNativeLibraryService(_paths, _logger),
+                _logger);
+            _steamClient.StatusChanged += (_, status) => PostToUi(() => ApplySteamStatus(status));
+            _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
-            ResolveAndPersistLocalIdentity();
+            await ConnectSteamAndBindIdentityAsync();
+            _peerTransport = new SteamPeerTransport(_steamClient, _logger);
+            _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
+            _peerDirectory = new SteamPeerDirectory(_steamClient, _logger);
+            _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
-            _voiceNetwork = new VoiceNetworkCoordinator();
-            _packRuntimes = new PackRuntimeService(
-                _paths,
-                _logger,
-                networkCoordinator: _voiceNetwork);
-            _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _network, _peerRoutes);
-            _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
+            _packRuntimes = new PackRuntimeService(_paths, _logger);
+            _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _peerTransport);
+            _skinService = new SkinService(_paths, _logger, _peerTransport);
             await _skinService.StartAsync(_lifetimeCts.Token);
-            _lanRelay = new LanRelayService(
-                _logger,
-                _network,
-                _peerRoutes,
-                new LanRelayPortStore(_paths, _logger));
-            _lanRelay.SetLocalIdentity(ResolveActiveLocalIdentity().id);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
-            _peerSupportLogs = new PeerSupportLogService(
-                _paths,
-                _network,
-                _peerRoutes,
-                ResolveActiveLocalIdentity,
-                ResolveCurrentInstanceDirectory,
-                CaptureSupportEnvironmentAsync,
-                CaptureSupportNetworkMetrics);
-            _peerSupportLogs.StateChanged += () => PostToUi(() =>
-            {
-                _diagnosticLogTargetIdentityId =
-                    _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
-                RefreshVoiceSettingsWindow();
-            });
-            _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _network, _peerRoutes);
-            _transfer.AttachPeerSupportLogService(_peerSupportLogs);
-            _updateService = new UpdateService(
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
+                runtimeOptions: null,
+                confirmation: new WpfWorldTransferConfirmation(this));
+            _bugReports = new BugReportService(
                 _paths,
                 _logger,
-                networkCoordinator: _voiceNetwork);
+                _peerTransport,
+                ResolveCurrentInstanceDirectory,
+                CreateBugReportContext,
+                CaptureSupportEnvironmentAsync);
+            _bugReports.ReportReceived += (_, directory) => PostToUi(() =>
+            {
+                SetBugReportStatus($"Получен отчёт: {Path.GetFileName(directory)}");
+                RefreshDiagnosticsPanel();
+            });
+            _bugReports.PruneStoredReports();
+            _peerRouter.Register(_bugReports);
+            _peerRouter.Register(_waypointSync);
+            _peerRouter.Register(_skinService);
+            _peerRouter.RegisterFallback(_transfer);
+            _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
                 PostToUi(() => ApplyTransferProgress(progress));
@@ -218,46 +165,8 @@ public partial class MainWindow : Window
                 RefreshWorlds();
                 RefreshUi();
             });
-            _discovery = new PeerDiscoveryService(_paths, _logger, _network, _peerRoutes);
-            _discovery.PeerUpdated += announcement =>
-            {
-                PostToUi(() =>
-                {
-                    if (_shutdownStarted ||
-                        _primaryEndpoint is null ||
-                        !string.Equals(
-                            _primaryEndpoint.InterfaceId,
-                            announcement.LocalInterfaceId,
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(
-                            _primaryEndpoint.NetworkAddress,
-                            announcement.LocalAddress,
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        return;
-                    }
-                    ApplyPeer(announcement);
-                });
-            };
-            _lanAdvertisement = new LanAdvertisementService(_logger, _lanRelay, _peerRoutes);
-            _lanAdvertisement.Start();
-            _voiceChannel = new VoiceChannelService(
-                _logger,
-                _voiceNetwork,
-                network: _network,
-                routes: _peerRoutes);
-            _voiceChannel.Initialize(_settings);
-            _voiceChannel.SpeakingStateChanged += OnVoiceSpeakingStateChanged;
-            _voiceChannel.PeerPresenceChanged += OnVoicePeerPresenceChanged;
-            _voiceChannel.TrafficProtectionChanged += OnVoiceTrafficProtectionChanged;
-            InitializePttHotkey();
-
             LoadSettingsIntoUi();
-            RefreshVoiceDevices();
             RefreshBuilds();
-            CaptureNetworkAddresses(isStartup: true);
-            RefreshNetworkEnvironment();
-            RefreshHostPeers();
             RefreshMemoryText(saveIfChanged: true);
             RefreshWorlds();
             InitializeUpdateUi();
@@ -293,25 +202,15 @@ public partial class MainWindow : Window
         await Dispatcher.Yield(DispatcherPriority.Background);
 
         _uiTimer.Stop();
-        _networkRefreshTimer.Stop();
-        if (_networkChangeSubscribed)
-        {
-            NetworkChange.NetworkAddressChanged -= NetworkAddressChanged;
-            _networkChangeSubscribed = false;
-        }
         _lifetimeCts.Cancel();
         try
         {
-            if (_discovery is not null) await _discovery.DisposeAsync();
-            if (_lanAdvertisement is not null) await _lanAdvertisement.DisposeAsync();
-            _pttHotkey?.Dispose();
-            _voiceSettingsWindow?.Close();
-            if (_voiceChannel is not null) await _voiceChannel.DisposeAsync();
+            if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
-            if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
-            if (_lanRelay is not null) await _lanRelay.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
+            if (_peerTransport is not null) await _peerTransport.DisposeAsync();
+            if (_steamClient is not null) await _steamClient.DisposeAsync();
             _packInstances?.Dispose();
             _packRuntimes?.Dispose();
             _identityAdapter?.Dispose();
@@ -354,9 +253,6 @@ public partial class MainWindow : Window
         try
         {
             PlayerNameTextBox.Text = RequireSettings().PlayerName;
-            VoiceMasterVolumeSlider.Value = settings.VoiceOutputVolume;
-            VoiceMuteButton.Content = "Микрофон";
-            VoiceDeafenButton.Content = "Звук";
         }
         finally
         {
@@ -364,233 +260,38 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshNetworkEnvironment()
+    /// <summary>
+    /// Re-reads the friends list. Steam serves it from its own cache, so this
+    /// is cheap enough for the two-second UI timer that used to poll adapters.
+    /// </summary>
+    /// <summary>
+    /// Presence is what friends see; it has to follow the game starting and
+    /// stopping, and it has to be re-set after e4steam clears rich presence
+    /// when a hosted world closes.
+    /// </summary>
+    private void RefreshLocalPresence()
     {
-        _networkSnapshot = RequireNetwork().GetSnapshot();
-        _networkEndpoints = _networkSnapshot.Endpoints.ToList();
-        _primaryEndpoint = _networkSnapshot.PrimaryEndpoint;
-    }
-
-    private void CaptureNetworkAddresses(bool isStartup)
-    {
-        var network = RequireNetwork();
-        var settings = RequireSettings();
-        var addresses = network.CaptureAvailableAddresses();
-        var selected = network.SelectedAddress;
-        var selectionChanged = false;
-        var previouslyKnown = new HashSet<string>(_knownNetworkAddresses, StringComparer.OrdinalIgnoreCase);
-        var isIdle = IsNetworkSelectionIdle();
-
-        NetworkAddressOption? target = null;
-        if (!isStartup && selected is not null)
-        {
-            target = NetworkSelectionPolicy.Find(addresses, selected.InterfaceId, selected.Address);
-        }
-
-        if (target is null && (isStartup || isIdle))
-        {
-            target = NetworkSelectionPolicy.Find(
-                addresses,
-                settings.SelectedNetworkInterfaceId,
-                settings.SelectedNetworkAddress);
-        }
-
-        var newestSoftwareAddress = NetworkSelectionPolicy.SelectNewestSoftwareAddress(
-            addresses,
-            previouslyKnown);
-        if (!isStartup && isIdle)
-        {
-            var pendingSoftwareAddress = NetworkSelectionPolicy.Find(
-                addresses,
-                _pendingNetworkInterfaceId,
-                _pendingNetworkAddress);
-            target = newestSoftwareAddress ?? pendingSoftwareAddress ?? target;
-            _networkSelectionRefreshPending = false;
-            _pendingNetworkInterfaceId = "";
-            _pendingNetworkAddress = "";
-        }
-        else if (!isStartup && !isIdle)
-        {
-            if (newestSoftwareAddress is not null)
-            {
-                _pendingNetworkInterfaceId = newestSoftwareAddress.InterfaceId;
-                _pendingNetworkAddress = newestSoftwareAddress.Address;
-                _networkSelectionRefreshPending = true;
-            }
-            else if (target is null)
-            {
-                _networkSelectionRefreshPending = true;
-            }
-        }
-
-        if (target is null && (isStartup || isIdle))
-        {
-            target = NetworkSelectionPolicy.SelectStartupFallback(
-                addresses,
-                settings.SelectedNetworkInterfaceId,
-                settings.SelectedNetworkAddress);
-        }
-
-        if (target is not null &&
-            !IsSameNetworkAddress(network.SelectedAddress, target) &&
-            network.SelectAddress(target.InterfaceId, target.Address))
-        {
-            selectionChanged = true;
-        }
-        else if (target is not null && !IsSameNetworkAddress(network.SelectedAddress, target))
-        {
-            target = null;
-        }
-
-        if (target is not null)
-        {
-            PersistNetworkAddressSelection(target);
-        }
-
-        _suppressNetworkAddressSelection = true;
+        if (_shutdownStarted || !_startupComplete || !IsIdentityBound) return;
         try
         {
-            _networkAddresses.Clear();
-            foreach (var address in addresses)
-            {
-                _networkAddresses.Add(address);
-            }
-
-            NetworkAddressComboBox.SelectedItem = target;
+            PublishLocalPresence();
         }
-        finally
+        catch (Exception ex) when (ex is InvalidOperationException or IdentityUnavailableException or IOException)
         {
-            _suppressNetworkAddressSelection = false;
-        }
-
-        _knownNetworkAddresses.Clear();
-        foreach (var address in addresses)
-        {
-            _knownNetworkAddresses.Add(NetworkSelectionPolicy.GetKey(address));
-        }
-
-        NetworkAddressPlaceholderText.Text = _networkAddresses.Count == 0
-            ? "Сетевой IP не найден"
-            : "Выберите сетевой IP";
-        NetworkAddressPlaceholderText.Visibility = target is null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        if (target is not null && (isStartup || selectionChanged))
-        {
-            RequireLogger().Info($"Network IP selected: {target.DisplayName}.");
-        }
-        else if (isStartup && _networkAddresses.Count > 0)
-        {
-            RequireLogger().Info("Select a network IP before starting network play.");
+            _logger?.Warn($"Steam presence refresh failed: {ex.Message}");
         }
     }
 
-    private static bool IsSameNetworkAddress(NetworkAddressOption? left, NetworkAddressOption? right) =>
-        left is not null &&
-        right is not null &&
-        string.Equals(left.InterfaceId, right.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(left.Address, right.Address, StringComparison.OrdinalIgnoreCase);
-
-    private bool IsNetworkSelectionIdle() =>
-        !_busy &&
-        !_transferActive &&
-        !_minecraftRunning &&
-        !_minecraftPreparing &&
-        _voiceChannel is not { IsJoined: true };
-
-    private void PersistNetworkAddressSelection(NetworkAddressOption address)
+    private void RefreshSteamPeers()
     {
-        var settings = RequireSettings();
-        if (string.Equals(settings.SelectedNetworkInterfaceId, address.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(settings.SelectedNetworkAddress, address.Address, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        settings.SelectedNetworkInterfaceId = address.InterfaceId;
-        settings.SelectedNetworkAddress = address.Address;
-        RequireSettingsService().Save(settings);
-    }
-
-    private void NetworkAddressChanged(object? sender, EventArgs e)
-    {
-        if (_shutdownStarted || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
-        {
-            return;
-        }
-
-        _ = Dispatcher.BeginInvoke(() =>
-        {
-            if (_shutdownStarted) return;
-            _networkRefreshTimer.Stop();
-            _networkRefreshTimer.Start();
-        });
-    }
-
-    private async void NetworkRefreshTimer_Tick(object? sender, EventArgs e)
-    {
-        _networkRefreshTimer.Stop();
-        await RefreshNetworkAdaptersSafelyAsync(forceRestart: false);
-    }
-
-    private async Task RefreshNetworkAdaptersSafelyAsync(bool forceRestart)
-    {
+        if (_shutdownStarted || _peerDirectory is null) return;
         try
         {
-            await RefreshNetworkAdaptersAsync(forceRestart);
+            _peerDirectory.Refresh();
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn($"Network adapter refresh failed: {ex.Message}");
-        }
-    }
-
-    private async Task RefreshNetworkAdaptersAsync(bool forceRestart)
-    {
-        if (_networkRefreshInProgress || _network is null || _settings is null)
-        {
-            return;
-        }
-
-        _networkRefreshInProgress = true;
-        try
-        {
-            var previousFingerprint = _networkSnapshot.Fingerprint;
-            var previousTopologyFingerprint =
-                _networkSnapshot.TopologyFingerprint;
-            RequireNetwork().InvalidateSnapshot();
-            CaptureNetworkAddresses(isStartup: false);
-            RefreshNetworkEnvironment();
-            var currentFingerprint = _networkSnapshot.Fingerprint;
-            var currentTopologyFingerprint =
-                _networkSnapshot.TopologyFingerprint;
-            if (_startupComplete &&
-                (forceRestart || !string.Equals(previousFingerprint, currentFingerprint, StringComparison.Ordinal)))
-            {
-                await StartNetworkingAsync();
-            }
-            else if (_startupComplete &&
-                     _peerSupportLogs is not null &&
-                     !string.Equals(
-                         previousTopologyFingerprint,
-                         currentTopologyFingerprint,
-                         StringComparison.Ordinal))
-            {
-                await _peerSupportLogs.UpdateNetworkContextAsync(
-                    _networkSnapshot,
-                    _lifetimeCts.Token);
-            }
-
-            RefreshVoicePeers();
-            RefreshLanAdvertisementState();
-            RefreshUi();
-        }
-        finally
-        {
-            _networkRefreshInProgress = false;
+            _logger?.Warn($"Steam friend refresh failed: {ex.Message}");
         }
     }
 
@@ -745,145 +446,110 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshVoiceDevices()
+    /// <summary>
+    /// Pushes the bug-report state into the panel in the main window: who can
+    /// receive a report right now, and what happened to the last one.
+    /// </summary>
+    internal void RefreshDiagnosticsPanel()
     {
-        if (_voiceChannel is null || _settings is null || _settingsService is null)
+        var targets = BuildDiagnosticLogTargets();
         {
-            return;
-        }
-
-        var inputDevices = _voiceChannel.GetInputDevices();
-        var outputDevices = _voiceChannel.GetOutputDevices();
-
-        VoiceInputComboBox.ItemsSource = inputDevices;
-        VoiceOutputComboBox.ItemsSource = outputDevices;
-
-        var selectedInput = inputDevices.FirstOrDefault(device =>
-            string.Equals(device.Id, _settings.VoiceInputDeviceId, StringComparison.OrdinalIgnoreCase));
-        var selectedOutput = outputDevices.FirstOrDefault(device =>
-            string.Equals(device.Id, _settings.VoiceOutputDeviceId, StringComparison.OrdinalIgnoreCase));
-        var actualInput = selectedInput ?? (inputDevices.Count > 0 ? inputDevices[0] : null);
-        var actualOutput = selectedOutput ?? (outputDevices.Count > 0 ? outputDevices[0] : null);
-        var inputId = actualInput?.Id ?? "";
-        var outputId = actualOutput?.Id ?? "";
-        var settingsChanged =
-            !string.Equals(_settings.VoiceInputDeviceId, inputId, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(_settings.VoiceOutputDeviceId, outputId, StringComparison.OrdinalIgnoreCase);
-
-        _suppressVoicePersistence = true;
-        try
-        {
-            VoiceInputComboBox.SelectedItem = actualInput;
-            VoiceOutputComboBox.SelectedItem = actualOutput;
-            _settings.VoiceInputDeviceId = inputId;
-            _settings.VoiceOutputDeviceId = outputId;
-            _voiceChannel.SetDeviceIds(inputId, outputId);
-        }
-        finally
-        {
-            _suppressVoicePersistence = false;
-        }
-
-        if (settingsChanged)
-        {
-            _settingsService.Save(_settings);
-        }
-
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void RefreshVoiceSettingsWindow(VoiceSettingsWindow? window = null)
-    {
-        var target = window ?? _voiceSettingsWindow;
-        if (target is null || _settings is null || _voiceChannel is null)
-        {
-            return;
-        }
-
-        var inputDevices = _voiceChannel.GetInputDevices();
-        var outputDevices = _voiceChannel.GetOutputDevices();
-        target.ApplyState(
-            inputDevices,
-            outputDevices,
-            _settings.VoiceInputDeviceId,
-            _settings.VoiceOutputDeviceId,
-            _settings.VoicePttMode,
-            PttInputBinding.Parse(_settings.VoicePushToTalkBinding).DisplayName,
-            _settings.VoiceInputVolume,
-            _settings.VoiceOutputVolume,
-            BuildDiagnosticLogTargets(),
-            _diagnosticLogTargetIdentityId,
-            _peerSupportLogs?.StatusText ?? "Передача логов выключена.",
-            _peerSupportLogs?.HasReceivedLogs == true);
-    }
-
-    internal void ClearVoiceSettingsWindow(VoiceSettingsWindow window)
-    {
-        if (ReferenceEquals(_voiceSettingsWindow, window))
-        {
-            _voiceSettingsWindow = null;
-        }
-    }
-
-    internal async void SetDiagnosticLogTarget(DiagnosticLogTargetOption option)
-    {
-        if (_peerSupportLogs is null || _shutdownStarted)
-        {
-            return;
-        }
-
-        var changeVersion = Interlocked.Increment(
-            ref _diagnosticLogTargetChangeVersion);
-        var enteredGate = false;
-        _diagnosticLogTargetIdentityId = option.IdentityId;
-        try
-        {
-            await _diagnosticLogTargetChangeGate.WaitAsync(_lifetimeCts.Token);
-            enteredGate = true;
-            if (changeVersion != Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
+            var selected = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
+            // Rebuilding the list on every tick would close the drop-down the
+            // moment a player opened it.
+            if (!targets.SequenceEqual(
+                    (DiagnosticLogTargetComboBox.ItemsSource as IEnumerable<DiagnosticLogTargetOption>) ?? []))
             {
-                return;
+                DiagnosticLogTargetComboBox.ItemsSource = targets;
+                DiagnosticLogTargetComboBox.SelectedItem =
+                    targets.FirstOrDefault(option => option == selected) ??
+                    targets.FirstOrDefault(option => !option.IsNobody) ??
+                    targets.FirstOrDefault();
             }
+        }
 
-            await _peerSupportLogs.SetTargetAsync(option, _lifetimeCts.Token);
+        var recipient = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
+        SendBugReportButton.IsEnabled =
+            !_bugReportSending && IsIdentityBound && recipient is { IsNobody: false };
+        DiagnosticLogStatusText.Text = _bugReportStatus;
+        OpenSupportLogsButton.IsEnabled = HasReceivedBugReports();
+    }
+
+    private bool HasReceivedBugReports()
+    {
+        try
+        {
+            var reports = _bugReports?.ReportsDirectory;
+            return reports is not null && Directory.Exists(reports) &&
+                   Directory.EnumerateDirectories(reports).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Packs the last of this player's logs, with whatever they typed, and
+    /// sends it to the friend they picked. Nothing streams: the report is a
+    /// snapshot of the moment they noticed something was wrong.
+    /// </summary>
+    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e) =>
+        OpenSupportLogsDirectory();
+
+    private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bugReports is null || _bugReportSending) return;
+        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient ||
+            recipient.IsNobody)
+        {
+            SetBugReportStatus("Выберите, кому отправить отчёт.");
+            return;
+        }
+
+        _bugReportSending = true;
+        SetBugReportStatus($"Отправка отчёта игроку {recipient.DisplayName}…");
+        try
+        {
+            var message = BugReportMessageTextBox.Text;
+            var manifest = await _bugReports
+                .SendAsync(recipient.SteamId, message, _lifetimeCts.Token)
+                .ConfigureAwait(true);
+            BugReportMessageTextBox.Clear();
+            SetBugReportStatus(
+                $"Отчёт отправлен игроку {recipient.DisplayName} " +
+                $"({manifest.ArchiveBytes / 1024} КиБ).");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (changeVersion == Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
-            {
-                _diagnosticLogTargetIdentityId = string.Empty;
-                _logger?.Warn(
-                    $"Diagnostic log sharing could not be changed: {ex.Message}");
-            }
+            _logger?.Warn($"Bug report could not be sent: {ex.Message}");
+            SetBugReportStatus($"Не удалось отправить отчёт: {ex.Message}");
         }
         finally
         {
-            if (enteredGate)
-            {
-                _diagnosticLogTargetChangeGate.Release();
-            }
-            if (changeVersion == Volatile.Read(
-                    ref _diagnosticLogTargetChangeVersion))
-            {
-                RefreshVoiceSettingsWindow();
-            }
+            _bugReportSending = false;
+            RefreshDiagnosticsPanel();
         }
+    }
+
+    private void SetBugReportStatus(string message)
+    {
+        _bugReportStatus = message;
+        DiagnosticLogStatusText.Text = message;
     }
 
     internal void OpenSupportLogsDirectory()
     {
-        if (_paths is null) return;
+        if (_paths is null || _bugReports is null) return;
         try
         {
-            Directory.CreateDirectory(_paths.SupportLogs);
+            Directory.CreateDirectory(_bugReports.ReportsDirectory);
             Process.Start(new ProcessStartInfo
             {
-                FileName = _paths.SupportLogs,
+                FileName = _bugReports.ReportsDirectory,
                 UseShellExecute = true
             });
         }
@@ -891,7 +557,7 @@ public partial class MainWindow : Window
                                    InvalidOperationException or
                                    System.ComponentModel.Win32Exception)
         {
-            _logger?.Warn($"Received diagnostic log directory could not be opened: {ex.Message}");
+            _logger?.Warn($"Received bug report directory could not be opened: {ex.Message}");
         }
     }
 
@@ -899,477 +565,33 @@ public partial class MainWindow : Window
     {
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
-        var selectedEndpoint = _primaryEndpoint;
-        if (selectedEndpoint is null)
-        {
-            return result;
-        }
-
         foreach (var peer in _peers
-                     .Where(peer =>
-                         peer.LastSeen >= cutoff &&
-                         peer.DiagnosticLogProtocolVersion ==
-                         PeerSupportProtocol.ProtocolVersion &&
-                         PeerSupportCertificate.TryNormalizeFingerprint(
-                             peer.DiagnosticTlsFingerprint,
-                             out _))
-                     .OrderBy(
-                         peer => peer.PlayerName,
-                         StringComparer.CurrentCultureIgnoreCase))
+                     .Where(peer => peer.LastSeen >= cutoff)
+                     .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
-            if (!peer.TryGetObservedRemoteAddress(
-                    selectedEndpoint.NetworkAddress,
-                    selectedEndpoint.InterfaceId,
-                    cutoff,
-                    out var observedAddress))
-            {
-                continue;
-            }
-
-            var playerName = string.IsNullOrWhiteSpace(peer.PlayerName)
-                ? "Неизвестный игрок"
-                : peer.PlayerName;
-            result.Add(new DiagnosticLogTargetOption(
-                peer.IdentityId,
-                $"{playerName} - {observedAddress}",
-                observedAddress,
-                peer.DiagnosticTlsFingerprint));
+            result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
         }
         return result;
     }
 
-    internal void SetVoiceInputDevice(VoiceAudioDevice device)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceInputDeviceId = device.Id;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-        RefreshVoiceDevices();
-        RefreshUi();
-    }
-
-    internal void SetVoiceOutputDevice(VoiceAudioDevice device)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceOutputDeviceId = device.Id;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-        RefreshVoiceDevices();
-        RefreshUi();
-    }
-
-    internal void SetVoiceMasterVolume(double volume)
-    {
-        SetVoiceOutputVolume(volume);
-    }
-
-    internal void SetVoiceInputVolume(double volume)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceInputVolume = Math.Clamp(volume, 0d, 2d);
-        _settingsService.Save(_settings);
-        _voiceChannel.SetInputVolume(_settings.VoiceInputVolume);
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void SetVoiceOutputVolume(double volume)
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceOutputVolume = Math.Clamp(volume, 0d, 2d);
-        _settings.VoiceMasterVolume = _settings.VoiceOutputVolume;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetOutputVolume(_settings.VoiceOutputVolume);
-        VoiceMasterVolumeSlider.Value = _settings.VoiceOutputVolume;
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void SetVoicePttMode(string mode)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        _settings.VoicePttMode = mode is "Hold" or "Toggle" ? mode : "Off";
-        _voicePttInputPressed = false;
-        _voicePttToggleActive = false;
-        _settingsService.Save(_settings);
-        ApplyVoiceTransmissionState();
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void ToggleVoiceMute()
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceMuted = !_voiceChannel.IsMuted;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetMuted(_settings.VoiceMuted);
-        if (_localVoicePeer is not null)
-        {
-            _localVoicePeer.IsVoiceMuted = _settings.VoiceMuted;
-        }
-        RefreshVoicePeers();
-        RefreshUi();
-    }
-
-    internal void ToggleVoiceDeafen()
-    {
-        if (_settings is null || _settingsService is null || _voiceChannel is null) return;
-
-        _settings.VoiceDeafened = !_settings.VoiceDeafened;
-        _settingsService.Save(_settings);
-        _voiceChannel.SetDeafened(_settings.VoiceDeafened);
-        RefreshUi();
-    }
-
-    internal void SetVoicePeerVolume(PeerViewModel peer, double volume)
-    {
-        if (_voiceChannel is null) return;
-
-        var peerId = ResolveVoicePeerId(peer);
-        if (string.IsNullOrWhiteSpace(peerId))
-        {
-            return;
-        }
-
-        var clamped = Math.Clamp(volume, 0d, 2d);
-        peer.VoiceVolume = clamped;
-        _voiceChannel.SetPeerVolume(peerId, clamped);
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void SetVoicePushToTalkKey(Key key)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        if (key == Key.None || key == Key.System)
-        {
-            key = Key.V;
-        }
-
-        _settings.VoicePushToTalkKey = key.ToString();
-        _settings.VoicePushToTalkBinding = $"Key:{key}";
-        _settingsService.Save(_settings);
-        _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
-        RefreshVoiceSettingsWindow();
-    }
-
-    internal void SetVoicePushToTalkBinding(string binding)
-    {
-        if (_settings is null || _settingsService is null) return;
-
-        var parsed = PttInputBinding.Parse(binding);
-        _settings.VoicePushToTalkBinding = parsed.ToString();
-        if (parsed.Kind == PttInputKind.Key)
-        {
-            _settings.VoicePushToTalkKey = parsed.Key.ToString();
-        }
-
-        _voicePttInputPressed = false;
-        _voicePttToggleActive = false;
-        _settingsService.Save(_settings);
-        _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
-        ApplyVoiceTransmissionState();
-        RefreshVoiceSettingsWindow();
-    }
-
-    private void InitializePttHotkey()
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _pttHotkey?.Dispose();
-            _pttHotkey = new GlobalPttHotkeyService(_settings.VoicePushToTalkBinding, pressed =>
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    OnVoicePttInput(pressed);
-                }));
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn("Global PTT hotkey unavailable: " + ex.Message);
-        }
-    }
-
-    private void OnVoicePttInput(bool pressed)
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        if (_settings.VoicePttMode == "Hold")
-        {
-            _voicePttInputPressed = pressed;
-            ApplyVoiceTransmissionState();
-            return;
-        }
-
-        if (_settings.VoicePttMode == "Toggle" && pressed)
-        {
-            _voicePttToggleActive = !_voicePttToggleActive;
-            ApplyVoiceTransmissionState();
-        }
-    }
-
-    private void ApplyVoiceTransmissionState()
-    {
-        if (_voiceChannel is null || _settings is null)
-        {
-            return;
-        }
-
-        var shouldTransmit = _settings.VoicePttMode switch
-        {
-            "Hold" => _voicePttInputPressed,
-            "Toggle" => _voicePttToggleActive,
-            _ => true
-        };
-        _voiceChannel.SetPttPressed(shouldTransmit);
-    }
-
-    private void RefreshHostPeers()
-    {
-        var selectedPeerId = GetSelectablePeerId(HostComboBox.SelectedItem as PeerViewModel);
-        var selectedCandidates = GetSelectedPeerAddresses(HostComboBox.SelectedItem as PeerViewModel);
-        var hosts = _peers
-            .Where(peer => peer.IsHost)
-            .OrderByDescending(peer => peer.LastSeen)
-            .ThenBy(peer => peer.LastRttMs ?? int.MaxValue)
-            .ThenBy(peer => peer.PlayerName, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
-
-        _hostPeers.Clear();
-        foreach (var host in hosts)
-        {
-            _hostPeers.Add(host);
-        }
-
-        if (_hostPeers.Count == 0)
-        {
-            HostComboBox.SelectedItem = null;
-        }
-        else
-        {
-            var restored = FindMatchingPeer(_hostPeers, selectedPeerId, selectedCandidates)
-                ?? _hostPeers.FirstOrDefault();
-            HostComboBox.SelectedItem = restored ?? _hostPeers[0];
-        }
-
-    }
-
-    private void RefreshVoicePeers()
-    {
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(30);
-        foreach (var stale in _voicePresence.Where(pair => pair.Value.LastSeenUtc < cutoff).Select(pair => pair.Key).ToArray())
-        {
-            _voicePresence.Remove(stale);
-        }
-
-        var peers = _voicePresence.Values
-            .OrderByDescending(entry => entry.LastSeenUtc)
-            .ThenBy(entry => entry.Peer.PlayerName, StringComparer.CurrentCultureIgnoreCase)
-            .Select(entry => entry.Peer)
-            .ToList();
-
-        peers.Sort((left, right) =>
-        {
-            if (ReferenceEquals(left, right))
-            {
-                return 0;
-            }
-
-            var seenComparison = right?.LastSeen.CompareTo(left?.LastSeen ?? DateTimeOffset.MinValue) ?? 0;
-            return seenComparison != 0
-                ? seenComparison
-                : string.Compare(
-                    left?.PlayerName,
-                    right?.PlayerName,
-                    StringComparison.OrdinalIgnoreCase);
-        });
-
-        if (_voiceChannel is { IsJoined: true })
-        {
-            var identity = ResolveActiveLocalIdentity();
-            _localVoicePeer ??= new PeerViewModel { IsLocalVoicePeer = true };
-            _localVoicePeer.PlayerName = identity.name;
-            _localVoicePeer.IdentityName = identity.name;
-            _localVoicePeer.IdentityId = identity.id;
-            _localVoicePeer.SetLocalEndpoints(_networkEndpoints, _primaryEndpoint);
-            _localVoicePeer.IsInVoiceChannel = true;
-            _localVoicePeer.IsVoiceMuted = _voiceChannel.IsMuted;
-            _localVoicePeer.LastSeen = DateTimeOffset.Now;
-            peers.Insert(0, _localVoicePeer);
-        }
-        else
-        {
-            _localVoicePeer = null;
-        }
-        var signature = string.Join("|", peers.Select(GetVoicePeerSignature));
-        var shouldRefreshList =
-            !string.Equals(signature, _lastVoicePeerListSignature, StringComparison.Ordinal) ||
-            _voicePeers.Count != peers.Count ||
-            !_voicePeers.Zip(peers).All(pair => ReferenceEquals(pair.First, pair.Second));
-
-        if (shouldRefreshList)
-        {
-            _lastVoicePeerListSignature = signature;
-            _voicePeers.Clear();
-            foreach (var peer in peers)
-            {
-                _voicePeers.Add(peer);
-            }
-        }
-
-        UpdateVoicePeersFromDiscovery();
-        RefreshVoiceSettingsWindow();
-    }
-
-    private void UpdateVoicePeersFromDiscovery()
-    {
-        if (_voiceChannel is null)
-        {
-            return;
-        }
-
-        if (!_voiceChannel.IsJoined)
-        {
-            if (_lastVoiceTransportPeerSignature.Length > 0)
-            {
-                _lastVoiceTransportPeerSignature = "";
-                _voiceChannel.UpdatePeers(Array.Empty<VoicePeerCandidate>());
-            }
-            return;
-        }
-
-        var peers = _voicePresence
-            .Where(pair => pair.Value.LastSeenUtc >= DateTimeOffset.UtcNow - TimeSpan.FromSeconds(30))
-            .SelectMany(pair => (_peerRoutes?.GetSendCandidates(pair.Key) ?? [])
-                .Select(endpoint =>
-                new VoicePeerCandidate(
-                    pair.Key,
-                    endpoint.Address,
-                    endpoint.LocalAddress,
-                    endpoint.LocalInterfaceId)))
-            .Where(peer => !string.IsNullOrWhiteSpace(peer.PeerId))
-            .Distinct()
-            .ToArray();
-
-        var signature = string.Join("|", peers.Select(peer =>
-            $"{peer.PeerId}@{peer.Address}:{peer.LocalAddress}:{peer.LocalInterfaceId}"));
-        if (string.Equals(signature, _lastVoiceTransportPeerSignature, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _lastVoiceTransportPeerSignature = signature;
-        _voiceChannel.UpdatePeers(peers);
-    }
-
-    private static string ResolveVoicePeerId(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return "";
-        }
-
-        return Guid.TryParse(peer.IdentityId, out var identity)
-            ? identity.ToString("D")
-            : "";
-    }
-
-    private string GetVoicePeerSignature(PeerViewModel peer)
-    {
-        var peerId = ResolveVoicePeerId(peer);
-        var addresses = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
-            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
-            .Select(endpoint => $"{endpoint.Address}|{endpoint.LocalAddress}|{endpoint.LocalInterfaceId}")
-            .Where(address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(address => address, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return $"{peerId}=>{string.Join(",", addresses)}";
-    }
-
-    private static string GetSelectablePeerId(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return "";
-        }
-
-        return Guid.TryParse(peer.IdentityId, out var identity)
-            ? identity.ToString("D")
-            : "";
-    }
-
-    private static string[] GetSelectedPeerAddresses(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return Array.Empty<string>();
-        }
-
-        return peer.GetCandidateAddresses()
-            .Where(address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
+    private static SteamId64 GetSelectablePeerId(PeerViewModel? peer) =>
+        peer?.SteamId ?? SteamId64.None;
 
     private static PeerViewModel? FindMatchingPeer(
         ObservableCollection<PeerViewModel> peers,
-        string selectedPeerId,
-        string[]? selectedAddresses = null,
-        bool requireHost = false)
-    {
-        if (peers.Count == 0)
-        {
-            return null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(selectedPeerId))
-        {
-            var byIdentity = peers.FirstOrDefault(peer =>
-                string.Equals(peer.IdentityId, selectedPeerId, StringComparison.OrdinalIgnoreCase));
-            if (byIdentity is not null)
-            {
-                return byIdentity;
-            }
-        }
-
-        if (selectedAddresses is null || selectedAddresses.Length == 0)
-        {
-            return null;
-        }
-
-        var selectedSet = new HashSet<string>(selectedAddresses, StringComparer.OrdinalIgnoreCase);
-        var byCandidates = peers.FirstOrDefault(peer =>
-            peer.GetCandidateAddresses(requireHost).Any(address => selectedSet.Contains(address)));
-        if (byCandidates is not null)
-        {
-            return byCandidates;
-        }
-
-        return peers.FirstOrDefault(peer =>
-            !string.IsNullOrWhiteSpace(peer.NetworkAddress) &&
-            selectedSet.Contains(peer.NetworkAddress));
-    }
+        SteamId64 selectedPeerId) =>
+        peers.FirstOrDefault(peer => peer.SteamId == selectedPeerId);
 
     private WorldMetadataContext? CreateWorldMetadataContext()
     {
-        var owner = GetActiveLocalOwner();
-        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
+        // Steam decides who the player is; until it has, no world is stamped
+        // with an owner and the list simply shows what is on disk.
+        if (!IsIdentityBound || BuildComboBox.SelectedItem is not ClientBuildViewModel build)
         {
             return null;
         }
+        var owner = GetActiveLocalOwner();
+        var ownerSteamId = RequireIdentityService().ResolveContext(RequireSettings()).SteamId64.ToString();
 
         return new WorldMetadataContext
         {
@@ -1377,7 +599,8 @@ public partial class MainWindow : Window
             BuildRelativePath = build.RelativePath,
             PackHash = _localPackHash,
             OwnerIdentityId = owner.id,
-            OwnerIdentityName = owner.name
+            OwnerIdentityName = owner.name,
+            OwnerSteamId64 = ownerSteamId
         };
     }
 
@@ -1390,12 +613,14 @@ public partial class MainWindow : Window
                 path,
                 metadataContext.OwnerIdentityId,
                 metadataContext.OwnerIdentityName,
-                overwriteExistingOwner: false);
+                overwriteExistingOwner: false,
+                ownerSteamId64: metadataContext.OwnerSteamId64);
             _ = RequireWorldMetadata().TryWriteCurrentHolderMetadata(
                 path,
                 metadataContext.OwnerIdentityId,
                 metadataContext.OwnerIdentityName,
-                transferred: false);
+                transferred: false,
+                holderSteamId64: metadataContext.OwnerSteamId64);
         }
 
         var buildName = string.IsNullOrWhiteSpace(metadata?.BuildName)
@@ -1410,30 +635,27 @@ public partial class MainWindow : Window
         };
     }
 
+    /// <summary>
+    /// Brings up everything that needs other players: the connection router and
+    /// the presence keys friends discover this launcher by. Without Steam there
+    /// is nothing to start, and the window says so instead of failing.
+    /// </summary>
     private async Task StartNetworkingAsync()
     {
         var settings = RequireSettings();
-        if (_peerSupportLogs is not null)
+        if (!IsIdentityBound || _steamClient?.Status.IsReady != true)
         {
-            await _peerSupportLogs.UpdateNetworkContextAsync(
-                _networkSnapshot,
-                _lifetimeCts.Token);
-        }
-        if (_peerSupportLogs is not null &&
-            string.IsNullOrWhiteSpace(_peerSupportLogs.CurrentTargetIdentityId))
-        {
-            _diagnosticLogTargetIdentityId = string.Empty;
-        }
-        if (_networkEndpoints.Count == 0)
-        {
-            await RequireTransfer().StopListenerAsync();
-            await RequireDiscovery().StopAsync();
-            RequireLogger().Warn("Select a usable network IP to enable network play.");
+            RequireTransfer().StopAcceptingIncomingTransfers();
+            RequireLogger().Warn("Steam is unavailable; network play stays off.");
             return;
         }
 
-        await RequireTransfer().StartListenerAsync(settings, _lifetimeCts.Token);
-        await RequireDiscovery().StartAsync(_networkSnapshot, CreateAnnouncement);
+        RequireTransfer().UseSettingsForIncomingTransfers(settings);
+        if (_peerRouter is not null)
+        {
+            await _peerRouter.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
+        }
+        PublishLocalPresence();
     }
 
     private async Task RefreshPackHashAndNetworkingAsync()
@@ -1449,47 +671,63 @@ public partial class MainWindow : Window
         }
     }
 
-    private PeerAnnouncement CreateAnnouncement(NetworkEndpointInfo _)
+    /// <summary>
+    /// Publishes what friends need to know about this launcher. This is the
+    /// successor of the UDP announcement: the same facts, carried by Steam.
+    /// </summary>
+    private void PublishLocalPresence()
     {
+        if (_peerDirectory is null || _steamClient?.Status.IsReady != true) return;
+        if (!SteamId64.TryFrom(_steamClient.Status.SteamId64, out var localId)) return;
+
         var settings = RequireSettings();
         var identity = ResolveActiveLocalIdentity();
-        _lanRelay?.SetLocalIdentity(identity.id);
-        RefreshOpenToLanState();
-        var openToLanPort = _openToLanPort;
-        _lanRelay?.SetHostSession(openToLanPort, _openToLanSessionId);
         var identityContext = RequireIdentityService().ResolveContext(settings);
         RequireWaypointSync().UpdateHostingState(
-            openToLanPort.HasValue,
+            false,
             settings.ClientRelativePath,
             _localPackHash,
             identityContext);
         var waypointHost = RequireWaypointSync().GetHostAdvertisement();
-        var skin = RequireSkinService().GetAnnouncement(settings, identity.id);
-        return new PeerAnnouncement
+        var skin = RequireSkinService().GetAnnouncement(settings, identityContext.MinecraftUuid);
+        _peerDirectory.PublishLocalPresence(new SteamPeerPresence
         {
-            ProtocolVersion = PeerDiscoveryService.ProtocolVersion,
+            SteamId = localId,
+            PersonaName = _steamClient.Status.PersonaName,
+            ProtocolVersion = SteamPresenceCodec.ProtocolVersion,
             PlayerName = identity.name,
-            IdentityId = identity.id,
-            IdentityName = identity.name,
-            IsHost = openToLanPort.HasValue,
+            MinecraftUuid = identityContext.MinecraftUuid,
             PackHash = _localPackHash,
-            ServerPort = openToLanPort ?? 0,
-            LanSessionId = _openToLanSessionId,
-            LanWorldName = _openToLanWorldName,
-            LanRelayProtocolVersion = LanRelayService.ResumableProtocolVersion,
-            IsVoiceChannelActive = _voiceChannel?.IsJoined == true,
-            IsVoiceMuted = _voiceChannel?.IsMuted == true,
-            IsMinecraftRunning = _minecraftRunning,
-            IsMinecraftPreparing = _minecraftPreparing,
+            State = _minecraftRunning
+                ? SteamPresenceCodec.StateInGame
+                : _minecraftPreparing
+                    ? SteamPresenceCodec.StatePreparing
+                    : SteamPresenceCodec.StateIdle,
             IsSkinAvailable = skin.IsAvailable,
             SkinSha256 = skin.Sha256,
             SkinModel = skin.Model,
             HostedWorldId = waypointHost?.WorldId ?? string.Empty,
             WaypointProtocolVersion = WaypointSyncService.ProtocolVersion,
             WaypointProviders = waypointHost?.Providers.ToList() ?? [],
-            DiagnosticLogProtocolVersion = PeerSupportProtocol.ProtocolVersion,
-            DiagnosticTlsFingerprint = _peerSupportLogs?.Fingerprint ?? string.Empty
-        };
+            // Anyone running this build can receive a bug report.
+            DiagnosticProtocolVersion = BugReportManifest.ProtocolVersion
+        });
+    }
+
+    /// <summary>What a report says about the machine it came from.</summary>
+    private BugReportContext CreateBugReportContext()
+    {
+        var settings = RequireSettings();
+        var identity = RequireIdentityService().ResolveContext(settings);
+        return new BugReportContext(
+            identity.SteamId64,
+            _steamClient?.Status.PersonaName ?? string.Empty,
+            identity.IdentityName,
+            identity.MinecraftUuid,
+            BuildVersionText(),
+            settings.ClientRelativePath,
+            _localPackHash,
+            _minecraftRunning);
     }
 
     private string? ResolveCurrentInstanceDirectory()
@@ -1519,46 +757,29 @@ public partial class MainWindow : Window
                 RequirePaths(),
                 settings.ClientRelativePath,
                 _localPackHash,
-                RequireNetwork().GetSnapshot(),
-                _peerRoutes?.Export() ?? new KnownPeerCache(),
+                CaptureSteamDiagnosticContext(),
                 BuildSupportRuntimeState(),
                 _minecraft?.DiagnosticJavaPath),
             token);
     }
 
-    private SupportNetworkMetrics CaptureSupportNetworkMetrics()
+    private SteamDiagnosticContext CaptureSteamDiagnosticContext()
     {
-        var network = _network?.GetSnapshot() ?? new NetworkEnvironmentSnapshot();
-        var routes = _peerRoutes?.Export() ?? new KnownPeerCache();
-        var voice = _voiceNetwork?.Snapshot ?? default;
-        var relay = _lanRelay?.GetDiagnosticSnapshot() ??
-                    new LanRelayDiagnosticSnapshot(false, string.Empty, 0, 0);
-        return SupportDiagnosticSnapshotBuilder.CaptureMetrics(
-            network,
-            routes,
-            routes.Peers.Count,
-            _discovery?.IsRunning == true,
-            _transfer?.IsOperationActive == true,
-            relay.IsHosting,
-            relay.ClientRelayCount,
-            voice,
-            diagnosticBytesSent: 0,
-            diagnosticBytesReceived: 0,
-            reconnects: 0,
-            decodeErrors: 0,
-            BuildSupportRuntimeState());
+        var status = _steamClient?.Status;
+        return new SteamDiagnosticContext(
+            status?.SteamId64.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            status?.PersonaName ?? string.Empty,
+            status?.Availability.ToString() ?? SteamAvailability.NotStarted.ToString(),
+            _steamClient?.Friends.Count ?? 0,
+            _peerDirectory?.Peers.Count ?? 0);
     }
 
     private Dictionary<string, string> BuildSupportRuntimeState()
     {
-        var endpoint = _network?.GetSnapshot().PrimaryEndpoint;
-        var relay = _lanRelay?.GetDiagnosticSnapshot();
-        var lan = _lanAdvertisement?.GetDiagnosticSnapshot();
-        var voice = _voiceNetwork?.Snapshot ?? default;
-        var voiceDetails = _voiceChannel?.GetDiagnosticSnapshot();
         var identity = _settings is null
             ? (id: string.Empty, name: string.Empty)
             : ResolveActiveLocalIdentity();
+        var steam = CaptureSteamDiagnosticContext();
         var state = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["launcher.state"] = _state,
@@ -1569,139 +790,29 @@ public partial class MainWindow : Window
             ["game.version"] = _minecraft?.DiagnosticGameVersion ?? string.Empty,
             ["game.profile"] = _minecraft?.DiagnosticProfileId ?? string.Empty,
             ["pack.hash"] = _localPackHash,
-            ["network.selectedAddress"] = endpoint?.NetworkAddress ?? string.Empty,
-            ["network.selectedInterfaceId"] = endpoint?.InterfaceId ?? string.Empty,
-            ["network.selectedInterfaceIndex"] =
-                endpoint?.InterfaceIndex.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceHardware"] =
-                endpoint?.IsHardware.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceFilter"] =
-                endpoint?.IsFilterInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceEndpoint"] =
-                endpoint?.IsEndpointInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceDefaultRoute"] =
-                endpoint?.HasDefaultRoute.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.routeSelectionReason"] = endpoint is null
-                ? "no selected endpoint"
-                : endpoint.IsHardware
-                    ? endpoint.HasDefaultRoute
-                        ? "physical primary route"
-                        : "manually selected physical interface"
-                    : "selected software interface",
-            ["discovery.protocolVersion"] =
-                PeerDiscoveryService.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
-            ["discovery.running"] =
-                (_discovery?.IsRunning == true).ToString(CultureInfo.InvariantCulture),
-            ["lan.hostSessionId"] = relay?.LanSessionId ?? string.Empty,
-            ["lan.hostPort"] =
-                relay?.LocalMinecraftPort.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["lan.relayProtocolVersion"] =
-                LanRelayService.ResumableProtocolVersion.ToString(CultureInfo.InvariantCulture),
-            ["lan.clientRelays"] =
-                relay?.ClientRelayCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.activeResumableTunnels"] =
-                relay?.ActiveResumableTunnels.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.transportDrops"] =
-                relay?.TransportDrops.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeAttempts"] =
-                relay?.ResumeAttempts.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeSuccesses"] =
-                relay?.ResumeSuccesses.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.resumeFailures"] =
-                relay?.ResumeFailures.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["lan.remoteSessions"] =
-                lan?.RemoteSessionCount.ToString(CultureInfo.InvariantCulture) ?? "0",
+            ["steam.id64"] = steam.SteamId64,
+            ["steam.persona"] = steam.PersonaName,
+            ["steam.availability"] = steam.Availability,
+            ["steam.friends"] = steam.FriendCount.ToString(CultureInfo.InvariantCulture),
+            ["steam.identityBound"] = IsIdentityBound.ToString(CultureInfo.InvariantCulture),
+            ["steam.presenceProtocolVersion"] =
+                SteamPresenceCodec.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
             ["transfer.active"] =
                 (_transfer?.IsOperationActive == true).ToString(CultureInfo.InvariantCulture),
             ["transfer.bytesCurrent"] =
                 Interlocked.Read(ref _transferBytesCurrent).ToString(CultureInfo.InvariantCulture),
             ["transfer.bytesTotal"] =
-                Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture),
-            ["voice.joined"] = voice.IsJoined.ToString(CultureInfo.InvariantCulture),
-            ["voice.connectedPeers"] =
-                voice.ConnectedPeers.ToString(CultureInfo.InvariantCulture),
-            ["voice.rttMs"] = voice.RoundTripMs.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.lossPercent"] =
-                voice.LossPercent.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.jitterMs"] =
-                voice.JitterMs.ToString("F2", CultureInfo.InvariantCulture),
-            ["voice.lastPacketError"] = _voiceChannel?.LastPacketError ?? string.Empty,
-            ["voice.routeCount"] =
-                voiceDetails?.RouteCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.decoderCount"] =
-                voiceDetails?.DecoderCount.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.decodeErrors"] =
-                voiceDetails?.DecodeErrors.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.packetsSent"] =
-                voiceDetails?.Transport.PacketsSent.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.packetsReceived"] =
-                voiceDetails?.Transport.PacketsReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.bytesSent"] =
-                voiceDetails?.Transport.BytesSent.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.bytesReceived"] =
-                voiceDetails?.Transport.BytesReceived.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.transportErrors"] =
-                voiceDetails?.Transport.Errors.ToString(CultureInfo.InvariantCulture) ?? "0",
-            ["voice.reconnects"] =
-                voiceDetails?.Transport.ListenerReconnects.ToString(CultureInfo.InvariantCulture) ?? "0"
+                Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture)
         };
 
-        if (endpoint is null)
-        {
-            return state;
-        }
-
-        foreach (var pair in BuildPeerSupportRuntimeState(endpoint))
+        foreach (var pair in BuildPeerSupportRuntimeState())
         {
             state[pair.Key] = pair.Value;
         }
         return state;
     }
 
-    private void OnLanRelayDiagnosticEvent(LanRelayDiagnosticEvent value)
-    {
-        var details = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["phase"] = value.Phase,
-            ["role"] = value.Role,
-            ["tunnelId"] = value.TunnelId,
-            ["lanSessionId"] = value.LanSessionId,
-            ["direction"] = value.Direction,
-            ["localRelayPort"] =
-                value.LocalRelayPort.ToString(CultureInfo.InvariantCulture),
-            ["hostMinecraftPort"] =
-                value.HostMinecraftPort.ToString(CultureInfo.InvariantCulture),
-            ["outboundProducedOffset"] =
-                value.OutboundProducedOffset.ToString(CultureInfo.InvariantCulture),
-            ["outboundAcknowledgedOffset"] =
-                value.OutboundAcknowledgedOffset.ToString(CultureInfo.InvariantCulture),
-            ["inboundReceivedOffset"] =
-                value.InboundReceivedOffset.ToString(CultureInfo.InvariantCulture),
-            ["bufferedBytes"] =
-                value.BufferedBytes.ToString(CultureInfo.InvariantCulture),
-            ["attempt"] = value.Attempt.ToString(CultureInfo.InvariantCulture),
-            ["downtimeMs"] =
-                value.Downtime.TotalMilliseconds.ToString(
-                    "F0",
-                    CultureInfo.InvariantCulture),
-            ["error"] = value.Error,
-            ["terminalReason"] = value.TerminalReason
-        };
-        _peerSupportLogs?.PublishRuntimeEvent(
-            $"lan_relay.{value.Phase}",
-            value.PeerIdentityId,
-            value.RemoteAddress,
-            value.LocalAddress,
-            value.LocalInterfaceId,
-            value.TerminalReason.Length > 0
-                ? value.TerminalReason
-                : value.Error,
-            details,
-            value.AtUtc);
-    }
-
-    private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState(
-        NetworkEndpointInfo endpoint)
+    private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState()
     {
         if (!Dispatcher.CheckAccess())
         {
@@ -1714,7 +825,7 @@ public partial class MainWindow : Window
 
             try
             {
-                return Dispatcher.Invoke(() => BuildPeerSupportRuntimeState(endpoint));
+                return Dispatcher.Invoke(BuildPeerSupportRuntimeState);
             }
             catch (InvalidOperationException) when (
                 Dispatcher.HasShutdownStarted ||
@@ -1729,60 +840,32 @@ public partial class MainWindow : Window
         }
 
         var state = new Dictionary<string, string>(StringComparer.Ordinal);
-        var cutoff = DateTimeOffset.Now - TimeSpan.FromSeconds(35);
+        var cutoff = DateTimeOffset.Now - PeerTtl;
         var peerIndex = 0;
         foreach (var peer in _peers
                      .Where(peer => peer.LastSeen >= cutoff)
-                     .OrderBy(peer => peer.IdentityId, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(peer => peer.SteamId.Value)
                      .Take(32))
         {
-            if (!peer.TryGetObservedRemoteAddress(
-                    endpoint.NetworkAddress,
-                    endpoint.InterfaceId,
-                    cutoff,
-                    out var remoteAddress))
-            {
-                continue;
-            }
-
             var prefix = $"peer.{peerIndex++}";
-            state[$"{prefix}.identityId"] = peer.IdentityId;
-            state[$"{prefix}.playerName"] = peer.PlayerName.Length <= 128
-                ? peer.PlayerName
-                : peer.PlayerName[..128];
-            state[$"{prefix}.observedAddress"] = remoteAddress;
+            state[$"{prefix}.steamId64"] = peer.SteamId.ToString();
+            state[$"{prefix}.personaName"] = Clamp(peer.PersonaName);
+            state[$"{prefix}.playerName"] = Clamp(peer.PlayerName);
+            state[$"{prefix}.state"] = peer.IsMinecraftRunning
+                ? SteamPresenceCodec.StateInGame
+                : peer.IsMinecraftPreparing
+                    ? SteamPresenceCodec.StatePreparing
+                    : SteamPresenceCodec.StateIdle;
             state[$"{prefix}.lastSeenUtc"] =
                 peer.LastSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
-            state[$"{prefix}.rttMs"] =
-                peer.LastRttMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-            state[$"{prefix}.isHost"] = peer.IsHost.ToString(CultureInfo.InvariantCulture);
-            state[$"{prefix}.lanSessionId"] = peer.LanSessionId.Length <= 128
-                ? peer.LanSessionId
-                : peer.LanSessionId[..128];
-            state[$"{prefix}.lanRelayProtocolVersion"] =
-                peer.LanRelayProtocolVersion.ToString(CultureInfo.InvariantCulture);
             state[$"{prefix}.diagnosticCompatible"] =
                 peer.SupportsDiagnosticLogs.ToString(CultureInfo.InvariantCulture);
         }
 
         state["peer.count"] = peerIndex.ToString(CultureInfo.InvariantCulture);
         return state;
-    }
 
-    private void OnVoiceSpeakingStateChanged(string peerId, bool isSpeaking)
-    {
-        PostToUi(() =>
-        {
-            var peer = _voicePeers.FirstOrDefault(item =>
-                string.Equals(ResolveVoicePeerId(item), peerId, StringComparison.OrdinalIgnoreCase));
-            if (peer is null)
-            {
-                return;
-            }
-
-            peer.IsSpeaking = isSpeaking;
-            RefreshVoiceSettingsWindow();
-        });
+        static string Clamp(string value) => value.Length <= 128 ? value : value[..128];
     }
 
     private void PostToUi(Action action)
@@ -1804,416 +887,62 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnVoicePeerPresenceChanged(string peerId, bool isPresent, bool explicitLeave)
+    /// <summary>
+    /// Reconciles the window with the friends Steam currently reports. The VPN
+    /// era merged one announcement at a time; presence arrives as a whole list,
+    /// so anyone missing from it has simply stopped publishing.
+    /// </summary>
+    private void ApplyPeers(IReadOnlyList<SteamPeerPresence> peers)
     {
-        PostToUi(() =>
+        if (_shutdownStarted) return;
+        var localId = _steamClient?.Status.SteamId64 ?? 0;
+        var selectedPeerId = GetSelectablePeerId(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
+
+        foreach (var presence in peers)
         {
-            if (isPresent)
+            if (presence.SteamId.Value == localId) continue;
+            RequireWaypointSync().ObservePeer(presence);
+
+            var peer = _peers.FirstOrDefault(candidate => candidate.SteamId == presence.SteamId);
+            if (peer is null)
             {
-                if (_voicePresence.TryGetValue(peerId, out var existing))
-                {
-                    existing.LastSeenUtc = DateTimeOffset.UtcNow;
-                }
-                else
-                {
-                    var peer = _peers.FirstOrDefault(candidate =>
-                        string.Equals(ResolveVoicePeerId(candidate), peerId, StringComparison.OrdinalIgnoreCase));
-                    if (peer is not null)
-                    {
-                        _voicePresence[peerId] = new VoicePresenceEntry(
-                            peer,
-                            DateTimeOffset.UtcNow);
-                    }
-                }
+                peer = new PeerViewModel { SteamId = presence.SteamId };
+                _peers.Add(peer);
             }
-            else if (explicitLeave ||
-                     (_voicePresence.TryGetValue(peerId, out var existing) &&
-                      DateTimeOffset.UtcNow - existing.LastSeenUtc >= TimeSpan.FromSeconds(30)))
-            {
-                _voicePresence.Remove(peerId);
-            }
-            RefreshVoicePeers();
-        });
-    }
-
-    private void OnVoiceTrafficProtectionChanged(bool enabled)
-    {
-        PostToUi(RefreshUi);
-    }
-
-    internal double GetCurrentUiScale()
-    {
-        try
-        {
-            if (RootGrid.ActualWidth <= 0 || RootGrid.ActualHeight <= 0)
-            {
-                return 1d;
-            }
-
-            var bounds = RootGrid.TransformToAncestor(this)
-                .TransformBounds(new Rect(0, 0, RootGrid.ActualWidth, RootGrid.ActualHeight));
-            var scaleX = bounds.Width / RootGrid.ActualWidth;
-            var scaleY = bounds.Height / RootGrid.ActualHeight;
-            var scale = Math.Min(scaleX, scaleY);
-            return double.IsFinite(scale) && scale > 0 ? scale : 1d;
-        }
-        catch
-        {
-            return 1d;
-        }
-    }
-
-    private void ApplyPeer(PeerAnnouncement announcement)
-    {
-        var localIdentity = ResolveActiveLocalIdentity();
-        if (!string.IsNullOrWhiteSpace(announcement.IdentityId) &&
-            string.Equals(announcement.IdentityId, localIdentity.id, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-        if (announcement.NetworkAddress is not null && RequireDiscovery().IsLocalAddress(announcement.NetworkAddress))
-        {
-            return;
+            peer.Apply(presence, _localPackHash);
+            RequireSkinService().ObservePeer(peer);
         }
 
-        RequireWaypointSync().ObservePeer(announcement);
-        _peerSupportLogs?.ObservePeer(announcement);
-
-        var peer = _peers.FirstOrDefault(candidate =>
-            string.Equals(candidate.IdentityId, announcement.IdentityId, StringComparison.OrdinalIgnoreCase));
-        if (peer is null)
+        var current = peers.Select(presence => presence.SteamId).ToHashSet();
+        for (var index = _peers.Count - 1; index >= 0; index--)
         {
-            peer = new PeerViewModel();
-            _peers.Add(peer);
+            if (!current.Contains(_peers[index].SteamId)) _peers.RemoveAt(index);
         }
 
-        peer.Apply(announcement, _localPackHash);
-        RequireSkinService().ObservePeer(peer);
-        var voicePeerId = ResolveVoicePeerId(peer);
-        if (!string.IsNullOrWhiteSpace(voicePeerId))
-        {
-            if (announcement.IsVoiceChannelActive)
-            {
-                _voicePresence[voicePeerId] = new VoicePresenceEntry(
-                    peer,
-                    DateTimeOffset.UtcNow);
-            }
-            else
-            {
-                _voicePresence.Remove(voicePeerId);
-            }
-        }
-        if (OnlinePlayerComboBox.SelectedItem is null)
-        {
-            OnlinePlayerComboBox.SelectedItem = peer;
-        }
-        RefreshHostPeers();
-        RefreshVoicePeers();
-        UpdateVoicePeersFromDiscovery();
-        RefreshLanAdvertisementState();
-        RefreshVoiceSettingsWindow();
+        OnlinePlayerComboBox.SelectedItem =
+            FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
+        RefreshDiagnosticsPanel();
         RefreshUi();
     }
 
+    /// <summary>
+    /// Drops peers whose presence stopped being refreshed and forgets a
+    /// diagnostics target that went with them.
+    /// </summary>
     private void PruneStalePeers()
     {
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var selectedPeerId = GetSelectablePeerId(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
-        var selectedCandidates = GetSelectedPeerAddresses(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
         for (var index = _peers.Count - 1; index >= 0; index--)
         {
-            if (!_peers[index].PruneEndpoints(cutoff))
-            {
-                _peers.RemoveAt(index);
-            }
+            if (_peers[index].LastSeen < cutoff) _peers.RemoveAt(index);
         }
 
-        if (!string.IsNullOrWhiteSpace(selectedPeerId) || selectedCandidates.Length > 0)
-        {
-            OnlinePlayerComboBox.SelectedItem = FindMatchingPeer(_peers, selectedPeerId, selectedCandidates);
-        }
+        OnlinePlayerComboBox.SelectedItem =
+            FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
 
-        if (OnlinePlayerComboBox.SelectedItem is null && _peers.Count > 0)
-        {
-            OnlinePlayerComboBox.SelectedItem = _peers[0];
-        }
-
-        RefreshVoicePeers();
-        UpdateVoicePeersFromDiscovery();
-        RefreshHostPeers();
-        RefreshLanAdvertisementState();
-        if (!string.IsNullOrWhiteSpace(_diagnosticLogTargetIdentityId) &&
-            !_peers.Any(peer =>
-                string.Equals(
-                    peer.IdentityId,
-                    _diagnosticLogTargetIdentityId,
-                    StringComparison.OrdinalIgnoreCase) &&
-                peer.LastSeen >= cutoff &&
-                peer.SupportsDiagnosticLogs))
-        {
-            _diagnosticLogTargetIdentityId = string.Empty;
-            if (_peerSupportLogs is not null)
-            {
-                SetDiagnosticLogTarget(DiagnosticLogTargetOption.Nobody);
-            }
-        }
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
-
-    private void RefreshLanAdvertisementState()
-    {
-        if (_lanAdvertisement is null || _settings is null) return;
-        _lanAdvertisement.Update(
-            _openToLanPort,
-            _openToLanSessionId,
-            string.IsNullOrWhiteSpace(_openToLanWorldName) ? "Minecraft LAN" : _openToLanWorldName,
-            string.IsNullOrWhiteSpace(_settings.PlayerName) ? "Minecraft" : _settings.PlayerName,
-            _networkEndpoints,
-            _peers);
-    }
-
-    private void RefreshHostLatencies()
-    {
-        if (_hostRttScanInProgress) return;
-
-        var hostPeers = _peers
-            .Where(peer => peer.IsHost && peer.ServerPort > 0)
-            .ToList();
-        if (hostPeers.Count == 0) return;
-
-        _hostRttScanInProgress = true;
-        _ = UpdateHostLatenciesAsync(hostPeers);
-    }
-
-    private async Task UpdateHostLatenciesAsync(IReadOnlyList<PeerViewModel> hostPeers)
-    {
-        try
-        {
-            var probes = hostPeers.Select(async peer =>
-            {
-                var peerPort = Math.Clamp(peer.ServerPort, 1, 65535);
-                var result = await ProbeHostEndpointAsync(
-                    peer,
-                    WorldTransferService.TransferPort,
-                    attempts: 1,
-                    timeout: TimeSpan.FromMilliseconds(600));
-
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    var current = _peers.FirstOrDefault(item =>
-                        item.IsHost &&
-                        item.ServerPort == peerPort &&
-                        (
-                            !string.IsNullOrWhiteSpace(peer.IdentityId)
-                                ? string.Equals(item.IdentityId, peer.IdentityId, StringComparison.OrdinalIgnoreCase)
-                                : string.Equals(item.NetworkAddress, peer.NetworkAddress, StringComparison.OrdinalIgnoreCase)));
-                    if (current is null) return;
-
-                    current.LastRttMs = result.Reachability.IsReachable ? result.Reachability.RoundTripMs : null;
-                    if (result.Reachability.IsReachable)
-                    {
-                        current.NetworkAddress = result.Address;
-                        current.LastRttAt = DateTimeOffset.Now;
-                    }
-                    else if (current.LastRttAt == default)
-                    {
-                        current.LastRttAt = DateTimeOffset.UtcNow;
-                    }
-                });
-            });
-
-            await Task.WhenAll(probes);
-            await Dispatcher.InvokeAsync(RefreshHostPeers);
-        }
-        finally
-        {
-            _hostRttScanInProgress = false;
-        }
-    }
-
-    private void RefreshOpenToLanState()
-    {
-        var detection = DetectOpenToLanPort();
-        var port = detection.Port;
-
-        if (_openToLanPort == port &&
-            (!port.HasValue || _activeOpenToLanGeneration == detection.Generation))
-        {
-            if (port.HasValue && string.IsNullOrWhiteSpace(_openToLanWorldName))
-            {
-                _openToLanWorldName = LanWorldInfoService.FindActiveWorldName(_paths?.Worlds);
-            }
-            return;
-        }
-
-        var previousPort = _openToLanPort;
-        _openToLanPort = port;
-        if (port.HasValue)
-        {
-            if (!previousPort.HasValue || previousPort.Value != port.Value ||
-                _activeOpenToLanGeneration != detection.Generation)
-            {
-                _openToLanSessionId = Guid.NewGuid().ToString("N");
-                _activeOpenToLanGeneration = detection.Generation;
-                _openToLanWorldName = LanWorldInfoService.FindActiveWorldName(_paths?.Worlds);
-            }
-            RequireLogger().Info(
-                $"Minecraft Open to LAN session {_openToLanSessionId} detected on port {port.Value} " +
-                $"for world '{_openToLanWorldName}'.");
-            SetState($"LAN open: {port.Value}");
-        }
-        else
-        {
-            _openToLanSessionId = "";
-            _openToLanWorldName = "";
-            _activeOpenToLanGeneration = 0;
-            if (_state.StartsWith("LAN open:", StringComparison.OrdinalIgnoreCase))
-            {
-                SetState("Minecraft");
-                RequireLogger().Info("Minecraft Open to LAN is no longer detected.");
-            }
-        }
-    }
-
-    private LanPortDetection DetectOpenToLanPort()
-    {
-        if (_paths is null || _settings is null) return LanPortDetection.None;
-        if (!_minecraftRunning)
-        {
-            ResetPendingLanDetection();
-            return LanPortDetection.None;
-        }
-
-        var logPath = Path.Combine(_paths.CombineUnderInstances(_settings.ClientRelativePath), "logs", "latest.log");
-        if (File.Exists(logPath))
-        {
-            try
-            {
-                using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                if (stream.Length < _openToLanLogPosition)
-                {
-                    _openToLanLogPosition = 0;
-                }
-
-                stream.Seek(_openToLanLogPosition, SeekOrigin.Begin);
-                using var reader = new StreamReader(stream);
-                while (!reader.EndOfStream)
-                {
-                    var line = reader.ReadLine();
-                    if (line is null) continue;
-                    if (TryParseOpenToLanPort(line, out var parsedPort))
-                    {
-                        _pendingOpenToLanPort = parsedPort;
-                        _pendingOpenToLanSince = DateTimeOffset.UtcNow;
-                        _pendingOpenToLanGeneration++;
-                        _openToLanCloseObserved = false;
-                        continue;
-                    }
-
-                    if (LanClosedRegex().IsMatch(line))
-                    {
-                        _openToLanCloseObserved = true;
-                        _pendingOpenToLanPort = null;
-                        _openToLanListenerMissingSince = null;
-                    }
-                }
-
-                _openToLanLogPosition = stream.Position;
-            }
-            catch (IOException)
-            {
-                return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-            }
-        }
-
-        if (_openToLanCloseObserved)
-        {
-            _openToLanCloseObserved = false;
-            return LanPortDetection.None;
-        }
-
-        var candidatePort = _pendingOpenToLanPort ?? _openToLanPort;
-        var candidateGeneration = _pendingOpenToLanPort.HasValue
-            ? _pendingOpenToLanGeneration
-            : _activeOpenToLanGeneration;
-        if (!candidatePort.HasValue) return LanPortDetection.None;
-
-        if (_minecraft?.OwnsTcpListener(candidatePort.Value) == true)
-        {
-            _pendingOpenToLanPort = candidatePort;
-            _openToLanListenerMissingSince = null;
-            return new LanPortDetection(candidatePort, candidateGeneration);
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        if (_pendingOpenToLanPort.HasValue && now - _pendingOpenToLanSince < TimeSpan.FromSeconds(5))
-        {
-            return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-        }
-
-        _openToLanListenerMissingSince ??= now;
-        if (_openToLanPort.HasValue && now - _openToLanListenerMissingSince < TimeSpan.FromSeconds(3))
-        {
-            return new LanPortDetection(_openToLanPort, _activeOpenToLanGeneration);
-        }
-
-        RequireLogger().Info(
-            $"Detected stale LAN port {candidatePort.Value}; the active Minecraft process does not own it.");
-        _pendingOpenToLanPort = null;
-        _openToLanListenerMissingSince = null;
-        return LanPortDetection.None;
-    }
-
-    private void ResetPendingLanDetection()
-    {
-        _pendingOpenToLanPort = null;
-        _pendingOpenToLanSince = default;
-        _openToLanListenerMissingSince = null;
-        _openToLanCloseObserved = false;
-    }
-
-    private static bool TryParseOpenToLanPort(string line, out int port)
-    {
-        port = 0;
-        if (!line.Contains("Started serving on", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var index = line.IndexOf("Started serving on", StringComparison.OrdinalIgnoreCase);
-        var tail = line[(index + "Started serving on".Length)..];
-        if (string.IsNullOrWhiteSpace(tail))
-        {
-            return false;
-        }
-
-        var matches = OpenToLanPortNumberRegex().Matches(tail);
-        for (var i = matches.Count - 1; i >= 0; i--)
-        {
-            if (!int.TryParse(matches[i].Value, out var candidate))
-            {
-                continue;
-            }
-
-            if (candidate is > 0 and <= 65535)
-            {
-                port = candidate;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    [GeneratedRegex("\\b\\d{2,5}\\b", RegexOptions.IgnoreCase)]
-    private static partial Regex OpenToLanPortNumberRegex();
-
-    [GeneratedRegex("Stopping (?:singleplayer )?server", RegexOptions.IgnoreCase)]
-    private static partial Regex LanClosedRegex();
 
     private readonly record struct LanPortDetection(int? Port, long Generation)
     {
@@ -2228,7 +957,6 @@ public partial class MainWindow : Window
             if (!isRunning)
             {
                 RefreshWorlds();
-                RefreshOpenToLanState();
             }
             RefreshUi();
         });
@@ -2298,7 +1026,7 @@ public partial class MainWindow : Window
             SetState("Starting client");
             try
             {
-                await RequireMinecraft().StartClientAsync(settings, null, 0, runtimeProgress, _lifetimeCts.Token);
+                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, _lifetimeCts.Token);
             }
             catch
             {
@@ -2345,113 +1073,18 @@ public partial class MainWindow : Window
 
         try
         {
-            var identity = ResolveActiveLocalIdentity();
-            var skin = _skinService.SelectLocalSkin(_settings, identity.id, dialog.FileName);
+            var identity = RequireIdentityService().ResolveContext(_settings);
+            var skin = _skinService.SelectLocalSkin(_settings, identity.MinecraftUuid, dialog.FileName);
             RequireSettingsService().Save(_settings);
             SetState($"Skin selected ({skin.Model})");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+                                   InvalidDataException or NotSupportedException or
+                                   IdentityUnavailableException)
         {
             RequireLogger().Warn($"Skin selection failed: {ex.Message}");
             MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
-
-    private sealed record HostEndpointProbeResult(
-        bool IsReachable,
-        HostReachabilityResult Reachability,
-        string Address);
-
-    private async Task<HostEndpointProbeResult> ProbeHostEndpointAsync(
-        PeerViewModel peer,
-        int port,
-        int attempts,
-        TimeSpan timeout)
-    {
-        var candidateEndpoints = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
-            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
-            .ToArray();
-        foreach (var endpoint in candidateEndpoints)
-        {
-            if (!IPAddress.TryParse(endpoint.Address, out var address))
-            {
-                continue;
-            }
-
-            if (IPAddress.IsLoopback(address))
-            {
-                continue;
-            }
-
-            var effectivePort = Math.Clamp(port, 1, 65535);
-            var reachability = await CheckHostReachabilityAsync(
-                address,
-                endpoint.LocalAddress,
-                endpoint.LocalInterfaceId,
-                effectivePort,
-                attempts,
-                timeout);
-            if (reachability.IsReachable)
-            {
-                _peerRoutes?.MarkEndpointHealthy(peer.IdentityId, endpoint);
-                return new HostEndpointProbeResult(true, reachability, endpoint.Address);
-            }
-            _peerRoutes?.MarkEndpointUnhealthy(peer.IdentityId, endpoint);
-        }
-
-        return new HostEndpointProbeResult(false, HostReachabilityResult.Failed("No reachable host endpoint."), string.Empty);
-    }
-
-    private async Task<HostReachabilityResult> CheckHostReachabilityAsync(
-        IPAddress address,
-        string localAddress,
-        string localInterfaceId,
-        int port,
-        int attempts,
-        TimeSpan timeout)
-    {
-        Exception? lastError = null;
-        for (var attempt = 1; attempt <= attempts; attempt++)
-        {
-            using var cts = new CancellationTokenSource(timeout);
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                using var client = RequireNetwork().CreateBoundTcpClient(
-                    address,
-                    localAddress,
-                    localInterfaceId);
-                await client.ConnectAsync(address, port, cts.Token);
-                return HostReachabilityResult.Succeeded(stopwatch.ElapsedMilliseconds);
-            }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or TimeoutException)
-            {
-                lastError = ex;
-                if (attempt < attempts) await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(300, 120 * attempt)));
-            }
-        }
-
-        return HostReachabilityResult.Failed(lastError?.Message ?? "Connection attempt failed.");
-    }
-
-    private sealed class HostReachabilityResult
-    {
-        public bool IsReachable { get; }
-        public int? RoundTripMs { get; }
-        public string FailureReason { get; }
-
-        private HostReachabilityResult(bool isReachable, int? roundTripMs, string failureReason)
-        {
-            IsReachable = isReachable;
-            RoundTripMs = roundTripMs;
-            FailureReason = failureReason;
-        }
-
-        public static HostReachabilityResult Succeeded(long roundTripMs)
-            => new(true, (int)Math.Clamp(roundTripMs, 0, int.MaxValue), string.Empty);
-
-        public static HostReachabilityResult Failed(string reason)
-            => new(false, null, reason);
     }
 
     private async void TransferButton_Click(object sender, RoutedEventArgs e)
@@ -2626,6 +1259,77 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
+    /// <summary>
+    /// Connects to Steam and binds this machine's account to the profile its
+    /// progress lives under. A closed or signed-out Steam is a status with a
+    /// "Повторить" button, never a startup failure - but nothing that needs an
+    /// identity (playing, transferring, diagnostics) runs until it succeeds.
+    /// </summary>
+    private async Task ConnectSteamAndBindIdentityAsync()
+    {
+        if (_steamClient is null || _identityService is null) return;
+
+        var status = await _steamClient.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
+        ApplySteamStatus(status);
+        if (!status.IsReady) return;
+
+        try
+        {
+            var binding = _identityService.Bind();
+            if (!binding.Bound)
+            {
+                SetSteamMessage(string.IsNullOrEmpty(binding.Message)
+                    ? SteamIdentityService.SteamUnavailableMessage
+                    : binding.Message);
+                return;
+            }
+
+            ResolveAndPersistLocalIdentity();
+            // A retry after Steam was fixed has to bring the network up too;
+            // during startup this runs once more, and starting is idempotent.
+            if (_startupComplete) await StartNetworkingAsync().ConfigureAwait(true);
+        }
+        catch (IdentityUnavailableException ex)
+        {
+            _logger?.Warn($"Identity binding failed: {ex.Message}");
+            SetSteamMessage(ex.Message);
+        }
+        finally
+        {
+            RefreshUi();
+        }
+    }
+
+    /// <summary>Re-runs the whole Steam handshake after the player fixes Steam.</summary>
+    private async void RetrySteamButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetrySteamButton.IsEnabled = false;
+        try
+        {
+            await ConnectSteamAndBindIdentityAsync();
+        }
+        finally
+        {
+            RetrySteamButton.IsEnabled = true;
+        }
+    }
+
+    private void ApplySteamStatus(SteamClientStatus status)
+    {
+        SetSteamMessage(status.Message);
+        RetrySteamButton.Visibility = status.IsReady && IsIdentityBound
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        RefreshUi();
+    }
+
+    private void SetSteamMessage(string message)
+    {
+        SteamStatusText.Text = message;
+    }
+
+    private bool IsIdentityBound => _identityService?.IsBound == true;
+
     private void ResolveAndPersistLocalIdentity()
     {
         if (_identityService is null || _settings is null || _settingsService is null) return;
@@ -2634,7 +1338,7 @@ public partial class MainWindow : Window
         var resolvedContext = _identityService.ResolveContext(_settings);
         var updated = false;
 
-        var identityId = resolvedContext.IdentityId ?? "";
+        var identityId = resolvedContext.SteamId64.ToString();
         if (!string.Equals(_settings.LocalIdentityId, identityId, StringComparison.Ordinal))
         {
             _settings.LocalIdentityId = identityId;
@@ -2719,21 +1423,27 @@ public partial class MainWindow : Window
         }
 
         var identity = _identityService.ResolveContext(_settings);
-        _settings.LocalIdentityId = identity.IdentityId;
+        _settings.LocalIdentityId = identity.SteamId64.ToString();
         _settings.LocalIdentityName = identity.IdentityName;
         _settingsService.Save(_settings);
     }
 
+    /// <summary>
+    /// Who owns a world: the Minecraft UUID, not the Steam account. World
+    /// metadata is read by every build of the launcher, old ones included.
+    /// </summary>
     private (string id, string name) GetActiveLocalOwner()
     {
-        var identity = ResolveActiveLocalIdentity();
-        return (identity.id, identity.name);
+        var settings = RequireSettings();
+        if (_identityService is not { IsBound: true }) return ("", Environment.UserName);
+        var resolved = _identityService.ResolveContext(settings);
+        return (resolved.MinecraftUuid, resolved.IdentityName);
     }
 
     private (string id, string name) ResolveActiveLocalIdentity()
     {
         var settings = RequireSettings();
-        if (_identityService is null)
+        if (_identityService is not { IsBound: true })
         {
             return (
                 string.IsNullOrWhiteSpace(settings.LocalIdentityId) ? string.Empty : settings.LocalIdentityId.Trim(),
@@ -2744,7 +1454,7 @@ public partial class MainWindow : Window
         }
 
         var resolved = _identityService.ResolveContext(settings);
-        return (resolved.IdentityId ?? "", resolved.IdentityName ?? "");
+        return (resolved.SteamId64.ToString(), resolved.IdentityName ?? "");
     }
 
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
@@ -2816,23 +1526,6 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
-    private async void NetworkAddressComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressNetworkAddressSelection ||
-            NetworkAddressComboBox.SelectedItem is not NetworkAddressOption address ||
-            !RequireNetwork().SelectAddress(address.InterfaceId, address.Address))
-        {
-            return;
-        }
-
-        _networkSelectionRefreshPending = false;
-        _pendingNetworkInterfaceId = "";
-        _pendingNetworkAddress = "";
-        PersistNetworkAddressSelection(address);
-        RequireLogger().Info($"Network IP selected: {address.DisplayName}.");
-        await RefreshNetworkAdaptersSafelyAsync(forceRestart: true);
-    }
-
     private async void BuildComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressBuildPersistence || _settings is null || _settingsService is null) return;
@@ -2844,11 +1537,6 @@ public partial class MainWindow : Window
         await RefreshPackHashAsync();
         if (_startupComplete) await StartNetworkingAsync();
         SetState($"Build selected: {build.Name}");
-        RefreshUi();
-    }
-
-    private void HostComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
         RefreshUi();
     }
 
@@ -3177,162 +1865,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void VoiceJoinButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        await RunVoiceActionAsync(async () =>
-        {
-            if (_voiceChannel.IsJoined)
-            {
-                _voicePttInputPressed = false;
-                _voicePttToggleActive = false;
-                _voiceChannel.SetPttPressed(false);
-                await _voiceChannel.LeaveAsync();
-                RefreshVoicePeers();
-                SetState("Voice channel left");
-                return;
-            }
-
-            EnsureVoiceDevicesSelection();
-            _voiceChannel.SetDeviceIds(_settings.VoiceInputDeviceId, _settings.VoiceOutputDeviceId);
-            _voiceChannel.Initialize(_settings);
-            _voiceChannel.SetInputVolume(_settings.VoiceInputVolume);
-            _voiceChannel.SetOutputVolume(_settings.VoiceOutputVolume);
-            _voiceChannel.Join();
-            _voicePttInputPressed = false;
-            _voicePttToggleActive = false;
-            RefreshVoicePeers();
-            UpdateVoicePeersFromDiscovery();
-            ApplyVoiceTransmissionState();
-            SetState("Voice channel joined");
-            await Task.Yield();
-        });
-    }
-
-    private void VoiceSettingsButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceSettingsWindow is { IsVisible: true })
-        {
-            _voiceSettingsWindow.Activate();
-            return;
-        }
-
-        _voiceSettingsWindow = new VoiceSettingsWindow(this, GetCurrentUiScale());
-        _voiceSettingsWindow.Show();
-        RefreshVoiceSettingsWindow(_voiceSettingsWindow);
-    }
-
-    private void EnsureVoiceDevicesSelection()
-    {
-        if (_settings is null || _voiceChannel is null) return;
-
-        var input = string.IsNullOrWhiteSpace(_settings.VoiceInputDeviceId)
-            ? VoiceInputComboBox.SelectedItem as VoiceAudioDevice
-            : null;
-        var output = string.IsNullOrWhiteSpace(_settings.VoiceOutputDeviceId)
-            ? VoiceOutputComboBox.SelectedItem as VoiceAudioDevice
-            : null;
-
-        if (input is not null)
-        {
-            _settings.VoiceInputDeviceId = input.Id;
-        }
-
-        if (output is not null)
-        {
-            _settings.VoiceOutputDeviceId = output.Id;
-        }
-
-        _voiceChannel.SetDeviceIds(
-            _settings.VoiceInputDeviceId,
-            _settings.VoiceOutputDeviceId);
-    }
-
-    private void VoiceInputComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressVoicePersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        if (VoiceInputComboBox.SelectedItem is VoiceAudioDevice device)
-        {
-            SetVoiceInputDevice(device);
-        }
-    }
-
-    private void VoiceOutputComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressVoicePersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        if (VoiceOutputComboBox.SelectedItem is VoiceAudioDevice device)
-        {
-            SetVoiceOutputDevice(device);
-        }
-    }
-
-    private void VoiceMasterVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_suppressTextPersistence || _voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        SetVoiceMasterVolume(e.NewValue);
-    }
-
-    private void VoiceMuteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        ToggleVoiceMute();
-    }
-
-    private void VoiceProtectionButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is not { IsJoined: true }) return;
-        _voiceChannel.ToggleTrafficProtection();
-        RefreshUi();
-    }
-
-    private void VoiceDeafenButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceChannel is null || _settings is null || _settingsService is null) return;
-
-        ToggleVoiceDeafen();
-    }
-
-    private void VoicePttButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(true);
-    }
-
-    private void VoicePttButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePttButton_LostMouseCapture(object sender, MouseEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePttButton_MouseLeave(object sender, MouseEventArgs e)
-    {
-        _voiceChannel?.SetPttPressed(false);
-    }
-
-    private void VoicePeerVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (sender is not Slider slider || slider.DataContext is not PeerViewModel peer || _voiceChannel is null)
-        {
-            return;
-        }
-
-        var peerId = ResolveVoicePeerId(peer);
-        if (string.IsNullOrWhiteSpace(peerId))
-        {
-            return;
-        }
-
-        SetVoicePeerVolume(peer, e.NewValue);
-    }
-
     private void ApplyMemoryText()
     {
         if (int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb))
@@ -3417,31 +1949,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RunVoiceActionAsync(Func<Task> action)
-    {
-        if (_voiceBusy)
-        {
-            return;
-        }
-
-        _voiceBusy = true;
-        RefreshUi();
-        try
-        {
-            await action();
-        }
-        catch (Exception ex)
-        {
-            RequireLogger().Warn(ex.Message);
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _voiceBusy = false;
-            RefreshUi();
-        }
-    }
-
     private void SetState(string state)
     {
         _state = state;
@@ -3457,25 +1964,24 @@ public partial class MainWindow : Window
         if (_settings is null) return;
 
         RefreshPlayerIdentityDisplay();
-        var interactiveEnabled = !_busy;
+        // Everything that touches a world needs to know who the player is, and
+        // that answer comes from Steam; without it only the settings stay live.
+        var interactiveEnabled = !_busy && IsIdentityBound;
         var configurationEnabled = interactiveEnabled &&
                                    !_transferActive &&
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
-        var voiceEnabled = !_voiceBusy && _voiceChannel is not null;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
-        PlayerNameTextBox.IsEnabled = configurationEnabled;
-        PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !configurationEnabled;
-        ChangePlayerNameButton.IsEnabled = configurationEnabled;
+        PlayerNameTextBox.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
+        PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
+        ChangePlayerNameButton.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 0;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        HostComboBox.IsEnabled = configurationEnabled && _hostPeers.Count > 0;
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
         SkinButton.IsEnabled = !_minecraftRunning;
-        NetworkAddressComboBox.IsEnabled = IsNetworkSelectionIdle() && _networkAddresses.Count > 0;
         WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 0;
         OnlinePlayerComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -3488,44 +1994,7 @@ public partial class MainWindow : Window
         MemoryTextBox.IsEnabled = configurationEnabled;
         UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
 
-        VoiceJoinButton.IsEnabled = !_voiceBusy && _voiceChannel is not null;
-        VoiceSettingsButton.IsEnabled = voiceEnabled;
-        VoiceProtectionButton.IsEnabled = _voiceChannel is { IsJoined: true } && !_voiceBusy;
-        VoicePttButton.IsEnabled = _voiceChannel is { IsJoined: true };
-        VoiceInputComboBox.IsEnabled = voiceEnabled;
-        VoiceOutputComboBox.IsEnabled = voiceEnabled;
-        VoiceMasterVolumeSlider.IsEnabled = voiceEnabled;
-        VoiceMuteButton.IsEnabled = _voiceChannel is { IsJoined: true } && !_voiceBusy;
-        VoiceDeafenButton.IsEnabled = _voiceChannel is not null;
-        if (_voiceChannel is not null)
-        {
-            VoiceJoinButton.Content = _voiceChannel.IsJoined ? "\uE778" : "\uE717";
-            VoiceJoinButton.ToolTip = _voiceChannel.IsJoined
-                ? "Выйти из голосового канала"
-                : "Войти в голосовой канал";
-            VoiceMuteButton.Content = _voiceChannel.IsMuted ? "\uE198" : "\uE720";
-            VoiceMuteButton.ToolTip = _voiceChannel.IsMuted ? "Включить микрофон" : "Выключить микрофон";
-            var protectionEnabled = _voiceChannel.IsTrafficProtectionEnabled;
-            VoiceProtectionIcon.Text = protectionEnabled ? "\uEA18" : "\uEB59";
-            VoiceProtectionIconTransform.Matrix = protectionEnabled
-                ? Matrix.Identity
-                : DisabledVoiceProtectionIconTransform;
-            VoiceProtectionButton.ToolTip = _voiceChannel.IsTrafficProtectionEnabled
-                ? "Буфер включён"
-                : "Буфер выключен";
-            VoiceDeafenButton.Content = "Звук";
-        }
-        else
-        {
-            VoiceJoinButton.Content = "\uE717";
-            VoiceMuteButton.Content = "\uE720";
-            VoiceProtectionIcon.Text = "\uEA18";
-            VoiceProtectionIconTransform.Matrix = Matrix.Identity;
-            VoiceProtectionButton.ToolTip = "Буфер включён";
-            VoiceDeafenButton.Content = "Звук";
-        }
-        VoiceStatusText.Text = string.Empty;
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
         RefreshTransferStatus();
     }
 
@@ -3544,31 +2013,16 @@ public partial class MainWindow : Window
     private AppSettings RequireSettings() => _settings ?? throw new InvalidOperationException("Settings are not initialized.");
     private SettingsService RequireSettingsService() => _settingsService ?? throw new InvalidOperationException("Settings service is not initialized.");
     private Logger RequireLogger() => _logger ?? throw new InvalidOperationException("Logger is not initialized.");
-    private VirtualNetworkService RequireNetwork() => _network ?? throw new InvalidOperationException("Network service is not initialized.");
     private PackHashService RequirePackHash() => _packHash ?? throw new InvalidOperationException("Pack hash service is not initialized.");
 
     private PortablePackSyncService RequirePackSync() => _packSync ?? throw new InvalidOperationException("Pack sync service is not initialized.");
     private WorldMetadataService RequireWorldMetadata() => _worldMetadata ?? throw new InvalidOperationException("World metadata service is not initialized.");
-    private LocalIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
+    private SteamIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
     private WorldPlayerProfileService RequireWorldPlayerProfiles() => _worldPlayerProfiles ?? throw new InvalidOperationException("World player profile service is not initialized.");
-    private PeerDiscoveryService RequireDiscovery() => _discovery ?? throw new InvalidOperationException("Peer discovery is not initialized.");
     private MinecraftProcessService RequireMinecraft() => _minecraft ?? throw new InvalidOperationException("Minecraft service is not initialized.");
     private WorldTransferService RequireTransfer() => _transfer ?? throw new InvalidOperationException("World transfer service is not initialized.");
     private WaypointSyncService RequireWaypointSync() => _waypointSync ?? throw new InvalidOperationException("Waypoint sync service is not initialized.");
     private SkinService RequireSkinService() => _skinService ?? throw new InvalidOperationException("Skin service is not initialized.");
 
-    private sealed class VoicePresenceEntry
-    {
-        public VoicePresenceEntry(
-            PeerViewModel peer,
-            DateTimeOffset lastSeenUtc)
-        {
-            Peer = peer;
-            LastSeenUtc = lastSeenUtc;
-        }
-
-        public PeerViewModel Peer { get; }
-        public DateTimeOffset LastSeenUtc { get; set; }
-    }
     private UpdateService RequireUpdateService() => _updateService ?? throw new InvalidOperationException("Update service is not initialized.");
 }

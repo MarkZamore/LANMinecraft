@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,7 +7,11 @@ namespace Minecraft;
 
 public sealed class PackHashService : IDisposable
 {
-    private const int CacheSchemaVersion = 2;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int CacheGeneration = 2;
     private static readonly string[] IncludedRoots =
     {
         "mods",
@@ -115,7 +119,7 @@ public sealed class PackHashService : IDisposable
         {
             if (!File.Exists(_paths.PackHashesFile)) return new PackHashCache();
             var cache = JsonSerializer.Deserialize<PackHashCache>(File.ReadAllText(_paths.PackHashesFile), _jsonOptions);
-            return cache?.SchemaVersion == CacheSchemaVersion ? cache : new PackHashCache();
+            return cache?.SchemaVersion == CacheGeneration ? cache : new PackHashCache();
         }
         catch
         {
@@ -125,7 +129,7 @@ public sealed class PackHashService : IDisposable
 
     private void WriteCache(PackHashCache cache)
     {
-        cache.SchemaVersion = CacheSchemaVersion;
+        cache.SchemaVersion = CacheGeneration;
         AtomicFile.WriteAllText(_paths.PackHashesFile, JsonSerializer.Serialize(cache, _jsonOptions));
     }
 
@@ -160,7 +164,7 @@ public sealed class PackHashService : IDisposable
 
     private sealed class PackHashCache
     {
-        public int SchemaVersion { get; set; } = CacheSchemaVersion;
+        public int SchemaVersion { get; set; } = CacheGeneration;
         public Dictionary<string, CachedPack> Packs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 

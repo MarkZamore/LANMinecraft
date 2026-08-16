@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -57,6 +57,44 @@ public sealed class ManagedComponentService
         FtbEssentialsSizeBytes,
         FtbEssentialsSha256);
     private static readonly SemaphoreSlim FtbEssentialsGate = new(1, 1);
+
+    // e4steam carries the multiplayer session over Steam's peer-to-peer
+    // network; without it a Steam-era pack cannot host or join at all, so it
+    // is required for every NeoForge pack the launcher supports (see
+    // SteamPlayPolicy) rather than only for Infinity. Upstream releases live
+    // on GitHub; CurseForge mirrors the identical file (same SHA-256) on the
+    // same CDN the FTB Essentials pin already uses.
+    // Synthetic cache key: the upstream has no numeric file id, so the pinned
+    // version 0.2.4 is encoded the way the Bumblezone hotfix encodes its own.
+    public const long E4steamCacheFileId = 20400;
+    public const string E4steamVersion = "0.2.4";
+    public const string E4steamFileName = "e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar";
+    public const long E4steamSizeBytes = 2_673_601;
+    public const string E4steamSha256 =
+        "47f0c8671bb8889e226df2bef41779b1e3cdb9271a8cfe3b216cfe6eaf910420";
+
+    /// <summary>Mod ids whose presence in the instance conflicts with the pinned build.</summary>
+    private static readonly string[] E4steamConflictPrefixes = ["e4steam", "e4mc"];
+
+    public static Uri E4steamDownloadUri { get; } = new(
+        "https://mediafilez.forgecdn.net/files/8611/556/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
+        UriKind.Absolute);
+
+    public static Uri E4steamUpstreamDownloadUri { get; } = new(
+        "https://github.com/Kamilhik/e4steam/releases/download/v0.2.4/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
+        UriKind.Absolute);
+
+    public static IReadOnlyList<Uri> E4steamDownloadUris { get; } =
+        Array.AsReadOnly([E4steamDownloadUri, E4steamUpstreamDownloadUri]);
+
+    private static readonly ManagedComponentDescriptor E4steam = new(
+        "e4steam",
+        E4steamCacheFileId,
+        E4steamFileName,
+        E4steamDownloadUris,
+        E4steamSizeBytes,
+        E4steamSha256);
+    private static readonly SemaphoreSlim E4steamGate = new(1, 1);
 
     // Bumblezone 7.13.2 ships a chunk-packet mixin that crashes the server in
     // its dimension when ModernFix and Smooth Chunk are also installed - both
@@ -126,6 +164,7 @@ public sealed class ManagedComponentService
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
     private readonly ManagedComponentDescriptor _ftbEssentials;
+    private readonly ManagedComponentDescriptor _e4steam;
     private readonly ManagedModReplacement[] _modReplacements;
 
     public ManagedComponentService(
@@ -141,12 +180,14 @@ public sealed class ManagedComponentService
         Logger logger,
         HttpClient? httpClient,
         ManagedComponentDescriptor ftbEssentials,
-        IReadOnlyList<ManagedModReplacement>? modReplacements = null)
+        IReadOnlyList<ManagedModReplacement>? modReplacements = null,
+        ManagedComponentDescriptor? e4steam = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
         _ftbEssentials = ValidateDescriptor(ftbEssentials);
+        _e4steam = ValidateDescriptor(e4steam ?? E4steam);
         _modReplacements = (modReplacements ?? DefaultModReplacements)
             .Select(replacement => replacement with
             {
@@ -187,9 +228,68 @@ public sealed class ManagedComponentService
         }
     }
 
+    /// <summary>
+    /// Ensures the pinned e4steam artifact is installed in
+    /// <paramref name="preparedInstance"/>. Steam play is impossible without
+    /// it, so - like FTB Essentials - a failure here fails the launch closed.
+    /// </summary>
+    public async Task<ManagedComponentInstallResult> EnsureSteamTransportModAsync(
+        PackInstanceContext preparedInstance,
+        CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(preparedInstance);
+        await E4steamGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            return await EnsureRequiredComponentCoreAsync(
+                    _e4steam,
+                    E4steamConflictPrefixes,
+                    $"e4steam {E4steamVersion}",
+                    preparedInstance,
+                    token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn(
+                $"Required managed component {_e4steam.Id} could not be prepared; " +
+                $"Minecraft launch must remain blocked: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            E4steamGate.Release();
+        }
+    }
+
+    internal string E4steamCachePath => GetCachePath(_e4steam);
+
     internal string FtbEssentialsCachePath => GetCachePath(_ftbEssentials);
 
-    private async Task<ManagedComponentInstallResult> EnsureFtbEssentialsCoreAsync(
+    private Task<ManagedComponentInstallResult> EnsureFtbEssentialsCoreAsync(
+        PackInstanceContext preparedInstance,
+        CancellationToken token) =>
+        EnsureRequiredComponentCoreAsync(
+            _ftbEssentials,
+            ["ftb-essentials"],
+            $"FTB Essentials {FtbEssentialsVersion} (CurseForge file {FtbEssentialsCurseForgeFileId})",
+            preparedInstance,
+            token);
+
+    /// <summary>
+    /// Converges one launch-critical JAR in the instance: keep a verified copy,
+    /// otherwise restore it from the managed cache, otherwise download it. Any
+    /// other build of the same mod is a conflict and stops the launch, because
+    /// two copies of these mods break mod loading outright.
+    /// </summary>
+    private async Task<ManagedComponentInstallResult> EnsureRequiredComponentCoreAsync(
+        ManagedComponentDescriptor component,
+        IReadOnlyList<string> conflictPrefixes,
+        string downloadDescription,
         PackInstanceContext preparedInstance,
         CancellationToken token)
     {
@@ -197,53 +297,47 @@ public sealed class ManagedComponentService
         var gameDirectory = ValidatePreparedInstance(preparedInstance);
         var modsDirectory = Path.Combine(gameDirectory, "mods");
         EnsureOrdinaryDirectory(modsDirectory);
-        RejectConflictingFtbEssentials(modsDirectory, _ftbEssentials.FileName);
+        RejectConflictingJars(modsDirectory, component.FileName, conflictPrefixes);
 
-        var installedPath = Path.Combine(modsDirectory, _ftbEssentials.FileName);
+        var installedPath = Path.Combine(modsDirectory, component.FileName);
         EnsureOrdinaryFileIfPresent(installedPath);
-        var cachePath = GetCachePath(_ftbEssentials);
+        var cachePath = GetCachePath(component);
         EnsureOrdinaryFileIfPresent(cachePath);
 
         var downloaded = false;
         var installed = false;
         var cachePopulated = false;
 
-        if (IsValidFile(installedPath, _ftbEssentials))
+        if (IsValidFile(installedPath, component))
         {
-            if (!IsValidFile(cachePath, _ftbEssentials))
+            if (!IsValidFile(cachePath, component))
             {
-                await AtomicCopyAsync(
-                        installedPath,
-                        cachePath,
-                        _ftbEssentials,
-                        token)
+                await AtomicCopyAsync(installedPath, cachePath, component, token)
                     .ConfigureAwait(false);
                 cachePopulated = true;
-                _logger.Info("Recovered FTB Essentials managed cache from the verified instance JAR.");
+                _logger.Info(
+                    $"Recovered the {component.Id} managed cache from the verified instance JAR.");
             }
         }
         else
         {
-            if (!IsValidFile(cachePath, _ftbEssentials))
+            if (!IsValidFile(cachePath, component))
             {
-                _logger.Info(
-                    $"Downloading FTB Essentials {FtbEssentialsVersion} " +
-                    $"(CurseForge file {FtbEssentialsCurseForgeFileId}).");
-                await DownloadToCacheAsync(_ftbEssentials, cachePath, token).ConfigureAwait(false);
+                _logger.Info($"Downloading {downloadDescription}.");
+                await DownloadToCacheAsync(component, cachePath, token).ConfigureAwait(false);
                 downloaded = true;
                 cachePopulated = true;
-                _logger.Info("Verified pinned FTB Essentials download.");
+                _logger.Info($"Verified pinned {component.Id} download.");
             }
 
-            await AtomicCopyAsync(cachePath, installedPath, _ftbEssentials, token)
-                .ConfigureAwait(false);
+            await AtomicCopyAsync(cachePath, installedPath, component, token).ConfigureAwait(false);
             installed = true;
-            _logger.Info("Installed pinned FTB Essentials into the prepared instance.");
+            _logger.Info($"Installed pinned {component.Id} into the prepared instance.");
         }
 
         return new ManagedComponentInstallResult(
-            _ftbEssentials.Id,
-            _ftbEssentials.FileId,
+            component.Id,
+            component.FileId,
             installedPath,
             cachePath,
             downloaded,
@@ -452,6 +546,20 @@ public sealed class ManagedComponentService
         return gameDirectory;
     }
 
+    /// <summary>
+    /// The cache directory name a pinned component currently uses, or null when
+    /// nothing pins that id any more. Used to sweep superseded downloads.
+    /// </summary>
+    public static string? PinnedCacheFileId(string componentId) => componentId switch
+    {
+        "ftb-essentials" => FtbEssentialsCurseForgeFileId.ToString(CultureInfo.InvariantCulture),
+        "e4steam" => E4steamCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "the-bumblezone" => BumblezoneCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "oritech" => OritechCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "java-runtime" => PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_'),
+        _ => null
+    };
+
     private string GetCachePath(ManagedComponentDescriptor component)
     {
         var path = Path.Combine(
@@ -624,8 +732,13 @@ public sealed class ManagedComponentService
         effectiveUri.Scheme == Uri.UriSchemeHttps &&
         effectiveUri.IsDefaultPort &&
         string.IsNullOrEmpty(effectiveUri.UserInfo) &&
-        component.DownloadUris.Any(candidate =>
-            string.Equals(candidate.Host, effectiveUri.Host, StringComparison.OrdinalIgnoreCase));
+        (component.DownloadUris.Any(candidate =>
+             string.Equals(candidate.Host, effectiveUri.Host, StringComparison.OrdinalIgnoreCase)) ||
+         // GitHub hands release downloads to *.githubusercontent.com; accept
+         // that hop only for components that actually name github.com.
+         (effectiveUri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase) &&
+          component.DownloadUris.Any(candidate =>
+              candidate.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))));
 
     private static string SanitizeUri(Uri uri)
     {
@@ -735,19 +848,21 @@ public sealed class ManagedComponentService
         }
     }
 
-    private static void RejectConflictingFtbEssentials(
+    private static void RejectConflictingJars(
         string modsDirectory,
-        string managedFileName)
+        string managedFileName,
+        IReadOnlyList<string> conflictPrefixes)
     {
         var conflict = Directory
             .EnumerateFiles(modsDirectory, "*.jar", SearchOption.TopDirectoryOnly)
             .FirstOrDefault(path =>
-                Path.GetFileName(path).StartsWith("ftb-essentials", StringComparison.OrdinalIgnoreCase) &&
+                conflictPrefixes.Any(prefix =>
+                    Path.GetFileName(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) &&
                 !string.Equals(Path.GetFileName(path), managedFileName, StringComparison.OrdinalIgnoreCase));
         if (conflict is not null)
         {
             throw new InvalidOperationException(
-                $"A conflicting FTB Essentials JAR is already present: {Path.GetFileName(conflict)}");
+                $"A conflicting JAR is already present: {Path.GetFileName(conflict)}");
         }
     }
 

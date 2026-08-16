@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace Minecraft;
 
 public static class MemorySizingService
@@ -10,8 +12,7 @@ public static class MemorySizingService
     {
         try
         {
-            var bytes = new Microsoft.VisualBasic.Devices.ComputerInfo().TotalPhysicalMemory;
-            return GetAllowedMaxMemoryGb(bytes);
+            return GetAllowedMaxMemoryGb(GetTotalPhysicalMemoryBytes());
         }
         catch
         {
@@ -23,14 +24,47 @@ public static class MemorySizingService
     {
         try
         {
-            var bytes = new Microsoft.VisualBasic.Devices.ComputerInfo().TotalPhysicalMemory;
-            return GetRecommendedDefaultMemoryGb(bytes);
+            return GetRecommendedDefaultMemoryGb(GetTotalPhysicalMemoryBytes());
         }
         catch
         {
             return 16;
         }
     }
+
+    /// <summary>
+    /// Installed physical memory, straight from Win32. This used to come from
+    /// Microsoft.VisualBasic.Devices.ComputerInfo, which only resolved because
+    /// NAudio dragged in the Windows Forms assemblies; the numbers and every
+    /// sizing rule below are unchanged.
+    /// </summary>
+    private static ulong GetTotalPhysicalMemoryBytes()
+    {
+        var status = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
+        if (!GlobalMemoryStatusEx(ref status))
+        {
+            throw new InvalidOperationException("Installed memory could not be read.");
+        }
+        return status.TotalPhysical;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryStatusEx
+    {
+        public uint Length;
+        public uint MemoryLoad;
+        public ulong TotalPhysical;
+        public ulong AvailablePhysical;
+        public ulong TotalPageFile;
+        public ulong AvailablePageFile;
+        public ulong TotalVirtual;
+        public ulong AvailableVirtual;
+        public ulong AvailableExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 
     public static int GetRecommendedDefaultMemoryGb(ulong totalPhysicalMemoryBytes)
     {

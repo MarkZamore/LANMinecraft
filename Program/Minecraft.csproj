@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -39,8 +39,16 @@
                       LogicalName="Minecraft.WindowIconAssets.jar" />
     <EmbeddedResource Include="PortableTeleportCommands.js"
                       LogicalName="Minecraft.PortableTeleportCommands.js" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
-    <PackageReference Include="Concentus" Version="2.2.2" />
+    <!-- Keeps the game from writing a full DEBUG copy of every session; see
+         GameLogConfigurationService. -->
+    <EmbeddedResource Include="GameLogConfiguration.xml"
+                      LogicalName="Minecraft.GameLogConfiguration.xml" />
+    <!-- Steamworks SDK 1.60 native, the build Steamworks.NET 2024.8.0 targets.
+         Its NuGet package ships managed assemblies only, so the DLL is
+         vendored here and extracted at runtime by SteamNativeLibraryService. -->
+    <EmbeddedResource Include="Native\steam_api64.dll"
+                      LogicalName="Minecraft.SteamApi64.dll" />
+    <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
     <PackageReference Include="BsDiff" Version="1.1.0" />
   </ItemGroup>

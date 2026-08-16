@@ -1,25 +1,26 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace Minecraft;
 
 public sealed class SettingsService
 {
-    private readonly AppPaths _paths;
-    private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private const double MinVoiceMasterVolume = 0d;
-    private const double MaxVoiceMasterVolume = 2d;
-    private const string DefaultVoicePttMode = "Off";
-    private const string DefaultVoicePushToTalkBinding = "Key:V";
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    public const int CurrentSchemaVersion = PortableFormat.SchemaVersion;
 
-    public SettingsService(AppPaths paths)
+    private readonly AppPaths _paths;
+    private readonly Logger? _logger;
+    private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    public SettingsService(AppPaths paths, Logger? logger = null)
     {
         _paths = paths;
+        _logger = logger;
     }
 
     public AppSettings Load()
     {
-        var settingsFile = ResolveSettingsFileToRead();
+        var settingsFile = _paths.SettingsFile;
 
         if (!File.Exists(settingsFile))
         {
@@ -51,20 +52,11 @@ public sealed class SettingsService
         AtomicFile.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
 
-    private string ResolveSettingsFileToRead()
-    {
-        if (File.Exists(_paths.SettingsFile))
-        {
-            return _paths.SettingsFile;
-        }
-
-        return _paths.LegacySettingsFiles.FirstOrDefault(File.Exists) ?? _paths.SettingsFile;
-    }
-
     private static AppSettings ApplyFallbacks(AppSettings? source, bool useRecommendedMemory = false)
     {
         var settings = source ?? new AppSettings();
 
+        settings.SchemaVersion = CurrentSchemaVersion;
         settings.PlayerName = settings.PlayerName?.Trim() ?? "";
         settings.PreviousPlayerName = settings.PreviousPlayerName?.Trim() ?? "";
 
@@ -87,43 +79,31 @@ public sealed class SettingsService
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
         settings.SkinPath = settings.SkinPath?.Trim() ?? "";
         settings.SelectedWorldRelativePath = settings.SelectedWorldRelativePath?.Trim() ?? "";
-        settings.VoiceInputDeviceId = settings.VoiceInputDeviceId?.Trim() ?? "";
-        settings.VoiceOutputDeviceId = settings.VoiceOutputDeviceId?.Trim() ?? "";
-        settings.VoicePushToTalkKey = string.IsNullOrWhiteSpace(settings.VoicePushToTalkKey)
-            ? "V"
-            : settings.VoicePushToTalkKey.Trim();
-        settings.VoiceMasterVolume = Math.Clamp(settings.VoiceMasterVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
-        settings.VoicePttMode = NormalizePttMode(settings.VoicePttMode);
-        settings.VoicePushToTalkBinding = NormalizePttBinding(settings.VoicePushToTalkBinding, settings.VoicePushToTalkKey);
-        settings.VoiceInputVolume = Math.Clamp(settings.VoiceInputVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
-        settings.VoiceOutputVolume = Math.Clamp(settings.VoiceOutputVolume, MinVoiceMasterVolume, MaxVoiceMasterVolume);
 
         return settings;
-    }
-
-    private static string NormalizePttMode(string? value)
-    {
-        var mode = value?.Trim();
-        return mode is "Off" or "Hold" or "Toggle" ? mode : DefaultVoicePttMode;
-    }
-
-    private static string NormalizePttBinding(string? value, string? legacyKey)
-    {
-        var binding = value?.Trim();
-        if (!string.IsNullOrWhiteSpace(binding) &&
-            (binding.StartsWith("Key:", StringComparison.OrdinalIgnoreCase) ||
-             binding.StartsWith("Mouse:", StringComparison.OrdinalIgnoreCase)))
-        {
-            return binding;
-        }
-
-        var key = string.IsNullOrWhiteSpace(legacyKey) ? "V" : legacyKey.Trim();
-        return string.IsNullOrWhiteSpace(key) ? DefaultVoicePushToTalkBinding : $"Key:{key}";
     }
 
     private static AppSettings CreateSafeDefaults()
     {
         return ApplyFallbacks(new AppSettings(), useRecommendedMemory: true);
+    }
+
+    /// <summary>1 when the file predates the version field.</summary>
+    internal static int ReadSchemaVersion(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("schemaVersion", out var value) &&
+                   value.TryGetInt32(out var version)
+                ? version
+                : 1;
+        }
+        catch (JsonException)
+        {
+            return 1;
+        }
     }
 
     private static bool HasJsonProperty(string json, string propertyName)
