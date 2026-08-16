@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -545,6 +545,20 @@ public sealed class ManagedComponentService
         EnsureOrdinaryDirectory(gameDirectory, createIfMissing: false);
         return gameDirectory;
     }
+
+    /// <summary>
+    /// The cache directory name a pinned component currently uses, or null when
+    /// nothing pins that id any more. Used to sweep superseded downloads.
+    /// </summary>
+    public static string? PinnedCacheFileId(string componentId) => componentId switch
+    {
+        "ftb-essentials" => FtbEssentialsCurseForgeFileId.ToString(CultureInfo.InvariantCulture),
+        "e4steam" => E4steamCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "the-bumblezone" => BumblezoneCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "oritech" => OritechCacheFileId.ToString(CultureInfo.InvariantCulture),
+        "java-runtime" => PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_'),
+        _ => null
+    };
 
     private string GetCachePath(ManagedComponentDescriptor component)
     {

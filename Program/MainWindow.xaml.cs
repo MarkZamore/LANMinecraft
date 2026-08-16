@@ -107,6 +107,7 @@ public partial class MainWindow : Window
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
+            DeprecatedFileCleanupService.Run(_paths, _logger);
             _logger = new Logger(_paths.LogFile);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
