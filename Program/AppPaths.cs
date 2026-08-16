@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft;
 
@@ -33,6 +33,7 @@ public sealed class AppPaths
         Packs = CombineUnderService("Packs");
         Launcher = CombineUnderService("Launcher");
         Runtimes = Path.Combine(Launcher, "Runtimes");
+        SteamNative = Path.Combine(Launcher, "Steam");
         Personal = CombineUnderService("Personal");
         Instances = Path.Combine(Personal, "Instances");
         PackConflicts = Path.Combine(Personal, "PackConflicts");
@@ -45,27 +46,29 @@ public sealed class AppPaths
     public string Packs { get; }
     public string Launcher { get; }
     public string Runtimes { get; }
+    public string SteamNative { get; }
     public string Personal { get; }
     public string Instances { get; }
     public string PackConflicts { get; }
     public string Worlds { get; }
     public string SettingsFile => Path.Combine(Personal, "settings.json");
-    public string IdentityFile => Path.Combine(Personal, "UUID.json");
-    public string NetworkPeersFile => Path.Combine(Personal, "network-peers.json");
-    public string LanRelayPortsFile => Path.Combine(Personal, "lan-relay-ports.json");
+    /// <summary>Copies of per-world documents taken before this build first rewrites them.</summary>
+    public string IdentityBackups => Path.Combine(Personal, "Backups", "Identity");
     public string PackHashesFile => Path.Combine(Personal, "pack-hashes.json");
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");
     public string MinecraftWindowPlacementFile => Path.Combine(Personal, "minecraft-window-placement.json");
     public string SkinRegistryFile => Path.Combine(Personal, "skin-profiles.properties");
     public string WaypointSyncStateFile => Path.Combine(Personal, "waypoint-sync.json");
     public string WaypointConflicts => Path.Combine(Personal, "WaypointConflicts");
-    public string SupportLogs => Path.Combine(Personal, "SupportLogs");
-    public string SupportSpool => Path.Combine(Personal, "SupportSpool");
-    public string[] LegacySettingsFiles => new[]
-    {
-        Path.Combine(Service, "settings.json"),
-        Path.Combine(Program, "settings.json")
-    };
+    /// <summary>
+    /// Journals for interrupted player-profile writes. It sits beside Personal
+    /// rather than under Personal\Temp because startup cleanup wipes Temp,
+    /// which used to delete every journal before recovery could read it.
+    /// </summary>
+    public string ProfileTransactions => Path.Combine(Personal, "ProfileTransactions");
+
+    /// <summary>Bug reports received from friends, one directory per report.</summary>
+    public string BugReports => Path.Combine(Personal, "BugReports");
     public string LogFile => Path.Combine(Personal, "logs.log");
 
     public void Ensure()
@@ -77,8 +80,8 @@ public sealed class AppPaths
         Directory.CreateDirectory(Personal);
         Directory.CreateDirectory(Instances);
         Directory.CreateDirectory(Worlds);
-        Directory.CreateDirectory(SupportLogs);
-        Directory.CreateDirectory(SupportSpool);
+        Directory.CreateDirectory(BugReports);
+        Directory.CreateDirectory(ProfileTransactions);
     }
 
     public string CombineUnderRoot(string relativePath)

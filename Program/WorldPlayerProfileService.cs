@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -11,6 +11,11 @@ public sealed class WorldPlayerProfileService
     private readonly AppPaths _paths;
     private readonly Logger? _logger;
     private readonly WorldPlayerManifestService _manifests = new();
+
+    // One stamp per launcher run, so a launch that migrates twenty worlds
+    // produces one backup directory rather than twenty.
+    private static readonly string MigrationBackupStamp =
+        DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
 
     public WorldPlayerProfileService(AppPaths paths, Logger? logger = null)
     {
@@ -277,9 +282,48 @@ public sealed class WorldPlayerProfileService
         LocalIdentityContext identity,
         ProfileFileTransaction transaction)
     {
+        BackUpPreSteamManifest(worldPath);
         transaction.Track(Path.Combine(worldPath, WorldPlayerManifestService.ManifestFileName));
         _manifests.Write(worldPath, identity);
         _manifests.Validate(worldPath);
+    }
+
+    /// <summary>
+    /// Keeps one copy of the manifest as it looked before this build first
+    /// rewrote it. It fires once per world - the file is stamped with the new
+    /// schema afterwards - and it is deliberately outside the world directory,
+    /// where it cannot change the world's hash or its file set.
+    /// </summary>
+    private void BackUpPreSteamManifest(string worldPath)
+    {
+        try
+        {
+            var manifestPath = Path.Combine(worldPath, WorldPlayerManifestService.ManifestFileName);
+            if (!File.Exists(manifestPath)) return;
+            if (_manifests.Read(worldPath) is not { } previous ||
+                previous.SchemaVersion >= PortableFormat.SchemaVersion)
+            {
+                return;
+            }
+
+            var target = Path.Combine(
+                _paths.IdentityBackups,
+                MigrationBackupStamp,
+                "worlds",
+                Path.GetFileName(worldPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
+                WorldPlayerManifestService.ManifestFileName);
+            if (File.Exists(target)) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(manifestPath, target);
+            _logger?.Info(
+                $"Player manifest of {Path.GetFileName(worldPath)} was copied to {target} before the Steam-era rewrite.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // A missing backup must not stop a launch; the manifest itself is
+            // still rolled back by the transaction if the rewrite fails.
+            _logger?.Warn($"Player manifest backup for {Path.GetFileName(worldPath)} failed: {ex.Message}");
+        }
     }
 
     private static NbtCompoundTag EnsureDataCompound(NbtFile level)
@@ -304,13 +348,13 @@ public sealed class WorldPlayerProfileService
 
     private static Guid GetCanonicalIdentityUuid(LocalIdentityContext identity)
     {
-        if (!Guid.TryParse(identity.IdentityId, out var identityUuid) || identityUuid == Guid.Empty)
+        if (!Guid.TryParse(identity.MinecraftUuid, out var identityUuid) || identityUuid == Guid.Empty)
         {
             throw new InvalidDataException("Portable identity UUID is missing or invalid.");
         }
         if (!Guid.TryParse(identity.MinecraftUuid, out var minecraftUuid) || minecraftUuid != identityUuid)
         {
-            throw new InvalidDataException("Minecraft UUID does not match Minecraft\\Personal\\UUID.json.");
+            throw new InvalidDataException("Minecraft UUID does not match the profile bound to this Steam account.");
         }
         return identityUuid;
     }
