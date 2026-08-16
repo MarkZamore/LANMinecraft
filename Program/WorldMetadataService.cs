@@ -86,6 +86,48 @@ public sealed class WorldMetadataService
         }
     }
 
+    /// <summary>
+    /// Renames the build a world belongs to, and only for a world still naming
+    /// <paramref name="legacyBuildRelativePath"/>. The world id, its pack hash
+    /// and everyone recorded around it stay exactly as they are.
+    /// </summary>
+    public bool TryRebindBuild(
+        string worldPath,
+        string legacyBuildRelativePath,
+        string buildName,
+        string buildRelativePath)
+    {
+        lock (_gate)
+        {
+            var metadata = Read(worldPath);
+            if (metadata is null ||
+                !IsSameBuildPath(metadata.BuildRelativePath, legacyBuildRelativePath))
+            {
+                return false;
+            }
+
+            metadata.BuildName = buildName;
+            metadata.BuildRelativePath = buildRelativePath;
+            try
+            {
+                AtomicFile.WriteAllText(
+                    GetMetadataPath(worldPath),
+                    JsonSerializer.Serialize(metadata, _jsonOptions));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
+    private static bool IsSameBuildPath(string? left, string? right) =>
+        string.Equals(
+            left?.Trim().Trim('\\', '/'),
+            right?.Trim().Trim('\\', '/'),
+            StringComparison.OrdinalIgnoreCase);
+
     public string GetBuildName(string worldPath)
     {
         var metadata = Read(worldPath);

@@ -136,7 +136,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
     {
         var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, DefaultJarClasses);
 
-        var configuration = service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: false);
+        var configuration = service.Build(runtime, gameDirectory);
 
         var properties = configuration.Properties;
 
@@ -162,60 +162,11 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             target => target.ClassName.Contains("ShareToLanScreen", StringComparison.Ordinal) ||
                       target.ClassName.Contains("NetworkServerEntry", StringComparison.Ordinal));
 
-        // The Infinity-only teleport patches must stay disabled and untargeted
-        // for every other pack.
+        // The removed teleport patches must stay dormant: their properties are
+        // still emitted, pinned off, and nothing is targeted for them.
         Assert.Equal("false", properties["ftbTeleportEnabled"]);
         Assert.DoesNotContain(
             configuration.Targets,
             target => target.ClassName.StartsWith("dev/ftb/mods/ftbchunks/", StringComparison.Ordinal));
     }
-
-    [Fact]
-    public void Build_WithTeleportBridge_EmitsFtbTeleportTargets()
-    {
-        var jarClasses = DefaultJarClasses
-            .Concat(
-            [
-                "xaero/hud/minimap/waypoint/WaypointTeleport",
-                "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel",
-                "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon",
-                "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket",
-                "org/zeith/solarflux/client/SolarFluxResourcePack"
-            ])
-            .ToArray();
-        var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, jarClasses);
-
-        var configuration = service.Build(runtime, gameDirectory, enableXaeroWaypointBridge: true);
-
-        var properties = configuration.Properties;
-        Assert.Equal("true", properties["ftbTeleportEnabled"]);
-        Assert.Equal("true", properties["xaeroWaypointEnabled"]);
-        Assert.Equal(
-            "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel," +
-            "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon," +
-            "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket",
-            properties["ftbTeleportClasses"]);
-        Assert.Equal("hasPermissions", properties["ftbPermissionMethods"]);
-
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "xaero/hud/minimap/waypoint/WaypointTeleport");
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel");
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon");
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket");
-
-        Assert.Equal("true", properties["solarFluxSyncEnabled"]);
-        Assert.Equal("org/zeith/solarflux/client/SolarFluxResourcePack", properties["solarFluxPackClasses"]);
-        Assert.Equal("init,listResources,getNamespaces,getResource", properties["solarFluxSyncMethods"]);
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "org/zeith/solarflux/client/SolarFluxResourcePack");
-    }
-
 }

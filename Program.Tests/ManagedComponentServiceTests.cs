@@ -8,32 +8,6 @@ namespace Minecraft.Tests;
 public sealed class ManagedComponentServiceTests
 {
     [Fact]
-    public void PinnedFtbEssentialsArtifact_MatchesCurseForgeFile7608733()
-    {
-        Assert.Equal(410811, ManagedComponentService.FtbEssentialsCurseForgeProjectId);
-        Assert.Equal(7608733, ManagedComponentService.FtbEssentialsCurseForgeFileId);
-        Assert.Equal("2101.1.9", ManagedComponentService.FtbEssentialsVersion);
-        Assert.Equal(
-            "ftb-essentials-neoforge-2101.1.9.jar",
-            ManagedComponentService.FtbEssentialsFileName);
-        Assert.Equal(209459, ManagedComponentService.FtbEssentialsSizeBytes);
-        Assert.Equal(
-            "4da8e4d461ceef1a5e6f6705265fe24239b132cdc408eb77787231cb56c219bf",
-            ManagedComponentService.FtbEssentialsSha256);
-        Assert.Equal(
-            "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
-            ManagedComponentService.FtbEssentialsDownloadUri.AbsoluteUri);
-        Assert.Equal(
-            [
-                "https://mediafilez.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
-                "https://edge.forgecdn.net/files/7608/733/ftb-essentials-neoforge-2101.1.9.jar",
-                "https://www.curseforge.com/api/v1/mods/410811/files/7608733/download"
-            ],
-            ManagedComponentService.FtbEssentialsDownloadUris
-                .Select(uri => uri.AbsoluteUri));
-    }
-
-    [Fact]
     public async Task MissingComponent_DownloadsVerifiesCachesAndInstallsAtomically()
     {
         using var fixture = new TemporaryPortableRoot();
@@ -48,7 +22,7 @@ public sealed class ManagedComponentServiceTests
             Path.Combine(instance.GameDirectory, "mods", "unrelated.jar"),
             "leave me");
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.True(result.Downloaded);
         Assert.True(result.Installed);
@@ -80,12 +54,12 @@ public sealed class ManagedComponentServiceTests
         using var httpClient = new HttpClient(handler);
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
-        Directory.CreateDirectory(Path.GetDirectoryName(service.FtbEssentialsCachePath)!);
-        await File.WriteAllBytesAsync(service.FtbEssentialsCachePath, payload);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.E4steamCachePath)!);
+        await File.WriteAllBytesAsync(service.E4steamCachePath, payload);
         var arbitraryMod = Path.Combine(instance.GameDirectory, "mods", "example-mod.jar");
         await File.WriteAllTextAsync(arbitraryMod, "unchanged");
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.False(result.Downloaded);
         Assert.True(result.Installed);
@@ -113,7 +87,7 @@ public sealed class ManagedComponentServiceTests
             component.FileName);
         await File.WriteAllBytesAsync(installedPath, payload);
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.False(result.Downloaded);
         Assert.False(result.Installed);
@@ -140,15 +114,15 @@ public sealed class ManagedComponentServiceTests
             "mods",
             component.FileName);
         await File.WriteAllBytesAsync(installedPath, rejected);
-        Directory.CreateDirectory(Path.GetDirectoryName(service.FtbEssentialsCachePath)!);
-        await File.WriteAllBytesAsync(service.FtbEssentialsCachePath, rejected);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.E4steamCachePath)!);
+        await File.WriteAllBytesAsync(service.E4steamCachePath, rejected);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => service.EnsureFtbEssentialsAsync(instance));
+            () => service.EnsureSteamTransportModAsync(instance));
 
         Assert.Equal(component.DownloadUris[0], Assert.Single(handler.RequestUris));
         Assert.Equal(rejected, await File.ReadAllBytesAsync(installedPath));
-        Assert.Equal(rejected, await File.ReadAllBytesAsync(service.FtbEssentialsCachePath));
+        Assert.Equal(rejected, await File.ReadAllBytesAsync(service.E4steamCachePath));
         Assert.Empty(Directory.EnumerateFiles(
             fixture.Root,
             "*.tmp",
@@ -173,17 +147,17 @@ public sealed class ManagedComponentServiceTests
             "mods",
             component.FileName);
         await File.WriteAllBytesAsync(installedPath, corrupt);
-        Directory.CreateDirectory(Path.GetDirectoryName(service.FtbEssentialsCachePath)!);
-        await File.WriteAllBytesAsync(service.FtbEssentialsCachePath, corrupt);
+        Directory.CreateDirectory(Path.GetDirectoryName(service.E4steamCachePath)!);
+        await File.WriteAllBytesAsync(service.E4steamCachePath, corrupt);
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.True(result.Downloaded);
         Assert.True(result.Installed);
         Assert.True(result.CachePopulated);
         Assert.Equal(component.DownloadUris[0], Assert.Single(handler.RequestUris));
         Assert.Equal(expected, await File.ReadAllBytesAsync(installedPath));
-        Assert.Equal(expected, await File.ReadAllBytesAsync(service.FtbEssentialsCachePath));
+        Assert.Equal(expected, await File.ReadAllBytesAsync(service.E4steamCachePath));
         Assert.Empty(Directory.EnumerateFiles(
             fixture.Root,
             "*.tmp",
@@ -206,8 +180,8 @@ public sealed class ManagedComponentServiceTests
         var instance = fixture.CreatePreparedInstance();
 
         await Task.WhenAll(
-            service.EnsureFtbEssentialsAsync(instance),
-            service.EnsureFtbEssentialsAsync(instance));
+            service.EnsureSteamTransportModAsync(instance),
+            service.EnsureSteamTransportModAsync(instance));
 
         Assert.Single(handler.RequestUris);
     }
@@ -217,8 +191,8 @@ public sealed class ManagedComponentServiceTests
     {
         using var fixture = new TemporaryPortableRoot();
         var payload = Encoding.UTF8.GetBytes("fallback managed component");
-        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
-        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var primary = new Uri("https://primary.example.test/e4steam.jar");
+        var fallback = new Uri("https://fallback.example.test/e4steam.jar");
         var component = TestComponent(payload, primary, fallback);
         var handler = new RecordingHandler((request, _) =>
             Task.FromResult(
@@ -229,7 +203,7 @@ public sealed class ManagedComponentServiceTests
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.True(result.Downloaded);
         Assert.True(result.Installed);
@@ -248,8 +222,8 @@ public sealed class ManagedComponentServiceTests
         var expected = Encoding.UTF8.GetBytes("correct bytes");
         var rejected = Encoding.UTF8.GetBytes("wrong__ bytes");
         Assert.Equal(expected.Length, rejected.Length);
-        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
-        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var primary = new Uri("https://primary.example.test/e4steam.jar");
+        var fallback = new Uri("https://fallback.example.test/e4steam.jar");
         var component = TestComponent(expected, primary, fallback);
         var handler = new RecordingHandler((request, _) =>
             Task.FromResult(Success(request.RequestUri == primary ? rejected : expected)));
@@ -257,7 +231,7 @@ public sealed class ManagedComponentServiceTests
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.Equal([primary, fallback], handler.RequestUris);
         Assert.Equal(expected, await File.ReadAllBytesAsync(result.CachePath));
@@ -273,8 +247,8 @@ public sealed class ManagedComponentServiceTests
     {
         using var fixture = new TemporaryPortableRoot();
         var payload = Encoding.UTF8.GetBytes("body fallback managed component");
-        var primary = new Uri("https://primary.example.test/ftb-essentials.jar");
-        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+        var primary = new Uri("https://primary.example.test/e4steam.jar");
+        var fallback = new Uri("https://fallback.example.test/e4steam.jar");
         var component = TestComponent(payload, primary, fallback);
         var handler = new RecordingHandler((request, _) =>
             Task.FromResult(
@@ -288,7 +262,7 @@ public sealed class ManagedComponentServiceTests
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
 
-        var result = await service.EnsureFtbEssentialsAsync(instance);
+        var result = await service.EnsureSteamTransportModAsync(instance);
 
         Assert.Equal([primary, fallback], handler.RequestUris);
         Assert.Equal(payload, await File.ReadAllBytesAsync(result.CachePath));
@@ -305,8 +279,8 @@ public sealed class ManagedComponentServiceTests
         using var fixture = new TemporaryPortableRoot();
         var payload = Encoding.UTF8.GetBytes("component");
         var primary = new Uri(
-            "https://primary.example.test/ftb-essentials.jar?temporary-token=secret");
-        var fallback = new Uri("https://fallback.example.test/ftb-essentials.jar");
+            "https://primary.example.test/e4steam.jar?temporary-token=secret");
+        var fallback = new Uri("https://fallback.example.test/e4steam.jar");
         var component = TestComponent(payload, primary, fallback);
         var handler = new RecordingHandler((request, _) =>
             Task.FromResult(new HttpResponseMessage(
@@ -318,13 +292,13 @@ public sealed class ManagedComponentServiceTests
         var instance = fixture.CreatePreparedInstance();
 
         var error = await Assert.ThrowsAsync<HttpRequestException>(
-            () => service.EnsureFtbEssentialsAsync(instance));
+            () => service.EnsureSteamTransportModAsync(instance));
 
         Assert.Equal([primary, fallback], handler.RequestUris);
         Assert.Contains("HTTP 403", error.Message, StringComparison.Ordinal);
         Assert.Contains("HTTP 503", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("?", error.Message, StringComparison.Ordinal);
-        Assert.False(File.Exists(service.FtbEssentialsCachePath));
+        Assert.False(File.Exists(service.E4steamCachePath));
         Assert.Empty(Directory.EnumerateFiles(
             fixture.Root,
             "*.tmp",
@@ -339,7 +313,7 @@ public sealed class ManagedComponentServiceTests
         var component = TestComponent(
             payload,
             new Uri(
-                "https://user:password@example.test/ftb-essentials.jar?temporary-token=secret"));
+                "https://user:password@example.test/e4steam.jar?temporary-token=secret"));
         using var httpClient = new HttpClient(new RecordingHandler((_, _) =>
             Task.FromResult(Success(payload))));
 
@@ -351,7 +325,7 @@ public sealed class ManagedComponentServiceTests
     }
 
     [Fact]
-    public async Task ConflictingFtbJar_BlocksAndDoesNotDeleteAnything()
+    public async Task ConflictingJarOfTheSameMod_BlocksAndDoesNotDeleteAnything()
     {
         using var fixture = new TemporaryPortableRoot();
         var payload = Encoding.UTF8.GetBytes("component");
@@ -364,11 +338,11 @@ public sealed class ManagedComponentServiceTests
         var conflict = Path.Combine(
             instance.GameDirectory,
             "mods",
-            "ftb-essentials-neoforge-another-version.jar");
+            "e4steam-neoforge-another-version.jar");
         await File.WriteAllTextAsync(conflict, "foreign file");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.EnsureFtbEssentialsAsync(instance));
+            () => service.EnsureSteamTransportModAsync(instance));
 
         Assert.Equal("foreign file", await File.ReadAllTextAsync(conflict));
         Assert.Empty(handler.RequestUris);
@@ -392,7 +366,7 @@ public sealed class ManagedComponentServiceTests
             Path.Combine(outside, "client.jar"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.EnsureFtbEssentialsAsync(instance));
+            () => service.EnsureSteamTransportModAsync(instance));
 
         Assert.Empty(handler.RequestUris);
     }
@@ -401,11 +375,11 @@ public sealed class ManagedComponentServiceTests
         byte[] payload,
         params Uri[] downloadUris) =>
         new(
-            "ftb-essentials-test",
+            "e4steam-test",
             123456,
-            "ftb-essentials-neoforge-test.jar",
+            "e4steam-neoforge-test.jar",
             downloadUris.Length == 0
-                ? [new Uri("https://example.test/ftb-essentials.jar")]
+                ? [new Uri("https://example.test/e4steam.jar")]
                 : downloadUris,
             payload.LongLength,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant());

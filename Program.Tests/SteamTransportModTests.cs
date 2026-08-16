@@ -199,7 +199,7 @@ public sealed class SteamTransportModTests
         public ManagedComponentService CreateService(
             HttpClient httpClient,
             ManagedComponentDescriptor e4steam) =>
-            new(Paths, Logger, httpClient, DefaultFtbEssentials(), null, e4steam);
+            new(Paths, Logger, httpClient, e4steam);
 
         public PackInstanceContext CreatePreparedInstance()
         {
@@ -213,15 +213,6 @@ public sealed class SteamTransportModTests
                 gameDirectory,
                 Path.Combine(packDirectory, "client.jar"));
         }
-
-        private static ManagedComponentDescriptor DefaultFtbEssentials() =>
-            new(
-                "ftb-essentials",
-                ManagedComponentService.FtbEssentialsCurseForgeFileId,
-                ManagedComponentService.FtbEssentialsFileName,
-                ManagedComponentService.FtbEssentialsDownloadUris,
-                ManagedComponentService.FtbEssentialsSizeBytes,
-                ManagedComponentService.FtbEssentialsSha256);
 
         public void Dispose()
         {
