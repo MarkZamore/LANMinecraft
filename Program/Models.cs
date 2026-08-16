@@ -33,25 +33,6 @@ public sealed class AppSettings
     public string SelectedWorldRelativePath { get; set; } = "";
     public string SelectedNetworkInterfaceId { get; set; } = "";
     public string SelectedNetworkAddress { get; set; } = "";
-    public string VoiceInputDeviceId { get; set; } = "";
-    public string VoiceOutputDeviceId { get; set; } = "";
-
-    [JsonIgnore]
-    public bool VoiceMuted { get; set; }
-
-    [JsonIgnore]
-    public bool VoiceDeafened { get; set; }
-
-    [JsonIgnore]
-    public double VoiceMasterVolume { get; set; } = 1.0;
-
-    [JsonIgnore]
-    public string VoicePushToTalkKey { get; set; } = "V";
-
-    public string VoicePttMode { get; set; } = "Off";
-    public string VoicePushToTalkBinding { get; set; } = "Key:V";
-    public double VoiceInputVolume { get; set; } = 1.0;
-    public double VoiceOutputVolume { get; set; } = 1.0;
 }
 
 public sealed class NetworkEndpointInfo
@@ -184,8 +165,6 @@ public sealed class PeerAnnouncement
     public string LanSessionId { get; set; } = "";
     public string LanWorldName { get; set; } = "";
     public int LanRelayProtocolVersion { get; set; }
-    public bool IsVoiceChannelActive { get; set; }
-    public bool IsVoiceMuted { get; set; }
     public bool IsMinecraftRunning { get; set; }
     public bool IsMinecraftPreparing { get; set; }
     public bool IsSkinAvailable { get; set; }
@@ -219,20 +198,15 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _lanSessionId = "";
     private string _lanWorldName = "";
     private int _lanRelayProtocolVersion;
-    private bool _isInVoiceChannel;
-    private bool _isSpeaking;
-    private bool _isVoiceMuted;
     private bool _isMinecraftRunning;
     private bool _isMinecraftPreparing;
     private bool _isSkinAvailable;
     private string _skinSha256 = "";
     private string _skinModel = "classic";
-    private double _voiceVolume = 1.0d;
     private DateTimeOffset _lastSeen;
     private string _localPackHash = "";
     private int? _lastRttMs;
     private DateTimeOffset _lastRttAt;
-    private bool _isLocalVoicePeer;
     private string _hostedWorldId = "";
     private int _waypointProtocolVersion;
     private IReadOnlyList<WaypointProviderAnnouncement> _waypointProviders = Array.Empty<WaypointProviderAnnouncement>();
@@ -247,7 +221,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             if (Set(ref _playerName, value))
             {
                 OnPropertyChanged(nameof(DisplayName));
-                OnPropertyChanged(nameof(VoiceDisplayName));
                 OnPropertyChanged(nameof(HostDisplayName));
             }
         }
@@ -261,7 +234,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             if (Set(ref _networkAddress, value))
             {
                 OnPropertyChanged(nameof(DisplayName));
-                OnPropertyChanged(nameof(VoiceDisplayName));
                 OnPropertyChanged(nameof(HostDisplayName));
             }
         }
@@ -293,49 +265,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
 
     public string PackHash { get => _packHash; set { if (Set(ref _packHash, value)) OnPropertyChanged(nameof(PackStatus)); } }
 
-    public bool IsInVoiceChannel
-    {
-        get => _isInVoiceChannel;
-        set => Set(ref _isInVoiceChannel, value);
-    }
-
-    public bool IsLocalVoicePeer
-    {
-        get => _isLocalVoicePeer;
-        set
-        {
-            if (Set(ref _isLocalVoicePeer, value))
-            {
-                OnPropertyChanged(nameof(DisplayName));
-                OnPropertyChanged(nameof(VoiceDisplayName));
-            }
-        }
-    }
-
-    public bool IsSpeaking
-    {
-        get => _isSpeaking;
-        set
-        {
-            if (Set(ref _isSpeaking, value))
-            {
-                OnPropertyChanged(nameof(VoiceDisplayName));
-            }
-        }
-    }
-
-    public bool IsVoiceMuted
-    {
-        get => _isVoiceMuted;
-        set
-        {
-            if (Set(ref _isVoiceMuted, value))
-            {
-                OnPropertyChanged(nameof(VoiceDisplayName));
-            }
-        }
-    }
-
     public bool IsMinecraftRunning
     {
         get => _isMinecraftRunning;
@@ -365,21 +294,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         get => _skinModel;
         set => Set(ref _skinModel, string.Equals(value, "slim", StringComparison.OrdinalIgnoreCase) ? "slim" : "classic");
     }
-
-    public double VoiceVolume
-    {
-        get => _voiceVolume;
-        set
-        {
-            var clamped = Math.Clamp(value, 0d, 2d);
-            if (Set(ref _voiceVolume, clamped))
-            {
-                OnPropertyChanged(nameof(VoiceVolumePercent));
-            }
-        }
-    }
-
-    public double VoiceVolumePercent => Math.Round(VoiceVolume * 100d);
 
     public int ServerPort
     {
@@ -447,17 +361,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         }
     }
 
-    public string VoiceDisplayName
-    {
-        get
-        {
-            var name = string.IsNullOrWhiteSpace(PlayerName) ? "Неизвестный игрок" : PlayerName;
-            var localSuffix = IsLocalVoicePeer ? " (Вы)" : string.Empty;
-            var address = string.IsNullOrWhiteSpace(AddressDisplay) ? "—" : AddressDisplay;
-            return $"{name}{localSuffix} - {address}";
-        }
-    }
-
     public string AddressDisplay
     {
         get
@@ -511,8 +414,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         PlayerName = announcement.PlayerName;
         IdentityId = announcement.IdentityId;
         IdentityName = announcement.IdentityName;
-        IsInVoiceChannel = announcement.IsVoiceChannelActive;
-        IsVoiceMuted = announcement.IsVoiceMuted;
         IsMinecraftRunning = announcement.IsMinecraftRunning;
         IsMinecraftPreparing = announcement.IsMinecraftPreparing;
         IsSkinAvailable = announcement.IsSkinAvailable;
@@ -721,7 +622,6 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(AddressDisplay));
         OnPropertyChanged(nameof(DisplayName));
-        OnPropertyChanged(nameof(VoiceDisplayName));
         OnPropertyChanged(nameof(HostDisplayName));
     }
 
@@ -846,9 +746,3 @@ public sealed class WorldMetadataContext
     public required string OwnerIdentityName { get; init; }
 }
 
-public sealed class VoicePacket
-{
-    public string PeerId { get; set; } = "";
-    public int Sequence { get; set; }
-    public byte[] Payload { get; set; } = Array.Empty<byte>();
-}

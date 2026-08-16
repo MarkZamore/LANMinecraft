@@ -45,8 +45,6 @@
     <EmbeddedResource Include="Native\steam_api64.dll"
                       LogicalName="Minecraft.SteamApi64.dll" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
-    <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
     <PackageReference Include="BsDiff" Version="1.1.0" />
   </ItemGroup>
