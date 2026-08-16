@@ -42,39 +42,3 @@ public interface ISelectedNetworkTransport
         NetworkEnvironmentSnapshot snapshot,
         CancellationToken token);
 }
-
-internal interface ILanRelayPeerConnector
-{
-    Task<TcpClient> ConnectAsync(
-        LanRelayTarget target,
-        int remotePort,
-        CancellationToken token);
-}
-
-internal sealed class SelectedNetworkLanRelayPeerConnector(
-    ISelectedNetworkTransport network) : ILanRelayPeerConnector
-{
-    public async Task<TcpClient> ConnectAsync(
-        LanRelayTarget target,
-        int remotePort,
-        CancellationToken token)
-    {
-        var client = network.CreateBoundTcpClient(
-            target.Address,
-            target.LocalAddress,
-            target.LocalInterfaceId);
-        try
-        {
-            await client.ConnectAsync(
-                target.Address,
-                remotePort,
-                token).ConfigureAwait(false);
-            return client;
-        }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
-    }
-}

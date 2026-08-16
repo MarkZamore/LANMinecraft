@@ -227,7 +227,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
 
     public void ObservePeer(PeerAnnouncement announcement)
     {
-        if (!announcement.IsHost || announcement.WaypointProtocolVersion != ProtocolVersion ||
+        if (announcement.WaypointProtocolVersion != ProtocolVersion ||
             !Guid.TryParse(announcement.HostedWorldId, out var worldId) || worldId == Guid.Empty)
         {
             return;

@@ -89,43 +89,6 @@ internal static class NetworkTestData
             Task.FromResult<IReadOnlyList<IPAddress>>([]);
     }
 
-    internal sealed class LoopbackLanRelayPeerConnector(
-        IPEndPoint endpoint) : ILanRelayPeerConnector
-    {
-        public LanRelayTarget? LastTarget { get; private set; }
-        public int? LastPort { get; private set; }
-        public IPAddress? AddressToFail { get; init; }
-        public List<IPAddress> AttemptedAddresses { get; } = [];
-
-        public async Task<TcpClient> ConnectAsync(
-            LanRelayTarget target,
-            int remotePort,
-            CancellationToken token)
-        {
-            LastTarget = target;
-            LastPort = remotePort;
-            AttemptedAddresses.Add(target.Address);
-            if (target.Address.Equals(AddressToFail))
-            {
-                throw new SocketException((int)SocketError.NetworkUnreachable);
-            }
-            var client = new TcpClient(endpoint.AddressFamily);
-            try
-            {
-                await client.ConnectAsync(
-                    endpoint.Address,
-                    endpoint.Port,
-                    token);
-                return client;
-            }
-            catch
-            {
-                client.Dispose();
-                throw;
-            }
-        }
-    }
-
     internal sealed class RecordingSelectedNetworkTransport : ISelectedNetworkTransport
     {
         public IPAddress? LastRemoteAddress { get; private set; }

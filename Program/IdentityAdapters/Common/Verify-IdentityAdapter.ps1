@@ -53,31 +53,6 @@ $clientJar = Join-Path $runtimeRoot "versions\1.21.1\1.21.1.jar"
 $ftbJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\ftb-chunks-neoforge-2101.1.20.jar"
 $solarJar = Join-Path $projectRoot "Minecraft\Packs\Infinity\mods\SolarFluxReborn-1.21.1-21.1.8.jar"
 $seed = [ordered]@{
-    "lanShareScreenClasses"        = "net/minecraft/client/gui/screens/ShareToLanScreen,foe"
-    "lanShareInitMethods"          = "init,aT_"
-    "integratedServerClasses"      = "net/minecraft/client/server/IntegratedServer,guo"
-    "publishServerMethods"         = "publishServer,a"
-    "getDefaultGameTypeMethods"    = "getDefaultGameType,u_"
-    "getWorldDataMethods"          = "getWorldData,bb"
-    "isPublishedMethods"           = "isPublished,r"
-    "worldDataClasses"             = "net/minecraft/world/level/storage/WorldData,erl"
-    "isAllowCommandsMethods"       = "isAllowCommands,m"
-    "httpUtilClasses"              = "net.minecraft.util.HttpUtil,ayf"
-    "getAvailablePortMethods"      = "getAvailablePort,a"
-    "gameTypeClasses"              = "net.minecraft.world.level.GameType,dct"
-    "publishCommandClasses"        = "net.minecraft.server.commands.PublishCommand,ans"
-    "publishSuccessMethods"        = "getSuccessMessage,a"
-    "minecraftClasses"             = "net.minecraft.client.Minecraft,fgo"
-    "minecraftGetInstanceMethods"  = "getInstance,Q"
-    "getSingleplayerServerMethods" = "getSingleplayerServer,V"
-    "setScreenMethods"             = "setScreen,a"
-    "updateTitleMethods"           = "updateTitle,d"
-    "minecraftGuiFields"           = "gui,l"
-    "screenClasses"                = "net.minecraft.client.gui.screens.Screen,fod"
-    "guiClasses"                   = "net/minecraft/client/gui/Gui,fhy"
-    "guiChatMethods"               = "getChat,d"
-    "chatComponentClasses"         = "net/minecraft/client/gui/components/ChatComponent,fin"
-    "chatAddMessageMethods"        = "addMessage,a"
     "ftbTeleportEnabled"           = "true"
     "ftbTeleportClasses"           = "dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen`$RowPanel,dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon,dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket"
     "ftbPermissionMethods"         = "hasPermissions"
@@ -94,8 +69,6 @@ foreach ($target in $state.targets) {
     $targets.Add([pscustomobject]@{ JarPath = [string]$target.jarPath; ClassName = [string]$target.className })
 }
 foreach ($extra in @(
-    @{ Jar = $srgJar;    Class = "net/minecraft/client/gui/screens/ShareToLanScreen" },
-    @{ Jar = $clientJar; Class = "foe" },
     @{ Jar = $ftbJar;    Class = 'dev/ftb/mods/ftbchunks/client/gui/WaypointEditorScreen$RowPanel' },
     @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon" },
     @{ Jar = $ftbJar;    Class = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket" },
