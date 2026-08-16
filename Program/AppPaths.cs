@@ -69,11 +69,6 @@ public sealed class AppPaths
 
     public string SupportLogs => Path.Combine(Personal, "SupportLogs");
     public string SupportSpool => Path.Combine(Personal, "SupportSpool");
-    public string[] LegacySettingsFiles => new[]
-    {
-        Path.Combine(Service, "settings.json"),
-        Path.Combine(Program, "settings.json")
-    };
     public string LogFile => Path.Combine(Personal, "logs.log");
 
     public void Ensure()
