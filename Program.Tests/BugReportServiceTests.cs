@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 
 namespace Minecraft.Tests;
 
@@ -71,6 +71,9 @@ public sealed class BugReportServiceTests : IDisposable
         Assert.Contains("CRASH_MARKER",
             File.ReadAllText(Path.Combine(report, "crash-reports", "crash-2026-08-16.txt")),
             StringComparison.Ordinal);
+        // The environment turns "it crashed" into something actionable.
+        Assert.Contains("release 38",
+            File.ReadAllText(Path.Combine(report, "environment.json")), StringComparison.Ordinal);
         // The archive itself is not kept once it is unpacked.
         Assert.False(File.Exists(Path.Combine(report, "report.zip")));
         _ = receiverPaths;
@@ -201,7 +204,11 @@ public sealed class BugReportServiceTests : IDisposable
             () => directory,
             () => new BugReportContext(
                 steamId, "MarkZamore", "MarkZamore", Guid.NewGuid().ToString("D"),
-                "release 38", "Infinity", new string('a', 64), IsMinecraftRunning: false));
+                "release 38", "Infinity", new string('a', 64), IsMinecraftRunning: false),
+            _ => Task.FromResult(new SupportEnvironmentSnapshot(
+                DateTimeOffset.UtcNow, "release 38", "38", ".NET 10", "Windows", "X64",
+                "Java 25", "Infinity", new string('a', 64), [],
+                SteamDiagnosticContext.Unavailable, new Dictionary<string, string>(), string.Empty)));
     }
 
     private (BugReportService Service, AppPaths Paths, PeerConnectionRouter Router) CreateReceiver(
