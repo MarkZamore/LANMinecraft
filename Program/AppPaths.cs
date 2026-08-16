@@ -63,6 +63,13 @@ public sealed class AppPaths
     public string SkinRegistryFile => Path.Combine(Personal, "skin-profiles.properties");
     public string WaypointSyncStateFile => Path.Combine(Personal, "waypoint-sync.json");
     public string WaypointConflicts => Path.Combine(Personal, "WaypointConflicts");
+    /// <summary>
+    /// Journals for interrupted player-profile writes. It sits beside Personal
+    /// rather than under Personal\Temp because startup cleanup wipes Temp,
+    /// which used to delete every journal before recovery could read it.
+    /// </summary>
+    public string ProfileTransactions => Path.Combine(Personal, "ProfileTransactions");
+
     public string SupportLogs => Path.Combine(Personal, "SupportLogs");
     public string SupportSpool => Path.Combine(Personal, "SupportSpool");
     public string[] LegacySettingsFiles => new[]
@@ -83,6 +90,7 @@ public sealed class AppPaths
         Directory.CreateDirectory(Worlds);
         Directory.CreateDirectory(SupportLogs);
         Directory.CreateDirectory(SupportSpool);
+        Directory.CreateDirectory(ProfileTransactions);
     }
 
     public string CombineUnderRoot(string relativePath)
