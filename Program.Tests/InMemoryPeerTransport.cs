@@ -1,4 +1,4 @@
-using System.IO.Pipelines;
+﻿using System.IO.Pipelines;
 
 namespace Minecraft.Tests;
 
@@ -47,6 +47,11 @@ internal sealed class InMemoryPeerTransport(
 
     public bool IsAvailable { get; set; } = true;
     public string UnavailableReason { get; set; } = "";
+
+    /// <summary>Peers this transport has open connections to.</summary>
+    public List<SteamId64> Connected { get; } = [];
+
+    public IReadOnlyCollection<SteamId64> ConnectedPeers => Connected;
 
     public event EventHandler<PeerConnection>? ConnectionAccepted;
 
