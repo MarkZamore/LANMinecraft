@@ -26,7 +26,9 @@ namespace Minecraft;
 /// SteamConnectionStream, framed by PortableProtocol), so what the spike
 /// measures is what a world transfer will do.
 ///
-/// This file is removed before the migration branch is merged.
+/// It ships with the launcher on purpose: it is the only way to test the Steam
+/// transport in isolation on two machines, and a player who cannot connect can
+/// be asked to run it without needing a special build.
 /// </summary>
 internal static class SteamSpikeRunner
 {

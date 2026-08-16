@@ -83,6 +83,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     private readonly SupportLogSanitizer _sanitizer;
     private readonly Func<string?> _instanceDirectoryProvider;
     private readonly Func<BugReportContext> _contextProvider;
+    private readonly Func<CancellationToken, Task<SupportEnvironmentSnapshot>>? _environmentProvider;
     private readonly TimeProvider _timeProvider;
 
     public BugReportService(
@@ -91,6 +92,7 @@ public sealed class BugReportService : IPortableProtocolHandler
         IPeerTransport transport,
         Func<string?> instanceDirectoryProvider,
         Func<BugReportContext> contextProvider,
+        Func<CancellationToken, Task<SupportEnvironmentSnapshot>>? environmentProvider = null,
         TimeProvider? timeProvider = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -99,6 +101,7 @@ public sealed class BugReportService : IPortableProtocolHandler
         _instanceDirectoryProvider = instanceDirectoryProvider ??
             throw new ArgumentNullException(nameof(instanceDirectoryProvider));
         _contextProvider = contextProvider ?? throw new ArgumentNullException(nameof(contextProvider));
+        _environmentProvider = environmentProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _sanitizer = SupportLogSanitizer.CreateDefault(paths);
     }
@@ -132,7 +135,8 @@ public sealed class BugReportService : IPortableProtocolHandler
 
         try
         {
-            var files = BuildArchive(archivePath, context, message);
+            var environment = await CaptureEnvironmentAsync(token).ConfigureAwait(false);
+            var files = BuildArchive(archivePath, context, message, environment);
             var info = new FileInfo(archivePath);
             var manifest = new BugReportManifest
             {
@@ -241,7 +245,30 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// previous session, and any crash report from the last day. Each is
     /// sanitised and tail-trimmed, because what explains a failure is its end.
     /// </summary>
-    private List<string> BuildArchive(string archivePath, BugReportContext context, string message)
+    /// <summary>
+    /// The machine as it is right now - versions, mods, runtime state. It is
+    /// what turns "it crashed" into something another person can act on.
+    /// </summary>
+    private async Task<string?> CaptureEnvironmentAsync(CancellationToken token)
+    {
+        if (_environmentProvider is null) return null;
+        try
+        {
+            var snapshot = await _environmentProvider(token).ConfigureAwait(false);
+            return JsonSerializer.Serialize(snapshot, JsonOptions);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or JsonException)
+        {
+            _logger.Warn($"Bug report environment could not be captured: {ex.Message}");
+            return null;
+        }
+    }
+
+    private List<string> BuildArchive(
+        string archivePath,
+        BugReportContext context,
+        string message,
+        string? environmentJson)
     {
         var entries = new List<(string Name, string Path)>();
         if (File.Exists(_paths.LogFile)) entries.Add(("launcher/logs.log", _paths.LogFile));
@@ -282,6 +309,11 @@ public sealed class BugReportService : IPortableProtocolHandler
         using (var zip = ZipFile.Open(archivePath, ZipArchiveMode.Create))
         {
             WriteTextEntry(zip, "report.txt", BuildReportText(context, message));
+            if (environmentJson is not null)
+            {
+                WriteTextEntry(zip, "environment.json", environmentJson);
+                written.Add("environment.json");
+            }
             foreach (var (name, path) in entries)
             {
                 try

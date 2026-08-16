@@ -143,7 +143,8 @@ public partial class MainWindow : Window
                 _logger,
                 _peerTransport,
                 ResolveCurrentInstanceDirectory,
-                CreateBugReportContext);
+                CreateBugReportContext,
+                CaptureSupportEnvironmentAsync);
             _bugReports.ReportReceived += (_, directory) => PostToUi(() =>
             {
                 SetBugReportStatus($"Получен отчёт: {Path.GetFileName(directory)}");
