@@ -27,6 +27,14 @@ public sealed class SteamPeerDirectory(
     private readonly Dictionary<ulong, (SteamPeerPresence Presence, DateTimeOffset LastSeen)> _peers = [];
     private readonly object _gate = new();
 
+    // Two players once sat looking at empty player lists with nothing in either
+    // log to say why - this whole path was silent. These remember what was last
+    // reported so a two-second timer can say when the answer changes without
+    // repeating itself.
+    private int _lastLoggedFriendCount = -1;
+    private int _lastLoggedPeerCount = -1;
+    private bool _publishedPresence;
+
     public event EventHandler<IReadOnlyList<SteamPeerPresence>>? PeersChanged;
 
     /// <summary>Everyone currently considered online, newest state first seen order.</summary>
@@ -42,9 +50,20 @@ public sealed class SteamPeerDirectory(
     public void PublishLocalPresence(SteamPeerPresence presence)
     {
         if (!client.Status.IsReady) return;
+        var refused = 0;
         foreach (var (key, value) in SteamPresenceCodec.Encode(presence))
         {
-            client.SetPresence(key, value);
+            if (!client.SetPresence(key, value)) refused++;
+        }
+
+        if (!_publishedPresence || refused > 0)
+        {
+            _publishedPresence = true;
+            logger?.Info(refused == 0
+                ? $"Published this launcher's presence to Steam as {presence.PlayerName} " +
+                  $"(protocol {presence.ProtocolVersion}, state {presence.State})."
+                : $"Steam refused {refused} of this launcher's presence keys; " +
+                  "friends will not see this launcher.");
         }
     }
 
@@ -60,7 +79,14 @@ public sealed class SteamPeerDirectory(
         var changed = false;
         var local = client.Status.SteamId64;
 
-        foreach (var friend in client.Friends)
+        var friends = client.Friends;
+        if (friends.Count != _lastLoggedFriendCount)
+        {
+            _lastLoggedFriendCount = friends.Count;
+            logger?.Info($"Steam reports {friends.Count} friend(s) to look for this launcher among.");
+        }
+
+        foreach (var friend in friends)
         {
             if (friend.SteamId64 == local) continue;
             if (!SteamId64.TryFrom(friend.SteamId64, out var peerId)) continue;
@@ -113,6 +139,16 @@ public sealed class SteamPeerDirectory(
         }
 
         if (changed) PeersChanged?.Invoke(this, Peers);
+
+        int count;
+        lock (_gate) count = _peers.Count;
+        if (count != _lastLoggedPeerCount)
+        {
+            _lastLoggedPeerCount = count;
+            logger?.Info(count == 0
+                ? $"No friend of {friends.Count} is publishing launcher presence right now."
+                : $"{count} friend(s) are running this launcher.");
+        }
     }
 
     public bool TryGetPeer(SteamId64 peer, out SteamPeerPresence presence)
