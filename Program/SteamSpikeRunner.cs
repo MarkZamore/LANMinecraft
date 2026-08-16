@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -19,6 +19,12 @@ namespace Minecraft;
 ///   LANMinecraft.exe --steam-spike listen
 ///   LANMinecraft.exe --steam-spike connect &lt;friendSteamId64&gt; [megabytes]
 ///   LANMinecraft.exe --steam-spike presence
+///   LANMinecraft.exe --steam-spike stream-listen
+///   LANMinecraft.exe --steam-spike stream-connect &lt;friendSteamId64&gt; [megabytes]
+///
+/// The stream-* modes drive the shipping transport (SteamPeerTransport over
+/// SteamConnectionStream, framed by PortableProtocol), so what the spike
+/// measures is what a world transfer will do.
 ///
 /// This file is removed before the migration branch is merged.
 /// </summary>
@@ -58,6 +64,26 @@ internal static class SteamSpikeRunner
 
         var logger = new Logger(paths.LogFile);
         var native = new SteamNativeLibraryService(paths, logger);
+
+        if (mode.StartsWith("stream", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                RunTransportAsync(paths, logger, mode, rest).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Log($"FAIL {mode}: {ex}");
+            }
+            finally
+            {
+                Log("done. Press Enter to close.");
+                Console.ReadLine();
+                _transcript?.Dispose();
+            }
+            return true;
+        }
+
         var api = new SteamworksApiFacade();
 
         try
@@ -102,6 +128,124 @@ internal static class SteamSpikeRunner
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Exercises the real transport: one side listens and counts what arrives,
+    /// the other sends a payload of the requested size and reads the receipt.
+    /// </summary>
+    private static async Task RunTransportAsync(
+        AppPaths paths,
+        Logger logger,
+        string mode,
+        string[] arguments)
+    {
+        await using var client = new SteamClientService(
+            new SteamworksApiFacade(),
+            new SteamNativeLibraryService(paths, logger),
+            logger);
+        var status = await client.StartAsync(CancellationToken.None).ConfigureAwait(false);
+        Log($"steam: {status.Availability} {status.PersonaName} ({status.SteamId64}) - {status.Message}");
+        if (!status.IsReady) return;
+
+        await using var transport = new SteamPeerTransport(client, logger);
+        if (string.Equals(mode, "stream-listen", StringComparison.OrdinalIgnoreCase))
+        {
+            await RunTransportListenAsync(transport).ConfigureAwait(false);
+            return;
+        }
+
+        if (arguments.Length == 0 ||
+            !ulong.TryParse(arguments[0], NumberStyles.None, CultureInfo.InvariantCulture, out var raw) ||
+            !SteamId64.TryFrom(raw, out var peer))
+        {
+            Log("usage: --steam-spike stream-connect <friendSteamId64> [megabytes]");
+            return;
+        }
+
+        var megabytes = arguments.Length > 1 &&
+                        int.TryParse(arguments[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : 64;
+        await RunTransportConnectAsync(transport, peer, megabytes).ConfigureAwait(false);
+    }
+
+    private static async Task RunTransportListenAsync(SteamPeerTransport transport)
+    {
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        transport.ConnectionAccepted += (_, connection) => _ = Task.Run(async () =>
+        {
+            await using var scope = connection;
+            Log($"accepted {connection.Context.PeerId} ({connection.Context.PersonaName}), " +
+                $"friend={connection.Context.IsFriend}");
+            try
+            {
+                var buffer = new byte[ChunkBytes];
+                var received = 0L;
+                var clock = Stopwatch.StartNew();
+                var lastReport = TimeSpan.Zero;
+                while (true)
+                {
+                    var read = await connection.Stream.ReadAsync(buffer).ConfigureAwait(false);
+                    if (read == 0) break;
+                    received += read;
+                    if (clock.Elapsed - lastReport > TimeSpan.FromSeconds(2))
+                    {
+                        lastReport = clock.Elapsed;
+                        Log($"received {received / (1024.0 * 1024.0):F1} MB " +
+                            $"({received / clock.Elapsed.TotalSeconds / (1024.0 * 1024.0):F2} MB/s)");
+                    }
+                }
+                Log($"OK received {received / (1024.0 * 1024.0):F1} MB in {clock.Elapsed.TotalSeconds:F1} s");
+            }
+            catch (Exception ex)
+            {
+                Log($"FAIL receive: {ex.Message}");
+            }
+            finally
+            {
+                finished.TrySetResult();
+            }
+        });
+
+        await transport.StartListeningAsync(CancellationToken.None).ConfigureAwait(false);
+        Log("listening through SteamPeerTransport; waiting for a friend to connect.");
+        await finished.Task.ConfigureAwait(false);
+    }
+
+    private static async Task RunTransportConnectAsync(
+        SteamPeerTransport transport,
+        SteamId64 peer,
+        int megabytes)
+    {
+        Log($"connecting to {peer} through SteamPeerTransport…");
+        await using var connection = await transport
+            .ConnectAsync(peer, "MinecraftPortableSpike", CancellationToken.None)
+            .ConfigureAwait(false);
+        Log($"connected to {connection.Context.PeerId} ({connection.Context.PersonaName})");
+
+        var payload = new byte[ChunkBytes];
+        Random.Shared.NextBytes(payload);
+        var total = (long)megabytes * 1024 * 1024;
+        var sent = 0L;
+        var clock = Stopwatch.StartNew();
+        var lastReport = TimeSpan.Zero;
+        while (sent < total)
+        {
+            var size = (int)Math.Min(payload.Length, total - sent);
+            await connection.Stream.WriteAsync(payload.AsMemory(0, size)).ConfigureAwait(false);
+            sent += size;
+            if (clock.Elapsed - lastReport > TimeSpan.FromSeconds(2))
+            {
+                lastReport = clock.Elapsed;
+                Log($"sent {sent / (1024.0 * 1024.0):F1} MB " +
+                    $"({sent / clock.Elapsed.TotalSeconds / (1024.0 * 1024.0):F2} MB/s)");
+            }
+        }
+
+        await connection.Stream.FlushAsync().ConfigureAwait(false);
+        Log($"OK sent {megabytes} MB in {clock.Elapsed.TotalSeconds:F1} s = " +
+            $"{megabytes / clock.Elapsed.TotalSeconds:F2} MB/s");
     }
 
     private static void RunProbe(SteamworksApiFacade api)
