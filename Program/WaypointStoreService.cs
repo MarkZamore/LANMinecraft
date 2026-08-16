@@ -232,7 +232,7 @@ public sealed class WaypointStoreService
     {
         var manifest = JsonSerializer.Deserialize<WaypointWorldManifest>(File.ReadAllText(path), _jsonOptions)
             ?? throw new InvalidDataException("Waypoint manifest is empty.");
-        if (manifest.SchemaVersion != SchemaVersion || !Guid.TryParse(manifest.WorldId, out _))
+        if (!PortableFormat.CanRead(manifest.SchemaVersion) || !Guid.TryParse(manifest.WorldId, out _))
         {
             throw new InvalidDataException("Waypoint manifest has an unsupported schema.");
         }

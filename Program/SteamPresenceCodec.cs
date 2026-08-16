@@ -98,10 +98,21 @@ public static class SteamPresenceCodec
         ArgumentNullException.ThrowIfNull(readKey);
         if (!peer.IsValid) return null;
         if (readKey(MarkerKey) != "1") return null;
-        if (!int.TryParse(readKey(VersionKey), NumberStyles.None, CultureInfo.InvariantCulture, out var version) ||
-            version != ProtocolVersion)
+        _ = int.TryParse(readKey(VersionKey), NumberStyles.None, CultureInfo.InvariantCulture, out var version);
+
+        // A friend running another version is still a friend running this
+        // launcher. Hiding them was the worst possible answer: both players saw
+        // an empty list and concluded the other was offline. They are listed,
+        // marked incompatible, and told which side has to update.
+        if (!PortableFormat.CanSpeak(version))
         {
-            return null;
+            return new SteamPeerPresence
+            {
+                SteamId = peer,
+                PersonaName = personaName,
+                ProtocolVersion = version,
+                PlayerName = readKey(NameKey)
+            };
         }
 
         var (skinSha, skinModel) = DecodeSkin(readKey(SkinKey));

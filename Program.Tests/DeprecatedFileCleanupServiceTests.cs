@@ -31,14 +31,14 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         var paths = CreatePaths();
         var deprecated = new[]
         {
-            Path.Combine(paths.Personal, "UUID.json"),
-            Path.Combine(paths.Personal, "steam-identity.json"),
             Path.Combine(paths.Personal, "network-peers.json"),
             Path.Combine(paths.Personal, "lan-relay-ports.json"),
             Path.Combine(paths.Launcher, "Start-Minecraft.ps1"),
             Path.Combine(paths.Launcher, "standalone-classpath.txt")
         };
         foreach (var path in deprecated) WriteFile(path, "stale");
+        WriteFile(Path.Combine(paths.Personal, "UUID.json"), "kept");
+        WriteFile(Path.Combine(paths.Personal, "steam-identity.json"), "kept");
         Directory.CreateDirectory(Path.Combine(paths.Personal, "WaypointSync"));
         Directory.CreateDirectory(Path.Combine(paths.Personal, "VoiceRecordings"));
         Directory.CreateDirectory(Path.Combine(paths.Launcher, "libraries", "net"));
@@ -46,6 +46,12 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         DeprecatedFileCleanupService.Run(paths);
 
         Assert.All(deprecated, path => Assert.False(File.Exists(path), path));
+        // The two identity records are kept on purpose: nothing reads them, but
+        // they are the only local evidence of the profile this machine played
+        // as, and they are what anyone would ask for if a player ever came back
+        // as the wrong character.
+        Assert.True(File.Exists(Path.Combine(paths.Personal, "UUID.json")));
+        Assert.True(File.Exists(Path.Combine(paths.Personal, "steam-identity.json")));
         Assert.False(Directory.Exists(Path.Combine(paths.Personal, "WaypointSync")));
         Assert.False(Directory.Exists(Path.Combine(paths.Personal, "VoiceRecordings")));
         Assert.False(Directory.Exists(Path.Combine(paths.Launcher, "libraries")));
@@ -134,12 +140,12 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     public void RunningTwice_IsHarmless()
     {
         var paths = CreatePaths();
-        WriteFile(Path.Combine(paths.Personal, "UUID.json"), "stale");
+        WriteFile(Path.Combine(paths.Personal, "network-peers.json"), "stale");
 
         DeprecatedFileCleanupService.Run(paths);
         DeprecatedFileCleanupService.Run(paths);
 
-        Assert.False(File.Exists(Path.Combine(paths.Personal, "UUID.json")));
+        Assert.False(File.Exists(Path.Combine(paths.Personal, "network-peers.json")));
     }
 
     private AppPaths CreatePaths()

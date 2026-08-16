@@ -202,7 +202,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
     public async Task HandleIncomingAsync(Stream stream, byte[] initialFrame, CancellationToken token)
     {
         var request = PortableProtocol.Deserialize<SkinRequest>(initialFrame, _jsonOptions);
-        if (request is null || request.Protocol != ProtocolName || request.ProtocolVersion != ProtocolVersion ||
+        if (request is null || request.Protocol != ProtocolName || !PortableFormat.CanSpeak(request.ProtocolVersion) ||
             !Guid.TryParse(request.PlayerUuid, out var requestedUuid) || !IsSha256(request.Sha256))
         {
             throw new InvalidDataException("Skin request is invalid.");
@@ -258,7 +258,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 
             var responseFrame = await PortableProtocol.ReadFrameAsync(stream, timeout.Token).ConfigureAwait(false);
             var response = PortableProtocol.Deserialize<SkinResponse>(responseFrame, _jsonOptions);
-            if (response is null || response.Protocol != ProtocolName || response.ProtocolVersion != ProtocolVersion ||
+            if (response is null || response.Protocol != ProtocolName || !PortableFormat.CanSpeak(response.ProtocolVersion) ||
                 !response.Ok || response.SizeBytes <= 0 || response.SizeBytes > MaxSkinBytes ||
                 !string.Equals(response.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
             {

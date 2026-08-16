@@ -176,6 +176,22 @@ public sealed class BugReportService : IPortableProtocolHandler
                 .ConfigureAwait(false);
             await PortableProtocol.WriteJsonAsync(connection.Stream, manifest, JsonOptions, timeout.Token)
                 .ConfigureAwait(false);
+
+            // The receiver decides on the manifest alone. Streaming first meant
+            // a refusal - a version mismatch, a size the other build will not
+            // take - arrived as a dead connection halfway through the upload,
+            // and the sentence explaining it was never read.
+            var accepted = PortableProtocol.Deserialize<BugReportAck>(
+                await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token).ConfigureAwait(false),
+                JsonOptions);
+            if (accepted is null || !accepted.Ok)
+            {
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(accepted?.Message)
+                        ? "Получатель не принял отчёт."
+                        : accepted.Message);
+            }
+
             await using (var archive = File.OpenRead(archivePath))
             {
                 await archive.CopyToAsync(connection.Stream, timeout.Token).ConfigureAwait(false);
@@ -217,6 +233,11 @@ public sealed class BugReportService : IPortableProtocolHandler
             ValidateManifest(manifest, context);
             var directory = PrepareReportDirectory(manifest, context);
             var archivePath = Path.Combine(directory, "report.zip");
+            await PortableProtocol.WriteJsonAsync(
+                stream,
+                new BugReportAck { Ok = true, Stage = "Accepted", ReportId = manifest.ReportId },
+                JsonOptions,
+                token).ConfigureAwait(false);
             await ReceiveArchiveAsync(stream, archivePath, manifest, token).ConfigureAwait(false);
             ExtractArchive(archivePath, directory);
             WriteReadme(directory, manifest, context);
@@ -408,9 +429,10 @@ public sealed class BugReportService : IPortableProtocolHandler
     private void ValidateManifest(BugReportManifest manifest, PeerConnectionContext context)
     {
         if (!string.Equals(manifest.Protocol, BugReportManifest.ProtocolName, StringComparison.Ordinal) ||
-            manifest.Version != BugReportManifest.ProtocolVersion)
+            !PortableFormat.CanSpeak(manifest.Version))
         {
-            throw new InvalidDataException("Отчёт отправлен несовместимой версией лаунчера.");
+            throw new InvalidDataException(
+                "Отчёт отправлен более новой версией лаунчера. Обновите лаунчер, чтобы его прочитать.");
         }
         if (!IsSafeReportId(manifest.ReportId))
         {

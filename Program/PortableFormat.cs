@@ -1,4 +1,4 @@
-namespace Minecraft;
+﻿namespace Minecraft;
 
 /// <summary>
 /// One version for everything the launcher writes, and one for everything it
@@ -28,13 +28,17 @@ public static class PortableFormat
     /// that came before it - a document written by an older build is simply an
     /// older version of the same sequence, with no special cases to remember.
     /// </summary>
-    public const int SchemaVersion = 10;
+    public const int SchemaVersion = 11;
 
     /// <summary>
     /// What one launcher says to another: world transfer, waypoint sync, skins,
     /// rich presence, bug reports. Also above every number that came before.
     /// </summary>
-    public const int ProtocolVersion = 10;
+    /// <summary>
+    /// 11 acknowledges a bug report's manifest before its body, so a refusal
+    /// reaches the sender instead of arriving as a dead connection.
+    /// </summary>
+    public const int ProtocolVersion = 11;
 
     /// <summary>True when this build knows the shape a document claims to be.</summary>
     public static bool CanRead(int schemaVersion) => schemaVersion is > 0 and <= SchemaVersion;
