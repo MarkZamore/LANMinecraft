@@ -471,20 +471,21 @@ public partial class MainWindow : Window
                     (DiagnosticLogTargetComboBox.ItemsSource as IEnumerable<DiagnosticLogTargetOption>) ?? []))
             {
                 DiagnosticLogTargetComboBox.ItemsSource = targets;
+                // The same answer the player list gives: keep whoever was
+                // chosen, otherwise take the first - a friend appearing online
+                // is already the choice, and a list of one is not a question.
                 DiagnosticLogTargetComboBox.SelectedItem =
-                    targets.FirstOrDefault(option => option == selected) ??
-                    targets.FirstOrDefault(option => !option.IsNobody) ??
-                    targets.FirstOrDefault();
+                    targets.FirstOrDefault(option => option == selected) ?? targets.FirstOrDefault();
             }
         }
 
-        // "Никому" on its own is the same kind of dead list: there is no
-        // friend to send a report to, so there is nothing to pick.
-        DiagnosticLogTargetComboBox.IsEnabled = targets.Any(option => !option.IsNobody);
+        DiagnosticLogTargetComboBox.IsEnabled = targets.Count > 0;
+        DiagnosticLogTargetPlaceholderText.Visibility =
+            targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         var recipient = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
         SendBugReportButton.IsEnabled =
-            !_bugReportSending && IsIdentityBound && recipient is { IsNobody: false };
+            !_bugReportSending && IsIdentityBound && recipient is not null;
         DiagnosticLogStatusText.Text = _bugReportStatus;
     }
 
@@ -496,8 +497,7 @@ public partial class MainWindow : Window
     private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
     {
         if (_bugReports is null || _bugReportSending) return;
-        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient ||
-            recipient.IsNobody)
+        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient)
         {
             SetBugReportStatus("Выберите, кому отправить отчёт.");
             return;
@@ -587,7 +587,7 @@ public partial class MainWindow : Window
         // A friend who was there a minute ago is still worth offering - and if
         // they are really gone, the send says so.
         var cutoff = DateTimeOffset.Now - DiagnosticTargetTtl;
-        var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
+        var result = new List<DiagnosticLogTargetOption>();
         foreach (var peer in _peers
                      // Anyone online can be sent a report. Whether their build
                      // can take it is the send's problem, and it says so out

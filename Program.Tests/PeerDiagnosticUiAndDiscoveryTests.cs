@@ -58,15 +58,13 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal("другая сборка", peer.PackStatus);
     }
 
+    /// <summary>
+    /// Who a report goes to is a choice for right now, not a setting: the list
+    /// is whoever is online at that moment, so nothing about it is written down.
+    /// </summary>
     [Fact]
-    public void DiagnosticTargetNobody_IsTheNonPersistentDefaultSentinel()
+    public void DiagnosticTarget_IsNeverPersisted()
     {
-        var nobody = DiagnosticLogTargetOption.Nobody;
-
-        Assert.True(nobody.IsNobody);
-        Assert.False(nobody.SteamId.IsValid);
-        Assert.Equal("Никому", nobody.DisplayName);
-
         var settingsJson = JsonSerializer.Serialize(new AppSettings(), WebJson);
         Assert.DoesNotContain(
             "diagnosticLogTarget",

@@ -253,8 +253,16 @@
                             Click="RetrySteamButton_Click"/>
                 </StackPanel>
                 <TextBlock Text="Сообщить о проблеме" Style="{StaticResource SectionTitleStyle}"/>
-                <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
-                                        ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"/>
+                <Grid>
+                    <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
+                                            ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"/>
+                    <TextBlock x:Name="DiagnosticLogTargetPlaceholderText"
+                               Text="Нет игроков в сети"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               HorizontalAlignment="Center"
+                               IsHitTestVisible="False"
+                               Visibility="Collapsed"/>
+                </Grid>
                 <TextBlock Text="Что случилось (необязательно)" Margin="0,8,0,4"/>
                 <TextBox x:Name="BugReportMessageTextBox"
                          Height="86"
