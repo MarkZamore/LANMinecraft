@@ -1673,7 +1673,15 @@ public partial class MainWindow : Window
 
     private static string BuildVersionText()
     {
-        return $"Версия {UpdateService.CurrentReleaseNumber}";
+        // The release number alone could not answer "are we on the same build".
+        // Two players compared numbers, agreed they matched, and were on
+        // different commits - the number is assigned when CI publishes, so a
+        // build that failed or a machine that updated halfway wears a number
+        // that says nothing about the code inside it. The commit does.
+        var sha = UpdateService.CurrentCommitSha;
+        return sha.Length >= 7
+            ? $"Версия {UpdateService.CurrentReleaseNumber} ({sha[..7]})"
+            : $"Версия {UpdateService.CurrentReleaseNumber}";
     }
 
     private void InitializeUpdateUi()
@@ -2037,8 +2045,14 @@ public partial class MainWindow : Window
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is
         // a decision here - the same way the player list does with nobody in it.
-        WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 1;
-        OnlinePlayerComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _peers.Count > 0;
+        // Both of these define the transfer that is currently running. Leaving
+        // them live let a player change the answer to a question already being
+        // acted on - and the transfer would carry on with the old one, which is
+        // worse than not offering.
+        WorldComboBox.IsEnabled =
+            interactiveEnabled && !_minecraftPreparing && !_transferActive && _worlds.Count > 1;
+        OnlinePlayerComboBox.IsEnabled =
+            interactiveEnabled && !_minecraftPreparing && !_transferActive && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         TransferButton.IsEnabled = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&

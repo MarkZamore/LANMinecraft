@@ -1,4 +1,4 @@
-using Steamworks;
+﻿using Steamworks;
 
 namespace Minecraft;
 
@@ -31,6 +31,9 @@ public interface ISteamApiFacade
     bool SetRichPresence(string key, string? value);
     string GetFriendRichPresence(ulong steamId64, string key);
     bool RequestFriendRichPresence(ulong steamId64);
+
+    /// <summary>Presence keys Steam holds for a friend, whatever their origin.</summary>
+    int GetFriendRichPresenceKeyCount(ulong steamId64);
 }
 
 /// <summary>The production implementation; the only place that links Steamworks.NET.</summary>
@@ -131,4 +134,15 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
         SteamFriends.RequestFriendRichPresence(new CSteamID(steamId64));
         return true;
     }
+
+    /// <summary>
+    /// How many presence keys Steam is holding for a friend, of any origin.
+    /// Valve labels this the debugging path and it answers the question that
+    /// reading one key cannot: zero means Steam has no record of them at all,
+    /// while a non-zero count without ours means they are publishing something
+    /// else. Those are different problems and the launcher could not tell them
+    /// apart while two players stared at each other's empty lists.
+    /// </summary>
+    public int GetFriendRichPresenceKeyCount(ulong steamId64) =>
+        _initialized ? SteamFriends.GetFriendRichPresenceKeyCount(new CSteamID(steamId64)) : 0;
 }

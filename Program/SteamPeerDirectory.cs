@@ -35,6 +35,18 @@ public sealed class SteamPeerDirectory(
     private int _lastLoggedPeerCount = -1;
     private bool _publishedPresence;
 
+    /// <summary>
+    /// When each friend was last asked for their presence. Valve rate-limits
+    /// RequestFriendRichPresence per user and answers a too-frequent caller
+    /// from the local cache without ever asking the server - so asking every
+    /// friend every two seconds, which is what this did, is the documented way
+    /// to guarantee the cache never fills. Reading stays on the fast timer;
+    /// reads are local and free. Only the asking is slowed down.
+    /// </summary>
+    private readonly Dictionary<ulong, DateTimeOffset> _lastRequested = [];
+
+    private static readonly TimeSpan RequestInterval = TimeSpan.FromSeconds(30);
+
     public event EventHandler<IReadOnlyList<SteamPeerPresence>>? PeersChanged;
 
     /// <summary>Everyone currently considered online, newest state first seen order.</summary>
@@ -96,7 +108,13 @@ public sealed class SteamPeerDirectory(
             // privacy settings, and skipping on it made friends who were
             // plainly running the launcher invisible. Publishing our keys is
             // the proof, so every friend is asked and the keys decide.
-            api.RequestFriendRichPresence(friend.SteamId64);
+            if (!_lastRequested.TryGetValue(friend.SteamId64, out var asked) ||
+                now - asked >= RequestInterval)
+            {
+                _lastRequested[friend.SteamId64] = now;
+                api.RequestFriendRichPresence(friend.SteamId64);
+            }
+
             var presence = SteamPresenceCodec.TryDecode(
                 peerId,
                 friend.PersonaName,
@@ -132,9 +150,9 @@ public sealed class SteamPeerDirectory(
             // Not decodable, but demonstrably here. List them under the name
             // Steam does give us, with an unknown protocol so nothing assumes
             // a compatibility it has not seen proof of.
-            var known = friends.FirstOrDefault(friend => friend.SteamId64 == connected.Value);
             if (!SteamId64.TryFrom(connected.Value, out var connectedId)) continue;
-            var persona = string.IsNullOrWhiteSpace(known.PersonaName)
+            var known = friends.FirstOrDefault(friend => friend.SteamId64 == connected.Value);
+            var persona = string.IsNullOrWhiteSpace(known?.PersonaName)
                 ? connectedId.ToString()
                 : known.PersonaName;
 
@@ -174,9 +192,30 @@ public sealed class SteamPeerDirectory(
         if (count != _lastLoggedPeerCount)
         {
             _lastLoggedPeerCount = count;
-            logger?.Info(count == 0
-                ? $"No friend of {friends.Count} is publishing launcher presence right now."
-                : $"{count} friend(s) are running this launcher.");
+            if (count > 0)
+            {
+                logger?.Info($"{count} friend(s) are running this launcher.");
+            }
+            else
+            {
+                // An empty list has three different causes and they need
+                // different answers, so say which one this is. Steam holding no
+                // keys at all for a friend means it never served their presence
+                // to us; keys without ours means they are running something
+                // else. Guessing between those cost two players an evening.
+                var detail = friends
+                    .Select(friend =>
+                        $"{friend.PersonaName}: {api.GetFriendRichPresenceKeyCount(friend.SteamId64)} key(s)" +
+                        (friend.IsInSharedApp ? ", in app" : ""))
+                    .Where(line => !line.EndsWith(": 0 key(s)", StringComparison.Ordinal))
+                    .Take(8)
+                    .ToArray();
+                logger?.Info(
+                    $"No friend of {friends.Count} is publishing launcher presence right now" +
+                    (detail.Length == 0
+                        ? "; Steam holds no presence keys for any of them."
+                        : $"; Steam holds keys for {string.Join(", ", detail)}."));
+            }
         }
     }
 
