@@ -41,12 +41,6 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     private static readonly TimeSpan RejectionWriteTimeout = TimeSpan.FromSeconds(5);
     // Steam relays make a first connection slower than a LAN socket ever was.
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
-    // The first frame is shared by world, waypoint, skin, relay and diagnostics
-    // protocols. Existing waypoint snapshots may legitimately use the portable
-    // protocol's full JSON limit; diagnostics applies its 256 KiB limit only
-    // after the short upgrade frame and TLS handshake.
-    private const int MaxInitialFrameBytes = PortableProtocol.MaxJsonFrameBytes;
-    private static readonly TimeSpan InitialFrameTimeout = TimeSpan.FromSeconds(10);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -1683,64 +1677,6 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         return Directory.Exists(path) && File.Exists(Path.Combine(path, "level.dat"));
     }
 
-    private static DateTime GetWorldLastWriteTimeUtc(string path)
-    {
-        var levelDat = Path.Combine(path, "level.dat");
-        return File.Exists(levelDat) ? File.GetLastWriteTimeUtc(levelDat) : Directory.GetLastWriteTimeUtc(path);
-    }
-
-    private string GetAvailableWorldDirectory(string safeWorldName)
-    {
-        var basePath = Path.Combine(_paths.Worlds, safeWorldName);
-        if (!Directory.Exists(basePath) && !File.Exists(basePath))
-        {
-            return basePath;
-        }
-
-        for (var index = 2; ; index++)
-        {
-            var candidate = Path.Combine(_paths.Worlds, $"{safeWorldName} ({index})");
-            if (!Directory.Exists(candidate) && !File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-    }
-
-    private static string GetSafeWorldName(string? worldName)
-    {
-        if (string.IsNullOrWhiteSpace(worldName))
-        {
-            return "World";
-        }
-
-        var invalidChars = Path.GetInvalidFileNameChars();
-        var safe = new string(worldName.Trim()
-            .Select(ch => invalidChars.Contains(ch) ? '_' : ch)
-            .ToArray());
-        return string.IsNullOrWhiteSpace(safe) ? "World" : safe;
-    }
-
-    private void DeleteTransferredWorld(string worldDir)
-    {
-        _paths.EnsureUnderRoot(worldDir);
-        var worldsRoot = _paths.Worlds.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var fullWorldDir = Path.GetFullPath(worldDir);
-        if (!fullWorldDir.StartsWith(worldsRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Refusing to delete a world outside ./Minecraft/Worlds.");
-        }
-
-        try
-        {
-            Directory.Delete(fullWorldDir, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new InvalidOperationException("World was transferred and verified, but the local source world could not be deleted. Close Minecraft and retry the transfer so only one host remains.", ex);
-        }
-    }
-
     internal static async Task<string> HashDirectoryAsync(
         string root,
         Func<long, long, Task>? progress,
@@ -1785,6 +1721,39 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
+
+    private string GetAvailableWorldDirectory(string safeWorldName)
+    {
+        var basePath = Path.Combine(_paths.Worlds, safeWorldName);
+        if (!Directory.Exists(basePath) && !File.Exists(basePath))
+        {
+            return basePath;
+        }
+
+        for (var index = 2; ; index++)
+        {
+            var candidate = Path.Combine(_paths.Worlds, $"{safeWorldName} ({index})");
+            if (!Directory.Exists(candidate) && !File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    private static string GetSafeWorldName(string? worldName)
+    {
+        if (string.IsNullOrWhiteSpace(worldName))
+        {
+            return "World";
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var safe = new string(worldName.Trim()
+            .Select(ch => invalidChars.Contains(ch) ? '_' : ch)
+            .ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "World" : safe;
+    }
+
 
     private static void AppendInt64(IncrementalHash hash, long value)
     {
