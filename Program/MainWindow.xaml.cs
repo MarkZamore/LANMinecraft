@@ -589,9 +589,11 @@ public partial class MainWindow : Window
         var cutoff = DateTimeOffset.Now - DiagnosticTargetTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
         foreach (var peer in _peers
-                     // A launcher that cannot read the report is not a place to
-                     // send one; the list already says why it is missing.
-                     .Where(peer => peer.LastSeen >= cutoff && peer.SupportsDiagnosticLogs)
+                     // Anyone online can be sent a report. Whether their build
+                     // can take it is the send's problem, and it says so out
+                     // loud - an empty list here would only leave a player who
+                     // needs help with nowhere to click.
+                     .Where(peer => peer.LastSeen >= cutoff)
                      .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
             result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
@@ -2044,9 +2046,9 @@ public partial class MainWindow : Window
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
-        // The skin is copied into the instance as the game starts, so a change
-        // made from here on would not reach this session anyway.
-        SkinButton.IsEnabled = !_minecraftRunning && !_minecraftPreparing;
+        // Preparing a pack is a long wait and the skin is only read when the
+        // client itself starts, so there is room to change it right up to then.
+        SkinButton.IsEnabled = !_minecraftRunning;
         // A list with nothing to choose between is not a control, it is a
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is
