@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -1454,6 +1454,11 @@ public sealed class SupportLogCollector : IAsyncDisposable
         {
             return false;
         }
+
+        var name = Path.GetFileName(path);
+        // The game's DEBUG copy of a session is tens of megabytes and says
+        // nothing latest.log and the crash report do not.
+        if (name.StartsWith("debug", StringComparison.OrdinalIgnoreCase)) return false;
 
         return Path.GetExtension(path).Equals(".log", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith(".log.gz", StringComparison.OrdinalIgnoreCase);

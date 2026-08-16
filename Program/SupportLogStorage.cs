@@ -568,8 +568,11 @@ public sealed class SupportLogStorage
     /// <summary>1 = peer ids were Minecraft UUIDs; 2 = SteamID64.</summary>
     internal const int SchemaVersion = 2;
 
-    public const long MaxSessionBytes = 2L * 1024 * 1024 * 1024;
-    public const long MaxTotalBytes = 8L * 1024 * 1024 * 1024;
+    // A received bundle is logs, not backups: what a friend needs to read a
+    // crash is the last session or two, and anything older has been overtaken
+    // by whatever the player did since.
+    public const long MaxSessionBytes = 256L * 1024 * 1024;
+    public const long MaxTotalBytes = 1024L * 1024 * 1024;
     public const long MinimumFreeBytes = 2L * 1024 * 1024 * 1024;
     public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
 
