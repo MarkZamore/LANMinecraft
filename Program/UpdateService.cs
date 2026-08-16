@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -19,6 +19,12 @@ public sealed class UpdateService
     public const string ExecutableAssetName = "LANMinecraft.exe";
     public const string ManifestAssetName = "update.json";
     public const string DeltaPatchAssetName = "LANMinecraft.bsdiff";
+    /// <summary>
+    /// The shape of update.json, which CI writes for every launcher that might
+    /// read it - including builds older than the one that produced it. It is
+    /// deliberately not PortableFormat's version: raising that must never make
+    /// an installed launcher unable to parse its own update manifest.
+    /// </summary>
     public const int ManifestSchemaVersion = 2;
     public const string DeltaPatchAlgorithm = "bsdiff";
     public const int DeltaPatchAlgorithmVersion = 1;
@@ -41,7 +47,6 @@ public sealed class UpdateService
     private readonly string _currentCommitSha;
     private readonly string? _currentExecutablePath;
     private readonly TimeSpan _checkTimeout;
-    private readonly VoiceNetworkCoordinator? _voiceNetwork;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -54,8 +59,7 @@ public sealed class UpdateService
         HttpClient? httpClient = null,
         string? currentCommitSha = null,
         TimeSpan? checkTimeout = null,
-        string? currentExecutablePath = null,
-        VoiceNetworkCoordinator? networkCoordinator = null)
+        string? currentExecutablePath = null)
     {
         _paths = paths;
         _logger = logger;
@@ -65,7 +69,6 @@ public sealed class UpdateService
         _currentExecutablePath = string.IsNullOrWhiteSpace(currentExecutablePath)
             ? null
             : Path.GetFullPath(currentExecutablePath);
-        _voiceNetwork = networkCoordinator;
     }
 
     public static string CurrentCommitSha => ResolveCurrentCommitSha();
@@ -719,7 +722,7 @@ public sealed class UpdateService
             ValidateDeltaPatchManifest(
                 manifest.DeltaPatch,
                 manifest.CommitSha,
-                requireLegacyAssetName: true);
+                requireExactAssetName: true);
         }
 
         if (manifest.DeltaPatches.Count > MaximumDeltaPatches)
@@ -728,7 +731,7 @@ public sealed class UpdateService
         }
         foreach (var delta in manifest.DeltaPatches)
         {
-            ValidateDeltaPatchManifest(delta, manifest.CommitSha, requireLegacyAssetName: false);
+            ValidateDeltaPatchManifest(delta, manifest.CommitSha, requireExactAssetName: false);
         }
         if (manifest.DeltaPatches
             .GroupBy(delta => NormalizeSha(delta.BaseSha256), StringComparer.OrdinalIgnoreCase)
@@ -741,7 +744,7 @@ public sealed class UpdateService
     private static void ValidateDeltaPatchManifest(
         DeltaPatchManifest delta,
         string targetCommitSha,
-        bool requireLegacyAssetName)
+        bool requireExactAssetName)
     {
         if (!string.Equals(delta.Algorithm, DeltaPatchAlgorithm, StringComparison.Ordinal))
         {
@@ -756,7 +759,7 @@ public sealed class UpdateService
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base commit.");
         }
-        if (requireLegacyAssetName && !string.Equals(delta.AssetName, DeltaPatchAssetName, StringComparison.Ordinal))
+        if (requireExactAssetName && !string.Equals(delta.AssetName, DeltaPatchAssetName, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Update manifest contains an unexpected delta asset name.");
         }
@@ -764,7 +767,7 @@ public sealed class UpdateService
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta asset name.");
         }
-        if (!requireLegacyAssetName && delta.BaseReleaseNumber < 1)
+        if (!requireExactAssetName && delta.BaseReleaseNumber < 1)
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base release number.");
         }
@@ -858,6 +861,8 @@ public sealed class UpdateService
         return new Uri(uri, UriKind.Absolute);
     }
 
+    private const int DownloadBlockBytes = 64 * 1024;
+
     private async Task CopyWithProgressAsync(
         Stream input,
         Stream output,
@@ -865,8 +870,7 @@ public sealed class UpdateService
         IProgress<UpdatePreparationProgress>? progress,
         CancellationToken token)
     {
-        var buffer = new byte[VoiceTransferLimiter.TransferBlockSize];
-        using var limiter = _voiceNetwork?.CreateTransferLimiter();
+        var buffer = new byte[DownloadBlockBytes];
         var lastReportTimestamp = Stopwatch.GetTimestamp();
         long total = 0;
         while (true)
@@ -875,7 +879,6 @@ public sealed class UpdateService
             if (read <= 0) break;
             await output.WriteAsync(buffer.AsMemory(0, read), token);
             total += read;
-            if (limiter is not null) await limiter.ThrottleAsync(read, token).ConfigureAwait(false);
             var now = Stopwatch.GetTimestamp();
             if (expectedSize > 0 &&
                 (total >= expectedSize ||

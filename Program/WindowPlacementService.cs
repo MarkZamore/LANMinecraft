@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.IO;
 using System.Windows;
@@ -8,7 +8,11 @@ namespace Minecraft;
 
 public sealed class WindowPlacementService
 {
-    private const int SchemaVersion = 1;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int CacheGeneration = 1;
     private const uint ShowNormal = 1;
     private const uint ShowMaximized = 3;
     private const uint RestoreToMaximized = 0x0002;
@@ -68,7 +72,7 @@ public sealed class WindowPlacementService
                                     (placement.Flags & RestoreToMaximized) != 0);
             var state = new SavedWindowPlacement
             {
-                SchemaVersion = SchemaVersion,
+                CacheGeneration = CacheGeneration,
                 Left = bounds.Left,
                 Top = bounds.Top,
                 Right = bounds.Right,
@@ -129,7 +133,7 @@ public sealed class WindowPlacementService
             var saved = JsonSerializer.Deserialize<SavedWindowPlacement>(
                 File.ReadAllText(_placementFile),
                 _jsonOptions);
-            if (saved is null || saved.SchemaVersion != SchemaVersion)
+            if (saved is null || saved.CacheGeneration != CacheGeneration)
             {
                 return null;
             }
@@ -249,7 +253,7 @@ public sealed class WindowPlacementService
 
     private sealed class SavedWindowPlacement
     {
-        public int SchemaVersion { get; set; }
+        public int CacheGeneration { get; set; }
         public int Left { get; set; }
         public int Top { get; set; }
         public int Right { get; set; }

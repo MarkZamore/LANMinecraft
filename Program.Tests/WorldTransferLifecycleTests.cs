@@ -1,45 +1,49 @@
-using System.Net;
-using System.Net.Sockets;
-using System.Text.Json;
+﻿using System.Text.Json;
 using Minecraft;
 
 namespace Minecraft.Tests;
 
+/// <summary>
+/// Shutdown and refusal behaviour of the receiving side. The listener itself
+/// now belongs to the connection router, so what is pinned here is what the
+/// transfer service still owns: an in-flight transfer must not be cut off, and
+/// a disposed service must never accept another one.
+/// </summary>
 public sealed class WorldTransferLifecycleTests
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     [Fact]
-    public async Task DisposeAsync_WaitsForInFlightStart_ThenPreventsRestart()
+    public async Task DisposeAsync_WaitsForAnInFlightTransfer_ThenRefusesNewOnes()
     {
-        await using var fixture = ServiceFixture.Create(GetFreeTcpPort());
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        fixture.Network.BlockNextSnapshot();
+        await using var fixture = ServiceFixture.Create(TimeSpan.FromSeconds(30));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await fixture.StartAcceptingAsync(timeout.Token);
 
-        var start = Task.Run(
-            () => fixture.Service.StartListenerAsync(fixture.Settings, timeout.Token),
-            timeout.Token);
-        await fixture.Network.SnapshotEntered.Task.WaitAsync(timeout.Token);
+        var connection = await fixture.ConnectAsSenderAsync(timeout.Token);
+        await PortableProtocol.WriteJsonAsync(
+            connection.Stream, NewPrepareHeader(), JsonOptions, timeout.Token);
+        var preparing = PortableProtocol.Deserialize<WorldTransferAck>(
+            await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token), JsonOptions);
+        Assert.NotNull(preparing);
+        Assert.True(preparing.Ok);
+        await connection.DisposeAsync();
 
-        var dispose = fixture.Service.DisposeAsync().AsTask();
-        await Task.Delay(100, timeout.Token);
-        Assert.False(dispose.IsCompleted);
+        // Disposal unwinds the in-flight receive instead of returning while it
+        // still holds the transfer gate, and the service never takes another.
+        await fixture.Service.DisposeAsync().AsTask().WaitAsync(timeout.Token);
 
-        fixture.Network.ReleaseSnapshot();
-        await start.WaitAsync(timeout.Token);
-        await dispose.WaitAsync(timeout.Token);
-
-        await Assert.ThrowsAsync<ObjectDisposedException>(
-            () => fixture.Service.StartListenerAsync(fixture.Settings, timeout.Token));
+        Assert.False(fixture.Service.IsOperationActive);
+        Assert.Throws<ObjectDisposedException>(
+            () => fixture.Service.UseSettingsForIncomingTransfers(fixture.Settings));
         await fixture.Service.DisposeAsync();
-
-        using var listener = new TcpListener(IPAddress.Loopback, fixture.Port);
-        listener.Start();
     }
 
     [Fact]
-    public async Task UnexpectedIncomingFailure_IsObserved_AndStopStillCompletes()
+    public async Task UnexpectedIncomingFailure_IsObserved_AndTheServiceStaysUsable()
     {
-        await using var fixture = ServiceFixture.Create(GetFreeTcpPort());
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var fixture = ServiceFixture.Create();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var failureObserved = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var injectUnexpectedFailure = 1;
@@ -50,76 +54,122 @@ public sealed class WorldTransferLifecycleTests
             {
                 throw new InvalidOperationException("Injected logger callback failure.");
             }
-            if (line.Contains("Incoming world transfer failed:", StringComparison.Ordinal))
+            if (line.Contains("Incoming world transfer from", StringComparison.Ordinal))
             {
                 failureObserved.TrySetResult();
             }
         };
 
-        await fixture.Service.StartListenerAsync(fixture.Settings, timeout.Token);
-        using (var client = new TcpClient(AddressFamily.InterNetwork))
+        await fixture.StartAcceptingAsync(timeout.Token);
+        await using (var connection = await fixture.ConnectAsSenderAsync(timeout.Token))
         {
-            await client.ConnectAsync(IPAddress.Loopback, fixture.Port, timeout.Token);
             await PortableProtocol.WriteJsonAsync(
-                client.GetStream(),
+                connection.Stream,
                 new
                 {
                     Protocol = WorldTransferService.ProtocolName,
                     ProtocolVersion = WorldTransferService.ProtocolVersion + 1,
                     MessageType = WorldTransferService.ProbeMessageType
                 },
-                new JsonSerializerOptions(JsonSerializerDefaults.Web),
+                JsonOptions,
                 timeout.Token);
             await failureObserved.Task.WaitAsync(timeout.Token);
         }
 
-        await fixture.Service.StopListenerAsync().WaitAsync(timeout.Token);
+        Assert.False(fixture.Service.IsOperationActive);
+        fixture.Service.StopAcceptingIncomingTransfers();
     }
 
-    private static int GetFreeTcpPort()
+    /// <summary>
+    /// Between "Steam went away" and "the window says so" a connection can still
+    /// arrive; it must be dropped rather than half-processed.
+    /// </summary>
+    [Fact]
+    public async Task WithIncomingTransfersStopped_AConnectionIsDropped()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
+        await using var fixture = ServiceFixture.Create();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var refused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Logger.LineWritten += line =>
+        {
+            if (line.Contains("incoming transfers are disabled", StringComparison.Ordinal))
+            {
+                refused.TrySetResult();
+            }
+        };
+
+        await fixture.StartAcceptingAsync(timeout.Token);
+        fixture.Service.StopAcceptingIncomingTransfers();
+
+        await using var connection = await fixture.ConnectAsSenderAsync(timeout.Token);
+        await PortableProtocol.WriteJsonAsync(
+            connection.Stream, NewPrepareHeader(), JsonOptions, timeout.Token);
+
+        await refused.Task.WaitAsync(timeout.Token);
+        Assert.False(fixture.Service.IsOperationActive);
     }
 
+    private static WorldTransferHeader NewPrepareHeader() => new()
+    {
+        Protocol = WorldTransferService.ProtocolName,
+        ProtocolVersion = WorldTransferService.ProtocolVersion,
+        MessageType = WorldTransferService.PrepareMessageType,
+        TransferId = Guid.NewGuid().ToString("N"),
+        SenderName = "LifecycleTest",
+        SenderIdentityId = Guid.NewGuid().ToString("D"),
+        SenderSteamId64 = ServiceFixture.SenderSteamId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture),
+        SenderIdentityName = "LifecycleTest",
+        Size = 0,
+        FileName = "world.zip",
+        WorldName = "LifecycleWorld"
+    };
+
+    /// <summary>
+    /// One receiver on an in-memory peer network, reachable the way a friend
+    /// reaches it: a connection through the transport, demultiplexed by the
+    /// router. The VPN-era fixture bound a loopback TCP port for the same job.
+    /// </summary>
     private sealed class ServiceFixture : IAsyncDisposable
     {
+        internal const ulong ReceiverSteamId = 76561198000000001;
+        internal const ulong SenderSteamId = 76561198000000002;
+
         private readonly string _root;
         private readonly WaypointSyncService _waypoints;
         private readonly SkinService _skins;
-        private readonly LanRelayService _relay;
         private readonly PackRuntimeService _packRuntimes;
+        private readonly PeerConnectionRouter _router;
+        private readonly InMemoryPeerTransport _senderTransport;
 
         private ServiceFixture(
             string root,
-            int port,
+            AppPaths paths,
             Logger logger,
-            BlockingNetworkTransport network,
             WaypointSyncService waypoints,
             SkinService skins,
-            LanRelayService relay,
             PackRuntimeService packRuntimes,
+            PeerConnectionRouter router,
+            InMemoryPeerTransport senderTransport,
             WorldTransferService service)
         {
             _root = root;
-            Port = port;
+            Paths = paths;
             Logger = logger;
-            Network = network;
             _waypoints = waypoints;
             _skins = skins;
-            _relay = relay;
             _packRuntimes = packRuntimes;
+            _router = router;
+            _senderTransport = senderTransport;
             Service = service;
         }
 
-        public int Port { get; }
+        public AppPaths Paths { get; }
         public Logger Logger { get; }
-        public BlockingNetworkTransport Network { get; }
         public WorldTransferService Service { get; }
         public AppSettings Settings { get; } = new() { PlayerName = "LifecycleTest" };
 
-        public static ServiceFixture Create(int port)
+        public static ServiceFixture Create(TimeSpan? idleTimeout = null)
         {
             var root = Path.Combine(
                 Path.GetTempPath(),
@@ -128,37 +178,20 @@ public sealed class WorldTransferLifecycleTests
             var paths = new AppPaths(root);
             paths.Ensure();
             var logger = new Logger(paths.LogFile);
-            var endpoint = new NetworkEndpointInfo
-            {
-                InterfaceId = "loopback-test",
-                InterfaceIndex = 0,
-                InterfaceName = "loopback-test",
-                NetworkAddress = IPAddress.Loopback.ToString(),
-                PrefixLength = 8,
-                BroadcastAddress = ""
-            };
-            var network = new BlockingNetworkTransport(endpoint);
-            var routes = new PeerRouteResolver();
+            var network = new InMemoryPeerNetwork();
+            var receiverTransport = network.CreateTransport(ReceiverSteamId, "Receiver");
+            var senderTransport = network.CreateTransport(SenderSteamId, "Sender");
+            network.MakeFriends(ReceiverSteamId, SenderSteamId);
             var metadata = new WorldMetadataService();
-            var identity = new LocalIdentityService(paths);
+            var identity = TestIdentity.CreateBound(ReceiverSteamId, "Receiver");
             var profiles = new WorldPlayerProfileService(paths, logger);
-            var waypoints = new WaypointSyncService(paths, logger, metadata, network, routes);
-            var skins = new SkinService(paths, logger, network, routes);
-            var relay = new LanRelayService(logger, network, routes);
-            var voiceNetwork = new VoiceNetworkCoordinator();
+            var waypoints = new WaypointSyncService(paths, logger, metadata, receiverTransport);
+            var skins = new SkinService(paths, logger, receiverTransport);
             var identityAdapter = new PortableIdentityAdapterService(paths, logger);
             var packInstances = new PackInstanceService(paths, logger);
-            var packRuntimes = new PackRuntimeService(paths, logger, networkCoordinator: voiceNetwork);
+            var packRuntimes = new PackRuntimeService(paths, logger);
             var minecraft = new MinecraftProcessService(
-                paths,
-                logger,
-                identity,
-                identityAdapter,
-                profiles,
-                packInstances,
-                packRuntimes,
-                waypoints,
-                skins);
+                paths, logger, identity, identityAdapter, profiles, packInstances, packRuntimes, waypoints, skins);
             var service = new WorldTransferService(
                 paths,
                 logger,
@@ -169,81 +202,37 @@ public sealed class WorldTransferLifecycleTests
                 profiles,
                 waypoints,
                 skins,
-                relay,
-                network,
-                routes,
-                new WorldTransferRuntimeOptions
-                {
-                    Port = port,
-                    ListenAddress = IPAddress.Loopback
-                });
+                receiverTransport,
+                idleTimeout is null
+                    ? new WorldTransferRuntimeOptions()
+                    : new WorldTransferRuntimeOptions { PeerIdleTimeout = idleTimeout.Value });
+            var router = new PeerConnectionRouter(receiverTransport, logger);
+            router.RegisterFallback(service);
             return new ServiceFixture(
-                root,
-                port,
-                logger,
-                network,
-                waypoints,
-                skins,
-                relay,
-                packRuntimes,
-                service);
+                root, paths, logger, waypoints, skins, packRuntimes, router, senderTransport, service);
+        }
+
+        public async Task StartAcceptingAsync(CancellationToken token)
+        {
+            await _router.StartAsync(token);
+            Service.UseSettingsForIncomingTransfers(Settings);
+        }
+
+        public async Task<PeerConnection> ConnectAsSenderAsync(CancellationToken token)
+        {
+            Assert.True(SteamId64.TryFrom(ReceiverSteamId, out var receiver));
+            return await _senderTransport.ConnectAsync(
+                receiver, WorldTransferService.ProtocolName, token);
         }
 
         public async ValueTask DisposeAsync()
         {
-            Network.ReleaseSnapshot();
+            await _router.DisposeAsync();
             await Service.DisposeAsync();
             await _waypoints.DisposeAsync();
             await _skins.DisposeAsync();
-            await _relay.DisposeAsync();
             _packRuntimes.Dispose();
             if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
         }
-    }
-
-    private sealed class BlockingNetworkTransport(
-        NetworkEndpointInfo endpoint) : ISelectedNetworkTransport
-    {
-        private readonly ManualResetEventSlim _releaseSnapshot = new(false);
-        private int _blockNextSnapshot;
-
-        public TaskCompletionSource SnapshotEntered { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public NetworkEnvironmentSnapshot GetSnapshot()
-        {
-            if (Interlocked.Exchange(ref _blockNextSnapshot, 0) != 0)
-            {
-                SnapshotEntered.TrySetResult();
-                _releaseSnapshot.Wait();
-            }
-            return new NetworkEnvironmentSnapshot
-            {
-                Endpoints = [endpoint],
-                PrimaryEndpoint = endpoint
-            };
-        }
-
-        public TcpClient CreateBoundTcpClient(
-            IPAddress remoteAddress,
-            string? localAddress = null,
-            string? localInterfaceId = null) =>
-            throw new InvalidOperationException("No outgoing connection was expected.");
-
-        public UdpClient CreateBoundUdpClient(
-            NetworkEndpointInfo networkEndpoint,
-            int port,
-            bool reuseAddress) =>
-            throw new InvalidOperationException("No datagram socket was expected.");
-
-        public Task<IReadOnlyList<IPAddress>> GetDynamicPeerTargetsAsync(
-            NetworkEnvironmentSnapshot snapshot,
-            CancellationToken token) =>
-            Task.FromResult<IReadOnlyList<IPAddress>>([]);
-
-        public void BlockNextSnapshot() =>
-            Interlocked.Exchange(ref _blockNextSnapshot, 1);
-
-        public void ReleaseSnapshot() => _releaseSnapshot.Set();
     }
 }
