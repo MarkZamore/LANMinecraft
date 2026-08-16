@@ -162,6 +162,11 @@ public sealed class SteamIdentityService : IIdentityService, IDisposable
             _store.Save(document);
             Publish(created);
 
+            // A brand-new player gets UUID.json too, holding the derived value:
+            // the previous launcher reads that file and nothing else, so a
+            // rollback keeps their progress instead of inventing a new profile.
+            if (source == IdentityBindingSource.Derived) TryWriteLegacyIdentityIfMissing(playerUuid);
+
             var migrated = source == IdentityBindingSource.MigratedUuidJson;
             _logger?.Info(migrated
                 ? $"Progress from UUID.json ({playerUuid}) is now bound to Steam account {personaName} ({canonical})."
@@ -206,6 +211,28 @@ public sealed class SteamIdentityService : IIdentityService, IDisposable
     private void Publish(SteamIdentityBinding binding)
     {
         lock (_stateGate) _binding = binding;
+    }
+
+    private void TryWriteLegacyIdentityIfMissing(Guid playerUuid)
+    {
+        if (File.Exists(_paths.IdentityFile)) return;
+        try
+        {
+            Directory.CreateDirectory(_paths.Personal);
+            AtomicFile.WriteAllText(_paths.IdentityFile, JsonSerializer.Serialize(
+                new PortableIdentity
+                {
+                    SchemaVersion = 1,
+                    PlayerUuid = playerUuid,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                },
+                LegacyJsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The binding is what matters; the compatibility file is a bonus.
+            _logger?.Warn($"UUID.json could not be written for the derived profile: {ex.Message}");
+        }
     }
 
     private Guid? TryReadLegacyUuid()
