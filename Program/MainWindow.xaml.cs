@@ -1672,18 +1672,9 @@ public partial class MainWindow : Window
         return $"{bytes} Б";
     }
 
-    private static string BuildVersionText()
-    {
-        // The release number alone could not answer "are we on the same build".
-        // Two players compared numbers, agreed they matched, and were on
-        // different commits - the number is assigned when CI publishes, so a
-        // build that failed or a machine that updated halfway wears a number
-        // that says nothing about the code inside it. The commit does.
-        var sha = UpdateService.CurrentCommitSha;
-        return sha.Length >= 7
-            ? $"Версия {UpdateService.CurrentReleaseNumber} ({sha[..7]})"
-            : $"Версия {UpdateService.CurrentReleaseNumber}";
-    }
+    // The number is the commit count, so it names the commit by itself - the
+    // short hash it used to carry said the same thing twice.
+    private static string BuildVersionText() => $"Версия {UpdateService.CurrentReleaseNumber}";
 
     private void InitializeUpdateUi()
     {
