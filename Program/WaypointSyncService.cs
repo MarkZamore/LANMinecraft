@@ -270,18 +270,40 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
     }
 
     /// <summary>
-    /// Names a host's folder for mods that key their data by server address.
-    /// e4steam's own address changes every session, so this stays stable per
-    /// Steam account instead.
+    /// The address a mod keys a host's data by. Xaero names its folder after
+    /// the server address, and e4steam regenerates that address every session,
+    /// so the session the guest is actually in wins; only when they have never
+    /// joined this host does a stable placeholder stand in, and the next real
+    /// session picks the waypoints up from the store anyway.
     /// </summary>
-    /// <summary>
-    /// An invalid account would produce the bare prefix "s-", which every host
-    /// would then share; there is no folder for a peer we cannot name.
-    /// </summary>
-    internal static string HostFolderToken(SteamId64 peer) =>
-        peer.IsValid ? $"s-{peer}" : string.Empty;
+    internal string HostFolderToken(string gameDirectory, SteamId64 peer)
+    {
+        if (!peer.IsValid) return string.Empty;
+        return XaeroMultiplayerFolderResolver.FindCurrentHostAddress(gameDirectory, peer)
+               ?? XaeroMultiplayerFolderResolver.PendingAddress(peer);
+    }
 
     private static string RemoteKey(string worldId, SteamId64 host) => $"{worldId}|{host}";
+
+    /// <summary>
+    /// Where a host's waypoints have to be written so the game sees them. It is
+    /// every session folder the guest has with that host, newest first, because
+    /// the guest may rejoin an older one - and the placeholder when there are
+    /// none yet.
+    /// </summary>
+    private static string[] ResolveHostAddresses(string gameDirectory, SteamId64 host)
+    {
+        var folders = XaeroMultiplayerFolderResolver.FindHostFolders(gameDirectory, host);
+        if (folders.Length == 0)
+        {
+            var pending = XaeroMultiplayerFolderResolver.PendingAddress(host);
+            return pending.Length == 0 ? [] : [pending];
+        }
+
+        return folders
+            .Select(XaeroMultiplayerFolderResolver.ToAddress)
+            .ToArray();
+    }
 
     private void RegisterRemote(PendingHostAnnouncement announcement, LocalWaypointSession local)
     {
@@ -576,7 +598,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
 
     private async Task SyncRemoteCoreAsync(LocalWaypointSession local, RemoteWorldWorkItem remote, CancellationToken token)
     {
-        var hostFolder = HostFolderToken(remote.Host);
+        var hostFolder = HostFolderToken(local.GameDirectory, remote.Host);
         foreach (var providerInfo in remote.Providers)
         {
             var stateKey = StateKey(local.Identity.MinecraftUuid, remote.WorldId, providerInfo.Provider.ProviderId);
@@ -654,18 +676,23 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
             {
                 throw new InvalidDataException("Remote waypoint snapshot belongs to a different world context.");
             }
-            // One host, one folder: the address a mod keys its data by is the
-            // host's Steam account, not an address that changes every session.
-            var context = new WaypointNativeContext(
-                local.GameDirectory,
-                string.Empty,
-                remote.WorldId,
-                providerInfo.WorldContextId,
-                providerInfo.ModVersion,
-                IsHost: false,
-                RemoteAddress: HostFolderToken(remote.Host));
-            var result = providerInfo.Provider.Import(context, response.Snapshot, []);
-            managed.UnionWith(result.ManagedRelativePaths);
+            // Written into the session the guest is in now, and read back out
+            // of every session they have had with this host - Xaero keeps one
+            // folder per e4steam address, and that address is new each time.
+            var addresses = ResolveHostAddresses(local.GameDirectory, remote.Host);
+            foreach (var address in addresses)
+            {
+                var context = new WaypointNativeContext(
+                    local.GameDirectory,
+                    string.Empty,
+                    remote.WorldId,
+                    providerInfo.WorldContextId,
+                    providerInfo.ModVersion,
+                    IsHost: false,
+                    RemoteAddress: address);
+                var result = providerInfo.Provider.Import(context, response.Snapshot, []);
+                managed.UnionWith(result.ManagedRelativePaths);
+            }
             WaypointPath.DeleteRemovedManagedFiles(
                 local.GameDirectory,
                 state.ManagedRelativePaths,
