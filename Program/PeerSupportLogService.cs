@@ -16,6 +16,10 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
     private const int SpoolEnvelopeHeaderSize = 25;
     private const int MaxIncomingConnections = 16;
     private const int MaxIncomingSessions = 32;
+    // The byte limiter is what actually bounds a peer; this only stops a flood
+    // of tiny frames, so it has to sit well above the frame rate a sender
+    // reaches while shaped to SupportLogRateLimiter.DefaultBytesPerSecond.
+    private const int MaxFramesPerSecond = 1024;
     private const int MaxIncomingSessionsPerPeer = 2;
     private const int MaxManifestStreams = 512;
     private const int CollectorQueueCapacity = 4;
@@ -722,13 +726,27 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
         }
     }
 
+    /// <summary>
+    /// Turns collected log lines into frames. The collector emits one item per
+    /// line, and a game log writes hundreds of lines a second, so lines from
+    /// the same source are batched into one frame: a frame per line put the
+    /// sender over the receiver's cadence guard within seconds, which is what
+    /// cut every game run short in the field.
+    /// </summary>
     private async Task PumpCollectorAsync(
         OutgoingSession session,
         SupportLogCollector collector,
         CancellationToken token)
     {
+        var batch = new CollectorBatch(this, session);
         await foreach (var item in collector.ReadAllAsync(token).ConfigureAwait(false))
         {
+            if (item.Kind is not (SupportLogCollectorItemKind.Content or
+                                  SupportLogCollectorItemKind.SourceReset))
+            {
+                await batch.FlushAsync(token).ConfigureAwait(false);
+            }
+
             switch (item.Kind)
             {
                 case SupportLogCollectorItemKind.SourceOpened:
@@ -760,13 +778,13 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
                         throw new InvalidDataException(
                             "A diagnostic source produced data before registration.");
                     }
-                    await EnqueueTextAsync(
-                        session,
-                        PeerSupportFrameType.Data,
-                        streamId,
-                        item.Text,
-                        token,
-                        collectorFrame: true).ConfigureAwait(false);
+                    await batch.AppendAsync(streamId, item.Text, token).ConfigureAwait(false);
+                    // Nothing else is waiting: send what is buffered rather
+                    // than holding a partial batch while the log is quiet.
+                    if (!collector.Items.TryPeek(out _))
+                    {
+                        await batch.FlushAsync(token).ConfigureAwait(false);
+                    }
                     break;
                 }
                 case SupportLogCollectorItemKind.SnapshotCompleted:
@@ -783,6 +801,49 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
                         collectorFrame: true).ConfigureAwait(false);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Collects consecutive lines from one source into a single frame. It is
+    /// flushed when the source changes, when the buffer reaches a frame's
+    /// worth of text, or as soon as the collector has nothing more to hand
+    /// over - so a busy log is batched and a quiet one is still immediate.
+    /// </summary>
+    private sealed class CollectorBatch(PeerSupportLogService owner, OutgoingSession session)
+    {
+        private const int FlushThresholdBytes = 32 * 1024;
+
+        private readonly StringBuilder _text = new();
+        private uint _streamId;
+
+        public async Task AppendAsync(uint streamId, string text, CancellationToken token)
+        {
+            if (text.Length == 0) return;
+            if (_text.Length > 0 && streamId != _streamId)
+            {
+                await FlushAsync(token).ConfigureAwait(false);
+            }
+            _streamId = streamId;
+            _text.Append(text);
+            if (_text.Length >= FlushThresholdBytes)
+            {
+                await FlushAsync(token).ConfigureAwait(false);
+            }
+        }
+
+        public async Task FlushAsync(CancellationToken token)
+        {
+            if (_text.Length == 0) return;
+            var payload = _text.ToString();
+            _text.Clear();
+            await owner.EnqueueTextAsync(
+                session,
+                PeerSupportFrameType.Data,
+                _streamId,
+                payload,
+                token,
+                collectorFrame: true).ConfigureAwait(false);
         }
     }
 
@@ -2482,7 +2543,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
                     _frameWindowStartedUtc = now;
                     _framesInWindow = 0;
                 }
-                if (++_framesInWindow > 64)
+                if (++_framesInWindow > MaxFramesPerSecond)
                 {
                     throw new InvalidDataException(
                         "The diagnostics sender exceeded the frame-rate limit.");
