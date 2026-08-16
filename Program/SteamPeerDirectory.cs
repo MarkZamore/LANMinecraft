@@ -56,9 +56,14 @@ public sealed class SteamPeerDirectory(
 
         foreach (var friend in client.Friends)
         {
-            if (friend.SteamId64 == local || !friend.IsInSharedApp) continue;
+            if (friend.SteamId64 == local) continue;
             if (!SteamId64.TryFrom(friend.SteamId64, out var peerId)) continue;
 
+            // Whether Steam calls a friend "in Spacewar" is not the question -
+            // that flag depends on how their launcher was started and on their
+            // privacy settings, and skipping on it made friends who were
+            // plainly running the launcher invisible. Publishing our keys is
+            // the proof, so every friend is asked and the keys decide.
             api.RequestFriendRichPresence(friend.SteamId64);
             var presence = SteamPresenceCodec.TryDecode(
                 peerId,
