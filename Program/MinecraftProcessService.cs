@@ -205,7 +205,27 @@ public sealed class MinecraftProcessService
             new("-Djava.net.preferIPv4Stack=true"),
             new("-Djava.net.preferIPv6Addresses=false"),
             new($"-Djava.io.tmpdir={javaTempDir}"),
-            new($"-Dminecraft.portable.skin.registry={skinRegistryPath}")
+            new($"-Dminecraft.portable.skin.registry={skinRegistryPath}"),
+            // Lazy model loading, delivered as a JVM property rather than as a
+            // config line. A player on a 16 GB machine ran out of heap inside
+            // ModelBakery.bakeModels while changing a resource pack: this pack
+            // ships 214k model and 58k blockstate JSONs, and the vanilla path
+            // holds every one of them live at once. This declines that
+            // allocation, capping the graph at ten thousand baked and ten
+            // thousand unbaked models.
+            //
+            // Why not the config file: the pack's copy of
+            // config/modernfix-mixins.properties can never reach an instance -
+            // ModernFix rewrites the file on every launch, and this launcher
+            // appends to it too, so the pack sync sees a locally modified file
+            // for ever and diverts its own version to PackConflicts. A JVM
+            // property is read after that file, never persists, and cannot
+            // overwrite a setting a player chose deliberately.
+            //
+            // Only safe for options ModernFix has no mod-compatibility entry
+            // for: the JVM-property path skips the isModDefined check that the
+            // file path honours. dynamic_resources has no such entry.
+            new("-Dmodernfix.config.mixin.perf.dynamic_resources=true")
         };
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
