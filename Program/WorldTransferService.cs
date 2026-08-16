@@ -1252,8 +1252,10 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             $"Minecraft is running or being prepared on the transfer {role}.");
     }
 
+    // A peer on an older protocol is understood; one on a newer protocol knows
+    // shapes this build does not, and is refused with something to act on.
     private static bool HasExpectedProtocol(string? protocol, int version) =>
-        string.Equals(protocol, ProtocolName, StringComparison.Ordinal) && version == ProtocolVersion;
+        string.Equals(protocol, ProtocolName, StringComparison.Ordinal) && PortableFormat.CanSpeak(version);
 
     private void BeginProgress(long total = 0) => RaiseProgress(0, total);
 

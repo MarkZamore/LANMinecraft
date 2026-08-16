@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 
 namespace Minecraft.Tests;
 
@@ -136,6 +136,66 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.Equal(76561198000000002UL, retried.SteamId64);
     }
 
+    /// <summary>
+    /// Steam closing does not raise anything - RunCallbacks simply stops doing
+    /// work - so the launcher has to notice by asking. Until it did, the window
+    /// went on showing a connection nobody had, and Retry returned instantly
+    /// because the status still said Ready.
+    /// </summary>
+    [Fact]
+    public async Task WhenSteamDisappears_TheSessionEndsAndRetryReconnects()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api);
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        // The player closes Steam.
+        api.SteamRunning = false;
+        api.LoggedOn = false;
+
+        var afterLoss = await service.StartAsync(CancellationToken.None);
+        Assert.False(afterLoss.IsReady);
+        Assert.Equal(SteamAvailability.SteamNotRunning, afterLoss.Availability);
+
+        // ...starts it again, and the same button now reconnects.
+        api.SteamRunning = true;
+        api.LoggedOn = true;
+        var recovered = await service.StartAsync(CancellationToken.None);
+        Assert.True(recovered.IsReady);
+        Assert.Equal(76561198000000001UL, recovered.SteamId64);
+        Assert.Equal(2, api.InitializeCount);
+    }
+
+    /// <summary>
+    /// Shutting the Steam API down while the callback thread is inside it is a
+    /// native crash on exit, which a player reads as "the launcher crashed".
+    /// </summary>
+    [Fact]
+    public async Task Disposing_StopsTheCallbackThreadBeforeTheApi()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        var service = new SteamClientService(api);
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        await service.DisposeAsync();
+
+        Assert.False(api.Initialized);
+        Assert.Equal(1, api.ShutdownCount);
+        Assert.False(api.CallbacksRanAfterShutdown, "The pump was still calling Steam after shutdown.");
+    }
+
     [Fact]
     public async Task PresenceCalls_AreIgnoredUntilSteamIsReady()
     {
@@ -197,6 +257,8 @@ internal sealed class FakeSteamApi : ISteamApiFacade
         return true;
     }
 
+    public bool CallbacksRanAfterShutdown { get; private set; }
+
     public void Shutdown()
     {
         if (!Initialized) return;
@@ -204,7 +266,10 @@ internal sealed class FakeSteamApi : ISteamApiFacade
         ShutdownCount++;
     }
 
-    public void RunCallbacks() { }
+    public void RunCallbacks()
+    {
+        if (ShutdownCount > 0) CallbacksRanAfterShutdown = true;
+    }
 
     public bool IsSteamRunning() => SteamRunning;
 

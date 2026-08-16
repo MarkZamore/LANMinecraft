@@ -16,11 +16,16 @@ namespace Minecraft;
 /// </summary>
 public static class DeprecatedFileCleanupService
 {
-    /// <summary>Files directly under Personal that no build writes any more.</summary>
+    /// <summary>
+    /// Files directly under Personal that no build writes any more.
+    ///
+    /// UUID.json and steam-identity.json are deliberately absent: nothing reads
+    /// them, but they are the only local record of the profile a machine used
+    /// to play as. They cost a few hundred bytes and they are the first thing
+    /// anyone would want if a player ever came back as the wrong character.
+    /// </summary>
     private static readonly string[] PersonalFiles =
     [
-        "UUID.json",              // the pre-Steam identity; the account decides now
-        "steam-identity.json",    // the migration's binding table
         "network-peers.json",     // the VPN route cache
         "lan-relay-ports.json",   // the LAN relay's port store
         "peer-support-certificate.json"

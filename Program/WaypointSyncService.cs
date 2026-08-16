@@ -240,7 +240,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
     public void ObservePeer(SteamPeerPresence presence)
     {
         ArgumentNullException.ThrowIfNull(presence);
-        if (presence.WaypointProtocolVersion != ProtocolVersion ||
+        if (!PortableFormat.CanSpeak(presence.WaypointProtocolVersion) ||
             !Guid.TryParse(presence.HostedWorldId, out var worldId) || worldId == Guid.Empty)
         {
             return;
@@ -769,7 +769,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
             var response = PortableProtocol.Deserialize<WaypointSyncReply>(frame, _jsonOptions);
             return response is not null &&
                    response.Protocol == ProtocolName &&
-                   response.ProtocolVersion == ProtocolVersion
+                   PortableFormat.CanSpeak(response.ProtocolVersion)
                 ? response
                 : null;
         }
@@ -1023,7 +1023,7 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
     private static void ValidateRequest(WaypointSyncEnvelope request)
     {
         if (!string.Equals(request.Protocol, ProtocolName, StringComparison.Ordinal) ||
-            request.ProtocolVersion != ProtocolVersion ||
+            !PortableFormat.CanSpeak(request.ProtocolVersion) ||
             !Guid.TryParse(request.WorldId, out var worldId) || worldId == Guid.Empty ||
             !Guid.TryParse(request.PlayerUuid, out var playerId) || playerId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.ProviderId) ||

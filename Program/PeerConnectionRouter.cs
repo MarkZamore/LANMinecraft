@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO;
 
 namespace Minecraft;
@@ -14,8 +14,12 @@ namespace Minecraft;
 /// </summary>
 public sealed class PeerConnectionRouter : IAsyncDisposable
 {
-    /// <summary>The first frame is a small handshake; anything larger is a mistake or an attack.</summary>
-    internal const int MaxInitialFrameBytes = 64 * 1024;
+    /// <summary>
+    /// The opening frame is not always a handshake: a waypoint push carries its
+    /// whole snapshot in it. The bound is the protocol's own JSON limit, so a
+    /// player with a mature waypoint set is not silently dropped.
+    /// </summary>
+    internal const int MaxInitialFrameBytes = PortableProtocol.MaxJsonFrameBytes;
     internal static readonly TimeSpan InitialFrameTimeout = TimeSpan.FromSeconds(10);
     private const int MaxConcurrentConnections = 32;
 
@@ -50,12 +54,17 @@ public sealed class PeerConnectionRouter : IAsyncDisposable
         _fallback = handler;
     }
 
+    /// <summary>
+    /// Begins accepting connections. A transport that refuses to listen leaves
+    /// the router unstarted rather than half-started, so the player can fix
+    /// Steam and press Retry.
+    /// </summary>
     public async Task StartAsync(CancellationToken token = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_started) return;
-        _started = true;
         await _transport.StartListeningAsync(token).ConfigureAwait(false);
+        _started = true;
     }
 
     private void OnConnectionAccepted(object? sender, PeerConnection connection)

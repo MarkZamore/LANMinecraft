@@ -27,7 +27,11 @@ public sealed class SteamPeerTransport : IPeerTransport
     internal const int VirtualPort = 35656;
 
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan PumpInterval = TimeSpan.FromMilliseconds(2);
+    /// <summary>Between polls while data is flowing; keeps one core free.</summary>
+    private static readonly TimeSpan PumpInterval = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>Between polls when nothing is arriving.</summary>
+    private static readonly TimeSpan IdlePumpInterval = TimeSpan.FromMilliseconds(10);
     private const int MaxMessagesPerPoll = 32;
 
     // A world transfer moves gigabytes: Steam's 1 MB/s default would turn a
@@ -342,16 +346,17 @@ public sealed class SteamPeerTransport : IPeerTransport
                 }
             }
 
-            if (idle)
+            try
             {
-                try
-                {
-                    await Task.Delay(PumpInterval, _shutdown.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
+                // Always yield: a busy transfer would otherwise spin a core flat
+                // out for the hour it takes to move a world. At 32 messages of
+                // 256 KiB per poll this pause cannot be the bottleneck.
+                await Task.Delay(idle ? IdlePumpInterval : PumpInterval, _shutdown.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
             }
         }
     }

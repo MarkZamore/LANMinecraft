@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace Minecraft;
 
@@ -41,6 +42,15 @@ public sealed class SteamClientService : IAsyncDisposable
     private const string FailedMessagePrefix = "Не удалось подключиться к Steam: ";
 
     private static readonly TimeSpan IdlePumpInterval = TimeSpan.FromMilliseconds(50);
+    /// <summary>How often the pump asks whether Steam is still there.</summary>
+    private static readonly TimeSpan LivenessCheckInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long shutdown waits for the callback thread to leave Steam.</summary>
+    private static readonly TimeSpan PumpStopTimeout = TimeSpan.FromSeconds(5);
+
+    internal const string SteamLostMessage =
+        "Steam закрылся или выполнен выход из аккаунта. Запустите Steam и нажмите «Повторить».";
+
     private static readonly TimeSpan FriendsRefreshInterval = TimeSpan.FromSeconds(5);
 
     private readonly ISteamApiFacade _api;
@@ -96,7 +106,10 @@ public sealed class SteamClientService : IAsyncDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            if (Status.IsReady) return Status;
+            // A status of Ready is only trustworthy while Steam is still
+            // there; if it went away, this call is the recovery path.
+            if (Status.IsReady && IsSteamAlive()) return Status;
+            if (Status.IsReady) TearDownApi("Steam закрылся; переподключение.");
             Publish(new SteamClientStatus(SteamAvailability.Starting, 0, string.Empty, "Подключение к Steam…"));
 
             try
@@ -175,19 +188,34 @@ public sealed class SteamClientService : IAsyncDisposable
     private void PumpLoop()
     {
         var nextFriendsRefresh = DateTimeOffset.MinValue;
+        var nextLivenessCheck = DateTimeOffset.UtcNow + LivenessCheckInterval;
         while (!_shutdownCts.IsCancellationRequested)
         {
             try
             {
                 _api.RunCallbacks();
                 var now = DateTimeOffset.UtcNow;
+                if (now >= nextLivenessCheck)
+                {
+                    nextLivenessCheck = now + LivenessCheckInterval;
+                    // Steam closing does not raise anything: RunCallbacks simply
+                    // stops doing work. Without this the window would go on
+                    // claiming a connection nobody has.
+                    if (!IsSteamAlive())
+                    {
+                        _logger?.Warn("Steam is no longer running or signed in; the session ended.");
+                        Publish(new SteamClientStatus(
+                            SteamAvailability.SteamNotRunning, 0, string.Empty, SteamLostMessage));
+                        return;
+                    }
+                }
                 if (now >= nextFriendsRefresh)
                 {
                     nextFriendsRefresh = now + FriendsRefreshInterval;
                     RefreshFriends();
                 }
             }
-            catch (Exception ex) when (ex is InvalidOperationException or AccessViolationException)
+            catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
             {
                 _logger?.Warn($"Steam callback pump stopped: {ex.Message}");
                 Publish(new SteamClientStatus(
@@ -230,11 +258,59 @@ public sealed class SteamClientService : IAsyncDisposable
         if (_disposed) return;
         _disposed = true;
         await _shutdownCts.CancelAsync().ConfigureAwait(false);
-        var pump = _pump;
-        _pump = null;
-        pump?.Join(TimeSpan.FromSeconds(2));
-        _api.Shutdown();
+        StopPumpAndApi();
         _shutdownCts.Dispose();
         _gate.Dispose();
+    }
+
+    /// <summary>
+    /// True while the Steam client this session belongs to is still there.
+    /// </summary>
+    private bool IsSteamAlive()
+    {
+        try
+        {
+            return _api.IsSteamRunning() && _api.IsLoggedOn();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ends the session so the next <see cref="StartAsync"/> starts a fresh one.
+    /// </summary>
+    private void TearDownApi(string reason)
+    {
+        _logger?.Info(reason);
+        StopPumpAndApi();
+        lock (_stateGate) _friends = [];
+    }
+
+    /// <summary>
+    /// Stops the callback thread before the API goes away. Steamworks is not
+    /// safe to shut down while another thread is inside it, so a pump that
+    /// refuses to stop means the API is left alone - the process is ending
+    /// anyway, and a crash on exit would look like a crash to the player.
+    /// </summary>
+    private void StopPumpAndApi()
+    {
+        var pump = _pump;
+        _pump = null;
+        if (pump is { IsAlive: true } && !pump.Join(PumpStopTimeout))
+        {
+            _logger?.Warn("The Steam callback thread did not stop; leaving the API to the process exit.");
+            return;
+        }
+
+        try
+        {
+            _api.Shutdown();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
+        {
+            _logger?.Warn($"Steam shutdown failed: {ex.Message}");
+        }
     }
 }
