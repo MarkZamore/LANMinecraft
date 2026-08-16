@@ -80,6 +80,28 @@ public sealed class SteamPeerDirectory(
     }
 
     /// <summary>
+    /// A friend told us about themselves directly, over a connection, because
+    /// Steam would not. Their account of their presence outranks the nothing
+    /// Steam offered, and it lives as long as any other entry does.
+    /// </summary>
+    public void Introduce(SteamPeerPresence presence)
+    {
+        ArgumentNullException.ThrowIfNull(presence);
+        var now = DateTimeOffset.UtcNow;
+        bool changed;
+        lock (_gate)
+        {
+            changed = !_peers.TryGetValue(presence.SteamId.Value, out var previous) ||
+                      previous.Presence != presence;
+            _peers[presence.SteamId.Value] = (presence, now);
+        }
+        if (!changed) return;
+        logger?.Info($"{presence.PlayerName} introduced themselves over a launcher connection " +
+                     $"(protocol {presence.ProtocolVersion}, state {presence.State}).");
+        PeersChanged?.Invoke(this, Peers);
+    }
+
+    /// <summary>
     /// Re-reads the friend list. Cheap enough for the UI timer: Steam serves
     /// the cached presence of friends the client already knows about.
     /// </summary>
@@ -120,6 +142,8 @@ public sealed class SteamPeerDirectory(
                 friend.PersonaName,
                 key => api.GetFriendRichPresence(friend.SteamId64, key));
             if (presence is null) continue;
+            // A friend who introduced themselves ages by the introduction, not
+            // by a Steam read that keeps coming back empty.
 
             lock (_gate)
             {

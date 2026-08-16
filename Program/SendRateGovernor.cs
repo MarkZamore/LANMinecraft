@@ -13,9 +13,8 @@ namespace Minecraft;
 /// 8 MiB/s floor into a relay that carries two drowned it in resends - the
 /// remote side reported 15 % of our packets arriving and the world crawled at
 /// 0.05 MiB/s while the wire showed 8. The only measurement Steam gives of the
-/// path our bytes take is the peer's connection quality; this reads it every
-/// few seconds and moves the floor: sharply down while packets are being lost,
-/// gently up while they are not.
+/// path our bytes take is the peer's connection quality; this reads it and
+/// moves the floor: down when packets are being lost, up while they are not.
 ///
 /// SendRateMin and SendRateMax are never locked, so they can be changed on a
 /// live connection - the one place Steam lets a sender adapt.
@@ -24,7 +23,7 @@ internal sealed class SendRateGovernor
 {
     internal const int MinimumBytesPerSecond = 256 * 1024;
     internal const int MaximumBytesPerSecond = 100 * 1024 * 1024;
-    internal const int InitialBytesPerSecond = 8 * 1024 * 1024;
+    internal const int InitialBytesPerSecond = 4 * 1024 * 1024;
 
     /// <summary>Below this share of packets arriving, the path is being flooded.</summary>
     internal const float LossyQuality = 0.9f;
@@ -34,8 +33,19 @@ internal sealed class SendRateGovernor
 
     private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// The peer's quality figure is a running average that outlives the loss
+    /// that lowered it. Cutting on every read while it recovers means cutting
+    /// three or four times for one event, all the way to the floor - the first
+    /// version of this did exactly that and pinned a 1.3 MiB/s path at 0.25.
+    /// One cut per event, then silence until the number has had time to move.
+    /// </summary>
+    private static readonly TimeSpan BackoffHold = TimeSpan.FromSeconds(12);
+
     private readonly HSteamNetConnection _connection;
     private long _nextSampleAt;
+    private long _holdUntil;
+    private float _lastQuality = -1f;
     private int _rate = InitialBytesPerSecond;
 
     internal SendRateGovernor(HSteamNetConnection connection)
@@ -68,26 +78,38 @@ internal sealed class SendRateGovernor
         var quality = status.m_flConnectionQualityRemote;
         if (quality < 0) return;
 
-        var next = Decide(_rate, quality);
+        var holding = now < _holdUntil;
+        var next = Decide(_rate, quality, _lastQuality, holding);
+        _lastQuality = quality;
+        if (next < _rate)
+        {
+            _holdUntil = now + (long)(BackoffHold.TotalSeconds * Stopwatch.Frequency);
+        }
         if (next == _rate) return;
         if (Apply(next)) Volatile.Write(ref _rate, next);
     }
 
     /// <summary>
     /// The control law on its own, so it can be reasoned about without Steam.
-    /// Halving on loss and adding a step on a clean read is the same shape TCP
-    /// settled on: it converges to the path's capacity and backs off before it
-    /// makes things worse.
+    /// A loss event backs off by a third - enough to stop the flooding, not
+    /// enough to throw the capacity away - and is acted on once: while
+    /// <paramref name="holding"/> the stale average is ignored, and a reading
+    /// that is merely still low but no longer falling is not a new event.
+    /// A clean path grows by an eighth per read, so a run of clean reads finds
+    /// the ceiling in under a minute without overshooting it by a multiple.
     /// </summary>
-    internal static int Decide(int current, float remoteQuality)
+    internal static int Decide(int current, float remoteQuality, float previousQuality, bool holding)
     {
         if (remoteQuality < LossyQuality)
         {
-            return Math.Max(MinimumBytesPerSecond, current / 2);
+            var newEvent = !holding && (previousQuality < 0 || remoteQuality <= previousQuality);
+            return newEvent
+                ? Math.Max(MinimumBytesPerSecond, current - current / 3)
+                : current;
         }
-        if (remoteQuality >= CleanQuality)
+        if (remoteQuality >= CleanQuality && !holding)
         {
-            var step = Math.Max(256 * 1024, current / 4);
+            var step = Math.Max(128 * 1024, current / 8);
             return (int)Math.Min(MaximumBytesPerSecond, (long)current + step);
         }
         return current;

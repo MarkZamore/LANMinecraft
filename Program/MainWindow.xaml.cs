@@ -56,6 +56,7 @@ public partial class MainWindow : Window
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
     private BugReportService? _bugReports;
+    private PeerGreetingService? _greetings;
     private string _localPackHash = "";
     private string _state = "Starting";
     private bool _busy;
@@ -159,6 +160,9 @@ public partial class MainWindow : Window
             _peerRouter.Register(_bugReports);
             _peerRouter.Register(_waypointSync);
             _peerRouter.Register(_skinService);
+            _greetings = new PeerGreetingService(_peerTransport, _logger);
+            _greetings.Greeted += presence => _peerDirectory?.Introduce(presence);
+            _peerRouter.Register(_greetings);
             _peerRouter.RegisterFallback(_transfer);
             _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
@@ -717,7 +721,7 @@ public partial class MainWindow : Window
             identityContext);
         var waypointHost = RequireWaypointSync().GetHostAdvertisement();
         var skin = RequireSkinService().GetAnnouncement(settings, identityContext.MinecraftUuid);
-        _peerDirectory.PublishLocalPresence(new SteamPeerPresence
+        var presence = new SteamPeerPresence
         {
             SteamId = localId,
             PersonaName = _steamClient.Status.PersonaName,
@@ -738,7 +742,13 @@ public partial class MainWindow : Window
             WaypointProviders = waypointHost?.Providers.ToList() ?? [],
             // Anyone running this build can receive a bug report.
             DiagnosticProtocolVersion = BugReportManifest.ProtocolVersion
-        });
+        };
+        _peerDirectory.PublishLocalPresence(presence);
+        // Steam decides per client whose presence it serves; a friend we can
+        // see may not be able to see us. Telling them ourselves is the only
+        // way to be sure the two lists agree.
+        _greetings?.SetLocalPresence(presence);
+        _greetings?.GreetNew(_peerDirectory.Peers, _lifetimeCts.Token);
     }
 
     /// <summary>What a report says about the machine it came from.</summary>
