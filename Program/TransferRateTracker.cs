@@ -21,12 +21,19 @@ internal sealed class TransferRateTracker
     {
         var now = Stopwatch.GetTimestamp();
         currentBytes = Math.Max(0, currentBytes);
-        if (!string.Equals(_scope, scope, StringComparison.Ordinal) ||
-            (_samples.Count > 0 && currentBytes < _samples.Last().Bytes))
+        if (!string.Equals(_scope, scope, StringComparison.Ordinal))
         {
             _scope = scope;
             _samples.Clear();
             _bytesPerSecond = 0;
+        }
+        // A count that steps back within a stage is a wobble in how "delivered"
+        // is measured, not a restart; a restart changes the stage. Clamping to
+        // the last value keeps one bad sample from zeroing six seconds of
+        // history.
+        if (_samples.Count > 0 && currentBytes < _samples.Last().Bytes)
+        {
+            currentBytes = _samples.Last().Bytes;
         }
 
         _samples.Enqueue((now, currentBytes));

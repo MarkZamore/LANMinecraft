@@ -1959,7 +1959,11 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     while (queued is not null &&
                            await Task.WhenAny(write, Task.Delay(ProgressTick, idle.Token)) != write)
                     {
-                        progress(Math.Max(0, total - read - Math.Min(total - read, queued.QueuedBytes)));
+                        // The queue holds part of this block already, so the
+                        // same "handed over minus still queued" as after the
+                        // write - it must never step back, or the window's
+                        // speed counter takes the step for a new transfer.
+                        progress(Math.Max(0, total - queued.QueuedBytes));
                     }
                     await write;
                 }
