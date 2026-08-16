@@ -27,7 +27,14 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     /// <summary>Stop feeding the send buffer past this; the peer is behind.</summary>
     internal const int PendingReliableLimitBytes = 8 * 1024 * 1024;
 
-    private static readonly TimeSpan SendRetryDelay = TimeSpan.FromMilliseconds(2);
+    // Task.Delay rounds up to the system timer, which on Windows is about
+    // 15.6 ms unless something has asked for better. Two milliseconds was
+    // therefore never two milliseconds: at one 256 KiB message per tick this
+    // capped the connection near 16 MiB/s no matter what rate Steam permitted -
+    // invisible at today's 8 MiB/s and the first wall we would hit on raising
+    // it. A periodic timer keeps the intent without the rounding.
+    private static readonly TimeSpan SendRetryDelay = TimeSpan.FromMilliseconds(1);
+    private static readonly TimeSpan SendRetryPollFloor = TimeSpan.FromMicroseconds(250);
 
     private readonly HSteamNetConnection _connection;
     private readonly Pipe _inbound;
@@ -155,7 +162,7 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
 
                 if (GetPendingReliableBytes() > PendingReliableLimitBytes)
                 {
-                    await Task.Delay(SendRetryDelay, token).ConfigureAwait(false);
+                    await WaitForDrainAsync(token).ConfigureAwait(false);
                     continue;
                 }
 
@@ -190,6 +197,19 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     public long QueuedBytes => GetPendingReliableBytes();
 
     public string DescribeLink() => SteamPeerTransport.DescribeLink(_connection);
+
+    /// <summary>
+    /// Waits for the send queue to drain a little without paying the system
+    /// timer's rounding on every message.
+    /// </summary>
+    private static async Task WaitForDrainAsync(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(SendRetryDelay);
+        if (!await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+        {
+            await Task.Delay(SendRetryPollFloor, token).ConfigureAwait(false);
+        }
+    }
 
     private int GetPendingReliableBytes()
     {
