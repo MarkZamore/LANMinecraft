@@ -9,14 +9,8 @@ namespace Minecraft;
 public sealed class WorldPlayerManifestService
 {
     public const string ManifestFileName = ".minecraft-portable-players.json";
-    /// <summary>3 = entries may name a Steam account; 2 knew only UUIDs.</summary>
-    internal const int CurrentSchemaVersion = 3;
-
-    /// <summary>
-    /// The oldest shape still accepted. A world that has not been opened by
-    /// this build yet is still a perfectly good world.
-    /// </summary>
-    internal const int MinimumSupportedSchemaVersion = 2;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    internal const int CurrentSchemaVersion = PortableFormat.SchemaVersion;
     private static readonly string[] ProfileDirectories = ["playerdata", "stats", "advancements"];
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -85,11 +79,12 @@ public sealed class WorldPlayerManifestService
     {
         var manifest = Read(worldPath)
             ?? throw new InvalidDataException($"Player manifest is missing in world {Path.GetFileName(worldPath)}.");
-        // A world may arrive from a build that has not learned about Steam
-        // accounts yet; the fields it lacks are ones nothing validates.
-        if (manifest.SchemaVersion is < MinimumSupportedSchemaVersion or > CurrentSchemaVersion)
+        // Anything this build has ever written is readable; only a document
+        // from a newer build is not.
+        if (!PortableFormat.CanRead(manifest.SchemaVersion))
         {
-            throw new InvalidDataException($"Unsupported player manifest schema {manifest.SchemaVersion}.");
+            throw new InvalidDataException(
+                PortableFormat.DescribeUnreadable("Список игроков мира", manifest.SchemaVersion));
         }
 
         if (!string.IsNullOrWhiteSpace(manifest.CurrentHolderUuid) &&
@@ -299,9 +294,9 @@ public sealed class WorldPlayerManifestService
 
 public sealed class WorldPlayersManifest
 {
-    // A schema-less document is a v2 one: v2 is the shape that shipped before
-    // the version was ever bumped here.
-    public int SchemaVersion { get; set; } = WorldPlayerManifestService.MinimumSupportedSchemaVersion;
+    // A document with no version at all predates versioning; reading it as
+    // version 1 keeps it inside the one rule rather than beside it.
+    public int SchemaVersion { get; set; } = 1;
 
     public string CurrentHolderUuid { get; set; } = string.Empty;
 

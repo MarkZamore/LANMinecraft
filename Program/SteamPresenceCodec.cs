@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 
 namespace Minecraft;
@@ -36,8 +36,8 @@ public sealed record SteamPeerPresence
 /// </summary>
 public static class SteamPresenceCodec
 {
-    /// <summary>Bumped when the meaning of the keys changes; peers ignore other versions.</summary>
-    public const int ProtocolVersion = 1;
+    /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
+    public const int ProtocolVersion = PortableFormat.ProtocolVersion;
 
     public const int MaxValueLength = 256;
     public const string StateIdle = "idle";

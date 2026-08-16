@@ -6,8 +6,8 @@ namespace Minecraft;
 public sealed class WorldMetadataService
 {
     public const string MetadataFileName = ".minecraft-portable-world.json";
-    /// <summary>6 = the document also names Steam accounts; 5 was UUIDs only.</summary>
-    public const int CurrentSchemaVersion = 6;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    public const int CurrentSchemaVersion = PortableFormat.SchemaVersion;
     private const string UnknownBuildName = "\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E";
     private const string UnknownOwnerName = "\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E";
     private readonly object _gate = new();

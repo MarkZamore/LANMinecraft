@@ -15,7 +15,8 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
         PeerConnectionContext context,
         CancellationToken token) =>
         HandleIncomingAsync(stream, initialFrame, token);
-    public const int ProtocolVersion = 1;
+    /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
+    public const int ProtocolVersion = PortableFormat.ProtocolVersion;
     public const string PullMessageType = "Pull";
     public const string PushMessageType = "Push";
 

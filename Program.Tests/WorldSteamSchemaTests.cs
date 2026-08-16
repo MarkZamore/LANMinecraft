@@ -132,7 +132,7 @@ public sealed class WorldSteamSchemaTests : IDisposable
 
         // A v2 manifest, as the previous build wrote it.
         var legacy = manifests.Write(world, identity);
-        Assert.Equal(WorldPlayerManifestService.CurrentSchemaVersion, legacy.SchemaVersion);
+        Assert.Equal(PortableFormat.SchemaVersion, legacy.SchemaVersion);
         DowngradeManifestToV2(world);
 
         var profiles = new WorldPlayerProfileService(paths);
@@ -140,7 +140,7 @@ public sealed class WorldSteamSchemaTests : IDisposable
 
         var manifest = manifests.Read(world);
         Assert.NotNull(manifest);
-        Assert.Equal(WorldPlayerManifestService.CurrentSchemaVersion, manifest.SchemaVersion);
+        Assert.Equal(PortableFormat.SchemaVersion, manifest.SchemaVersion);
         Assert.Equal(
             OwnerSteamId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             manifest.CurrentHolderSteamId64);
@@ -168,10 +168,10 @@ public sealed class WorldSteamSchemaTests : IDisposable
         WritePlayerProfile(world, identity.PlayerUuid);
         var manifests = new WorldPlayerManifestService();
         manifests.Write(world, identity);
-        SetManifestSchemaVersion(world, WorldPlayerManifestService.CurrentSchemaVersion + 1);
+        SetManifestSchemaVersion(world, PortableFormat.SchemaVersion + 1);
 
         var failure = Assert.Throws<InvalidDataException>(() => manifests.Validate(world));
-        Assert.Contains("Unsupported player manifest schema", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("более новой версией", failure.Message, StringComparison.Ordinal);
     }
 
     private AppPaths CreatePaths()
@@ -225,8 +225,9 @@ public sealed class WorldSteamSchemaTests : IDisposable
             JsonSerializer.Serialize(document, JsonOptions));
     }
 
+    /// <summary>Rewrites the manifest as a build from before this release wrote it.</summary>
     private static void DowngradeManifestToV2(string world) =>
-        SetManifestSchemaVersion(world, WorldPlayerManifestService.MinimumSupportedSchemaVersion);
+        SetManifestSchemaVersion(world, 2);
 
     private static void SetManifestSchemaVersion(string world, int schemaVersion)
     {

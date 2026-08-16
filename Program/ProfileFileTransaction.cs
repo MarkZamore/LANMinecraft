@@ -10,8 +10,8 @@ namespace Minecraft;
 /// </summary>
 internal sealed class ProfileFileTransaction : IDisposable
 {
-    /// <summary>2 = the journal names its owning process; 1 had no owner.</summary>
-    private const int SchemaVersion = 2;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    private const int SchemaVersion = PortableFormat.SchemaVersion;
     private const string QuarantineDirectoryName = "Quarantine";
     private static readonly TimeSpan QuarantineRetention = TimeSpan.FromDays(30);
 
@@ -90,11 +90,11 @@ internal sealed class ProfileFileTransaction : IDisposable
                                   File.ReadAllText(journalPath), ReadJsonOptions)
                     ?? throw new InvalidDataException("Profile transaction journal is empty.");
 
-                if (journal.SchemaVersion != SchemaVersion)
+                if (!PortableFormat.CanRead(journal.SchemaVersion))
                 {
-                    // Written by another build; that build owns its own repair.
+                    // Written by a newer build; that build owns its own repair.
                     logger?.Warn(
-                        $"Player profile transaction {name} uses schema {journal.SchemaVersion}; leaving it untouched.");
+                        $"Player profile transaction {name} uses format {journal.SchemaVersion}; leaving it untouched.");
                     continue;
                 }
 

@@ -23,7 +23,8 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         PeerConnectionContext context,
         CancellationToken token) =>
         HandleIncomingAsync(stream, initialFrame, token);
-    public const int ProtocolVersion = 1;
+    /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
+    public const int ProtocolVersion = PortableFormat.ProtocolVersion;
     public const int HttpPort = 35658;
     private const int MaxSkinBytes = 128 * 1024 * 1024;
     private readonly AppPaths _paths;

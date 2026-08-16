@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
@@ -30,7 +30,11 @@ public sealed partial class PortableJavaRuntimeService
     // the install looks like Mojang's components and carries no '+' in its path.
     private const string ArchiveRootPrefix = "jdk-25.0.3+9/";
     private const string MarkerFileName = ".portable-java.json";
-    private const int MarkerSchemaVersion = 1;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int MarkerCacheGeneration = 1;
 
     // Measured from the extracted image, with headroom for the archive copy.
     private const long RequiredFreeSpaceBytes = 700L * 1024 * 1024;
@@ -167,7 +171,7 @@ public sealed partial class PortableJavaRuntimeService
             if (!File.Exists(markerPath)) return null;
             var marker = JsonSerializer.Deserialize<JavaRuntimeMarker>(File.ReadAllText(markerPath));
             if (marker is null ||
-                marker.SchemaVersion != MarkerSchemaVersion ||
+                marker.SchemaVersion != MarkerCacheGeneration ||
                 !string.Equals(marker.RuntimeId, _pin.RuntimeId, StringComparison.Ordinal) ||
                 !string.Equals(marker.ArchiveSha256, _pin.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
             {
@@ -414,7 +418,7 @@ public sealed partial class PortableJavaRuntimeService
                 Path.Combine(stageRoot, MarkerFileName),
                 JsonSerializer.Serialize(new JavaRuntimeMarker
                 {
-                    SchemaVersion = MarkerSchemaVersion,
+                    SchemaVersion = MarkerCacheGeneration,
                     RuntimeId = _pin.RuntimeId,
                     ArchiveSha256 = _pin.ArchiveSha256,
                     JavaVersion = _pin.JavaVersion,

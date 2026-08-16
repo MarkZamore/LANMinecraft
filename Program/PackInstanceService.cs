@@ -12,7 +12,11 @@ public sealed record PackInstanceContext(string PackDirectory, string GameDirect
 
 public sealed class PackInstanceService : IDisposable
 {
-    private const int StateSchemaVersion = 1;
+    // A cache generation, not a data format: it is bumped to throw the cached
+    // work away and redo it, so it is deliberately independent of
+    // PortableFormat's version - a release must not cost every player a
+    // re-download for an unrelated change.
+    private const int StateCacheGeneration = 1;
     private const string StateFileName = ".portable-instance.json";
 
     internal static readonly HashSet<string> InstanceOwnedDirectories = new(StringComparer.OrdinalIgnoreCase)
@@ -207,7 +211,7 @@ public sealed class PackInstanceService : IDisposable
         EnsureMods(packDir, gameDir, state, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, token);
         SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
-        state.SchemaVersion = StateSchemaVersion;
+        state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
         return new PackInstanceContext(packDir, gameDir, clientJar);
@@ -546,7 +550,7 @@ public sealed class PackInstanceService : IDisposable
             if (File.Exists(statePath))
             {
                 var state = JsonSerializer.Deserialize<InstanceState>(File.ReadAllText(statePath), _jsonOptions);
-                if (state?.SchemaVersion == StateSchemaVersion)
+                if (state?.SchemaVersion == StateCacheGeneration)
                 {
                     state.Files = new Dictionary<string, SourceFileState>(state.Files, StringComparer.OrdinalIgnoreCase);
                     state.ModFiles = new Dictionary<string, SourceFileState>(state.ModFiles, StringComparer.OrdinalIgnoreCase);
@@ -698,7 +702,7 @@ public sealed class PackInstanceService : IDisposable
 
     private sealed class InstanceState
     {
-        public int SchemaVersion { get; set; } = StateSchemaVersion;
+        public int SchemaVersion { get; set; } = StateCacheGeneration;
         public string PackRelativePath { get; set; } = "";
         public string ModsMode { get; set; } = "";
         public Dictionary<string, SourceFileState> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);

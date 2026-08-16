@@ -19,6 +19,12 @@ public sealed class UpdateService
     public const string ExecutableAssetName = "LANMinecraft.exe";
     public const string ManifestAssetName = "update.json";
     public const string DeltaPatchAssetName = "LANMinecraft.bsdiff";
+    /// <summary>
+    /// The shape of update.json, which CI writes for every launcher that might
+    /// read it - including builds older than the one that produced it. It is
+    /// deliberately not PortableFormat's version: raising that must never make
+    /// an installed launcher unable to parse its own update manifest.
+    /// </summary>
     public const int ManifestSchemaVersion = 2;
     public const string DeltaPatchAlgorithm = "bsdiff";
     public const int DeltaPatchAlgorithmVersion = 1;

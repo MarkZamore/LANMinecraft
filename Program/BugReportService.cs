@@ -11,7 +11,9 @@ namespace Minecraft;
 public sealed record BugReportManifest
 {
     public const string ProtocolName = "MinecraftPortableBugReport";
-    public const int ProtocolVersion = 1;
+
+    /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
+    public const int ProtocolVersion = PortableFormat.ProtocolVersion;
 
     public string Protocol { get; init; } = ProtocolName;
     public int Version { get; init; } = ProtocolVersion;

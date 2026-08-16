@@ -5,8 +5,8 @@ namespace Minecraft;
 
 public sealed class SettingsService
 {
-    /// <summary>Schema written by this build; see <see cref="AppSettings.SchemaVersion"/>.</summary>
-    public const int CurrentSchemaVersion = 2;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    public const int CurrentSchemaVersion = PortableFormat.SchemaVersion;
 
     private readonly AppPaths _paths;
     private readonly Logger? _logger;

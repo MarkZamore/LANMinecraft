@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +7,11 @@ namespace Minecraft;
 
 public static class PackManifestService
 {
+    /// <summary>
+    /// Written by whoever prepares a pack, not by the launcher, so it keeps its
+    /// own small number: a pack author should not have to track launcher
+    /// releases to keep portable-pack.json valid.
+    /// </summary>
     public const int CurrentSchemaVersion = 1;
     public const string ManifestFileName = "portable-pack.json";
 

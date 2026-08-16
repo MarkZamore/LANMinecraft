@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,7 +10,8 @@ public sealed class WaypointStoreService
 {
     public const string StoreDirectoryName = ".minecraft-portable-waypoints";
     public const string ManifestFileName = "manifest.json";
-    public const int SchemaVersion = 1;
+    /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
+    public const int SchemaVersion = PortableFormat.SchemaVersion;
 
     private readonly WorldMetadataService _worldMetadata;
     private readonly WaypointProviderRegistry _providers;
