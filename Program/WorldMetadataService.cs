@@ -270,13 +270,29 @@ public sealed class WorldMetadataService
             metadata.SchemaVersion = CurrentSchemaVersion;
         }
         EnsureWorldId(metadata);
-        metadata.CurrentHolderIdentityId = string.IsNullOrWhiteSpace(holderId) ? string.Empty : holderId.Trim();
-        metadata.CurrentHolderIdentityName = string.IsNullOrWhiteSpace(holderName) ? UnknownOwnerName : holderName.Trim();
-        metadata.CurrentHolderSteamId64 = NormalizeSteamId(holderSteamId64) is { Length: > 0 } holderSteamId
+        var normalizedHolderId = string.IsNullOrWhiteSpace(holderId) ? string.Empty : holderId.Trim();
+        var normalizedHolderName = string.IsNullOrWhiteSpace(holderName) ? UnknownOwnerName : holderName.Trim();
+        var normalizedHolderSteamId = NormalizeSteamId(holderSteamId64) is { Length: > 0 } holderSteamId
             ? holderSteamId
-            : KnownSteamPlayers.TryGetSteamId(metadata.CurrentHolderIdentityId, out var knownHolder)
+            : KnownSteamPlayers.TryGetSteamId(normalizedHolderId, out var knownHolder)
                 ? knownHolder.ToString()
                 : string.Empty;
+
+        // The world list refreshes every two seconds; without this, each refresh
+        // rewrote a JSON file per world for nothing.
+        if (!transferred &&
+            metadata.SchemaVersion == CurrentSchemaVersion &&
+            string.Equals(metadata.CurrentHolderIdentityId, normalizedHolderId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(metadata.CurrentHolderIdentityName, normalizedHolderName, StringComparison.Ordinal) &&
+            string.Equals(metadata.CurrentHolderSteamId64, normalizedHolderSteamId, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(metadata.WorldId))
+        {
+            return true;
+        }
+
+        metadata.CurrentHolderIdentityId = normalizedHolderId;
+        metadata.CurrentHolderIdentityName = normalizedHolderName;
+        metadata.CurrentHolderSteamId64 = normalizedHolderSteamId;
         if (transferred) metadata.LastSuccessfulTransferUtc = DateTimeOffset.UtcNow;
         try
         {
