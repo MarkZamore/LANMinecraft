@@ -40,6 +40,7 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     private readonly Pipe _inbound;
     private readonly Action _onDispose;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly SendRateGovernor _governor;
     private int _disposed;
 
     /// <summary>
@@ -57,6 +58,7 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     {
         _connection = connection;
         _onDispose = onDispose;
+        _governor = new SendRateGovernor(connection);
         _inbound = new Pipe(new PipeOptions(
             pauseWriterThreshold: 16L * 1024 * 1024,
             resumeWriterThreshold: 4L * 1024 * 1024,
@@ -162,10 +164,12 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
 
                 if (GetPendingReliableBytes() > PendingReliableLimitBytes)
                 {
+                    _governor.Observe();
                     await WaitForDrainAsync(token).ConfigureAwait(false);
                     continue;
                 }
 
+                _governor.Observe();
                 var result = SteamNetworkingSockets.SendMessageToConnection(
                     _connection,
                     handle.AddrOfPinnedObject(),
@@ -197,6 +201,9 @@ internal sealed class SteamConnectionStream : Stream, IQueuedByteSink
     public long QueuedBytes => GetPendingReliableBytes();
 
     public string DescribeLink() => SteamPeerTransport.DescribeLink(_connection);
+
+    /// <summary>The send rate the governor currently holds this connection to.</summary>
+    internal int SendRateBytesPerSecond => _governor.RateBytesPerSecond;
 
     /// <summary>
     /// Waits for the send queue to drain a little without paying the system

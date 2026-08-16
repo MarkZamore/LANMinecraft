@@ -27,6 +27,9 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     internal const string EscrowStage = "Escrow";
     internal const string InstallStage = "Install";
     private const int TransferCopyBufferBytes = 1024 * 1024;
+
+    /// <summary>How often the sender's bar is updated while a write is waiting on Steam.</summary>
+    private static readonly TimeSpan ProgressTick = TimeSpan.FromMilliseconds(250);
     private const int MaxIncomingClients = 32;
     // A transfer may legitimately run for hours, so nothing caps its duration.
     // What is capped is silence: an active peer emits a progress frame at least
@@ -1947,7 +1950,18 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 idle.CancelAfter(idleTimeout);
                 try
                 {
-                    await output.WriteAsync(buffer.AsMemory(0, read), idle.Token);
+                    // The write itself can sit for a long time while Steam's
+                    // queue drains ahead of it, and in that time the queue IS
+                    // draining - bytes are arriving at the peer with nobody
+                    // telling the window. Report while waiting, so the bar
+                    // moves at the pace of delivery rather than of writes.
+                    var write = output.WriteAsync(buffer.AsMemory(0, read), idle.Token).AsTask();
+                    while (queued is not null &&
+                           await Task.WhenAny(write, Task.Delay(ProgressTick, idle.Token)) != write)
+                    {
+                        progress(Math.Max(0, total - read - Math.Min(total - read, queued.QueuedBytes)));
+                    }
+                    await write;
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
                 {
