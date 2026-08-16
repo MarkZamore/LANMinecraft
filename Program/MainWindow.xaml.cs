@@ -1,8 +1,5 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -25,10 +22,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<PeerViewModel> _peers = new();
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
-    private readonly ObservableCollection<NetworkAddressOption> _networkAddresses = new();
-    private readonly HashSet<string> _knownNetworkAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly DispatcherTimer _networkRefreshTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly CancellationTokenSource _lifetimeCts = new();
     private readonly SemaphoreSlim _diagnosticLogTargetChangeGate = new(1, 1);
     private readonly TransferRateTracker _transferRate = new();
@@ -39,8 +33,6 @@ public partial class MainWindow : Window
     private AppSettings? _settings;
     private SettingsService? _settingsService;
     private Logger? _logger;
-    private VirtualNetworkService? _network;
-    private PeerRouteResolver? _peerRoutes;
     private PackHashService? _packHash;
     private PortablePackSyncService? _packSync;
     private WorldMetadataService? _worldMetadata;
@@ -52,26 +44,24 @@ public partial class MainWindow : Window
     private PackRuntimeService? _packRuntimes;
     private WaypointSyncService? _waypointSync;
     private SkinService? _skinService;
-    private PeerDiscoveryService? _discovery;
+
+    [SuppressMessage(
+        "Performance",
+        "CA1859",
+        Justification = "The concrete transport is chosen at startup; every consumer takes the seam.")]
+    private IPeerTransport? _peerTransport;
+    private PeerConnectionRouter? _peerRouter;
+    private SteamPeerDirectory? _peerDirectory;
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
     private PeerSupportLogService? _peerSupportLogs;
-    private NetworkEnvironmentSnapshot _networkSnapshot = new();
-    private NetworkEndpointInfo? _primaryEndpoint;
-    private List<NetworkEndpointInfo> _networkEndpoints = [];
     private string _localPackHash = "";
     private string _state = "Starting";
-    private bool _networkRefreshInProgress;
-    private bool _networkChangeSubscribed;
-    private bool _networkSelectionRefreshPending;
-    private string _pendingNetworkInterfaceId = "";
-    private string _pendingNetworkAddress = "";
     private bool _busy;
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
-    private bool _suppressNetworkAddressSelection;
     private bool _suppressDiagnosticTargetSelection;
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
@@ -99,19 +89,14 @@ public partial class MainWindow : Window
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
         WorldComboBox.ItemsSource = _worlds;
-        NetworkAddressComboBox.ItemsSource = _networkAddresses;
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
             RefreshWorlds();
+            RefreshSteamPeers();
             PruneStalePeers();
             RefreshUi();
-            if (IsNetworkSelectionIdle() && _networkSelectionRefreshPending)
-            {
-                _ = RefreshNetworkAdaptersSafelyAsync(forceRestart: false);
-            }
         };
-        _networkRefreshTimer.Tick += NetworkRefreshTimer_Tick;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -126,10 +111,6 @@ public partial class MainWindow : Window
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
-            _network = new VirtualNetworkService(_logger);
-            _peerRoutes = new PeerRouteResolver();
-            NetworkChange.NetworkAddressChanged += NetworkAddressChanged;
-            _networkChangeSubscribed = true;
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
@@ -145,19 +126,24 @@ public partial class MainWindow : Window
                 new WpfIdentityConflictResolver(this));
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             await ConnectSteamAndBindIdentityAsync();
+            // The Steam transport itself lands in the next step; until then the
+            // launcher knows who everyone is but cannot open a stream to them.
+            _peerTransport = new NullPeerTransport();
+            _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
+            _peerDirectory = new SteamPeerDirectory(_steamClient, new SteamworksApiFacade(), _logger);
+            _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
             _packRuntimes = new PackRuntimeService(_paths, _logger);
-            _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _network, _peerRoutes);
-            _skinService = new SkinService(_paths, _logger, _network, _peerRoutes);
+            _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _peerTransport);
+            _skinService = new SkinService(_paths, _logger, _peerTransport);
             await _skinService.StartAsync(_lifetimeCts.Token);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
             _peerSupportLogs = new PeerSupportLogService(
                 _paths,
-                _network,
-                _peerRoutes,
+                _peerTransport,
                 ResolveActiveLocalIdentity,
                 ResolveCurrentInstanceDirectory,
                 CaptureSupportEnvironmentAsync,
@@ -168,8 +154,11 @@ public partial class MainWindow : Window
                     _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
                 RefreshDiagnosticsPanel();
             });
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _network, _peerRoutes);
-            _transfer.AttachPeerSupportLogService(_peerSupportLogs);
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport);
+            _peerRouter.Register(_peerSupportLogs);
+            _peerRouter.Register(_waypointSync);
+            _peerRouter.Register(_skinService);
+            _peerRouter.RegisterFallback(_transfer);
             _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
@@ -180,32 +169,8 @@ public partial class MainWindow : Window
                 RefreshWorlds();
                 RefreshUi();
             });
-            _discovery = new PeerDiscoveryService(_paths, _logger, _network, _peerRoutes);
-            _discovery.PeerUpdated += announcement =>
-            {
-                PostToUi(() =>
-                {
-                    if (_shutdownStarted ||
-                        _primaryEndpoint is null ||
-                        !string.Equals(
-                            _primaryEndpoint.InterfaceId,
-                            announcement.LocalInterfaceId,
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(
-                            _primaryEndpoint.NetworkAddress,
-                            announcement.LocalAddress,
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        return;
-                    }
-                    ApplyPeer(announcement);
-                });
-            };
-
             LoadSettingsIntoUi();
             RefreshBuilds();
-            CaptureNetworkAddresses(isStartup: true);
-            RefreshNetworkEnvironment();
             RefreshMemoryText(saveIfChanged: true);
             RefreshWorlds();
             InitializeUpdateUi();
@@ -241,20 +206,15 @@ public partial class MainWindow : Window
         await Dispatcher.Yield(DispatcherPriority.Background);
 
         _uiTimer.Stop();
-        _networkRefreshTimer.Stop();
-        if (_networkChangeSubscribed)
-        {
-            NetworkChange.NetworkAddressChanged -= NetworkAddressChanged;
-            _networkChangeSubscribed = false;
-        }
         _lifetimeCts.Cancel();
         try
         {
-            if (_discovery is not null) await _discovery.DisposeAsync();
+            if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
+            if (_peerTransport is not null) await _peerTransport.DisposeAsync();
             if (_steamClient is not null) await _steamClient.DisposeAsync();
             _identityService?.Dispose();
             _packInstances?.Dispose();
@@ -306,230 +266,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshNetworkEnvironment()
+    /// <summary>
+    /// Re-reads the friends list. Steam serves it from its own cache, so this
+    /// is cheap enough for the two-second UI timer that used to poll adapters.
+    /// </summary>
+    private void RefreshSteamPeers()
     {
-        _networkSnapshot = RequireNetwork().GetSnapshot();
-        _networkEndpoints = _networkSnapshot.Endpoints.ToList();
-        _primaryEndpoint = _networkSnapshot.PrimaryEndpoint;
-    }
-
-    private void CaptureNetworkAddresses(bool isStartup)
-    {
-        var network = RequireNetwork();
-        var settings = RequireSettings();
-        var addresses = network.CaptureAvailableAddresses();
-        var selected = network.SelectedAddress;
-        var selectionChanged = false;
-        var previouslyKnown = new HashSet<string>(_knownNetworkAddresses, StringComparer.OrdinalIgnoreCase);
-        var isIdle = IsNetworkSelectionIdle();
-
-        NetworkAddressOption? target = null;
-        if (!isStartup && selected is not null)
-        {
-            target = NetworkSelectionPolicy.Find(addresses, selected.InterfaceId, selected.Address);
-        }
-
-        if (target is null && (isStartup || isIdle))
-        {
-            target = NetworkSelectionPolicy.Find(
-                addresses,
-                settings.SelectedNetworkInterfaceId,
-                settings.SelectedNetworkAddress);
-        }
-
-        var newestSoftwareAddress = NetworkSelectionPolicy.SelectNewestSoftwareAddress(
-            addresses,
-            previouslyKnown);
-        if (!isStartup && isIdle)
-        {
-            var pendingSoftwareAddress = NetworkSelectionPolicy.Find(
-                addresses,
-                _pendingNetworkInterfaceId,
-                _pendingNetworkAddress);
-            target = newestSoftwareAddress ?? pendingSoftwareAddress ?? target;
-            _networkSelectionRefreshPending = false;
-            _pendingNetworkInterfaceId = "";
-            _pendingNetworkAddress = "";
-        }
-        else if (!isStartup && !isIdle)
-        {
-            if (newestSoftwareAddress is not null)
-            {
-                _pendingNetworkInterfaceId = newestSoftwareAddress.InterfaceId;
-                _pendingNetworkAddress = newestSoftwareAddress.Address;
-                _networkSelectionRefreshPending = true;
-            }
-            else if (target is null)
-            {
-                _networkSelectionRefreshPending = true;
-            }
-        }
-
-        if (target is null && (isStartup || isIdle))
-        {
-            target = NetworkSelectionPolicy.SelectStartupFallback(
-                addresses,
-                settings.SelectedNetworkInterfaceId,
-                settings.SelectedNetworkAddress);
-        }
-
-        if (target is not null &&
-            !IsSameNetworkAddress(network.SelectedAddress, target) &&
-            network.SelectAddress(target.InterfaceId, target.Address))
-        {
-            selectionChanged = true;
-        }
-        else if (target is not null && !IsSameNetworkAddress(network.SelectedAddress, target))
-        {
-            target = null;
-        }
-
-        if (target is not null)
-        {
-            PersistNetworkAddressSelection(target);
-        }
-
-        _suppressNetworkAddressSelection = true;
+        if (_shutdownStarted || _peerDirectory is null) return;
         try
         {
-            _networkAddresses.Clear();
-            foreach (var address in addresses)
-            {
-                _networkAddresses.Add(address);
-            }
-
-            NetworkAddressComboBox.SelectedItem = target;
+            _peerDirectory.Refresh();
         }
-        finally
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
-            _suppressNetworkAddressSelection = false;
-        }
-
-        _knownNetworkAddresses.Clear();
-        foreach (var address in addresses)
-        {
-            _knownNetworkAddresses.Add(NetworkSelectionPolicy.GetKey(address));
-        }
-
-        NetworkAddressPlaceholderText.Text = _networkAddresses.Count == 0
-            ? "Сетевой IP не найден"
-            : "Выберите сетевой IP";
-        NetworkAddressPlaceholderText.Visibility = target is null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        if (target is not null && (isStartup || selectionChanged))
-        {
-            RequireLogger().Info($"Network IP selected: {target.DisplayName}.");
-        }
-        else if (isStartup && _networkAddresses.Count > 0)
-        {
-            RequireLogger().Info("Select a network IP before starting network play.");
-        }
-    }
-
-    private static bool IsSameNetworkAddress(NetworkAddressOption? left, NetworkAddressOption? right) =>
-        left is not null &&
-        right is not null &&
-        string.Equals(left.InterfaceId, right.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(left.Address, right.Address, StringComparison.OrdinalIgnoreCase);
-
-    private bool IsNetworkSelectionIdle() =>
-        !_busy &&
-        !_transferActive &&
-        !_minecraftRunning &&
-        !_minecraftPreparing;
-
-    private void PersistNetworkAddressSelection(NetworkAddressOption address)
-    {
-        var settings = RequireSettings();
-        if (string.Equals(settings.SelectedNetworkInterfaceId, address.InterfaceId, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(settings.SelectedNetworkAddress, address.Address, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        settings.SelectedNetworkInterfaceId = address.InterfaceId;
-        settings.SelectedNetworkAddress = address.Address;
-        RequireSettingsService().Save(settings);
-    }
-
-    private void NetworkAddressChanged(object? sender, EventArgs e)
-    {
-        if (_shutdownStarted || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
-        {
-            return;
-        }
-
-        _ = Dispatcher.BeginInvoke(() =>
-        {
-            if (_shutdownStarted) return;
-            _networkRefreshTimer.Stop();
-            _networkRefreshTimer.Start();
-        });
-    }
-
-    private async void NetworkRefreshTimer_Tick(object? sender, EventArgs e)
-    {
-        _networkRefreshTimer.Stop();
-        await RefreshNetworkAdaptersSafelyAsync(forceRestart: false);
-    }
-
-    private async Task RefreshNetworkAdaptersSafelyAsync(bool forceRestart)
-    {
-        try
-        {
-            await RefreshNetworkAdaptersAsync(forceRestart);
-        }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn($"Network adapter refresh failed: {ex.Message}");
-        }
-    }
-
-    private async Task RefreshNetworkAdaptersAsync(bool forceRestart)
-    {
-        if (_networkRefreshInProgress || _network is null || _settings is null)
-        {
-            return;
-        }
-
-        _networkRefreshInProgress = true;
-        try
-        {
-            var previousFingerprint = _networkSnapshot.Fingerprint;
-            var previousTopologyFingerprint =
-                _networkSnapshot.TopologyFingerprint;
-            RequireNetwork().InvalidateSnapshot();
-            CaptureNetworkAddresses(isStartup: false);
-            RefreshNetworkEnvironment();
-            var currentFingerprint = _networkSnapshot.Fingerprint;
-            var currentTopologyFingerprint =
-                _networkSnapshot.TopologyFingerprint;
-            if (_startupComplete &&
-                (forceRestart || !string.Equals(previousFingerprint, currentFingerprint, StringComparison.Ordinal)))
-            {
-                await StartNetworkingAsync();
-            }
-            else if (_startupComplete &&
-                     _peerSupportLogs is not null &&
-                     !string.Equals(
-                         previousTopologyFingerprint,
-                         currentTopologyFingerprint,
-                         StringComparison.Ordinal))
-            {
-                await _peerSupportLogs.UpdateNetworkContextAsync(
-                    _networkSnapshot,
-                    _lifetimeCts.Token);
-            }
-
-            RefreshUi();
-        }
-        finally
-        {
-            _networkRefreshInProgress = false;
+            _logger?.Warn($"Steam friend refresh failed: {ex.Message}");
         }
     }
 
@@ -698,9 +448,9 @@ public partial class MainWindow : Window
             DiagnosticLogTargetComboBox.ItemsSource = targets;
             DiagnosticLogTargetComboBox.SelectedItem = targets.FirstOrDefault(option =>
                 string.Equals(
-                    option.IdentityId,
+                    option.SteamId.ToString(),
                     _diagnosticLogTargetIdentityId,
-                    StringComparison.OrdinalIgnoreCase)) ??
+                    StringComparison.Ordinal)) ??
                 targets.FirstOrDefault(option => option.IsNobody);
         }
         finally
@@ -740,7 +490,7 @@ public partial class MainWindow : Window
         var changeVersion = Interlocked.Increment(
             ref _diagnosticLogTargetChangeVersion);
         var enteredGate = false;
-        _diagnosticLogTargetIdentityId = option.IdentityId;
+        _diagnosticLogTargetIdentityId = option.SteamId.ToString();
         try
         {
             await _diagnosticLogTargetChangeGate.WaitAsync(_lifetimeCts.Token);
@@ -804,107 +554,22 @@ public partial class MainWindow : Window
     {
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var result = new List<DiagnosticLogTargetOption> { DiagnosticLogTargetOption.Nobody };
-        var selectedEndpoint = _primaryEndpoint;
-        if (selectedEndpoint is null)
-        {
-            return result;
-        }
-
         foreach (var peer in _peers
-                     .Where(peer =>
-                         peer.LastSeen >= cutoff &&
-                         peer.DiagnosticLogProtocolVersion ==
-                         PeerSupportProtocol.ProtocolVersion &&
-                         PeerSupportCertificate.TryNormalizeFingerprint(
-                             peer.DiagnosticTlsFingerprint,
-                             out _))
-                     .OrderBy(
-                         peer => peer.PlayerName,
-                         StringComparer.CurrentCultureIgnoreCase))
+                     .Where(peer => peer.LastSeen >= cutoff && peer.SupportsDiagnosticLogs)
+                     .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
-            if (!peer.TryGetObservedRemoteAddress(
-                    selectedEndpoint.NetworkAddress,
-                    selectedEndpoint.InterfaceId,
-                    cutoff,
-                    out var observedAddress))
-            {
-                continue;
-            }
-
-            var playerName = string.IsNullOrWhiteSpace(peer.PlayerName)
-                ? "Неизвестный игрок"
-                : peer.PlayerName;
-            result.Add(new DiagnosticLogTargetOption(
-                peer.IdentityId,
-                $"{playerName} - {observedAddress}",
-                observedAddress,
-                peer.DiagnosticTlsFingerprint));
+            result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
         }
         return result;
     }
 
-    private static string GetSelectablePeerId(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return "";
-        }
-
-        return Guid.TryParse(peer.IdentityId, out var identity)
-            ? identity.ToString("D")
-            : "";
-    }
-
-    private static string[] GetSelectedPeerAddresses(PeerViewModel? peer)
-    {
-        if (peer is null)
-        {
-            return Array.Empty<string>();
-        }
-
-        return peer.GetCandidateAddresses()
-            .Where(address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
+    private static SteamId64 GetSelectablePeerId(PeerViewModel? peer) =>
+        peer?.SteamId ?? SteamId64.None;
 
     private static PeerViewModel? FindMatchingPeer(
         ObservableCollection<PeerViewModel> peers,
-        string selectedPeerId,
-        string[]? selectedAddresses = null)
-    {
-        if (peers.Count == 0)
-        {
-            return null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(selectedPeerId))
-        {
-            var byIdentity = peers.FirstOrDefault(peer =>
-                string.Equals(peer.IdentityId, selectedPeerId, StringComparison.OrdinalIgnoreCase));
-            if (byIdentity is not null)
-            {
-                return byIdentity;
-            }
-        }
-
-        if (selectedAddresses is null || selectedAddresses.Length == 0)
-        {
-            return null;
-        }
-
-        var selectedSet = new HashSet<string>(selectedAddresses, StringComparer.OrdinalIgnoreCase);
-        var byCandidates = peers.FirstOrDefault(peer =>
-            peer.GetCandidateAddresses().Any(address => selectedSet.Contains(address)));
-        if (byCandidates is not null)
-        {
-            return byCandidates;
-        }
-
-        return peers.FirstOrDefault(peer =>
-            !string.IsNullOrWhiteSpace(peer.NetworkAddress) &&
-            selectedSet.Contains(peer.NetworkAddress));
-    }
+        SteamId64 selectedPeerId) =>
+        peers.FirstOrDefault(peer => peer.SteamId == selectedPeerId);
 
     private WorldMetadataContext? CreateWorldMetadataContext()
     {
@@ -953,30 +618,39 @@ public partial class MainWindow : Window
         };
     }
 
+    /// <summary>
+    /// Brings up everything that needs other players: the connection router and
+    /// the presence keys friends discover this launcher by. Without Steam there
+    /// is nothing to start, and the window says so instead of failing.
+    /// </summary>
     private async Task StartNetworkingAsync()
     {
         var settings = RequireSettings();
-        if (_peerSupportLogs is not null)
-        {
-            await _peerSupportLogs.UpdateNetworkContextAsync(
-                _networkSnapshot,
-                _lifetimeCts.Token);
-        }
         if (_peerSupportLogs is not null &&
             string.IsNullOrWhiteSpace(_peerSupportLogs.CurrentTargetIdentityId))
         {
             _diagnosticLogTargetIdentityId = string.Empty;
         }
-        if (_networkEndpoints.Count == 0)
+
+        if (!IsIdentityBound || _steamClient?.Status.IsReady != true)
         {
-            await RequireTransfer().StopListenerAsync();
-            await RequireDiscovery().StopAsync();
-            RequireLogger().Warn("Select a usable network IP to enable network play.");
+            RequireTransfer().StopAcceptingIncomingTransfers();
+            if (_peerSupportLogs is not null)
+            {
+                await _peerSupportLogs
+                    .OnTransportUnavailableAsync("steam_unavailable", _lifetimeCts.Token)
+                    .ConfigureAwait(true);
+            }
+            RequireLogger().Warn("Steam is unavailable; network play stays off.");
             return;
         }
 
-        await RequireTransfer().StartListenerAsync(settings, _lifetimeCts.Token);
-        await RequireDiscovery().StartAsync(_networkSnapshot, CreateAnnouncement);
+        RequireTransfer().UseSettingsForIncomingTransfers(settings);
+        if (_peerRouter is not null)
+        {
+            await _peerRouter.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
+        }
+        PublishLocalPresence();
     }
 
     private async Task RefreshPackHashAndNetworkingAsync()
@@ -992,8 +666,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private PeerAnnouncement CreateAnnouncement(NetworkEndpointInfo _)
+    /// <summary>
+    /// Publishes what friends need to know about this launcher. This is the
+    /// successor of the UDP announcement: the same facts, carried by Steam.
+    /// </summary>
+    private void PublishLocalPresence()
     {
+        if (_peerDirectory is null || _steamClient?.Status.IsReady != true) return;
+        if (!SteamId64.TryFrom(_steamClient.Status.SteamId64, out var localId)) return;
+
         var settings = RequireSettings();
         var identity = ResolveActiveLocalIdentity();
         var identityContext = RequireIdentityService().ResolveContext(settings);
@@ -1003,25 +684,28 @@ public partial class MainWindow : Window
             _localPackHash,
             identityContext);
         var waypointHost = RequireWaypointSync().GetHostAdvertisement();
-        var skin = RequireSkinService().GetAnnouncement(settings, identity.id);
-        return new PeerAnnouncement
+        var skin = RequireSkinService().GetAnnouncement(settings, identityContext.MinecraftUuid);
+        _peerDirectory.PublishLocalPresence(new SteamPeerPresence
         {
-            ProtocolVersion = PeerDiscoveryService.ProtocolVersion,
+            SteamId = localId,
+            PersonaName = _steamClient.Status.PersonaName,
+            ProtocolVersion = SteamPresenceCodec.ProtocolVersion,
             PlayerName = identity.name,
-            IdentityId = identity.id,
-            IdentityName = identity.name,
+            MinecraftUuid = identityContext.MinecraftUuid,
             PackHash = _localPackHash,
-            IsMinecraftRunning = _minecraftRunning,
-            IsMinecraftPreparing = _minecraftPreparing,
+            State = _minecraftRunning
+                ? SteamPresenceCodec.StateInGame
+                : _minecraftPreparing
+                    ? SteamPresenceCodec.StatePreparing
+                    : SteamPresenceCodec.StateIdle,
             IsSkinAvailable = skin.IsAvailable,
             SkinSha256 = skin.Sha256,
             SkinModel = skin.Model,
             HostedWorldId = waypointHost?.WorldId ?? string.Empty,
             WaypointProtocolVersion = WaypointSyncService.ProtocolVersion,
             WaypointProviders = waypointHost?.Providers.ToList() ?? [],
-            DiagnosticLogProtocolVersion = PeerSupportProtocol.ProtocolVersion,
-            DiagnosticTlsFingerprint = _peerSupportLogs?.Fingerprint ?? string.Empty
-        };
+            DiagnosticProtocolVersion = PeerSupportProtocol.ProtocolVersion
+        });
     }
 
     private string? ResolveCurrentInstanceDirectory()
@@ -1051,38 +735,39 @@ public partial class MainWindow : Window
                 RequirePaths(),
                 settings.ClientRelativePath,
                 _localPackHash,
-                RequireNetwork().GetSnapshot(),
-                _peerRoutes?.Export() ?? new KnownPeerCache(),
+                CaptureSteamDiagnosticContext(),
                 BuildSupportRuntimeState(),
                 _minecraft?.DiagnosticJavaPath),
             token);
     }
 
-    private SupportNetworkMetrics CaptureSupportNetworkMetrics()
-    {
-        var network = _network?.GetSnapshot() ?? new NetworkEnvironmentSnapshot();
-        var routes = _peerRoutes?.Export() ?? new KnownPeerCache();
-        return SupportDiagnosticSnapshotBuilder.CaptureMetrics(
-            network,
-            routes,
-            routes.Peers.Count,
-            _discovery?.IsRunning == true,
+    private SupportNetworkMetrics CaptureSupportNetworkMetrics() =>
+        SupportDiagnosticSnapshotBuilder.CaptureMetrics(
+            CaptureSteamDiagnosticContext(),
             _transfer?.IsOperationActive == true,
-            false,
-            0,
             diagnosticBytesSent: 0,
             diagnosticBytesReceived: 0,
             reconnects: 0,
             decodeErrors: 0,
             BuildSupportRuntimeState());
+
+    private SteamDiagnosticContext CaptureSteamDiagnosticContext()
+    {
+        var status = _steamClient?.Status;
+        return new SteamDiagnosticContext(
+            status?.SteamId64.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            status?.PersonaName ?? string.Empty,
+            status?.Availability.ToString() ?? SteamAvailability.NotStarted.ToString(),
+            _steamClient?.Friends.Count ?? 0,
+            _peerDirectory?.Peers.Count ?? 0);
     }
 
     private Dictionary<string, string> BuildSupportRuntimeState()
     {
-        var endpoint = _network?.GetSnapshot().PrimaryEndpoint;
         var identity = _settings is null
             ? (id: string.Empty, name: string.Empty)
             : ResolveActiveLocalIdentity();
+        var steam = CaptureSteamDiagnosticContext();
         var state = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["launcher.state"] = _state,
@@ -1093,29 +778,13 @@ public partial class MainWindow : Window
             ["game.version"] = _minecraft?.DiagnosticGameVersion ?? string.Empty,
             ["game.profile"] = _minecraft?.DiagnosticProfileId ?? string.Empty,
             ["pack.hash"] = _localPackHash,
-            ["network.selectedAddress"] = endpoint?.NetworkAddress ?? string.Empty,
-            ["network.selectedInterfaceId"] = endpoint?.InterfaceId ?? string.Empty,
-            ["network.selectedInterfaceIndex"] =
-                endpoint?.InterfaceIndex.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceHardware"] =
-                endpoint?.IsHardware.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceFilter"] =
-                endpoint?.IsFilterInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceEndpoint"] =
-                endpoint?.IsEndpointInterface.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.selectedInterfaceDefaultRoute"] =
-                endpoint?.HasDefaultRoute.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-            ["network.routeSelectionReason"] = endpoint is null
-                ? "no selected endpoint"
-                : endpoint.IsHardware
-                    ? endpoint.HasDefaultRoute
-                        ? "physical primary route"
-                        : "manually selected physical interface"
-                    : "selected software interface",
-            ["discovery.protocolVersion"] =
-                PeerDiscoveryService.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
-            ["discovery.running"] =
-                (_discovery?.IsRunning == true).ToString(CultureInfo.InvariantCulture),
+            ["steam.id64"] = steam.SteamId64,
+            ["steam.persona"] = steam.PersonaName,
+            ["steam.availability"] = steam.Availability,
+            ["steam.friends"] = steam.FriendCount.ToString(CultureInfo.InvariantCulture),
+            ["steam.identityBound"] = IsIdentityBound.ToString(CultureInfo.InvariantCulture),
+            ["steam.presenceProtocolVersion"] =
+                SteamPresenceCodec.ProtocolVersion.ToString(CultureInfo.InvariantCulture),
             ["transfer.active"] =
                 (_transfer?.IsOperationActive == true).ToString(CultureInfo.InvariantCulture),
             ["transfer.bytesCurrent"] =
@@ -1124,20 +793,14 @@ public partial class MainWindow : Window
                 Interlocked.Read(ref _transferBytesTotal).ToString(CultureInfo.InvariantCulture)
         };
 
-        if (endpoint is null)
-        {
-            return state;
-        }
-
-        foreach (var pair in BuildPeerSupportRuntimeState(endpoint))
+        foreach (var pair in BuildPeerSupportRuntimeState())
         {
             state[pair.Key] = pair.Value;
         }
         return state;
     }
 
-    private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState(
-        NetworkEndpointInfo endpoint)
+    private IReadOnlyDictionary<string, string> BuildPeerSupportRuntimeState()
     {
         if (!Dispatcher.CheckAccess())
         {
@@ -1150,7 +813,7 @@ public partial class MainWindow : Window
 
             try
             {
-                return Dispatcher.Invoke(() => BuildPeerSupportRuntimeState(endpoint));
+                return Dispatcher.Invoke(BuildPeerSupportRuntimeState);
             }
             catch (InvalidOperationException) when (
                 Dispatcher.HasShutdownStarted ||
@@ -1165,38 +828,32 @@ public partial class MainWindow : Window
         }
 
         var state = new Dictionary<string, string>(StringComparer.Ordinal);
-        var cutoff = DateTimeOffset.Now - TimeSpan.FromSeconds(35);
+        var cutoff = DateTimeOffset.Now - PeerTtl;
         var peerIndex = 0;
         foreach (var peer in _peers
                      .Where(peer => peer.LastSeen >= cutoff)
-                     .OrderBy(peer => peer.IdentityId, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(peer => peer.SteamId.Value)
                      .Take(32))
         {
-            if (!peer.TryGetObservedRemoteAddress(
-                    endpoint.NetworkAddress,
-                    endpoint.InterfaceId,
-                    cutoff,
-                    out var remoteAddress))
-            {
-                continue;
-            }
-
             var prefix = $"peer.{peerIndex++}";
-            state[$"{prefix}.identityId"] = peer.IdentityId;
-            state[$"{prefix}.playerName"] = peer.PlayerName.Length <= 128
-                ? peer.PlayerName
-                : peer.PlayerName[..128];
-            state[$"{prefix}.observedAddress"] = remoteAddress;
+            state[$"{prefix}.steamId64"] = peer.SteamId.ToString();
+            state[$"{prefix}.personaName"] = Clamp(peer.PersonaName);
+            state[$"{prefix}.playerName"] = Clamp(peer.PlayerName);
+            state[$"{prefix}.state"] = peer.IsMinecraftRunning
+                ? SteamPresenceCodec.StateInGame
+                : peer.IsMinecraftPreparing
+                    ? SteamPresenceCodec.StatePreparing
+                    : SteamPresenceCodec.StateIdle;
             state[$"{prefix}.lastSeenUtc"] =
                 peer.LastSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
-            state[$"{prefix}.rttMs"] =
-                peer.LastRttMs?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
             state[$"{prefix}.diagnosticCompatible"] =
                 peer.SupportsDiagnosticLogs.ToString(CultureInfo.InvariantCulture);
         }
 
         state["peer.count"] = peerIndex.ToString(CultureInfo.InvariantCulture);
         return state;
+
+        static string Clamp(string value) => value.Length <= 128 ? value : value[..128];
     }
 
     private void PostToUi(Action action)
@@ -1218,70 +875,67 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyPeer(PeerAnnouncement announcement)
+    /// <summary>
+    /// Reconciles the window with the friends Steam currently reports. The VPN
+    /// era merged one announcement at a time; presence arrives as a whole list,
+    /// so anyone missing from it has simply stopped publishing.
+    /// </summary>
+    private void ApplyPeers(IReadOnlyList<SteamPeerPresence> peers)
     {
-        var localIdentity = ResolveActiveLocalIdentity();
-        if (!string.IsNullOrWhiteSpace(announcement.IdentityId) &&
-            string.Equals(announcement.IdentityId, localIdentity.id, StringComparison.OrdinalIgnoreCase))
+        if (_shutdownStarted) return;
+        var localId = _steamClient?.Status.SteamId64 ?? 0;
+        var selectedPeerId = GetSelectablePeerId(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
+
+        foreach (var presence in peers)
         {
-            return;
-        }
-        if (announcement.NetworkAddress is not null && RequireDiscovery().IsLocalAddress(announcement.NetworkAddress))
-        {
-            return;
+            if (presence.SteamId.Value == localId) continue;
+            RequireWaypointSync().ObservePeer(presence);
+            _peerSupportLogs?.ObservePeer(presence);
+
+            var peer = _peers.FirstOrDefault(candidate => candidate.SteamId == presence.SteamId);
+            if (peer is null)
+            {
+                peer = new PeerViewModel { SteamId = presence.SteamId };
+                _peers.Add(peer);
+            }
+            peer.Apply(presence, _localPackHash);
+            RequireSkinService().ObservePeer(peer);
         }
 
-        RequireWaypointSync().ObservePeer(announcement);
-        _peerSupportLogs?.ObservePeer(announcement);
-
-        var peer = _peers.FirstOrDefault(candidate =>
-            string.Equals(candidate.IdentityId, announcement.IdentityId, StringComparison.OrdinalIgnoreCase));
-        if (peer is null)
+        var current = peers.Select(presence => presence.SteamId).ToHashSet();
+        for (var index = _peers.Count - 1; index >= 0; index--)
         {
-            peer = new PeerViewModel();
-            _peers.Add(peer);
+            if (!current.Contains(_peers[index].SteamId)) _peers.RemoveAt(index);
         }
 
-        peer.Apply(announcement, _localPackHash);
-        RequireSkinService().ObservePeer(peer);
-        if (OnlinePlayerComboBox.SelectedItem is null)
-        {
-            OnlinePlayerComboBox.SelectedItem = peer;
-        }
+        OnlinePlayerComboBox.SelectedItem =
+            FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
         RefreshDiagnosticsPanel();
         RefreshUi();
     }
 
+    /// <summary>
+    /// Drops peers whose presence stopped being refreshed and forgets a
+    /// diagnostics target that went with them.
+    /// </summary>
     private void PruneStalePeers()
     {
         var cutoff = DateTimeOffset.Now - PeerTtl;
         var selectedPeerId = GetSelectablePeerId(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
-        var selectedCandidates = GetSelectedPeerAddresses(OnlinePlayerComboBox.SelectedItem as PeerViewModel);
         for (var index = _peers.Count - 1; index >= 0; index--)
         {
-            if (!_peers[index].PruneEndpoints(cutoff))
-            {
-                _peers.RemoveAt(index);
-            }
+            if (_peers[index].LastSeen < cutoff) _peers.RemoveAt(index);
         }
 
-        if (!string.IsNullOrWhiteSpace(selectedPeerId) || selectedCandidates.Length > 0)
-        {
-            OnlinePlayerComboBox.SelectedItem = FindMatchingPeer(_peers, selectedPeerId, selectedCandidates);
-        }
+        OnlinePlayerComboBox.SelectedItem =
+            FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
 
-        if (OnlinePlayerComboBox.SelectedItem is null && _peers.Count > 0)
-        {
-            OnlinePlayerComboBox.SelectedItem = _peers[0];
-        }
-
-        if (!string.IsNullOrWhiteSpace(_diagnosticLogTargetIdentityId) &&
+        if (_diagnosticLogTargetIdentityId.Length != 0 &&
             !_peers.Any(peer =>
                 string.Equals(
-                    peer.IdentityId,
+                    peer.SteamId.ToString(),
                     _diagnosticLogTargetIdentityId,
-                    StringComparison.OrdinalIgnoreCase) &&
-                peer.LastSeen >= cutoff &&
+                    StringComparison.Ordinal) &&
                 peer.SupportsDiagnosticLogs))
         {
             _diagnosticLogTargetIdentityId = string.Empty;
@@ -1422,8 +1076,8 @@ public partial class MainWindow : Window
 
         try
         {
-            var identity = ResolveActiveLocalIdentity();
-            var skin = _skinService.SelectLocalSkin(_settings, identity.id, dialog.FileName);
+            var identity = RequireIdentityService().ResolveContext(_settings);
+            var skin = _skinService.SelectLocalSkin(_settings, identity.MinecraftUuid, dialog.FileName);
             RequireSettingsService().Save(_settings);
             SetState($"Skin selected ({skin.Model})");
         }
@@ -1432,103 +1086,6 @@ public partial class MainWindow : Window
             RequireLogger().Warn($"Skin selection failed: {ex.Message}");
             MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-    }
-
-    private sealed record HostEndpointProbeResult(
-        bool IsReachable,
-        HostReachabilityResult Reachability,
-        string Address);
-
-    private async Task<HostEndpointProbeResult> ProbeHostEndpointAsync(
-        PeerViewModel peer,
-        int port,
-        int attempts,
-        TimeSpan timeout)
-    {
-        var candidateEndpoints = (_peerRoutes?.GetSendCandidates(peer.IdentityId) ?? [])
-            .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.Address))
-            .ToArray();
-        foreach (var endpoint in candidateEndpoints)
-        {
-            if (!IPAddress.TryParse(endpoint.Address, out var address))
-            {
-                continue;
-            }
-
-            if (IPAddress.IsLoopback(address))
-            {
-                continue;
-            }
-
-            var effectivePort = Math.Clamp(port, 1, 65535);
-            var reachability = await CheckHostReachabilityAsync(
-                address,
-                endpoint.LocalAddress,
-                endpoint.LocalInterfaceId,
-                effectivePort,
-                attempts,
-                timeout);
-            if (reachability.IsReachable)
-            {
-                _peerRoutes?.MarkEndpointHealthy(peer.IdentityId, endpoint);
-                return new HostEndpointProbeResult(true, reachability, endpoint.Address);
-            }
-            _peerRoutes?.MarkEndpointUnhealthy(peer.IdentityId, endpoint);
-        }
-
-        return new HostEndpointProbeResult(false, HostReachabilityResult.Failed("No reachable host endpoint."), string.Empty);
-    }
-
-    private async Task<HostReachabilityResult> CheckHostReachabilityAsync(
-        IPAddress address,
-        string localAddress,
-        string localInterfaceId,
-        int port,
-        int attempts,
-        TimeSpan timeout)
-    {
-        Exception? lastError = null;
-        for (var attempt = 1; attempt <= attempts; attempt++)
-        {
-            using var cts = new CancellationTokenSource(timeout);
-            var stopwatch = Stopwatch.StartNew();
-            try
-            {
-                using var client = RequireNetwork().CreateBoundTcpClient(
-                    address,
-                    localAddress,
-                    localInterfaceId);
-                await client.ConnectAsync(address, port, cts.Token);
-                return HostReachabilityResult.Succeeded(stopwatch.ElapsedMilliseconds);
-            }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or TimeoutException)
-            {
-                lastError = ex;
-                if (attempt < attempts) await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(300, 120 * attempt)));
-            }
-        }
-
-        return HostReachabilityResult.Failed(lastError?.Message ?? "Connection attempt failed.");
-    }
-
-    private sealed class HostReachabilityResult
-    {
-        public bool IsReachable { get; }
-        public int? RoundTripMs { get; }
-        public string FailureReason { get; }
-
-        private HostReachabilityResult(bool isReachable, int? roundTripMs, string failureReason)
-        {
-            IsReachable = isReachable;
-            RoundTripMs = roundTripMs;
-            FailureReason = failureReason;
-        }
-
-        public static HostReachabilityResult Succeeded(long roundTripMs)
-            => new(true, (int)Math.Clamp(roundTripMs, 0, int.MaxValue), string.Empty);
-
-        public static HostReachabilityResult Failed(string reason)
-            => new(false, null, reason);
     }
 
     private async void TransferButton_Click(object sender, RoutedEventArgs e)
@@ -1780,7 +1337,7 @@ public partial class MainWindow : Window
         var resolvedContext = _identityService.ResolveContext(_settings);
         var updated = false;
 
-        var identityId = resolvedContext.IdentityId ?? "";
+        var identityId = resolvedContext.SteamId64.ToString();
         if (!string.Equals(_settings.LocalIdentityId, identityId, StringComparison.Ordinal))
         {
             _settings.LocalIdentityId = identityId;
@@ -1865,15 +1422,21 @@ public partial class MainWindow : Window
         }
 
         var identity = _identityService.ResolveContext(_settings);
-        _settings.LocalIdentityId = identity.IdentityId;
+        _settings.LocalIdentityId = identity.SteamId64.ToString();
         _settings.LocalIdentityName = identity.IdentityName;
         _settingsService.Save(_settings);
     }
 
+    /// <summary>
+    /// Who owns a world: the Minecraft UUID, not the Steam account. World
+    /// metadata is read by every build of the launcher, old ones included.
+    /// </summary>
     private (string id, string name) GetActiveLocalOwner()
     {
-        var identity = ResolveActiveLocalIdentity();
-        return (identity.id, identity.name);
+        var settings = RequireSettings();
+        if (_identityService is null) return ("", Environment.UserName);
+        var resolved = _identityService.ResolveContext(settings);
+        return (resolved.MinecraftUuid, resolved.IdentityName);
     }
 
     private (string id, string name) ResolveActiveLocalIdentity()
@@ -1890,7 +1453,7 @@ public partial class MainWindow : Window
         }
 
         var resolved = _identityService.ResolveContext(settings);
-        return (resolved.IdentityId ?? "", resolved.IdentityName ?? "");
+        return (resolved.SteamId64.ToString(), resolved.IdentityName ?? "");
     }
 
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
@@ -1960,23 +1523,6 @@ public partial class MainWindow : Window
     private void TransferSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         RefreshUi();
-    }
-
-    private async void NetworkAddressComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressNetworkAddressSelection ||
-            NetworkAddressComboBox.SelectedItem is not NetworkAddressOption address ||
-            !RequireNetwork().SelectAddress(address.InterfaceId, address.Address))
-        {
-            return;
-        }
-
-        _networkSelectionRefreshPending = false;
-        _pendingNetworkInterfaceId = "";
-        _pendingNetworkAddress = "";
-        PersistNetworkAddressSelection(address);
-        RequireLogger().Info($"Network IP selected: {address.DisplayName}.");
-        await RefreshNetworkAdaptersSafelyAsync(forceRestart: true);
     }
 
     private async void BuildComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2435,7 +1981,6 @@ public partial class MainWindow : Window
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
         SkinButton.IsEnabled = !_minecraftRunning;
-        NetworkAddressComboBox.IsEnabled = IsNetworkSelectionIdle() && _networkAddresses.Count > 0;
         WorldComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _worlds.Count > 0;
         OnlinePlayerComboBox.IsEnabled = interactiveEnabled && !_minecraftPreparing && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -2467,14 +2012,12 @@ public partial class MainWindow : Window
     private AppSettings RequireSettings() => _settings ?? throw new InvalidOperationException("Settings are not initialized.");
     private SettingsService RequireSettingsService() => _settingsService ?? throw new InvalidOperationException("Settings service is not initialized.");
     private Logger RequireLogger() => _logger ?? throw new InvalidOperationException("Logger is not initialized.");
-    private VirtualNetworkService RequireNetwork() => _network ?? throw new InvalidOperationException("Network service is not initialized.");
     private PackHashService RequirePackHash() => _packHash ?? throw new InvalidOperationException("Pack hash service is not initialized.");
 
     private PortablePackSyncService RequirePackSync() => _packSync ?? throw new InvalidOperationException("Pack sync service is not initialized.");
     private WorldMetadataService RequireWorldMetadata() => _worldMetadata ?? throw new InvalidOperationException("World metadata service is not initialized.");
     private SteamIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
     private WorldPlayerProfileService RequireWorldPlayerProfiles() => _worldPlayerProfiles ?? throw new InvalidOperationException("World player profile service is not initialized.");
-    private PeerDiscoveryService RequireDiscovery() => _discovery ?? throw new InvalidOperationException("Peer discovery is not initialized.");
     private MinecraftProcessService RequireMinecraft() => _minecraft ?? throw new InvalidOperationException("Minecraft service is not initialized.");
     private WorldTransferService RequireTransfer() => _transfer ?? throw new InvalidOperationException("World transfer service is not initialized.");
     private WaypointSyncService RequireWaypointSync() => _waypointSync ?? throw new InvalidOperationException("Waypoint sync service is not initialized.");

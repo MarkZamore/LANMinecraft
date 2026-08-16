@@ -1,18 +1,15 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 
 namespace Minecraft;
 
-internal sealed class PeerSupportLogService : IAsyncDisposable
+internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtocolHandler
 {
-    private const int TransferPort = WorldTransferService.TransferPort;
     private const int FirstDynamicStreamId = 100;
     private const int MaxSpoolPayloadBytes =
         SupportLogSpool.MaxRecordBytes - SpoolEnvelopeHeaderSize;
@@ -34,8 +31,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         new(JsonSerializerDefaults.Web);
 
     private readonly AppPaths _paths;
-    private readonly ISelectedNetworkTransport _network;
-    private readonly PeerRouteResolver _routes;
+    private readonly IPeerTransport _transport;
     private readonly Func<(string id, string name)> _identityProvider;
     private readonly Func<string?> _instanceDirectoryProvider;
     private readonly Func<CancellationToken, Task<SupportEnvironmentSnapshot>>
@@ -44,7 +40,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     private readonly SupportLogSanitizer _sanitizer;
     private readonly SupportLogStorage _storage;
     private readonly TimeProvider _timeProvider;
-    private readonly PeerSupportCertificate _certificate;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<string, ObservedPeer> _peers =
         new(StringComparer.OrdinalIgnoreCase);
@@ -59,8 +54,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     private readonly object _targetGate = new();
 
     private OutgoingSession? _target;
-    private string _networkFingerprint = string.Empty;
-    private string _selectedNetworkKey = string.Empty;
     private string _statusText = "Передача логов выключена.";
     private long _bytesSent;
     private long _bytesReceived;
@@ -72,8 +65,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
 
     public PeerSupportLogService(
         AppPaths paths,
-        ISelectedNetworkTransport network,
-        PeerRouteResolver routes,
+        IPeerTransport transport,
         Func<(string id, string name)> identityProvider,
         Func<string?> instanceDirProvider,
         Func<CancellationToken, Task<SupportEnvironmentSnapshot>>
@@ -83,8 +75,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         TimeProvider? timeProvider = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
-        _network = network ?? throw new ArgumentNullException(nameof(network));
-        _routes = routes ?? throw new ArgumentNullException(nameof(routes));
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _identityProvider =
             identityProvider ?? throw new ArgumentNullException(nameof(identityProvider));
         _instanceDirectoryProvider = instanceDirProvider ??
@@ -99,17 +90,21 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         _receiveLimiter = new SupportLogRateLimiter(
             SupportLogRateLimiter.DefaultBytesPerSecond,
             _timeProvider);
-        _certificate = PeerSupportCertificate.CreateEphemeral(_timeProvider.GetUtcNow());
-        var initialNetwork = network.GetSnapshot();
-        _networkFingerprint = initialNetwork.TopologyFingerprint;
-        _selectedNetworkKey = BuildSelectedNetworkKey(initialNetwork);
         PruneOrphanSpools();
         _maintenanceTask = RunMaintenanceAsync();
     }
 
     public event Action? StateChanged;
 
-    public string Fingerprint => _certificate.Fingerprint;
+    /// <summary>The first frame of an incoming diagnostics connection names this.</summary>
+    public string ProtocolName => PeerSupportProtocol.UpgradeProtocolName;
+
+    Task IPortableProtocolHandler.HandleAsync(
+        Stream stream,
+        byte[] initialFrame,
+        PeerConnectionContext context,
+        CancellationToken token) =>
+        HandleIncomingAsync(stream, initialFrame, context, token);
 
     public string CurrentTargetIdentityId
     {
@@ -136,12 +131,14 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Records something the launcher did that matters to whoever reads the
+    /// bundle later. The VPN era also carried addresses and the chosen adapter;
+    /// under Steam a peer is only an account.
+    /// </summary>
     public void PublishRuntimeEvent(
         string type,
         string peerIdentityId,
-        string remoteAddress,
-        string localAddress,
-        string localInterfaceId,
         string reason,
         IReadOnlyDictionary<string, string>? details = null,
         DateTimeOffset? atUtc = null)
@@ -159,12 +156,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 _sanitizer,
                 "peerIdentityId",
                 NormalizeIdentity(peerIdentityId)),
-            SanitizeRuntimeField(_sanitizer, "remoteAddress", remoteAddress),
-            SanitizeRuntimeField(_sanitizer, "localAddress", localAddress),
-            SanitizeRuntimeField(
-                _sanitizer,
-                "localInterfaceId",
-                localInterfaceId),
             SanitizeRuntimeField(_sanitizer, "reason", reason),
             SanitizeRuntimeDetails(_sanitizer, details)));
     }
@@ -221,140 +212,66 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         return sanitized;
     }
 
-    public void ObservePeer(PeerAnnouncement announcement)
+    /// <summary>
+    /// Takes a friend's rich presence as the announcement it replaces: it says
+    /// whether they run a launcher that speaks this diagnostics version, and
+    /// under which name to show them.
+    /// </summary>
+    public void ObservePeer(SteamPeerPresence presence)
     {
-        ArgumentNullException.ThrowIfNull(announcement);
+        ArgumentNullException.ThrowIfNull(presence);
         if (Volatile.Read(ref _disposed) != 0) return;
 
-        var identityId = NormalizeIdentity(announcement.IdentityId);
-        if (identityId.Length == 0)
-        {
-            return;
-        }
+        var identityId = presence.SteamId.ToString();
+        if (identityId.Length == 0) return;
 
-        if (announcement.DiagnosticLogProtocolVersion !=
-                PeerSupportProtocol.ProtocolVersion ||
-            !PeerSupportCertificate.TryNormalizeFingerprint(
-                announcement.DiagnosticTlsFingerprint,
-                out var fingerprint) ||
-            !IPAddress.TryParse(announcement.NetworkAddress, out var remoteAddress) ||
-            !IsUsableRemoteAddress(remoteAddress) ||
-            !IPAddress.TryParse(announcement.LocalAddress, out var localAddress) ||
-            string.IsNullOrWhiteSpace(announcement.LocalInterfaceId))
+        if (presence.DiagnosticProtocolVersion != PeerSupportProtocol.ProtocolVersion)
         {
             _peers.TryRemove(identityId, out _);
             CancelTargetIfMatches(identityId, "peer_incompatible");
             return;
         }
 
-        var snapshot = _network.GetSnapshot();
-        var selected = snapshot.PrimaryEndpoint;
-        if (selected is null ||
-            !string.Equals(
-                selected.InterfaceId,
-                announcement.LocalInterfaceId,
-                StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(
-                selected.NetworkAddress,
-                localAddress.ToString(),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
         var observed = new ObservedPeer(
-            identityId,
-            NormalizePlayerName(announcement.PlayerName),
-            fingerprint,
-            remoteAddress,
-            localAddress,
-            selected.InterfaceId,
-            selected.InterfaceIndex,
+            presence.SteamId,
+            NormalizePlayerName(
+                presence.PlayerName.Length != 0 ? presence.PlayerName : presence.PersonaName),
             _timeProvider.GetUtcNow());
         var changed = !_peers.TryGetValue(identityId, out var previous) ||
-                      !previous.HasSameRoute(observed);
+                      !previous.DescribesSamePeer(observed);
         _peers[identityId] = observed;
 
-        if (changed)
+        if (!changed) return;
+
+        OutgoingSession? target;
+        lock (_targetGate) target = _target;
+        if (target is not null &&
+            string.Equals(target.Peer.IdentityId, identityId, StringComparison.Ordinal))
         {
-            OutgoingSession? target;
-            lock (_targetGate) target = _target;
-            if (target is not null &&
-                string.Equals(
-                    target.Peer.IdentityId,
-                    identityId,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.Equals(
-                        target.PinnedFingerprint,
-                        observed.Fingerprint,
-                        StringComparison.Ordinal))
-                {
-                    CancelTargetIfMatches(
-                        identityId,
-                        "peer_tls_fingerprint_changed");
-                }
-                else
-                {
-                    target.TryPublishEvent(new SupportTransportEvent(
-                        _timeProvider.GetUtcNow(),
-                        "peer_route_observed",
-                        observed.IdentityId,
-                        observed.RemoteAddress.ToString(),
-                        observed.LocalAddress.ToString(),
-                        observed.LocalInterfaceId,
-                        "discovery"));
-                }
-            }
+            target.Peer = observed;
+            target.TryPublishEvent(new SupportTransportEvent(
+                _timeProvider.GetUtcNow(),
+                "peer_presence_observed",
+                identityId,
+                "discovery"));
         }
-        if (changed)
-        {
-            RaiseStateChanged();
-        }
+        RaiseStateChanged();
     }
 
-    public async Task UpdateNetworkContextAsync(
-        NetworkEnvironmentSnapshot snapshot,
+    /// <summary>
+    /// Called when Steam goes away (client closed, signed out, API lost). The
+    /// peer list is only meaningful while Steam can authenticate accounts, so
+    /// everything in flight stops instead of retrying into a dead transport.
+    /// </summary>
+    public async Task OnTransportUnavailableAsync(
+        string reason,
         CancellationToken token = default)
     {
-        ArgumentNullException.ThrowIfNull(snapshot);
         if (Volatile.Read(ref _disposed) != 0) return;
-        var previous = Interlocked.Exchange(
-            ref _networkFingerprint,
-            snapshot.TopologyFingerprint);
-        if (string.Equals(
-                previous,
-                snapshot.TopologyFingerprint,
-                StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var selectedKey = BuildSelectedNetworkKey(snapshot);
-        var previousSelectedKey = Interlocked.Exchange(
-            ref _selectedNetworkKey,
-            selectedKey);
-        if (string.Equals(
-                previousSelectedKey,
-                selectedKey,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            OutgoingSession? current;
-            lock (_targetGate) current = _target;
-            current?.TryPublishEvent(new SupportTransportEvent(
-                _timeProvider.GetUtcNow(),
-                "network_interfaces_changed",
-                current.Peer.IdentityId,
-                current.Peer.RemoteAddress.ToString(),
-                current.Peer.LocalAddress.ToString(),
-                current.Peer.LocalInterfaceId,
-                snapshot.TopologyFingerprint));
-            RaiseStateChanged();
-            return;
-        }
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "transport_unavailable" : reason;
 
         Interlocked.Increment(ref _targetRequestVersion);
-        CancelCurrentTarget("selected_network_changed");
+        CancelCurrentTarget(normalizedReason);
         _peers.Clear();
         foreach (var incoming in _incoming.Values.ToArray())
         {
@@ -365,9 +282,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             }
             try
             {
-                await incoming.CompleteAsync(
-                    "selected_network_changed",
-                    token).ConfigureAwait(false);
+                await incoming.CompleteAsync(normalizedReason, token).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or
                                        UnauthorizedAccessException or
@@ -376,7 +291,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 Interlocked.Increment(ref _decodeErrors);
             }
         }
-        SetStatus("Выбранный сетевой IP изменился; передача логов остановлена.");
+        SetStatus("Steam недоступен; передача логов остановлена.");
     }
 
     public async Task SetTargetAsync(
@@ -386,7 +301,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(option);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         token.ThrowIfCancellationRequested();
-        var normalized = NormalizeIdentity(option.IdentityId);
+        var normalized = option.SteamId.ToString();
         var requestVersion = Interlocked.Increment(ref _targetRequestVersion);
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(
             token,
@@ -429,20 +344,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 throw new InvalidOperationException(
                     "Выбранный игрок больше не доступен для передачи логов.");
             }
-            if (!PeerSupportCertificate.TryNormalizeFingerprint(
-                    option.TlsFingerprint,
-                    out var selectedFingerprint) ||
-                !string.Equals(
-                    selectedFingerprint,
-                    peer.Fingerprint,
-                    StringComparison.Ordinal) ||
-                !IPAddress.TryParse(option.NetworkAddress, out var selectedAddress) ||
-                !selectedAddress.Equals(peer.RemoteAddress))
-            {
-                throw new InvalidOperationException(
-                    "Маршрут или сертификат выбранного игрока изменился; выберите его снова.");
-            }
-
             var session = new OutgoingSession(
                 peer,
                 Guid.NewGuid(),
@@ -461,7 +362,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 _target = session;
                 session.Task = RunOutgoingSessionAsync(session);
             }
-            SetStatus($"Подготовка логов для {peer.PlayerName} ({peer.RemoteAddress})…");
+            SetStatus($"Подготовка логов для {peer.PlayerName}…");
         }
         finally
         {
@@ -470,12 +371,12 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     }
 
     public async Task HandleIncomingAsync(
-        Stream transport,
+        Stream stream,
         byte[] initialFrame,
-        PortableConnectionContext connection,
+        PeerConnectionContext connection,
         CancellationToken token)
     {
-        ArgumentNullException.ThrowIfNull(transport);
+        ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(initialFrame);
         ArgumentNullException.ThrowIfNull(connection);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -491,14 +392,9 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
 
             using var handshake = CancellationTokenSource.CreateLinkedTokenSource(token);
             handshake.CancelAfter(HandshakeTimeout);
-            await using var tls = await PeerSupportTls.AuthenticateAsServerAsync(
-                transport,
-                _certificate,
-                fingerprint => FindCurrentPeerByFingerprint(fingerprint) is not null,
-                handshake.Token).ConfigureAwait(false);
 
             var helloFrame = await ReadFrameWithTimeoutAsync(
-                tls.Stream,
+                stream,
                 HandshakeTimeout,
                 handshake.Token).ConfigureAwait(false);
             if (helloFrame.Type != PeerSupportFrameType.Hello ||
@@ -510,10 +406,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             }
             var hello = PeerSupportProtocol.DeserializeJson<PeerSupportHello>(
                 helloFrame.Payload);
-            var peer = ValidateIncomingHello(
-                hello,
-                tls.RemoteCertificateFingerprint,
-                connection);
+            var peer = ValidateIncomingHello(hello, connection);
             var incoming = await GetOrCreateIncomingSessionAsync(
                 hello,
                 peer,
@@ -523,7 +416,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             if (!incoming.IsActive)
             {
                 await TryWriteTerminalErrorAsync(
-                    tls.Stream,
+                    stream,
                     incoming.HighestAcceptedSequence,
                     "diagnostic_session_is_no_longer_active",
                     token).ConfigureAwait(false);
@@ -543,7 +436,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     hello.SessionId,
                     incoming.HighestAcceptedSequence);
                 await WriteFrameWithTimeoutAsync(
-                    tls.Stream,
+                    stream,
                     new PeerSupportFrame(
                         PeerSupportFrameType.HelloAccepted,
                         0,
@@ -555,7 +448,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 try
                 {
                     await ReceiveFramesAsync(
-                        tls.Stream,
+                        stream,
                         hello,
                         peer,
                         connection,
@@ -567,7 +460,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     var reason = "receiver_storage_limit: " +
                                  _sanitizer.SanitizeMetadataValue(ex.Reason);
                     await TryWriteTerminalErrorAsync(
-                        tls.Stream,
+                        stream,
                         incoming.HighestAcceptedSequence,
                         reason,
                         token).ConfigureAwait(false);
@@ -640,7 +533,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         _incomingConnectionGate.Dispose();
         _targetChangeGate.Dispose();
         _shutdown.Dispose();
-        _certificate.Dispose();
     }
 
     private async Task RunMaintenanceAsync()
@@ -719,7 +611,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             terminalStatus = $"Передача логов остановлена: {ex.Reason}";
         }
         catch (Exception ex) when (ex is IOException or
-                                   SocketException or
                                    InvalidDataException or
                                    InvalidOperationException or
                                    UnauthorizedAccessException)
@@ -1097,23 +988,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 session.ForceCancel();
                 break;
             }
-            if (!string.Equals(
-                    peer.Fingerprint,
-                    session.PinnedFingerprint,
-                    StringComparison.Ordinal))
-            {
-                if (!session.StopRequested)
-                {
-                    PublishStopEvent(session, "peer_tls_fingerprint_changed");
-                }
-                session.FailureStatus =
-                    "Сертификат получателя изменился; выберите игрока снова.";
-                session.RequestStop(
-                    "peer_tls_fingerprint_changed",
-                    _timeProvider.GetUtcNow());
-                session.ForceCancel();
-                break;
-            }
             session.Peer = peer;
 
             try
@@ -1129,10 +1003,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 break;
             }
             catch (Exception ex) when (ex is IOException or
-                                       SocketException or
                                        InvalidDataException or
-                                       InvalidOperationException or
-                                       System.Security.Authentication.AuthenticationException)
+                                       InvalidOperationException)
             {
                 if (session.StopRequested &&
                     session.StopRequestedAtUtc is { } stoppedAt &&
@@ -1144,8 +1016,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 Interlocked.Increment(ref _reconnects);
                 if (!session.StopRequested)
                 {
-                    SetStatus(
-                        $"Повторное подключение к {peer.PlayerName} ({peer.RemoteAddress})…");
+                    SetStatus($"Повторное подключение к {peer.PlayerName}…");
                 }
                 await Task.Delay(ReconnectDelay, _timeProvider, token)
                     .ConfigureAwait(false);
@@ -1159,27 +1030,18 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         SupportLogRateLimiter limiter,
         CancellationToken token)
     {
-        var candidate = GetCurrentCandidate(peer) ??
-            throw new InvalidOperationException(
-                "The selected peer route is no longer confirmed.");
+        if (!_transport.IsAvailable)
+        {
+            throw new InvalidOperationException(_transport.UnavailableReason);
+        }
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(ConnectTimeout);
-        using var client = _network.CreateBoundTcpClient(
-            peer.RemoteAddress,
-            peer.LocalAddress.ToString(),
-            peer.LocalInterfaceId);
-        await client.ConnectAsync(
-            peer.RemoteAddress,
-            TransferPort,
-            timeout.Token).ConfigureAwait(false);
-        await using var stream = client.GetStream();
+        await using var connection = await _transport
+            .ConnectAsync(peer.SteamId, PeerSupportProtocol.UpgradeProtocolName, timeout.Token)
+            .ConfigureAwait(false);
+        var stream = connection.Stream;
         await PeerSupportProtocol.WriteUpgradeAsync(stream, timeout.Token)
             .ConfigureAwait(false);
-        await using var tls = await PeerSupportTls.AuthenticateAsClientAsync(
-            stream,
-            _certificate,
-            peer.Fingerprint,
-            timeout.Token).ConfigureAwait(false);
 
         var localIdentity = GetLocalIdentity();
         var hello = new PeerSupportHello
@@ -1191,7 +1053,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             ResumeAfterSequence = session.LastAcknowledged
         };
         await WriteFrameWithTimeoutAsync(
-            tls.Stream,
+            stream,
                 new PeerSupportFrame(
                     PeerSupportFrameType.Hello,
                     0,
@@ -1200,7 +1062,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     PeerSupportProtocol.SerializeJson(hello)),
             timeout.Token).ConfigureAwait(false);
         var acceptedFrame = await ReadFrameWithTimeoutAsync(
-            tls.Stream,
+            stream,
             HandshakeTimeout,
             timeout.Token).ConfigureAwait(false);
         if (acceptedFrame.Type == PeerSupportFrameType.Error)
@@ -1237,8 +1099,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             session.LastAcknowledged,
             token).ConfigureAwait(false);
         session.CollectorWindow.AcknowledgeThrough(session.LastAcknowledged);
-        _routes.MarkEndpointHealthy(peer.IdentityId, candidate);
-        SetStatus($"Логи передаются игроку {peer.PlayerName} ({peer.RemoteAddress}).");
+        SetStatus($"Логи передаются игроку {peer.PlayerName}.");
 
         while (!token.IsCancellationRequested)
         {
@@ -1249,10 +1110,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     PublishStopEvent(session, "peer_stale");
                 }
                 session.RequestStop("peer_stale", _timeProvider.GetUtcNow());
-            }
-            else if (!current.HasSameRoute(peer))
-            {
-                throw new IOException("The observed peer route changed.");
             }
             if (session.StopRequested)
             {
@@ -1279,11 +1136,11 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                     frame.Payload.Length + PeerSupportProtocol.HeaderSize,
                     token).ConfigureAwait(false);
                 await WriteFrameWithTimeoutAsync(
-                    tls.Stream,
+                    stream,
                     frame,
                     token).ConfigureAwait(false);
                 var ack = await ReadFrameWithTimeoutAsync(
-                    tls.Stream,
+                    stream,
                     FrameIdleTimeout,
                     token).ConfigureAwait(false);
                 if (ack.Type == PeerSupportFrameType.Error)
@@ -1443,20 +1300,17 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         Stream stream,
         PeerSupportHello hello,
         ObservedPeer authenticatedPeer,
-        PortableConnectionContext connection,
+        PeerConnectionContext connection,
         IncomingSessionState incoming,
         CancellationToken token)
     {
         ulong ackSequence = 1;
         while (!token.IsCancellationRequested)
         {
-            if (!IsIncomingPeerCurrent(
-                    hello.SenderIdentityId,
-                    authenticatedPeer,
-                    connection))
+            if (!IsIncomingPeerCurrent(hello.SenderIdentityId, connection))
             {
                 throw new IOException(
-                    "The diagnostics peer route is no longer current.");
+                    "The diagnostics connection no longer belongs to its sender.");
             }
 
             PeerSupportFrame frame;
@@ -1582,26 +1436,17 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         }
     }
 
-    private bool IsIncomingPeerCurrent(
+    /// <summary>
+    /// The Steam account behind a connection is fixed for its whole life, so
+    /// staying "current" now only means the frames still claim that account.
+    /// </summary>
+    private static bool IsIncomingPeerCurrent(
         string identityId,
-        ObservedPeer authenticatedPeer,
-        PortableConnectionContext connection)
+        PeerConnectionContext connection)
     {
         var normalized = NormalizeIdentity(identityId);
         return normalized.Length != 0 &&
-               TryGetCurrentPeer(normalized, out var current) &&
-               current.HasSameRoute(authenticatedPeer) &&
-               current.RemoteAddress.Equals(connection.RemoteAddress) &&
-               current.LocalAddress.Equals(connection.LocalAddress) &&
-               string.Equals(
-                   current.LocalInterfaceId,
-                   connection.LocalInterfaceId,
-                   StringComparison.OrdinalIgnoreCase) &&
-               current.LocalInterfaceIndex == connection.LocalInterfaceIndex &&
-               _routes.IsKnownEndpoint(
-                   normalized,
-                   connection.RemoteAddress,
-                   connection.LocalInterfaceId);
+               string.Equals(normalized, connection.PeerId.ToString(), StringComparison.Ordinal);
     }
 
     private async Task ApplyManifestAsync(
@@ -1786,7 +1631,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     private async Task<IncomingSessionState> GetOrCreateIncomingSessionAsync(
         PeerSupportHello hello,
         ObservedPeer peer,
-        PortableConnectionContext connection,
+        PeerConnectionContext connection,
         CancellationToken token)
     {
         var key = BuildIncomingKey(peer.IdentityId, hello.SessionId);
@@ -1804,9 +1649,9 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             if (_incoming.Count >= MaxIncomingSessions ||
                 _incoming.Values.Count(session =>
                     string.Equals(
-                        session.Storage.PeerIdentityId.ToString("D"),
+                        session.Storage.PeerIdentityId,
                         peer.IdentityId,
-                        StringComparison.OrdinalIgnoreCase)) >=
+                        StringComparison.Ordinal)) >=
                 MaxIncomingSessionsPerPeer)
             {
                 throw new InvalidDataException(
@@ -1818,15 +1663,13 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 ["protocolVersion"] =
                     PeerSupportProtocol.ProtocolVersion.ToString(
                         System.Globalization.CultureInfo.InvariantCulture),
-                ["observedRemoteAddress"] = connection.RemoteAddress.ToString(),
-                ["selectedLocalAddress"] = connection.LocalAddress.ToString(),
-                ["selectedLocalInterfaceId"] = connection.LocalInterfaceId,
-                ["tlsFingerprint"] = peer.Fingerprint
+                ["steamId64"] = peer.IdentityId,
+                ["steamPersonaName"] = connection.PersonaName
             };
             var storage = await _storage.CreateSessionAsync(
                 new SupportLogSessionDescriptor(
                     hello.SessionId,
-                    Guid.Parse(peer.IdentityId),
+                    peer.IdentityId,
                     peer.PlayerName,
                     hello.StartedAtUtc,
                     metadata),
@@ -1856,7 +1699,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     {
         try
         {
-            var identityId = incoming.Storage.PeerIdentityId.ToString("D");
+            var identityId = incoming.Storage.PeerIdentityId;
             var delay = _peers.TryGetValue(identityId, out var peer)
                 ? peer.LastSeenUtc + PeerTtl - _timeProvider.GetUtcNow()
                 : TimeSpan.Zero;
@@ -1881,10 +1724,15 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The sender is whoever Steam says opened the connection; the hello only
+    /// has to agree with that and to be addressed to this account. A friend
+    /// whose rich presence has not been read yet is still a legitimate sender,
+    /// so they are taken from the connection rather than from the peer list.
+    /// </summary>
     private ObservedPeer ValidateIncomingHello(
         PeerSupportHello hello,
-        string remoteFingerprint,
-        PortableConnectionContext connection)
+        PeerConnectionContext connection)
     {
         PeerSupportProtocol.ValidateHello(hello, _timeProvider.GetUtcNow());
         var senderId = NormalizeIdentity(hello.SenderIdentityId);
@@ -1893,43 +1741,30 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         if (hello.SessionId == Guid.Empty ||
             senderId.Length == 0 ||
             recipientId.Length == 0 ||
-            !string.Equals(
-                recipientId,
-                localIdentity.id,
-                StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(
-                senderId,
-                localIdentity.id,
-                StringComparison.OrdinalIgnoreCase) ||
-            !TryGetCurrentPeer(senderId, out var peer) ||
-            !string.Equals(
-                peer.Fingerprint,
-                remoteFingerprint,
-                StringComparison.Ordinal) ||
-            !peer.RemoteAddress.Equals(connection.RemoteAddress) ||
-            !peer.LocalAddress.Equals(connection.LocalAddress) ||
-            !string.Equals(
-                peer.LocalInterfaceId,
-                connection.LocalInterfaceId,
-                StringComparison.OrdinalIgnoreCase) ||
-            !_routes.IsKnownEndpoint(
-                senderId,
-                connection.RemoteAddress,
-                connection.LocalInterfaceId))
+            !string.Equals(recipientId, localIdentity.id, StringComparison.Ordinal) ||
+            string.Equals(senderId, localIdentity.id, StringComparison.Ordinal) ||
+            !string.Equals(senderId, connection.PeerId.ToString(), StringComparison.Ordinal))
         {
             throw new InvalidDataException(
-                "The diagnostics sender identity does not match its observed route.");
+                "The diagnostics sender identity does not match its Steam connection.");
         }
-        return peer;
+
+        if (TryGetCurrentPeer(senderId, out var peer)) return peer;
+
+        var observed = new ObservedPeer(
+            connection.PeerId,
+            NormalizePlayerName(connection.PersonaName),
+            _timeProvider.GetUtcNow());
+        _peers[senderId] = observed;
+        return observed;
     }
 
     internal void ValidateIncomingPeerForTesting(
         PeerSupportHello hello,
-        string remoteFingerprint,
-        PortableConnectionContext connection)
+        PeerConnectionContext connection)
     {
         ValidateIncomingConnectionContext(connection);
-        _ = ValidateIncomingHello(hello, remoteFingerprint, connection);
+        _ = ValidateIncomingHello(hello, connection);
     }
 
     internal static async Task AppendResumedFrameForTestingAsync(
@@ -1949,33 +1784,16 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
-    private void ValidateIncomingConnectionContext(
-        PortableConnectionContext connection)
+    private void ValidateIncomingConnectionContext(PeerConnectionContext connection)
     {
         var now = _timeProvider.GetUtcNow();
-        if (connection.IsRemoteLoopback ||
-            connection.RemotePort is < 1 or > 65535 ||
-            connection.LocalPort != TransferPort ||
+        if (!connection.PeerId.IsValid ||
+            !connection.IsFriend ||
             connection.AcceptedAtUtc < now.AddMinutes(-1) ||
-            connection.AcceptedAtUtc > now.AddMinutes(1) ||
-            !IsUsableRemoteAddress(connection.RemoteAddress))
+            connection.AcceptedAtUtc > now.AddMinutes(1))
         {
             throw new InvalidDataException(
-                "Loopback is not a valid diagnostics peer address.");
-        }
-
-        var selected = _network.GetSnapshot().PrimaryEndpoint;
-        if (selected is null ||
-            !IPAddress.TryParse(selected.NetworkAddress, out var selectedAddress) ||
-            !selectedAddress.Equals(connection.LocalAddress) ||
-            !string.Equals(
-                selected.InterfaceId,
-                connection.LocalInterfaceId,
-                StringComparison.OrdinalIgnoreCase) ||
-            selected.InterfaceIndex != connection.LocalInterfaceIndex)
-        {
-            throw new InvalidDataException(
-                "The diagnostics connection did not use the selected interface.");
+                "The diagnostics connection is not an accepted Steam friend.");
         }
     }
 
@@ -2026,64 +1844,19 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         };
     }
 
-    private PeerCandidateEndpoint? GetCurrentCandidate(ObservedPeer peer) =>
-        _routes.GetSendCandidates(peer.IdentityId)
-            .FirstOrDefault(candidate =>
-                string.Equals(
-                    candidate.Address,
-                    peer.RemoteAddress.ToString(),
-                    StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(
-                    candidate.LocalAddress,
-                    peer.LocalAddress.ToString(),
-                    StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(
-                    candidate.LocalInterfaceId,
-                    peer.LocalInterfaceId,
-                    StringComparison.OrdinalIgnoreCase));
-
     private bool TryGetCurrentPeer(string identityId, out ObservedPeer peer)
     {
         if (!_peers.TryGetValue(identityId, out peer!))
         {
             return false;
         }
-        if (_timeProvider.GetUtcNow() - peer.LastSeenUtc > PeerTtl ||
-            !IsPeerOnCurrentNetwork(peer))
+        if (_timeProvider.GetUtcNow() - peer.LastSeenUtc > PeerTtl)
         {
             _peers.TryRemove(identityId, out _);
             peer = null!;
             return false;
         }
         return true;
-    }
-
-    private ObservedPeer? FindCurrentPeerByFingerprint(string fingerprint)
-    {
-        if (!PeerSupportCertificate.TryNormalizeFingerprint(
-                fingerprint,
-                out var normalized))
-        {
-            return null;
-        }
-        return _peers.Values.FirstOrDefault(peer =>
-            string.Equals(peer.Fingerprint, normalized, StringComparison.Ordinal) &&
-            _timeProvider.GetUtcNow() - peer.LastSeenUtc <= PeerTtl &&
-            IsPeerOnCurrentNetwork(peer));
-    }
-
-    private bool IsPeerOnCurrentNetwork(ObservedPeer peer)
-    {
-        var selected = _network.GetSnapshot().PrimaryEndpoint;
-        return selected is not null &&
-               string.Equals(
-                   selected.InterfaceId,
-                   peer.LocalInterfaceId,
-                   StringComparison.OrdinalIgnoreCase) &&
-               string.Equals(
-                   selected.NetworkAddress,
-                   peer.LocalAddress.ToString(),
-                   StringComparison.OrdinalIgnoreCase);
     }
 
     private (string id, string name) GetLocalIdentity()
@@ -2143,9 +1916,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             _timeProvider.GetUtcNow(),
             "diagnostic_session_stopping",
             session.Peer.IdentityId,
-            session.Peer.RemoteAddress.ToString(),
-            session.Peer.LocalAddress.ToString(),
-            session.Peer.LocalInterfaceId,
             reason));
     }
 
@@ -2163,8 +1933,7 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         if (target is not null)
         {
             SetStatus(
-                $"Логи передаются игроку {target.Peer.PlayerName} " +
-                $"({target.Peer.RemoteAddress})." +
+                $"Логи передаются игроку {target.Peer.PlayerName}." +
                 (incoming.Length == 0
                     ? string.Empty
                     : $" Получение: {string.Join(", ", incoming)}."));
@@ -2340,18 +2109,8 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
                 "The diagnostics stream kind is invalid.")
         };
 
-    private static bool IsUsableRemoteAddress(IPAddress address) =>
-        !IPAddress.IsLoopback(address) &&
-        !address.Equals(IPAddress.Any) &&
-        !address.Equals(IPAddress.IPv6Any) &&
-        !address.Equals(IPAddress.Broadcast) &&
-        !address.IsIPv6Multicast &&
-        VirtualNetworkService.IsUsableAddress(address);
-
     private static string NormalizeIdentity(string? value) =>
-        Guid.TryParse(value, out var identity)
-            ? identity.ToString("D")
-            : string.Empty;
+        SteamId64.TryNormalize(value, out var canonical) ? canonical : string.Empty;
 
     private static string NormalizePlayerName(string? value)
     {
@@ -2364,20 +2123,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
 
     private static string BuildIncomingKey(string identityId, Guid sessionId) =>
         $"{identityId}/{sessionId:D}";
-
-    private static string BuildSelectedNetworkKey(
-        NetworkEnvironmentSnapshot snapshot)
-    {
-        var selected = snapshot.PrimaryEndpoint;
-        return selected is null
-            ? string.Empty
-            : string.Join(
-                "|",
-                selected.InterfaceId,
-                selected.InterfaceIndex.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture),
-                selected.NetworkAddress);
-    }
 
     private static async Task ObserveTaskAsync(Task? task)
     {
@@ -2429,24 +2174,15 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
     }
 
     private sealed record ObservedPeer(
-        string IdentityId,
+        SteamId64 SteamId,
         string PlayerName,
-        string Fingerprint,
-        IPAddress RemoteAddress,
-        IPAddress LocalAddress,
-        string LocalInterfaceId,
-        int LocalInterfaceIndex,
         DateTimeOffset LastSeenUtc)
     {
-        public bool HasSameRoute(ObservedPeer other) =>
-            string.Equals(Fingerprint, other.Fingerprint, StringComparison.Ordinal) &&
-            RemoteAddress.Equals(other.RemoteAddress) &&
-            LocalAddress.Equals(other.LocalAddress) &&
-            string.Equals(
-                LocalInterfaceId,
-                other.LocalInterfaceId,
-                StringComparison.OrdinalIgnoreCase) &&
-            LocalInterfaceIndex == other.LocalInterfaceIndex;
+        public string IdentityId { get; } = SteamId.ToString();
+
+        public bool DescribesSamePeer(ObservedPeer other) =>
+            SteamId == other.SteamId &&
+            string.Equals(PlayerName, other.PlayerName, StringComparison.Ordinal);
     }
 
     [SuppressMessage(
@@ -2477,7 +2213,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
             CancellationTokenSource cancellation)
         {
             Peer = peer;
-            PinnedFingerprint = peer.Fingerprint;
             SessionId = sessionId;
             CancelSource = cancellation;
             ProducerCancelSource =
@@ -2493,7 +2228,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         }
 
         public ObservedPeer Peer { get; set; }
-        public string PinnedFingerprint { get; }
         public Guid SessionId { get; }
         public DateTimeOffset StartedAtUtc { get; }
         public CancellationTokenSource CancelSource { get; }
@@ -2785,9 +2519,6 @@ internal sealed class PeerSupportLogService : IAsyncDisposable
         DateTimeOffset AtUtc,
         string Type,
         string PeerIdentityId,
-        string RemoteAddress,
-        string LocalAddress,
-        string LocalInterfaceId,
         string Reason,
         IReadOnlyDictionary<string, string>? Details = null);
 

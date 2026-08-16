@@ -1,4 +1,4 @@
-<Window x:Class="Minecraft.MainWindow"
+﻿<Window x:Class="Minecraft.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Minecraft"
@@ -74,9 +74,6 @@
                        ToolTip="{Binding DisplayName}"
                        TextAlignment="Center"
                        HorizontalAlignment="Stretch"/>
-        </DataTemplate>
-        <DataTemplate x:Key="NetworkAddressItemTemplate">
-            <TextBlock Text="{Binding DisplayName}" TextAlignment="Center" HorizontalAlignment="Stretch"/>
         </DataTemplate>
     </Window.Resources>
 
@@ -156,19 +153,6 @@
                              DataObject.Pasting="MemoryTextBox_Pasting"
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
                     <TextBlock Grid.Column="3" Text="GB" Margin="6,0,0,0"/>
-                </Grid>
-                <TextBlock Grid.Row="1" Grid.Column="3" Text="IP" Margin="0,10,0,0"/>
-                <Grid Grid.Row="1" Grid.Column="4" Margin="8,10,0,0">
-                    <local:CenteredDropDown x:Name="NetworkAddressComboBox"
-                                            ItemTemplate="{StaticResource NetworkAddressItemTemplate}"
-                                            SelectionChanged="NetworkAddressComboBox_SelectionChanged"/>
-                    <TextBlock x:Name="NetworkAddressPlaceholderText"
-                               Text="Сетевой IP не найден"
-                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               IsHitTestVisible="False"
-                               Visibility="Collapsed"/>
                 </Grid>
             </Grid>
 

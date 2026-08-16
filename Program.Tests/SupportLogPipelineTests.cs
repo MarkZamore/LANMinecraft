@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -52,7 +52,7 @@ public sealed class SupportLogPipelineTests
     {
         using var fixture = new TemporaryPortableRoot();
         var storage = new SupportLogStorage(fixture.Paths);
-        var peer = Guid.NewGuid();
+        var peer = "76561198000000002";
         var sessionId = Guid.NewGuid();
         var session = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             sessionId,
@@ -94,7 +94,7 @@ public sealed class SupportLogPipelineTests
     public async Task Storage_ResumesDeterministicSessionAndPersistsAcceptedFrameState()
     {
         using var fixture = new TemporaryPortableRoot();
-        var peer = Guid.NewGuid();
+        var peer = "76561198000000002";
         var sessionId = Guid.NewGuid();
         var startedAt = new DateTimeOffset(2026, 7, 26, 10, 11, 12, TimeSpan.Zero);
         var descriptor = new SupportLogSessionDescriptor(
@@ -223,12 +223,12 @@ public sealed class SupportLogPipelineTests
             freeSpaceProbe: _ => true);
         var first = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "76561198000000002",
             "Alice",
             DateTimeOffset.UtcNow));
         var second = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "76561198000000002",
             "Bob",
             DateTimeOffset.UtcNow));
 
@@ -263,7 +263,7 @@ public sealed class SupportLogPipelineTests
         var storage = new SupportLogStorage(fixture.Paths, timeProvider: time);
         var session = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "76561198000000002",
             "Alice",
             time.GetUtcNow()));
         var directory = session.SessionDirectory;
@@ -314,7 +314,7 @@ public sealed class SupportLogPipelineTests
             freeSpaceProbe: _ => true);
         var session = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "76561198000000002",
             "Alice",
             DateTimeOffset.UtcNow));
         await session.RegisterSourceAsync(new SupportLogStreamDescriptor(
@@ -367,7 +367,7 @@ public sealed class SupportLogPipelineTests
         {
             var session = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
                 Guid.NewGuid(),
-                Guid.NewGuid(),
+                "76561198000000002",
                 name,
                 time.GetUtcNow()));
             await session.RegisterSourceAsync(new SupportLogStreamDescriptor(
@@ -411,7 +411,7 @@ public sealed class SupportLogPipelineTests
             freeSpaceProbe: _ => true);
         var session = await storage.CreateSessionAsync(new SupportLogSessionDescriptor(
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "76561198000000002",
             "Alice",
             DateTimeOffset.UtcNow));
         var spool = new SupportLogSpool(

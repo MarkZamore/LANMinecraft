@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft;
 
@@ -57,7 +57,6 @@ public sealed class AppPaths
     public string SteamIdentityFile => Path.Combine(Personal, "steam-identity.json");
     /// <summary>Backups taken before the first write of a new identity schema.</summary>
     public string IdentityBackups => Path.Combine(Personal, "Backups", "Identity");
-    public string NetworkPeersFile => Path.Combine(Personal, "network-peers.json");
     public string PackHashesFile => Path.Combine(Personal, "pack-hashes.json");
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");
     public string MinecraftWindowPlacementFile => Path.Combine(Personal, "minecraft-window-placement.json");

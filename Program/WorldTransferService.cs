@@ -1,20 +1,19 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace Minecraft;
 
-public sealed class WorldTransferService : IAsyncDisposable
+public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHandler
 {
-    public const int TransferPort = 35656;
     public const string ProtocolName = "MinecraftPortableWorld";
-    public const int ProtocolVersion = 5;
+    /// <summary>6 = the header carries Steam accounts; 5 was the VPN era.</summary>
+    public const int ProtocolVersion = 6;
     public const string TransferMessageType = "Transfer";
     public const string ProbeMessageType = "Probe";
     public const string PrepareMessageType = "Prepare";
@@ -41,6 +40,8 @@ public sealed class WorldTransferService : IAsyncDisposable
     // archive, and its TCP window stays closed the whole time.
     private static TimeSpan WriteStallTimeout(TimeSpan idleTimeout) => idleTimeout * 8;
     private static readonly TimeSpan RejectionWriteTimeout = TimeSpan.FromSeconds(5);
+    // Steam relays make a first connection slower than a LAN socket ever was.
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
     // The first frame is shared by world, waypoint, skin, relay and diagnostics
     // protocols. Existing waypoint snapshots may legitimately use the portable
     // protocol's full JSON limit; diagnostics applies its 256 KiB limit only
@@ -57,12 +58,10 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
-    private readonly ISelectedNetworkTransport _network;
-    private readonly PeerRouteResolver _routes;
+    private readonly IPeerTransport _transport;
     private readonly WorldTransferRuntimeOptions _runtimeOptions;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly JsonSerializerOptions _indentedJsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly SemaphoreSlim _listenerGate = new(1, 1);
     private readonly SemaphoreSlim _transferGate = new(1, 1);
     private readonly SemaphoreSlim _incomingClientGate =
         new(MaxIncomingClients, MaxIncomingClients);
@@ -70,13 +69,10 @@ public sealed class WorldTransferService : IAsyncDisposable
     private readonly ConcurrentDictionary<int, Task> _receiveTasks = new();
     private readonly ConcurrentDictionary<int, Task> _cleanupTasks = new();
     private int _nextCleanupTaskId;
-    private readonly ConcurrentDictionary<int, TcpClient> _incomingClients = new();
     private readonly object _disposeGate = new();
-    private PeerSupportLogService? _peerSupportLogs;
+    private AppSettings? _incomingSettings;
     private int _nextReceiveTaskId;
     private int _disposeState;
-    private CancellationTokenSource? _listenerCts;
-    private Task? _listenerTask;
     private Task? _disposeTask;
 
     public WorldTransferService(
@@ -89,8 +85,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         WorldPlayerProfileService playerProfiles,
         WaypointSyncService waypointSync,
         SkinService skinService,
-        ISelectedNetworkTransport network,
-        PeerRouteResolver routes,
+        IPeerTransport transport,
         WorldTransferRuntimeOptions? runtimeOptions = null)
     {
         _paths = paths;
@@ -102,8 +97,7 @@ public sealed class WorldTransferService : IAsyncDisposable
         _playerProfiles = playerProfiles;
         _waypointSync = waypointSync;
         _skinService = skinService;
-        _network = network;
-        _routes = routes;
+        _transport = transport;
         _runtimeOptions = runtimeOptions ?? new WorldTransferRuntimeOptions();
         _runtimeOptions.Validate();
         WorldTransferRecoveryService.Recover(paths, logger);
@@ -114,124 +108,106 @@ public sealed class WorldTransferService : IAsyncDisposable
     public event Action<WorldTransferProgress>? ProgressChanged;
     public bool IsOperationActive => _transferGate.CurrentCount == 0;
 
-    internal void AttachPeerSupportLogService(PeerSupportLogService service)
+    /// <summary>
+    /// The settings an incoming transfer runs with. Listening itself belongs to
+    /// <see cref="PeerConnectionRouter"/> now, so this only says "accept
+    /// transfers, using these settings" instead of binding a socket.
+    /// </summary>
+    public void UseSettingsForIncomingTransfers(AppSettings settings)
     {
-        ArgumentNullException.ThrowIfNull(service);
-        if (Interlocked.CompareExchange(ref _peerSupportLogs, service, null) is not null)
-        {
-            throw new InvalidOperationException(
-                "The diagnostics protocol handler is already attached.");
-        }
+        ArgumentNullException.ThrowIfNull(settings);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeState) != 0, this);
+        Volatile.Write(ref _incomingSettings, settings);
     }
 
-    public async Task StartListenerAsync(AppSettings settings, CancellationToken token = default)
+    /// <summary>Stops accepting new incoming transfers; those in flight finish.</summary>
+    public void StopAcceptingIncomingTransfers() => Volatile.Write(ref _incomingSettings, null);
+
+    string IPortableProtocolHandler.ProtocolName => ProtocolName;
+
+    /// <summary>
+    /// Every world transfer arrives here, whatever its first frame says: the
+    /// transfer handshake predates the protocol field, so the router hands us
+    /// anything it cannot name.
+    /// </summary>
+    async Task IPortableProtocolHandler.HandleAsync(
+        Stream stream,
+        byte[] initialFrame,
+        PeerConnectionContext context,
+        CancellationToken token)
     {
-        await _listenerGate.WaitAsync(token).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(initialFrame);
+        ArgumentNullException.ThrowIfNull(context);
+        var settings = Volatile.Read(ref _incomingSettings);
+        if (settings is null)
+        {
+            _logger.Warn(
+                $"A world transfer from {context.PeerId} arrived while incoming transfers are disabled.");
+            return;
+        }
+
+        if (!await _incomingClientGate.WaitAsync(0, token).ConfigureAwait(false))
+        {
+            _logger.Warn($"A world transfer from {context.PeerId} was refused: too many incoming transfers.");
+            return;
+        }
+
+        var id = Interlocked.Increment(ref _nextReceiveTaskId);
+        // An in-flight transfer outlives its caller: receiving is tracked here
+        // so shutdown can wait for hours of work instead of cutting it off.
+        var receiveTask = ObserveIncomingTransferAsync(stream, settings, initialFrame, context);
+        _receiveTasks[id] = receiveTask;
+        _ = receiveTask.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                _receiveTasks.TryRemove(id, out _);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        await receiveTask.ConfigureAwait(false);
+    }
+
+    private async Task ObserveIncomingTransferAsync(
+        Stream stream,
+        AppSettings settings,
+        byte[] initialFrame,
+        PeerConnectionContext context)
+    {
+        var token = _shutdownCts.Token;
         try
         {
-            ObjectDisposedException.ThrowIf(
-                Volatile.Read(ref _disposeState) != 0,
-                this);
-            await StopListenerCoreAsync().ConfigureAwait(false);
-            var cts = new CancellationTokenSource();
-            var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _listenerCts = cts;
-            _listenerTask = ListenAsync(settings, ready, cts.Token);
-            await ready.Task.WaitAsync(token).ConfigureAwait(false);
-            _logger.Info("World transfer listener started.");
+            await ReceiveWorldAsync(stream, settings, initialFrame, context, token).ConfigureAwait(false);
         }
-        catch
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            await StopListenerCoreAsync().ConfigureAwait(false);
-            throw;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or InvalidOperationException)
+        {
+            _logger.Warn($"Incoming world transfer from {context.PeerId} failed: {ex.Message}");
         }
         finally
         {
-            _listenerGate.Release();
+            _incomingClientGate.Release();
         }
     }
 
-    public async Task StopListenerAsync()
+    private async Task WaitForIncomingTransfersAsync()
     {
-        await _listenerGate.WaitAsync().ConfigureAwait(false);
+        var receiveTasks = _receiveTasks.Values.ToArray();
+        if (receiveTasks.Length == 0) return;
         try
         {
-            await StopListenerCoreAsync().ConfigureAwait(false);
+            await Task.WhenAll(receiveTasks).ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or IOException)
         {
-            _listenerGate.Release();
         }
-    }
-
-    // waitForReceives is set only on shutdown: restarting the listener rebinds
-    // the accept sockets and must leave in-flight transfers running.
-    private async Task StopListenerCoreAsync(bool waitForReceives = false)
-    {
-        var cts = _listenerCts;
-        var task = _listenerTask;
-        _listenerCts = null;
-        _listenerTask = null;
-        try
+        catch (Exception ex)
         {
-            try
-            {
-                cts?.Cancel();
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"World transfer listener cancellation failed: {ex.Message}");
-            }
-
-            if (task is not null)
-            {
-                try
-                {
-                    await task.ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
-                {
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn($"World transfer listener shutdown failed: {ex.Message}");
-                }
-            }
-
-            if (!waitForReceives) return;
-
-            // Dispose the sockets first: a peer that stopped reading could
-            // otherwise block an in-flight write and stall shutdown forever.
-            foreach (var client in _incomingClients.Values.ToArray())
-            {
-                try
-                {
-                    client.Dispose();
-                }
-                catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
-                {
-                }
-            }
-
-            var receiveTasks = _receiveTasks.Values.ToArray();
-            if (receiveTasks.Length > 0)
-            {
-                try
-                {
-                    await Task.WhenAll(receiveTasks).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException or IOException)
-                {
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn($"Incoming world transfer shutdown failed: {ex.Message}");
-                }
-            }
-        }
-        finally
-        {
-            cts?.Dispose();
+            _logger.Warn($"Incoming world transfer shutdown failed: {ex.Message}");
         }
     }
 
@@ -254,8 +230,7 @@ public sealed class WorldTransferService : IAsyncDisposable
                 }
 
                 RaiseProgress(0, 0, "Проверка получателя");
-                var peerEndpoint = await VerifyPeerTransferReadyAsync(peer, settings, token);
-                var peerAddress = IPAddress.Parse(peerEndpoint.Address);
+                await VerifyPeerTransferReadyAsync(peer, settings, token).ConfigureAwait(false);
 
                 var worldDir = ResolveWorldToSend(worldPath);
                 WorldAccessGuard.EnsureClosed(worldDir);
@@ -265,7 +240,7 @@ public sealed class WorldTransferService : IAsyncDisposable
                 RaiseProgress(0, 0, "Подключение к получателю");
                 var worldName = Path.GetFileName(worldDir);
                 var worldMetadata = _worldMetadata.Read(worldDir);
-                var ownerId = ResolveOwnerIdentity(worldMetadata?.OwnerIdentityId, worldMetadata?.OwnerIdentityName, settings, identity.IdentityId, identity.IdentityName);
+                var ownerId = ResolveOwnerIdentity(worldMetadata?.OwnerIdentityId, worldMetadata?.OwnerIdentityName, settings, identity.MinecraftUuid, identity.IdentityName);
                 var transferId = Guid.NewGuid().ToString("N");
                 var transactionRoot = CreateTransactionDirectory(transferId);
                 var stagingWorld = Path.Combine(transactionRoot, "staging-world");
@@ -286,13 +261,10 @@ public sealed class WorldTransferService : IAsyncDisposable
                 {
                     // Connect before preparation so the receiver can follow
                     // snapshot and compression progress in its own window.
-                    using var client = _network.CreateBoundTcpClient(
-                        peerAddress,
-                        peerEndpoint.LocalAddress,
-                        peerEndpoint.LocalInterfaceId);
-                    await client.ConnectAsync(peerAddress, _runtimeOptions.Port, token);
-                    ConfigureTransferSocket(client.Client);
-                    await using var stream = client.GetStream();
+                    await using var connection = await _transport
+                        .ConnectAsync(peer.SteamId, ProtocolName, token)
+                        .ConfigureAwait(false);
+                    var stream = connection.Stream;
                     await WriteJsonAsync(stream, new WorldTransferHeader
                     {
                         Protocol = ProtocolName,
@@ -300,7 +272,8 @@ public sealed class WorldTransferService : IAsyncDisposable
                         MessageType = PrepareMessageType,
                         TransferId = transferId,
                         SenderName = identity.IdentityName,
-                        SenderIdentityId = identity.IdentityId,
+                        SenderIdentityId = identity.MinecraftUuid,
+                        SenderSteamId64 = identity.SteamId64.ToString(),
                         SenderIdentityName = identity.IdentityName,
                         Size = 0,
                         FileName = "world.zip",
@@ -357,7 +330,8 @@ public sealed class WorldTransferService : IAsyncDisposable
                         MessageType = TransferMessageType,
                         TransferId = transferId,
                         SenderName = identity.IdentityName,
-                        SenderIdentityId = identity.IdentityId,
+                        SenderIdentityId = identity.MinecraftUuid,
+                        SenderSteamId64 = identity.SteamId64.ToString(),
                         SenderIdentityName = identity.IdentityName,
                         OwnerIdentityId = ownerId.id,
                         OwnerIdentityName = ownerId.name,
@@ -472,257 +446,12 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
     }
 
-    private async Task ListenAsync(
+    private async Task ReceiveWorldAsync(
+        Stream stream,
         AppSettings settings,
-        TaskCompletionSource ready,
+        byte[] initialFrame,
+        PeerConnectionContext context,
         CancellationToken token)
-    {
-        var listeners = new List<TcpListener>();
-        try
-        {
-            foreach (var endpoint in ResolveListenerEndpoints())
-            {
-                var listener = CreateListener(endpoint.Address, _runtimeOptions.Port);
-                try
-                {
-                    if (endpoint.NetworkEndpoint is not null)
-                    {
-                        VirtualNetworkService.ConfigureInterface(
-                            listener.Server,
-                            endpoint.NetworkEndpoint);
-                    }
-                    listener.Start();
-                    listeners.Add(listener);
-                }
-                catch (Exception ex)
-                {
-                    listener.Stop();
-                    if (ex is not SocketException) throw;
-                    _logger.Warn(
-                        $"Transfer listener on {endpoint.Address}:{_runtimeOptions.Port} is unavailable: {ex.Message}");
-                }
-            }
-
-            if (listeners.Count == 0)
-            {
-                throw new SocketException((int)SocketError.AddressNotAvailable);
-            }
-
-            ready.TrySetResult();
-            await Task.WhenAll(listeners.Select(listener =>
-                AcceptClientsAsync(listener, settings, token))).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            ready.TrySetException(ex);
-            _logger.Warn($"World transfer listener failed: {ex.Message}");
-        }
-        finally
-        {
-            foreach (var listener in listeners) listener.Stop();
-        }
-    }
-
-    private async Task AcceptClientsAsync(
-        TcpListener listener,
-        AppSettings settings,
-        CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            var client = await listener.AcceptTcpClientAsync(token).ConfigureAwait(false);
-            if (!await _incomingClientGate.WaitAsync(0, token).ConfigureAwait(false))
-            {
-                client.Dispose();
-                continue;
-            }
-            var id = Interlocked.Increment(ref _nextReceiveTaskId);
-            _incomingClients[id] = client;
-            // An in-flight transfer outlives a listener restart: rebinding the
-            // accept sockets after a network change must not abort hours of work.
-            var receiveTask = ObserveIncomingClientAsync(client, settings, _shutdownCts.Token);
-            _receiveTasks[id] = receiveTask;
-            _ = receiveTask.ContinueWith(
-                completedTask =>
-                {
-                    _ = completedTask.Exception;
-                    _receiveTasks.TryRemove(id, out _);
-                    _incomingClients.TryRemove(id, out _);
-                },
-                CancellationToken.None,
-                TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-        }
-    }
-
-    private async Task ObserveIncomingClientAsync(
-        TcpClient client,
-        AppSettings settings,
-        CancellationToken token)
-    {
-        try
-        {
-            await HandleIncomingClientAsync(client, settings, token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn($"Incoming world transfer failed: {ex.Message}");
-        }
-        finally
-        {
-            _incomingClientGate.Release();
-        }
-    }
-
-    private TransferListenerEndpoint[] ResolveListenerEndpoints()
-    {
-        var configuredAddress = _runtimeOptions.ListenAddress;
-        var snapshot = _network.GetSnapshot();
-        if (!configuredAddress.Equals(IPAddress.Any) &&
-            !configuredAddress.Equals(IPAddress.IPv6Any))
-        {
-            var matchingEndpoint = snapshot.Endpoints.FirstOrDefault(endpoint =>
-                string.Equals(
-                    endpoint.NetworkAddress,
-                    configuredAddress.ToString(),
-                    StringComparison.OrdinalIgnoreCase));
-            return matchingEndpoint is null
-                ? []
-                : [new TransferListenerEndpoint(configuredAddress, matchingEndpoint)];
-        }
-
-        return snapshot.Endpoints
-            .Select(endpoint => new
-            {
-                Endpoint = endpoint,
-                Address = IPAddress.TryParse(endpoint.NetworkAddress, out var address)
-                    ? address
-                    : null
-            })
-            .Where(item => item.Address is not null && !IPAddress.IsLoopback(item.Address))
-            .GroupBy(
-                item => item.Address!.ToString(),
-                StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
-            {
-                var item = group.First();
-                return new TransferListenerEndpoint(item.Address!, item.Endpoint);
-            })
-            .ToArray();
-    }
-
-    private static TcpListener CreateListener(IPAddress address, int port)
-    {
-        var listener = new TcpListener(address, port);
-        try
-        {
-            if (address.Equals(IPAddress.IPv6Any))
-            {
-                listener.Server.DualMode = true;
-            }
-            return listener;
-        }
-        catch
-        {
-            listener.Stop();
-            throw;
-        }
-    }
-
-    private sealed record TransferListenerEndpoint(
-        IPAddress Address,
-        NetworkEndpointInfo? NetworkEndpoint);
-
-    private async Task HandleIncomingClientAsync(TcpClient client, AppSettings settings, CancellationToken token)
-    {
-        using var clientScope = client;
-        try
-        {
-            await using var stream = client.GetStream();
-            using var initialTimeout =
-                CancellationTokenSource.CreateLinkedTokenSource(token);
-            initialTimeout.CancelAfter(InitialFrameTimeout);
-            var initialFrame = await PortableProtocol.ReadFrameAsync(
-                stream,
-                initialTimeout.Token,
-                MaxInitialFrameBytes).ConfigureAwait(false);
-            var protocol = PortableProtocol.ReadProtocol(initialFrame);
-            if (string.Equals(protocol, WaypointSyncService.ProtocolName, StringComparison.Ordinal))
-            {
-                await _waypointSync.HandleIncomingAsync(stream, initialFrame, token).ConfigureAwait(false);
-                return;
-            }
-            if (string.Equals(protocol, SkinService.ProtocolName, StringComparison.Ordinal))
-            {
-                await _skinService.HandleIncomingAsync(stream, initialFrame, token).ConfigureAwait(false);
-                return;
-            }
-            if (string.Equals(
-                    protocol,
-                    PeerSupportProtocol.UpgradeProtocolName,
-                    StringComparison.Ordinal))
-            {
-                var supportLogs = Volatile.Read(ref _peerSupportLogs) ??
-                    throw new InvalidOperationException(
-                        "The diagnostics protocol handler is unavailable.");
-                await supportLogs.HandleIncomingAsync(
-                    stream,
-                    initialFrame,
-                    CreatePortableConnectionContext(client),
-                    token).ConfigureAwait(false);
-                return;
-            }
-            // Keepalive belongs to world transfers only: the other protocols
-            // keep long idle sessions open on purpose.
-            ConfigureTransferSocket(client.Client);
-            await ReceiveWorldAsync(stream, settings, initialFrame, token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex) when (ex is IOException or SocketException or JsonException or InvalidDataException)
-        {
-            _logger.Warn($"Incoming portable protocol request was rejected: {ex.Message}");
-        }
-    }
-
-    private PortableConnectionContext CreatePortableConnectionContext(TcpClient client)
-    {
-        if (client.Client.RemoteEndPoint is not IPEndPoint remote ||
-            client.Client.LocalEndPoint is not IPEndPoint local)
-        {
-            throw new InvalidDataException(
-                "The portable connection endpoints are unavailable.");
-        }
-
-        var endpoint = _network.GetSnapshot().Endpoints.FirstOrDefault(candidate =>
-            string.Equals(
-                candidate.NetworkAddress,
-                local.Address.ToString(),
-                StringComparison.OrdinalIgnoreCase));
-        if (endpoint is null)
-        {
-            throw new InvalidDataException(
-                "The portable connection did not arrive through the selected interface.");
-        }
-
-        return new PortableConnectionContext(
-            remote.Address,
-            remote.Port,
-            local.Address,
-            local.Port,
-            endpoint.InterfaceId,
-            endpoint.InterfaceIndex,
-            DateTimeOffset.UtcNow);
-    }
-
-    private async Task ReceiveWorldAsync(Stream stream, AppSettings settings, byte[] initialFrame, CancellationToken token)
     {
         var identity = ResolveIdentityContext(settings);
         WorldTransferHeader? header = null;
@@ -739,6 +468,23 @@ public sealed class WorldTransferService : IAsyncDisposable
             if (!HasExpectedProtocol(header.Protocol, header.ProtocolVersion))
             {
                 throw new InvalidOperationException("The sender uses an incompatible world transfer protocol.");
+            }
+            if (!string.Equals(
+                    header.SenderSteamId64,
+                    context.PeerId.ToString(),
+                    StringComparison.Ordinal))
+            {
+                await WriteJsonAsync(stream, new WorldTransferAck
+                {
+                    Protocol = ProtocolName,
+                    ProtocolVersion = ProtocolVersion,
+                    Ok = false,
+                    Stage = "Rejected",
+                    TransferId = header.TransferId,
+                    Message = "Отправитель не совпадает с Steam-подключением."
+                }, token).ConfigureAwait(false);
+                throw new InvalidOperationException(
+                    "The world transfer header does not match the Steam account that opened the connection.");
             }
             if (header.MessageType == ProbeMessageType)
             {
@@ -860,7 +606,7 @@ public sealed class WorldTransferService : IAsyncDisposable
             string sourceManifestSha = "";
             string waypointManifestSha = "";
             string installedManifestSha = "";
-            var owner = ResolveOwnerIdentity(null, null, settings, identity.IdentityId, identity.IdentityName, header.OwnerIdentityId, header.OwnerIdentityName);
+            var owner = ResolveOwnerIdentity(null, null, settings, identity.MinecraftUuid, identity.IdentityName, header.OwnerIdentityId, header.OwnerIdentityName);
             await RunWithHeartbeatAsync(progressChannel, () =>
             {
                 _playerProfiles.ValidatePlayerManifest(stagedWorldPath);
@@ -883,7 +629,7 @@ public sealed class WorldTransferService : IAsyncDisposable
                 {
                     throw new InvalidOperationException("Could not preserve world creator metadata.");
                 }
-                if (!_worldMetadata.TryWriteCurrentHolderMetadata(stagedWorldPath, identity.IdentityId, identity.IdentityName, transferred: true))
+                if (!_worldMetadata.TryWriteCurrentHolderMetadata(stagedWorldPath, identity.MinecraftUuid, identity.IdentityName, transferred: true))
                 {
                     throw new InvalidOperationException("Could not update current world holder metadata.");
                 }
@@ -1020,67 +766,59 @@ public sealed class WorldTransferService : IAsyncDisposable
         return worldDir;
     }
 
-    private async Task<PeerCandidateEndpoint> VerifyPeerTransferReadyAsync(
+    /// <summary>
+    /// Asks the receiver whether it can take a world at all before hours of
+    /// snapshotting begin. One Steam connection, one question - the VPN era had
+    /// to try every candidate address it had ever seen for this player.
+    /// </summary>
+    private async Task VerifyPeerTransferReadyAsync(
         PeerViewModel peer,
         AppSettings settings,
         CancellationToken token)
     {
         var identity = _identityService.ResolveContext(settings);
-        var candidateEndpoints = _routes.GetSendCandidates(peer.IdentityId)
-            .Where(endpoint => IPAddress.TryParse(endpoint.Address, out _))
-            .ToArray();
-        if (candidateEndpoints.Length == 0)
+        if (!_transport.IsAvailable)
         {
-            throw new InvalidOperationException("Selected player does not have a valid network IP address.");
+            throw new InvalidOperationException(_transport.UnavailableReason);
         }
 
-        var failures = new List<string>();
-        foreach (var endpoint in candidateEndpoints)
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutCts.CancelAfter(ProbeTimeout);
+        try
         {
-            var ip = IPAddress.Parse(endpoint.Address);
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
-            try
+            await using var connection = await _transport
+                .ConnectAsync(peer.SteamId, ProtocolName, timeoutCts.Token)
+                .ConfigureAwait(false);
+            await WriteJsonAsync(connection.Stream, new WorldTransferHeader
             {
-                using var client = _network.CreateBoundTcpClient(
-                    ip,
-                    endpoint.LocalAddress,
-                    endpoint.LocalInterfaceId);
-                await client.ConnectAsync(ip, _runtimeOptions.Port, timeoutCts.Token);
-                await using var stream = client.GetStream();
-                await WriteJsonAsync(stream, new WorldTransferHeader
-                {
-                    Protocol = ProtocolName,
-                    ProtocolVersion = ProtocolVersion,
-                    MessageType = ProbeMessageType,
-                    SenderName = identity.IdentityName,
-                    SenderIdentityId = identity.IdentityId,
-                    SenderIdentityName = identity.IdentityName,
-                    Size = 0,
-                    FileName = "probe",
-                    WorldName = ""
-                }, timeoutCts.Token);
+                Protocol = ProtocolName,
+                ProtocolVersion = ProtocolVersion,
+                MessageType = ProbeMessageType,
+                SenderName = identity.IdentityName,
+                SenderIdentityId = identity.MinecraftUuid,
+                SenderSteamId64 = identity.SteamId64.ToString(),
+                SenderIdentityName = identity.IdentityName,
+                Size = 0,
+                FileName = "probe",
+                WorldName = ""
+            }, timeoutCts.Token).ConfigureAwait(false);
 
-                var ack = await ReadJsonAsync<WorldTransferAck>(stream, timeoutCts.Token);
-                if (ack is null || !HasExpectedProtocol(ack.Protocol, ack.ProtocolVersion) ||
-                    !ack.Ok || ack.Stage != "Probe")
-                {
-                    throw new InvalidOperationException(ack?.Message ?? "receiver did not accept transfer probe");
-                }
-                _routes.MarkEndpointHealthy(peer.IdentityId, endpoint);
-                return endpoint;
-            }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or TimeoutException or InvalidOperationException or InvalidDataException or JsonException)
+            var ack = await ReadJsonAsync<WorldTransferAck>(connection.Stream, timeoutCts.Token)
+                .ConfigureAwait(false);
+            if (ack is null || !HasExpectedProtocol(ack.Protocol, ack.ProtocolVersion) ||
+                !ack.Ok || ack.Stage != "Probe")
             {
-                token.ThrowIfCancellationRequested();
-                _routes.MarkEndpointUnhealthy(peer.IdentityId, endpoint);
-                failures.Add($"{ip}: {ex.Message}");
+                throw new InvalidOperationException(ack?.Message ?? "receiver did not accept transfer probe");
             }
         }
-
-        throw new InvalidOperationException(
-            BuildPeerConnectionMessage(string.Join(", ", candidateEndpoints.Select(endpoint => endpoint.Address))) +
-            Environment.NewLine + string.Join(Environment.NewLine, failures.Take(3)));
+        catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException
+                                       or InvalidDataException or JsonException)
+        {
+            token.ThrowIfCancellationRequested();
+            throw new InvalidOperationException(
+                BuildPeerConnectionMessage(peer.DisplayName) + Environment.NewLine + ex.Message,
+                ex);
+        }
     }
 
     private void RaiseProgress(long current, long total, string stage = "")
@@ -1090,23 +828,6 @@ public sealed class WorldTransferService : IAsyncDisposable
             ProgressChanged?.Invoke(new WorldTransferProgress(true, current, total, stage));
         }
         catch
-        {
-        }
-    }
-
-    private static void ConfigureTransferSocket(Socket socket)
-    {
-        // Detect dead peers at the transport level instead of capping the
-        // transfer duration: a transfer may legitimately run for hours.
-        // A peer that is alive but wedged is caught by PeerIdleTimeout instead.
-        try
-        {
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 30);
-            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 10);
-            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 4);
-        }
-        catch (SocketException)
         {
         }
     }
@@ -1735,18 +1456,15 @@ public sealed class WorldTransferService : IAsyncDisposable
         }
     }
 
-    private string BuildPeerConnectionMessage(string peerIp)
+    private static string BuildPeerConnectionMessage(string peerName)
     {
         return $"""
-        Could not connect to player {peerIp}:{_runtimeOptions.Port}.
+        Не удалось связаться с игроком {peerName} через Steam.
 
-        Check on the receiving computer:
-        1. LANMinecraft.exe is running.
-        2. Both players are in the same virtual or local network.
-        3. The player list shows the correct network IP.
-        4. Windows Firewall allows incoming TCP connections on port {_runtimeOptions.Port}.
-
-        If Windows asks for LANMinecraft.exe network access, allow private networks.
+        Проверьте на компьютере получателя:
+        1. LANMinecraft.exe запущен, Steam запущен и вход выполнен.
+        2. Вы у друг друга в друзьях Steam.
+        3. Minecraft у получателя закрыт - во время игры мир принять нельзя.
         """;
     }
 
@@ -2048,16 +1766,9 @@ public sealed class WorldTransferService : IAsyncDisposable
     private async Task DisposeCoreAsync()
     {
         Interlocked.Exchange(ref _disposeState, 1);
+        StopAcceptingIncomingTransfers();
         _shutdownCts.Cancel();
-        await _listenerGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            await StopListenerCoreAsync(waitForReceives: true).ConfigureAwait(false);
-        }
-        finally
-        {
-            _listenerGate.Release();
-        }
+        await WaitForIncomingTransfersAsync().ConfigureAwait(false);
         await _transferGate.WaitAsync().ConfigureAwait(false);
         _transferGate.Release();
         // Give background transaction cleanup a moment to finish so temp files
@@ -2078,20 +1789,14 @@ public sealed record WorldTransferProgress(bool IsActive, long Current, long Tot
 
 public sealed class WorldTransferRuntimeOptions
 {
-    public int Port { get; init; } = WorldTransferService.TransferPort;
-    public IPAddress ListenAddress { get; init; } = IPAddress.IPv6Any;
     public TimeSpan PeerIdleTimeout { get; init; } = WorldTransferService.DefaultPeerIdleTimeout;
+
     internal void Validate()
     {
-        if (Port is < 1 or > 65535)
-        {
-            throw new ArgumentOutOfRangeException(nameof(Port), "World transfer port must be between 1 and 65535.");
-        }
         if (PeerIdleTimeout <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(PeerIdleTimeout), "Peer idle timeout must be positive.");
         }
-        ArgumentNullException.ThrowIfNull(ListenAddress);
     }
 }

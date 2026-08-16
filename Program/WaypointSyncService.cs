@@ -1,26 +1,35 @@
-using System.IO;
-using System.Net;
-using System.Net.Sockets;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace Minecraft;
 
-public sealed class WaypointSyncService : IAsyncDisposable
+public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHandler
 {
     public const string ProtocolName = "MinecraftPortableWaypoints";
+
+    string IPortableProtocolHandler.ProtocolName => ProtocolName;
+
+    Task IPortableProtocolHandler.HandleAsync(
+        Stream stream,
+        byte[] initialFrame,
+        PeerConnectionContext context,
+        CancellationToken token) =>
+        HandleIncomingAsync(stream, initialFrame, token);
     public const int ProtocolVersion = 1;
     public const string PullMessageType = "Pull";
     public const string PushMessageType = "Push";
 
     private static readonly TimeSpan PeriodicSyncInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ChangeDebounce = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan RemoteSessionTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RemoteSessionTtl = TimeSpan.FromSeconds(45);
+    // Steam relays add latency a LAN never had; a request that has not answered
+    // in this long is not going to.
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(15);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly WorldMetadataService _worldMetadata;
-    private readonly ISelectedNetworkTransport _network;
-    private readonly PeerRouteResolver _routes;
+    private readonly IPeerTransport _transport;
     private readonly WaypointProviderRegistry _providerRegistry;
     private readonly WaypointStoreService _store;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
@@ -50,14 +59,12 @@ public sealed class WaypointSyncService : IAsyncDisposable
         AppPaths paths,
         Logger logger,
         WorldMetadataService worldMetadata,
-        ISelectedNetworkTransport network,
-        PeerRouteResolver routes)
+        IPeerTransport transport)
     {
         _paths = paths;
         _logger = logger;
         _worldMetadata = worldMetadata;
-        _network = network;
-        _routes = routes;
+        _transport = transport;
         _providerRegistry = new WaypointProviderRegistry(logger);
         _store = new WaypointStoreService(worldMetadata, _providerRegistry, logger);
         MigrateLegacyState();
@@ -113,7 +120,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 {
                     var contextId = provider.ReadWorldContextId(worldPath);
                     if (string.IsNullOrWhiteSpace(contextId)) continue;
-                    var stored = _store.ReadSnapshot(worldPath, identity.IdentityId, provider.ProviderId);
+                    var stored = _store.ReadSnapshot(worldPath, identity.MinecraftUuid, provider.ProviderId);
                     if (stored is null) continue;
                     try
                     {
@@ -125,11 +132,11 @@ public sealed class WaypointSyncService : IAsyncDisposable
                             modVersion,
                             IsHost: true,
                             RemoteAddress: null);
-                        ImportSnapshot(provider, nativeContext, identity.IdentityId, stored);
+                        ImportSnapshot(provider, nativeContext, identity.MinecraftUuid, stored);
                     }
                     catch (Exception ex)
                     {
-                        SaveConflict(worldId, identity.IdentityId, provider.ProviderId, stored.Snapshot, $"prepare-{ex.GetType().Name}");
+                        SaveConflict(worldId, identity.MinecraftUuid, provider.ProviderId, stored.Snapshot, $"prepare-{ex.GetType().Name}");
                         _logger.Warn($"Could not restore {provider.ProviderId} waypoints for {Path.GetFileName(worldPath)}: {ex.Message}");
                     }
                 }
@@ -225,57 +232,52 @@ public sealed class WaypointSyncService : IAsyncDisposable
         }
     }
 
-    public void ObservePeer(PeerAnnouncement announcement)
+    /// <summary>
+    /// Notes that a friend is hosting a world we can sync waypoints with.
+    /// The peer is a Steam account; the folder token below only names their
+    /// data on disk, the way the peer's address used to.
+    /// </summary>
+    public void ObservePeer(SteamPeerPresence presence)
     {
-        if (announcement.WaypointProtocolVersion != ProtocolVersion ||
-            !Guid.TryParse(announcement.HostedWorldId, out var worldId) || worldId == Guid.Empty)
+        ArgumentNullException.ThrowIfNull(presence);
+        if (presence.WaypointProtocolVersion != ProtocolVersion ||
+            !Guid.TryParse(presence.HostedWorldId, out var worldId) || worldId == Guid.Empty)
         {
             return;
         }
 
-        var addresses = _routes.GetSendCandidates(announcement.IdentityId)
-            .Select(endpoint => new WaypointRouteEndpoint(
-                endpoint.Address,
-                endpoint.LocalAddress,
-                endpoint.LocalInterfaceId))
-            .Where(endpoint => IPAddress.TryParse(endpoint.Address, out _))
-            .Distinct()
-            .ToArray();
-        if (addresses.Length == 0) return;
-
-        var providers = (announcement.WaypointProviders ?? []).Select(item => new WaypointProviderAnnouncement
+        var providers = presence.WaypointProviders.Select(item => new WaypointProviderAnnouncement
         {
             ProviderId = item.ProviderId,
             ModVersion = item.ModVersion,
             WorldContextId = item.WorldContextId
         }).ToArray();
-        var identityKey = string.IsNullOrWhiteSpace(announcement.IdentityId)
-            ? addresses[0].Address
-            : announcement.IdentityId;
-        var pendingAnnouncements = addresses.Select(endpoint =>
-            new PendingHostAnnouncement(
-                worldId.ToString("D"),
-                identityKey,
-                endpoint.Address,
-                endpoint.LocalAddress,
-                endpoint.LocalInterfaceId,
-                providers,
-                DateTimeOffset.UtcNow))
-            .ToArray();
+        if (providers.Length == 0) return;
+
+        var pending = new PendingHostAnnouncement(
+            worldId.ToString("D"),
+            presence.SteamId,
+            providers,
+            DateTimeOffset.UtcNow);
 
         LocalWaypointSession? local;
         lock (_stateGate)
         {
-            foreach (var pending in pendingAnnouncements)
-            {
-                var pendingKey = $"{pending.WorldId}|{pending.HostIdentityId}|{pending.Address}";
-                _pendingAnnouncements[pendingKey] = pending;
-            }
+            _pendingAnnouncements[RemoteKey(pending.WorldId, pending.Host)] = pending;
             local = _localSession;
         }
         if (local is null) return;
-        foreach (var pending in pendingAnnouncements) RegisterRemote(pending, local);
+        RegisterRemote(pending, local);
     }
+
+    /// <summary>
+    /// Names a host's folder for mods that key their data by server address.
+    /// e4steam's own address changes every session, so this stays stable per
+    /// Steam account instead.
+    /// </summary>
+    internal static string HostFolderToken(SteamId64 peer) => $"s-{peer}";
+
+    private static string RemoteKey(string worldId, SteamId64 host) => $"{worldId}|{host}";
 
     private void RegisterRemote(PendingHostAnnouncement announcement, LocalWaypointSession local)
     {
@@ -289,26 +291,21 @@ public sealed class WaypointSyncService : IAsyncDisposable
             .ToDictionary(item => item.Provider.ProviderId, StringComparer.OrdinalIgnoreCase);
         if (providers.Count == 0) return;
 
-        var key = $"{announcement.WorldId}|{announcement.HostIdentityId}";
+        var key = RemoteKey(announcement.WorldId, announcement.Host);
         lock (_stateGate)
         {
-            if (!_remoteSessions.TryGetValue(key, out var remote))
+            var firstSighting = !_remoteSessions.TryGetValue(key, out var remote);
+            if (firstSighting)
             {
-                remote = new RemoteWorldSession(announcement.WorldId, announcement.HostIdentityId);
+                remote = new RemoteWorldSession(announcement.WorldId, announcement.Host);
                 _remoteSessions[key] = remote;
             }
-            var endpointKey = $"{announcement.LocalAddress}|{announcement.LocalInterfaceId}|{announcement.Address}";
-            var endpointAdded = !remote.Addresses.ContainsKey(endpointKey);
-            var providersChanged = remote.Providers.Count != providers.Count || providers.Any(item =>
+            var providersChanged = remote!.Providers.Count != providers.Count || providers.Any(item =>
                 !remote.Providers.TryGetValue(item.Key, out var current) ||
                 !string.Equals(current.WorldContextId, item.Value.WorldContextId, StringComparison.Ordinal));
-            remote.Addresses[endpointKey] = new RemoteAddressState(
-                announcement.Address,
-                announcement.LocalAddress,
-                announcement.LocalInterfaceId,
-                announcement.LastSeenUtc);
+            remote.LastSeenUtc = announcement.LastSeenUtc;
             remote.Providers = providers;
-            if (endpointAdded || providersChanged)
+            if (firstSighting || providersChanged)
             {
                 remote.PullRequested = true;
                 remote.ChangeVersion++;
@@ -505,37 +502,17 @@ public sealed class WaypointSyncService : IAsyncDisposable
             {
                 _pendingAnnouncements.Remove(key);
             }
-            foreach (var pair in _remoteSessions.ToArray())
+            foreach (var stale in _remoteSessions
+                         .Where(pair => pair.Value.LastSeenUtc < cutoff)
+                         .Select(pair => pair.Key)
+                         .ToArray())
             {
-                var endpointRemoved = false;
-                foreach (var address in pair.Value.Addresses
-                             .Where(endpoint => endpoint.Value.LastSeenUtc < cutoff)
-                             .Select(endpoint => endpoint.Key)
-                             .ToArray())
-                {
-                    pair.Value.Addresses.Remove(address);
-                    endpointRemoved = true;
-                }
-                if (pair.Value.Addresses.Count == 0)
-                {
-                    _remoteSessions.Remove(pair.Key);
-                }
-                else if (endpointRemoved)
-                {
-                    pair.Value.PullRequested = true;
-                    pair.Value.ChangeVersion++;
-                }
+                _remoteSessions.Remove(stale);
             }
             remotes = _remoteSessions.Select(pair => new RemoteWorldWorkItem(
                 pair.Key,
                 pair.Value.WorldId,
-                pair.Value.HostIdentityId,
-                pair.Value.Addresses.Values
-                    .Select(endpoint => new WaypointRouteEndpoint(
-                        endpoint.Address,
-                        endpoint.LocalAddress,
-                        endpoint.LocalInterfaceId))
-                    .ToArray(),
+                pair.Value.Host,
                 pair.Value.Providers.Values.ToArray(),
                 pair.Value.PullRequested,
                 pair.Value.ChangeVersion)).ToArray();
@@ -575,12 +552,12 @@ public sealed class WaypointSyncService : IAsyncDisposable
                     RemoteAddress: null);
                 var snapshot = providerInfo.Provider.Export(context);
                 var hash = WaypointStoreService.ComputeSnapshotHash(snapshot);
-                var key = StateKey(identity.IdentityId, hosted.WorldId, providerInfo.Provider.ProviderId);
+                var key = StateKey(identity.MinecraftUuid, hosted.WorldId, providerInfo.Provider.ProviderId);
                 var state = GetOrCreateProviderState(key);
                 if (string.Equals(state.LastNativeSha256, hash, StringComparison.OrdinalIgnoreCase)) continue;
-                var result = _store.SaveLocalSnapshot(hosted.WorldPath, identity.IdentityId, identity.IdentityName, snapshot);
+                var result = _store.SaveLocalSnapshot(hosted.WorldPath, identity.MinecraftUuid, identity.IdentityName, snapshot);
                 state.WorldId = hosted.WorldId;
-                state.PlayerUuid = identity.IdentityId;
+                state.PlayerUuid = identity.MinecraftUuid;
                 state.ProviderId = providerInfo.Provider.ProviderId;
                 state.Revision = result.Revision;
                 state.Sha256 = result.Sha256;
@@ -595,17 +572,17 @@ public sealed class WaypointSyncService : IAsyncDisposable
 
     private async Task SyncRemoteCoreAsync(LocalWaypointSession local, RemoteWorldWorkItem remote, CancellationToken token)
     {
-        var addresses = remote.Addresses;
+        var hostFolder = HostFolderToken(remote.Host);
         foreach (var providerInfo in remote.Providers)
         {
-            var stateKey = StateKey(local.Identity.IdentityId, remote.WorldId, providerInfo.Provider.ProviderId);
+            var stateKey = StateKey(local.Identity.MinecraftUuid, remote.WorldId, providerInfo.Provider.ProviderId);
             var state = GetOrCreateProviderState(stateKey);
             if (remote.PullRequested || !state.Pulled)
             {
                 bool pulled;
                 try
                 {
-                    pulled = await PullRemoteAsync(local, remote, providerInfo, addresses, state, token).ConfigureAwait(false);
+                    pulled = await PullRemoteAsync(local, remote, providerInfo, state, token).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
                 {
@@ -615,29 +592,25 @@ public sealed class WaypointSyncService : IAsyncDisposable
                 if (!pulled) continue;
             }
 
-            foreach (var endpoint in addresses)
+            token.ThrowIfCancellationRequested();
+            try
             {
-                token.ThrowIfCancellationRequested();
-                try
-                {
-                    var context = new WaypointNativeContext(
-                        local.GameDirectory,
-                        string.Empty,
-                        remote.WorldId,
-                        providerInfo.WorldContextId,
-                        providerInfo.ModVersion,
-                        IsHost: false,
-                        RemoteAddress: endpoint.Address);
-                    var snapshot = providerInfo.Provider.Export(context);
-                    var nativeHash = WaypointStoreService.ComputeSnapshotHash(snapshot);
-                    if (string.Equals(nativeHash, state.LastNativeSha256, StringComparison.OrdinalIgnoreCase)) continue;
-                    var pushed = await PushRemoteAsync(local, remote, providerInfo, addresses, state, snapshot, token).ConfigureAwait(false);
-                    if (pushed) break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn($"Could not inspect local {providerInfo.Provider.ProviderId} waypoints: {ex.Message}");
-                }
+                var context = new WaypointNativeContext(
+                    local.GameDirectory,
+                    string.Empty,
+                    remote.WorldId,
+                    providerInfo.WorldContextId,
+                    providerInfo.ModVersion,
+                    IsHost: false,
+                    RemoteAddress: hostFolder);
+                var snapshot = providerInfo.Provider.Export(context);
+                var nativeHash = WaypointStoreService.ComputeSnapshotHash(snapshot);
+                if (string.Equals(nativeHash, state.LastNativeSha256, StringComparison.OrdinalIgnoreCase)) continue;
+                await PushRemoteAsync(local, remote, providerInfo, state, snapshot, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"Could not inspect local {providerInfo.Provider.ProviderId} waypoints: {ex.Message}");
             }
         }
         lock (_stateGate)
@@ -654,7 +627,6 @@ public sealed class WaypointSyncService : IAsyncDisposable
         LocalWaypointSession local,
         RemoteWorldWorkItem remote,
         RemoteProvider providerInfo,
-        IReadOnlyList<WaypointRouteEndpoint> addresses,
         WaypointLocalProviderState state,
         CancellationToken token)
     {
@@ -662,12 +634,12 @@ public sealed class WaypointSyncService : IAsyncDisposable
         {
             MessageType = PullMessageType,
             WorldId = remote.WorldId,
-            PlayerUuid = local.Identity.IdentityId,
+            PlayerUuid = local.Identity.MinecraftUuid,
             PlayerName = local.Identity.IdentityName,
             ProviderId = providerInfo.Provider.ProviderId,
             WorldContextId = providerInfo.WorldContextId
         };
-        var response = await SendRequestAsync(remote.HostIdentityId, addresses, request, token).ConfigureAwait(false);
+        var response = await SendRequestAsync(remote.Host, request, token).ConfigureAwait(false);
         if (response is null || !response.Ok) return false;
 
         var managed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -678,19 +650,18 @@ public sealed class WaypointSyncService : IAsyncDisposable
             {
                 throw new InvalidDataException("Remote waypoint snapshot belongs to a different world context.");
             }
-            foreach (var endpoint in addresses)
-            {
-                var context = new WaypointNativeContext(
-                    local.GameDirectory,
-                    string.Empty,
-                    remote.WorldId,
-                    providerInfo.WorldContextId,
-                    providerInfo.ModVersion,
-                    IsHost: false,
-                    RemoteAddress: endpoint.Address);
-                var result = providerInfo.Provider.Import(context, response.Snapshot, []);
-                managed.UnionWith(result.ManagedRelativePaths);
-            }
+            // One host, one folder: the address a mod keys its data by is the
+            // host's Steam account, not an address that changes every session.
+            var context = new WaypointNativeContext(
+                local.GameDirectory,
+                string.Empty,
+                remote.WorldId,
+                providerInfo.WorldContextId,
+                providerInfo.ModVersion,
+                IsHost: false,
+                RemoteAddress: HostFolderToken(remote.Host));
+            var result = providerInfo.Provider.Import(context, response.Snapshot, []);
+            managed.UnionWith(result.ManagedRelativePaths);
             WaypointPath.DeleteRemovedManagedFiles(
                 local.GameDirectory,
                 state.ManagedRelativePaths,
@@ -702,7 +673,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
             state.LastNativeSha256 = string.Empty;
         }
         state.WorldId = remote.WorldId;
-        state.PlayerUuid = local.Identity.IdentityId;
+        state.PlayerUuid = local.Identity.MinecraftUuid;
         state.ProviderId = providerInfo.Provider.ProviderId;
         state.Revision = response.Revision;
         state.Sha256 = response.Sha256;
@@ -715,7 +686,6 @@ public sealed class WaypointSyncService : IAsyncDisposable
         LocalWaypointSession local,
         RemoteWorldWorkItem remote,
         RemoteProvider providerInfo,
-        IReadOnlyList<WaypointRouteEndpoint> addresses,
         WaypointLocalProviderState state,
         WaypointSnapshot snapshot,
         CancellationToken token)
@@ -724,7 +694,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
         {
             MessageType = PushMessageType,
             WorldId = remote.WorldId,
-            PlayerUuid = local.Identity.IdentityId,
+            PlayerUuid = local.Identity.MinecraftUuid,
             PlayerName = local.Identity.IdentityName,
             ProviderId = providerInfo.Provider.ProviderId,
             WorldContextId = providerInfo.WorldContextId,
@@ -732,11 +702,11 @@ public sealed class WaypointSyncService : IAsyncDisposable
             BaseSha256 = state.Sha256,
             Snapshot = snapshot
         };
-        var response = await SendRequestAsync(remote.HostIdentityId, addresses, request, token).ConfigureAwait(false);
+        var response = await SendRequestAsync(remote.Host, request, token).ConfigureAwait(false);
         if (response is null) return false;
         if (!response.Ok)
         {
-            SaveConflict(remote.WorldId, local.Identity.IdentityId, providerInfo.Provider.ProviderId, snapshot, "remote-rejected");
+            SaveConflict(remote.WorldId, local.Identity.MinecraftUuid, providerInfo.Provider.ProviderId, snapshot, "remote-rejected");
             state.Pulled = false;
             RequestRemotePull(remote.Key);
             return false;
@@ -748,41 +718,36 @@ public sealed class WaypointSyncService : IAsyncDisposable
     }
 
     private async Task<WaypointSyncReply?> SendRequestAsync(
-        string hostIdentityId,
-        IReadOnlyList<WaypointRouteEndpoint> addresses,
+        SteamId64 host,
         WaypointSyncEnvelope request,
         CancellationToken token)
     {
-        foreach (var endpoint in addresses.Distinct())
+        if (!_transport.IsAvailable) return null;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownCts.Token);
+        timeoutCts.CancelAfter(RequestTimeout);
+        try
         {
-            if (!IPAddress.TryParse(endpoint.Address, out var ip)) continue;
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownCts.Token);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
-            try
-            {
-                using var client = _network.CreateBoundTcpClient(
-                    ip,
-                    endpoint.LocalAddress,
-                    endpoint.LocalInterfaceId);
-                await client.ConnectAsync(ip, WorldTransferService.TransferPort, timeoutCts.Token).ConfigureAwait(false);
-                await using var stream = client.GetStream();
-                await PortableProtocol.WriteJsonAsync(stream, request, _jsonOptions, timeoutCts.Token).ConfigureAwait(false);
-                var frame = await PortableProtocol.ReadFrameAsync(stream, timeoutCts.Token).ConfigureAwait(false);
-                var response = PortableProtocol.Deserialize<WaypointSyncReply>(frame, _jsonOptions);
-                if (response is not null && response.Protocol == ProtocolName && response.ProtocolVersion == ProtocolVersion)
-                {
-                    _routes.MarkEndpointHealthy(hostIdentityId, endpoint.ToCandidate());
-                    return response;
-                }
-            }
-            catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or InvalidDataException or JsonException)
-            {
-                token.ThrowIfCancellationRequested();
-                _routes.MarkEndpointUnhealthy(hostIdentityId, endpoint.ToCandidate());
-                _logger.Warn($"Waypoint synchronization route {endpoint.Address} failed: {ex.Message}");
-            }
+            await using var connection = await _transport
+                .ConnectAsync(host, ProtocolName, timeoutCts.Token)
+                .ConfigureAwait(false);
+            await PortableProtocol.WriteJsonAsync(
+                connection.Stream, request, _jsonOptions, timeoutCts.Token).ConfigureAwait(false);
+            var frame = await PortableProtocol.ReadFrameAsync(connection.Stream, timeoutCts.Token)
+                .ConfigureAwait(false);
+            var response = PortableProtocol.Deserialize<WaypointSyncReply>(frame, _jsonOptions);
+            return response is not null &&
+                   response.Protocol == ProtocolName &&
+                   response.ProtocolVersion == ProtocolVersion
+                ? response
+                : null;
         }
-        return null;
+        catch (Exception ex) when (ex is IOException or OperationCanceledException
+                                       or InvalidOperationException or InvalidDataException or JsonException)
+        {
+            token.ThrowIfCancellationRequested();
+            _logger.Warn($"Waypoint synchronization with {host} failed: {ex.Message}");
+            return null;
+        }
     }
 
     private void ImportSnapshot(
@@ -1065,7 +1030,7 @@ public sealed class WaypointSyncService : IAsyncDisposable
         BuildName = Path.GetFileName(local.PackRelativePath),
         BuildRelativePath = local.PackRelativePath,
         PackHash = packHash,
-        OwnerIdentityId = identity.IdentityId,
+        OwnerIdentityId = identity.MinecraftUuid,
         OwnerIdentityName = identity.IdentityName
     };
 
@@ -1206,58 +1171,33 @@ public sealed class WaypointSyncService : IAsyncDisposable
     private sealed record RemoteProvider(IWaypointProvider Provider, string ModVersion, string WorldContextId);
     private sealed record PendingHostAnnouncement(
         string WorldId,
-        string HostIdentityId,
-        string Address,
-        string LocalAddress,
-        string LocalInterfaceId,
+        SteamId64 Host,
         IReadOnlyList<WaypointProviderAnnouncement> Providers,
         DateTimeOffset LastSeenUtc);
+
     private sealed record RemoteWorldWorkItem(
         string Key,
         string WorldId,
-        string HostIdentityId,
-        IReadOnlyList<WaypointRouteEndpoint> Addresses,
+        SteamId64 Host,
         IReadOnlyList<RemoteProvider> Providers,
         bool PullRequested,
         long ChangeVersion);
 
     private sealed class RemoteWorldSession
     {
-        public RemoteWorldSession(string worldId, string hostIdentityId)
+        public RemoteWorldSession(string worldId, SteamId64 host)
         {
             WorldId = worldId;
-            HostIdentityId = hostIdentityId;
+            Host = host;
         }
 
         public string WorldId { get; }
-        public string HostIdentityId { get; }
-        public Dictionary<string, RemoteAddressState> Addresses { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public SteamId64 Host { get; }
         public Dictionary<string, RemoteProvider> Providers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public bool PullRequested { get; set; }
         public long ChangeVersion { get; set; }
+        public DateTimeOffset LastSeenUtc { get; set; }
     }
-
-    private sealed record WaypointRouteEndpoint(
-        string Address,
-        string LocalAddress,
-        string LocalInterfaceId)
-    {
-        public PeerCandidateEndpoint ToCandidate() => new()
-        {
-            Address = Address,
-            LocalAddress = LocalAddress,
-            LocalInterfaceId = LocalInterfaceId,
-            AddressFamily = IPAddress.TryParse(Address, out var parsed) &&
-                            parsed.AddressFamily == AddressFamily.InterNetworkV6
-                ? "IPv6"
-                : "IPv4"
-        };
-    }
-    private sealed record RemoteAddressState(
-        string Address,
-        string LocalAddress,
-        string LocalInterfaceId,
-        DateTimeOffset LastSeenUtc);
 }
 
 public sealed record WaypointHostAdvertisement(

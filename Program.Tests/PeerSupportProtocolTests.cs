@@ -1,10 +1,5 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO.Compression;
-using System.Net;
-using System.Net.Sockets;
-using System.Security.Authentication;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Minecraft;
@@ -13,202 +8,6 @@ namespace Minecraft.Tests;
 
 public sealed class PeerSupportProtocolTests
 {
-    [Fact]
-    public void EphemeralCertificate_IsSelfSignedP256AndUsableByBothTlsRoles()
-    {
-        using var owner = PeerSupportCertificate.CreateEphemeral(
-            new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero));
-        var certificate = owner.Certificate;
-
-        Assert.True(certificate.HasPrivateKey);
-        Assert.Equal(certificate.Subject, certificate.Issuer);
-        Assert.Equal("1.2.840.10045.2.1", certificate.PublicKey.Oid.Value);
-        Assert.Equal(
-            "1.2.840.10045.4.3.2",
-            certificate.SignatureAlgorithm.Value);
-
-        using var publicKey = certificate.GetECDsaPublicKey();
-        Assert.NotNull(publicKey);
-        Assert.Equal(256, publicKey.KeySize);
-
-        var constraints = Assert.Single(
-            certificate.Extensions.OfType<X509BasicConstraintsExtension>());
-        Assert.False(constraints.CertificateAuthority);
-        Assert.True(constraints.Critical);
-
-        var keyUsage = Assert.Single(
-            certificate.Extensions.OfType<X509KeyUsageExtension>());
-        Assert.Equal(X509KeyUsageFlags.DigitalSignature, keyUsage.KeyUsages);
-
-        var enhancedUsage = Assert.Single(
-            certificate.Extensions.OfType<X509EnhancedKeyUsageExtension>());
-        Assert.Contains(
-            enhancedUsage.EnhancedKeyUsages.Cast<Oid>(),
-            oid => oid.Value == "1.3.6.1.5.5.7.3.1");
-        Assert.Contains(
-            enhancedUsage.EnhancedKeyUsages.Cast<Oid>(),
-            oid => oid.Value == "1.3.6.1.5.5.7.3.2");
-    }
-
-    [Fact]
-    public void Fingerprint_NormalizesSeparatorsAndMatchesOnlyExactCertificate()
-    {
-        using var expected = PeerSupportCertificate.CreateEphemeral();
-        using var different = PeerSupportCertificate.CreateEphemeral();
-        var separated = string.Join(
-            ":",
-            Enumerable.Range(0, expected.Fingerprint.Length / 2)
-                .Select(index => expected.Fingerprint.Substring(index * 2, 2)))
-            .ToLowerInvariant();
-
-        Assert.True(PeerSupportCertificate.TryNormalizeFingerprint(
-            $"  {separated}  ",
-            out var normalized));
-        Assert.Equal(expected.Fingerprint, normalized);
-        Assert.Equal(
-            expected.Fingerprint,
-            PeerSupportCertificate.GetFingerprint(expected.Certificate));
-        Assert.True(PeerSupportCertificate.MatchesFingerprint(
-            expected.Certificate,
-            separated));
-        Assert.False(PeerSupportCertificate.MatchesFingerprint(
-            different.Certificate,
-            expected.Fingerprint));
-
-        var changed = expected.Fingerprint[0] == '0'
-            ? $"1{expected.Fingerprint[1..]}"
-            : $"0{expected.Fingerprint[1..]}";
-        Assert.False(PeerSupportCertificate.MatchesFingerprint(
-            expected.Certificate,
-            changed));
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("00")]
-    [InlineData("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG")]
-    [InlineData("00000000000000000000000000000000000000000000000000000000000000000")]
-    public void Fingerprint_RejectsMalformedValues(string? value)
-    {
-        Assert.False(PeerSupportCertificate.TryNormalizeFingerprint(
-            value,
-            out var normalized));
-        Assert.Empty(normalized);
-    }
-
-    [Fact]
-    public async Task MutualTls_AcceptsExactPinsOnBothSides()
-    {
-        using var clientCertificate = PeerSupportCertificate.CreateEphemeral();
-        using var serverCertificate = PeerSupportCertificate.CreateEphemeral();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-
-        try
-        {
-            var endpoint = (IPEndPoint)listener.LocalEndpoint;
-            using var client = new TcpClient(AddressFamily.InterNetwork);
-            var acceptTask = listener.AcceptTcpClientAsync(timeout.Token).AsTask();
-            await client.ConnectAsync(
-                IPAddress.Loopback,
-                endpoint.Port,
-                timeout.Token);
-            using var server = await acceptTask;
-
-            var serverAuthentication = PeerSupportTls.AuthenticateAsServerAsync(
-                server.GetStream(),
-                serverCertificate,
-                clientCertificate.Fingerprint,
-                timeout.Token);
-            var clientAuthentication = PeerSupportTls.AuthenticateAsClientAsync(
-                client.GetStream(),
-                clientCertificate,
-                serverCertificate.Fingerprint,
-                timeout.Token);
-            var connections = await Task.WhenAll(
-                serverAuthentication,
-                clientAuthentication);
-            await using var serverConnection = connections[0];
-            await using var clientConnection = connections[1];
-
-            Assert.Equal(
-                clientCertificate.Fingerprint,
-                serverConnection.RemoteCertificateFingerprint);
-            Assert.Equal(
-                serverCertificate.Fingerprint,
-                clientConnection.RemoteCertificateFingerprint);
-
-            var sent = "mutual TLS is active"u8.ToArray();
-            await clientConnection.Stream.WriteAsync(sent, timeout.Token);
-            var received = new byte[sent.Length];
-            await serverConnection.Stream.ReadExactlyAsync(
-                received,
-                timeout.Token);
-            Assert.Equal(sent, received);
-        }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
-    [Fact]
-    public async Task MutualTls_RejectsAValidButWrongServerPin()
-    {
-        using var clientCertificate = PeerSupportCertificate.CreateEphemeral();
-        using var serverCertificate = PeerSupportCertificate.CreateEphemeral();
-        using var unrelatedCertificate = PeerSupportCertificate.CreateEphemeral();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-
-        try
-        {
-            var endpoint = (IPEndPoint)listener.LocalEndpoint;
-            using var client = new TcpClient(AddressFamily.InterNetwork);
-            var acceptTask = listener.AcceptTcpClientAsync(timeout.Token).AsTask();
-            await client.ConnectAsync(
-                IPAddress.Loopback,
-                endpoint.Port,
-                timeout.Token);
-            using var server = await acceptTask;
-
-            var serverAuthentication = PeerSupportTls.AuthenticateAsServerAsync(
-                server.GetStream(),
-                serverCertificate,
-                clientCertificate.Fingerprint,
-                timeout.Token);
-            var clientAuthentication = PeerSupportTls.AuthenticateAsClientAsync(
-                client.GetStream(),
-                clientCertificate,
-                unrelatedCertificate.Fingerprint,
-                timeout.Token);
-
-            var clientError = await Record.ExceptionAsync(async () =>
-                await clientAuthentication.WaitAsync(timeout.Token));
-            var serverError = await Record.ExceptionAsync(async () =>
-                await serverAuthentication.WaitAsync(timeout.Token));
-
-            Assert.True(
-                clientError is AuthenticationException or IOException,
-                $"Unexpected client TLS result: {clientError}");
-            Assert.True(
-                serverError is null or AuthenticationException or IOException,
-                $"Unexpected server TLS result: {serverError}");
-            if (serverAuthentication.IsCompletedSuccessfully)
-            {
-                var serverConnection = await serverAuthentication;
-                await serverConnection.DisposeAsync();
-            }
-        }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
     [Fact]
     public async Task BinaryFrame_RoundTripsWithoutCompression()
     {
@@ -433,13 +232,11 @@ public sealed class PeerSupportProtocolTests
     public void HelloValidation_RejectsMissingFieldsInvalidIdentityAndStaleTimestamp()
     {
         var now = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero);
-        var sender = Guid.NewGuid();
-        var recipient = Guid.NewGuid();
         var valid = new PeerSupportHello
         {
             SessionId = Guid.NewGuid(),
-            SenderIdentityId = sender.ToString("D"),
-            RecipientIdentityId = recipient.ToString("D"),
+            SenderIdentityId = "76561198000000001",
+            RecipientIdentityId = "76561198000000002",
             StartedAtUtc = now,
             ResumeAfterSequence = 0
         };
@@ -459,6 +256,11 @@ public sealed class PeerSupportProtocolTests
         Assert.Throws<InvalidDataException>(() =>
             PeerSupportProtocol.ValidateHello(
                 valid with { SenderIdentityId = @"..\..\outside" },
+                now));
+        // A GUID is what the previous protocol version used; it is not an account.
+        Assert.Throws<InvalidDataException>(() =>
+            PeerSupportProtocol.ValidateHello(
+                valid with { SenderIdentityId = Guid.NewGuid().ToString("D") },
                 now));
         Assert.Throws<InvalidDataException>(() =>
             PeerSupportProtocol.ValidateHello(
@@ -481,7 +283,7 @@ public sealed class PeerSupportProtocolTests
         {
             SessionId = Guid.NewGuid(),
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            SenderIdentityId = Guid.NewGuid().ToString("D"),
+            SenderIdentityId = "76561198000000001",
             Streams =
             [
                 new PeerSupportManifestStream(

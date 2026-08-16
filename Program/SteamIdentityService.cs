@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -188,8 +188,8 @@ public sealed class SteamIdentityService : IIdentityService, IDisposable
     }
 
     /// <summary>
-    /// The identity everything downstream uses. IdentityId stays the Minecraft
-    /// UUID for now - the peer layer switches to the SteamID64 in a later step.
+    /// The identity everything downstream uses: the SteamID64 addresses the
+    /// player on the network, the Minecraft UUID names their progress on disk.
     /// </summary>
     public LocalIdentityContext ResolveContext(AppSettings settings)
     {
@@ -198,7 +198,6 @@ public sealed class SteamIdentityService : IIdentityService, IDisposable
         var uuid = binding.PlayerUuid.ToString("D");
         return new LocalIdentityContext
         {
-            IdentityId = uuid,
             IdentityName = nickname,
             MinecraftUuid = uuid,
             SteamId64 = SteamId64.Parse(binding.SteamId64),

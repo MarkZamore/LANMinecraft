@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -8,9 +8,14 @@ using System.Text.RegularExpressions;
 
 namespace Minecraft;
 
+/// <summary>
+/// PeerIdentityId is a SteamID64 in decimal form since the Steam migration; it
+/// used to be the peer's Minecraft UUID. Folders written by older builds keep
+/// their GUID names and simply age out under retention.
+/// </summary>
 public sealed record SupportLogSessionDescriptor(
     Guid SessionId,
-    Guid PeerIdentityId,
+    string PeerIdentityId,
     string PeerPlayerName,
     DateTimeOffset StartedAtUtc,
     IReadOnlyDictionary<string, string>? Metadata = null);
@@ -24,7 +29,7 @@ public sealed record SupportLogStreamDescriptor(
 
 public sealed record SupportLogReceiveStatus(
     Guid SessionId,
-    Guid PeerIdentityId,
+    string PeerIdentityId,
     string PeerPlayerName,
     string SessionDirectory,
     bool IsActive,
@@ -560,6 +565,9 @@ internal sealed class SupportLogCombinedQuota
     Justification = "The storage lifetime is owned by the diagnostics service; SemaphoreSlim is used without its wait handle.")]
 public sealed class SupportLogStorage
 {
+    /// <summary>1 = peer ids were Minecraft UUIDs; 2 = SteamID64.</summary>
+    internal const int SchemaVersion = 2;
+
     public const long MaxSessionBytes = 2L * 1024 * 1024 * 1024;
     public const long MaxTotalBytes = 8L * 1024 * 1024 * 1024;
     public const long MinimumFreeBytes = 2L * 1024 * 1024 * 1024;
@@ -675,9 +683,11 @@ public sealed class SupportLogStorage
         CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
-        if (descriptor.SessionId == Guid.Empty || descriptor.PeerIdentityId == Guid.Empty)
+        if (descriptor.SessionId == Guid.Empty ||
+            !IsUsableDirectorySegment(descriptor.PeerIdentityId))
         {
-            throw new ArgumentException("Diagnostic session and peer identities must be non-empty GUIDs.");
+            throw new ArgumentException(
+                "The diagnostics session id must be a non-empty GUID and the peer id a plain identifier.");
         }
 
         var key = GetSessionKey(descriptor.PeerIdentityId, descriptor.SessionId);
@@ -692,7 +702,7 @@ public sealed class SupportLogStorage
 
             await PruneUnderGateAsync(onlyExpired: true, requiredBytes: 0, token).ConfigureAwait(false);
 
-            var peerDirectory = Path.Combine(_root, descriptor.PeerIdentityId.ToString("D"));
+            var peerDirectory = Path.Combine(_root, descriptor.PeerIdentityId);
             var started = descriptor.StartedAtUtc == default
                 ? _timeProvider.GetUtcNow()
                 : descriptor.StartedAtUtc.ToUniversalTime();
@@ -982,7 +992,7 @@ public sealed class SupportLogStorage
         await WriteTrackedTextAsync(
             _activeSessionsPath,
             JsonSerializer.Serialize(
-                new ActiveSessionIndex(1, _timeProvider.GetUtcNow(), entries),
+                new ActiveSessionIndex(SchemaVersion, _timeProvider.GetUtcNow(), entries),
                 JsonOptions),
             CancellationToken.None).ConfigureAwait(false);
     }
@@ -1091,8 +1101,18 @@ public sealed class SupportLogStorage
         }
     }
 
-    private static string GetSessionKey(Guid peerIdentityId, Guid sessionId) =>
-        $"{peerIdentityId:D}/{sessionId:D}";
+    private static string GetSessionKey(string peerIdentityId, Guid sessionId) =>
+        $"{peerIdentityId}/{sessionId:D}";
+
+    /// <summary>
+    /// A peer id becomes a directory name, so it may only contain characters
+    /// that cannot climb out of SupportLogs (SteamID64 digits, or a legacy GUID).
+    /// </summary>
+    private static bool IsUsableDirectorySegment(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length <= 64 &&
+        value.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
     private static string[] EnumerateDirectoriesSafe(string directory)
     {
@@ -1140,7 +1160,7 @@ public sealed class SupportLogStorage
 
     private sealed record ActiveSessionEntry(
         Guid SessionId,
-        Guid PeerIdentityId,
+        string PeerIdentityId,
         string PeerPlayerName,
         string RelativeDirectory,
         DateTimeOffset LastActivityUtc,
@@ -1149,7 +1169,7 @@ public sealed class SupportLogStorage
     internal sealed record StoredSessionManifest(
         int SchemaVersion,
         Guid SessionId,
-        Guid PeerIdentityId,
+        string PeerIdentityId,
         string PeerPlayerName,
         DateTimeOffset StartedAtUtc,
         DateTimeOffset UpdatedAtUtc,
@@ -1233,7 +1253,7 @@ public sealed class SupportLogReceiveSession
     public event Action<SupportLogReceiveStatus>? StatusChanged;
 
     public Guid SessionId => _descriptor.SessionId;
-    public Guid PeerIdentityId => _descriptor.PeerIdentityId;
+    public string PeerIdentityId => _descriptor.PeerIdentityId;
     public string PeerPlayerName => _descriptor.PeerPlayerName;
     public string SessionDirectory { get; }
     public long BytesReceived => Interlocked.Read(ref _bytesReceived);
@@ -1342,7 +1362,7 @@ public sealed class SupportLogReceiveSession
                 ex);
         }
         if (manifest.SessionId != SessionId ||
-            manifest.PeerIdentityId != PeerIdentityId)
+            !string.Equals(manifest.PeerIdentityId, PeerIdentityId, StringComparison.Ordinal))
         {
             throw new InvalidDataException(
                 "The existing diagnostic session identity does not match.");
@@ -1795,7 +1815,7 @@ public sealed class SupportLogReceiveSession
             acceptedHash = _highestAcceptedHash;
         }
         var manifest = new SupportLogStorage.StoredSessionManifest(
-            1,
+            SupportLogStorage.SchemaVersion,
             SessionId,
             PeerIdentityId,
             PeerPlayerName,

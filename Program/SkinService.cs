@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
@@ -11,16 +11,24 @@ using System.Windows.Media.Imaging;
 
 namespace Minecraft;
 
-public sealed class SkinService : IAsyncDisposable
+public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 {
     public const string ProtocolName = "MinecraftPortableSkin";
+
+    string IPortableProtocolHandler.ProtocolName => ProtocolName;
+
+    Task IPortableProtocolHandler.HandleAsync(
+        Stream stream,
+        byte[] initialFrame,
+        PeerConnectionContext context,
+        CancellationToken token) =>
+        HandleIncomingAsync(stream, initialFrame, token);
     public const int ProtocolVersion = 1;
     public const int HttpPort = 35658;
     private const int MaxSkinBytes = 128 * 1024 * 1024;
     private readonly AppPaths _paths;
     private readonly Logger _logger;
-    private readonly ISelectedNetworkTransport _network;
-    private readonly PeerRouteResolver _routes;
+    private readonly IPeerTransport _transport;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, SkinAsset> _assets = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SkinPeerDescriptor> _peers = new(StringComparer.OrdinalIgnoreCase);
@@ -39,13 +47,11 @@ public sealed class SkinService : IAsyncDisposable
     public SkinService(
         AppPaths paths,
         Logger logger,
-        ISelectedNetworkTransport network,
-        PeerRouteResolver routes)
+        IPeerTransport transport)
     {
         _paths = paths;
         _logger = logger;
-        _network = network;
-        _routes = routes;
+        _transport = transport;
         MigrateLegacyRegistry();
     }
 
@@ -152,7 +158,7 @@ public sealed class SkinService : IAsyncDisposable
 
     public void ObservePeer(PeerViewModel peer)
     {
-        var uuid = NormalizeUuid(peer.IdentityId);
+        var uuid = NormalizeUuid(peer.MinecraftUuid);
         if (uuid.Length == 0) return;
         if (!peer.IsSkinAvailable || !IsSha256(peer.SkinSha256))
         {
@@ -166,16 +172,11 @@ public sealed class SkinService : IAsyncDisposable
             uuid,
             peer.SkinSha256.ToUpperInvariant(),
             NormalizeModel(peer.SkinModel),
-            _routes.GetSendCandidates(peer.IdentityId)
-                .Select(endpoint => new SkinPeerEndpoint(
-                    endpoint.Address,
-                    endpoint.LocalAddress,
-                    endpoint.LocalInterfaceId))
-                .ToArray());
+            peer.SteamId);
         var metadataChanged = !_peers.TryGetValue(uuid, out var previousDescriptor) ||
                               previousDescriptor.Sha256 != descriptor.Sha256 ||
                               previousDescriptor.Model != descriptor.Model ||
-                              !previousDescriptor.Endpoints.SequenceEqual(descriptor.Endpoints);
+                              previousDescriptor.Peer != descriptor.Peer;
         _peers[uuid] = descriptor;
         if (_assets.TryGetValue(uuid, out var cached) &&
             string.Equals(cached.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
@@ -193,7 +194,7 @@ public sealed class SkinService : IAsyncDisposable
 
     public string PrepareRegistry(AppSettings settings, LocalIdentityContext identity)
     {
-        RefreshLocalSkin(settings, identity.IdentityId);
+        RefreshLocalSkin(settings, identity.MinecraftUuid);
         WriteRegistry();
         return _paths.SkinRegistryFile;
     }
@@ -241,61 +242,50 @@ public sealed class SkinService : IAsyncDisposable
         if (!_fetches.TryAdd(fetchKey, 0)) return;
         try
         {
-            foreach (var endpoint in descriptor.Endpoints)
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            await using var connection = await _transport
+                .ConnectAsync(descriptor.Peer, ProtocolName, timeout.Token)
+                .ConfigureAwait(false);
+            var stream = connection.Stream;
+            await PortableProtocol.WriteJsonAsync(stream, new SkinRequest
             {
-                if (!IPAddress.TryParse(endpoint.Address, out var address)) continue;
-                try
-                {
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(5));
-                    using var client = _network.CreateBoundTcpClient(
-                        address,
-                        endpoint.LocalAddress,
-                        endpoint.LocalInterfaceId);
-                    await client.ConnectAsync(address, WorldTransferService.TransferPort, timeout.Token).ConfigureAwait(false);
-                    await using var stream = client.GetStream();
-                    await PortableProtocol.WriteJsonAsync(stream, new SkinRequest
-                    {
-                        Protocol = ProtocolName,
-                        ProtocolVersion = ProtocolVersion,
-                        PlayerUuid = descriptor.PlayerUuid,
-                        Sha256 = descriptor.Sha256
-                    }, _jsonOptions, timeout.Token).ConfigureAwait(false);
-                    var responseFrame = await PortableProtocol.ReadFrameAsync(stream, timeout.Token).ConfigureAwait(false);
-                    var response = PortableProtocol.Deserialize<SkinResponse>(responseFrame, _jsonOptions);
-                    if (response is null || response.Protocol != ProtocolName || response.ProtocolVersion != ProtocolVersion ||
-                        !response.Ok || response.SizeBytes <= 0 || response.SizeBytes > MaxSkinBytes ||
-                        !string.Equals(response.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
+                Protocol = ProtocolName,
+                ProtocolVersion = ProtocolVersion,
+                PlayerUuid = descriptor.PlayerUuid,
+                Sha256 = descriptor.Sha256
+            }, _jsonOptions, timeout.Token).ConfigureAwait(false);
 
-                    var bytes = new byte[checked((int)response.SizeBytes)];
-                    await ReadExactAsync(stream, bytes, timeout.Token).ConfigureAwait(false);
-                    var hash = Convert.ToHexString(SHA256.HashData(bytes));
-                    if (!string.Equals(hash, descriptor.Sha256, StringComparison.OrdinalIgnoreCase) || !IsPng(bytes))
-                    {
-                        throw new InvalidDataException("Received skin failed integrity validation.");
-                    }
-
-                    _assets[descriptor.PlayerUuid] = new SkinAsset(
-                        bytes,
-                        hash,
-                        NormalizeModel(response.Model),
-                        "",
-                        bytes.LongLength,
-                        0);
-                    _routes.MarkEndpointHealthy(descriptor.PlayerUuid, endpoint.ToCandidate());
-                    WriteRegistry();
-                    return;
-                }
-                catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or InvalidDataException or JsonException)
-                {
-                    if (token.IsCancellationRequested) return;
-                    _routes.MarkEndpointUnhealthy(descriptor.PlayerUuid, endpoint.ToCandidate());
-                    _logger.Warn($"Peer skin request from {endpoint} failed: {ex.Message}");
-                }
+            var responseFrame = await PortableProtocol.ReadFrameAsync(stream, timeout.Token).ConfigureAwait(false);
+            var response = PortableProtocol.Deserialize<SkinResponse>(responseFrame, _jsonOptions);
+            if (response is null || response.Protocol != ProtocolName || response.ProtocolVersion != ProtocolVersion ||
+                !response.Ok || response.SizeBytes <= 0 || response.SizeBytes > MaxSkinBytes ||
+                !string.Equals(response.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
             }
+
+            var bytes = new byte[checked((int)response.SizeBytes)];
+            await ReadExactAsync(stream, bytes, timeout.Token).ConfigureAwait(false);
+            var hash = Convert.ToHexString(SHA256.HashData(bytes));
+            if (!string.Equals(hash, descriptor.Sha256, StringComparison.OrdinalIgnoreCase) || !IsPng(bytes))
+            {
+                throw new InvalidDataException("Received skin failed integrity validation.");
+            }
+
+            _assets[descriptor.PlayerUuid] = new SkinAsset(
+                bytes,
+                hash,
+                NormalizeModel(response.Model),
+                "",
+                bytes.LongLength,
+                0);
+            WriteRegistry();
+        }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException or InvalidDataException or JsonException or InvalidOperationException)
+        {
+            if (token.IsCancellationRequested) return;
+            _logger.Warn($"Peer skin request to {descriptor.Peer} failed: {ex.Message}");
         }
         finally
         {
@@ -664,27 +654,11 @@ public sealed class SkinService : IAsyncDisposable
         long SizeBytes,
         long LastWriteUtcTicks);
 
-    private sealed record SkinPeerEndpoint(
-        string Address,
-        string LocalAddress,
-        string LocalInterfaceId)
-    {
-        public PeerCandidateEndpoint ToCandidate() => new()
-        {
-            Address = Address,
-            LocalAddress = LocalAddress,
-            LocalInterfaceId = LocalInterfaceId,
-            AddressFamily = IPAddress.TryParse(Address, out var parsed) &&
-                            parsed.AddressFamily == AddressFamily.InterNetworkV6
-                ? "IPv6"
-                : "IPv4"
-        };
-    }
     private sealed record SkinPeerDescriptor(
         string PlayerUuid,
         string Sha256,
         string Model,
-        IReadOnlyList<SkinPeerEndpoint> Endpoints);
+        SteamId64 Peer);
 }
 
 public sealed record SkinAnnouncement(bool IsAvailable, string Sha256, string Model);
