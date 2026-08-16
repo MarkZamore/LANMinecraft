@@ -2028,7 +2028,7 @@ public partial class MainWindow : Window
         PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
         ChangePlayerNameButton.IsEnabled = !_busy && !_minecraftRunning && !_minecraftPreparing;
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
-        BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 0;
+        BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         PlayButton.Content = "Играть";
         PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
