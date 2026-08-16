@@ -107,6 +107,45 @@ public sealed class PeerVisibilityTests
     }
 
     /// <summary>
+    /// A world transfer takes both machines' attention for a long time, and
+    /// Steam serves a friend's presence on its own schedule. The friend
+    /// disappeared from the list mid-transfer while their world was still
+    /// arriving; holding a connection to somebody is proof enough.
+    /// </summary>
+    [Fact]
+    public async Task APeerWeAreTalkingTo_SurvivesAGapInTheirPresence()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
+        Assert.True(SteamId64.TryFrom(FriendSteamId, out var friendId));
+        foreach (var (key, value) in SteamPresenceCodec.Encode(FriendPresence(friendId)))
+        {
+            api.FriendPresence[(FriendSteamId, key)] = value;
+        }
+
+        var network = new InMemoryPeerNetwork();
+        var transport = network.CreateTransport(LocalSteamId, "MarkZamore");
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var directory = new SteamPeerDirectory(client, transport);
+        directory.Refresh();
+        Assert.Single(directory.Peers);
+
+        // Steam stops serving their keys, but the transfer connection is open.
+        api.FriendPresence.Clear();
+        transport.Connected.Add(friendId);
+        directory.Refresh();
+
+        Assert.Single(directory.Peers);
+    }
+
+    /// <summary>
     /// A report is what a player sends when something went wrong, which is
     /// usually while the game is running or right after it failed to start.
     /// Nothing about being busy may take that away.

@@ -1352,21 +1352,34 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         foreach (var (source, target) in files)
         {
             token.ThrowIfCancellationRequested();
+            long copied = 0;
             await using (var input = new FileStream(
-                source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length, FileOptions.SequentialScan))
+                source, FileMode.Open, FileAccess.Read, FileShare.Read, buffer.Length,
+                FileOptions.SequentialScan | FileOptions.Asynchronous))
             await using (var output = new FileStream(
-                target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length))
+                target, FileMode.CreateNew, FileAccess.Write, FileShare.None, buffer.Length,
+                FileOptions.Asynchronous))
             {
                 int read;
-                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                while ((read = await input.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
                 {
                     token.ThrowIfCancellationRequested();
-                    output.Write(buffer, 0, read);
-                    processed += read;
-                    await progress(processed, totalBytes).ConfigureAwait(false);
+                    await output.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                    copied += read;
+                    // The peer still has to hear from us inside a big file, but
+                    // the count it hears is only what has actually landed.
+                    await heartbeat().ConfigureAwait(false);
                 }
             }
+
+            // Windows takes a write into its cache and returns; the disk pays
+            // later. Counting bytes as they were handed over made the stage run
+            // to the end at memory speed and then sit at "done" for minutes
+            // while gigabytes drained. A file counts once it is closed - which
+            // is when it is really written.
+            processed += copied;
             File.SetLastWriteTime(target, File.GetLastWriteTime(source));
+            await progress(processed, totalBytes).ConfigureAwait(false);
         }
     }
 

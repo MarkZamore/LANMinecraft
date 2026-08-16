@@ -11,12 +11,18 @@
 /// </summary>
 public sealed class SteamPeerDirectory(
     SteamClientService client,
+    IPeerTransport? transport = null,
     Logger? logger = null)
 {
     private readonly ISteamApiFacade api = client.Api;
 
-    /// <summary>How long a peer survives after its keys stop being readable.</summary>
-    internal static readonly TimeSpan PresenceGrace = TimeSpan.FromSeconds(60);
+    /// <summary>
+    /// How long a peer survives after its keys stop being readable. Generous
+    /// because Steam serves a friend's presence on its own schedule and can
+    /// simply not have it for a while - especially while both machines are
+    /// busy moving a world.
+    /// </summary>
+    internal static readonly TimeSpan PresenceGrace = TimeSpan.FromMinutes(3);
 
     private readonly Dictionary<ulong, (SteamPeerPresence Presence, DateTimeOffset LastSeen)> _peers = [];
     private readonly object _gate = new();
@@ -76,6 +82,20 @@ public sealed class SteamPeerDirectory(
                 changed |= !_peers.TryGetValue(friend.SteamId64, out var previous) ||
                            previous.Presence != presence;
                 _peers[friend.SteamId64] = (presence, now);
+            }
+        }
+
+        // Anyone we hold a connection to is here, whatever presence says:
+        // during a world transfer the friend list went quiet and the peer
+        // vanished from the window while their world was still arriving.
+        foreach (var connected in transport?.ConnectedPeers ?? [])
+        {
+            lock (_gate)
+            {
+                if (_peers.TryGetValue(connected.Value, out var live))
+                {
+                    _peers[connected.Value] = (live.Presence, now);
+                }
             }
         }
 
