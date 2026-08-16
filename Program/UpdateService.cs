@@ -15,7 +15,7 @@ namespace Minecraft;
 public sealed partial class UpdateService
 {
     public const string RepositoryOwner = "MarkZamore";
-    public const string RepositoryName = "Minecraft";
+    public const string RepositoryName = "LANMinecraft";
     public const string ReleaseTag = "latest";
     public const string ExecutableAssetName = "LANMinecraft.exe";
     public const string ManifestAssetName = "update.json";

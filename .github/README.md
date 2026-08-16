@@ -6,7 +6,7 @@ Portable-лаунчер для игры с друзьями через Steam. О
 
 ## Скачать
 
-[Скачать последнюю версию LANMinecraft.exe](https://github.com/MarkZamore/Minecraft/releases/latest/download/LANMinecraft.exe)
+[Скачать последнюю версию LANMinecraft.exe](https://github.com/MarkZamore/LANMinecraft/releases/latest/download/LANMinecraft.exe)
 
 Для первого запуска достаточно поместить `LANMinecraft.exe` рядом с папкой `Minecraft\Packs`, содержащей подготовленную сборку. Игровые runtime-файлы выбранной версии загружаются после нажатия `Играть`; сама сборка, её моды и client jar приложением не скачиваются.
 

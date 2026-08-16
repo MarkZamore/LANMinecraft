@@ -77,7 +77,7 @@ function Resolve-ReleaseNumber([string]$revision) {
     $isDirty = Test-WorktreeIsDirty
     try {
         $manifest = Invoke-RestMethod `
-            -Uri "https://github.com/MarkZamore/Minecraft/releases/latest/download/update.json" `
+            -Uri "https://github.com/MarkZamore/LANMinecraft/releases/latest/download/update.json" `
             -TimeoutSec 10
         $latestNumber = Get-PositiveInteger $manifest.releaseNumber
         $latestCommit = ([string]$manifest.commitSha).Trim()
