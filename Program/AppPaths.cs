@@ -33,6 +33,7 @@ public sealed class AppPaths
         Packs = CombineUnderService("Packs");
         Launcher = CombineUnderService("Launcher");
         Runtimes = Path.Combine(Launcher, "Runtimes");
+        SteamNative = Path.Combine(Launcher, "Steam");
         Personal = CombineUnderService("Personal");
         Instances = Path.Combine(Personal, "Instances");
         PackConflicts = Path.Combine(Personal, "PackConflicts");
@@ -45,6 +46,7 @@ public sealed class AppPaths
     public string Packs { get; }
     public string Launcher { get; }
     public string Runtimes { get; }
+    public string SteamNative { get; }
     public string Personal { get; }
     public string Instances { get; }
     public string PackConflicts { get; }
