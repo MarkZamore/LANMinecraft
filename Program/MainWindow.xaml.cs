@@ -62,7 +62,8 @@ public partial class MainWindow : Window
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
     private bool _bugReportSending;
-    private string _bugReportStatus = "Отчёт отправляется другу через Steam.";
+    private string _bugReportStatus = string.Empty;
+    private readonly TransferRateTracker _bugReportRate = new();
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
@@ -145,9 +146,11 @@ public partial class MainWindow : Window
                 ResolveCurrentInstanceDirectory,
                 CreateBugReportContext,
                 CaptureSupportEnvironmentAsync);
-            _bugReports.ReportReceived += (_, directory) => PostToUi(() =>
+            _bugReports.ReportReceived += (_, arrival) => PostToUi(() =>
             {
-                SetBugReportStatus($"Получен отчёт: {Path.GetFileName(directory)}");
+                SetBugReportStatus(
+                    $"Получен отчёт от {arrival.SenderName} ({DescribeBytes(arrival.ArchiveBytes)}). " +
+                    $"Папка: {Path.GetFileName(arrival.Directory)}");
                 RefreshDiagnosticsPanel();
             });
             _bugReports.PruneStoredReports();
@@ -288,6 +291,11 @@ public partial class MainWindow : Window
         try
         {
             _peerDirectory.Refresh();
+            // Take the whole list every tick, not only when something about it
+            // changed: the window ages a peer out after PeerTtl, so a friend
+            // whose presence simply stayed the same used to vanish from the
+            // list about half a minute after the launcher started.
+            ApplyPeers(_peerDirectory.Peers);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
@@ -472,21 +480,6 @@ public partial class MainWindow : Window
         SendBugReportButton.IsEnabled =
             !_bugReportSending && IsIdentityBound && recipient is { IsNobody: false };
         DiagnosticLogStatusText.Text = _bugReportStatus;
-        OpenSupportLogsButton.IsEnabled = HasReceivedBugReports();
-    }
-
-    private bool HasReceivedBugReports()
-    {
-        try
-        {
-            var reports = _bugReports?.ReportsDirectory;
-            return reports is not null && Directory.Exists(reports) &&
-                   Directory.EnumerateDirectories(reports).Any();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
     }
 
     /// <summary>
@@ -494,9 +487,6 @@ public partial class MainWindow : Window
     /// sends it to the friend they picked. Nothing streams: the report is a
     /// snapshot of the moment they noticed something was wrong.
     /// </summary>
-    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e) =>
-        OpenSupportLogsDirectory();
-
     private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
     {
         if (_bugReports is null || _bugReportSending) return;
@@ -508,17 +498,19 @@ public partial class MainWindow : Window
         }
 
         _bugReportSending = true;
-        SetBugReportStatus($"Отправка отчёта игроку {recipient.DisplayName}…");
+        _bugReportRate.Reset();
+        SetBugReportStatus($"Подготовка отчёта для {recipient.DisplayName}…");
         try
         {
             var message = BugReportMessageTextBox.Text;
+            var progress = new Progress<BugReportProgress>(value => ApplyBugReportProgress(recipient, value));
             var manifest = await _bugReports
-                .SendAsync(recipient.SteamId, message, _lifetimeCts.Token)
+                .SendAsync(recipient.SteamId, message, progress, _lifetimeCts.Token)
                 .ConfigureAwait(true);
             BugReportMessageTextBox.Clear();
             SetBugReportStatus(
                 $"Отчёт отправлен игроку {recipient.DisplayName} " +
-                $"({manifest.ArchiveBytes / 1024} КиБ).");
+                $"({DescribeBytes(manifest.ArchiveBytes)}).");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -534,6 +526,25 @@ public partial class MainWindow : Window
             RefreshDiagnosticsPanel();
         }
     }
+
+    /// <summary>
+    /// The line under the button while a report is going out: how much of it
+    /// has left, out of how much, and how fast. A report is megabytes over a
+    /// Steam relay, so a still line reads as a hang.
+    /// </summary>
+    private void ApplyBugReportProgress(DiagnosticLogTargetOption recipient, BugReportProgress progress)
+    {
+        var speed = _bugReportRate.Update(progress.SentBytes, recipient.SteamId.ToString());
+        var line = $"Отправка отчёта игроку {recipient.DisplayName}: " +
+                   $"{DescribeBytes(progress.SentBytes)} из {DescribeBytes(progress.TotalBytes)}";
+        if (speed > 0) line += $" ({DescribeBytes((long)speed)}/с)";
+        SetBugReportStatus(line);
+    }
+
+    private static string DescribeBytes(long bytes) =>
+        bytes >= 1024L * 1024
+            ? $"{bytes / (1024d * 1024d):F1} МиБ"
+            : $"{Math.Max(0, bytes) / 1024d:F0} КиБ";
 
     private void SetBugReportStatus(string message)
     {
@@ -1322,18 +1333,27 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Steam is only mentioned when it is in the way. A working connection
+    /// needs no line of its own, and the account number behind it is not
+    /// something a player has any use for.
+    /// </summary>
     private void ApplySteamStatus(SteamClientStatus status)
     {
-        SetSteamMessage(status.Message);
-        RetrySteamButton.Visibility = status.IsReady && IsIdentityBound
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        var settled = status.IsReady && IsIdentityBound;
+        SteamProblemPanel.Visibility = settled ? Visibility.Collapsed : Visibility.Visible;
+        if (!settled) SetSteamMessage(status.Message);
         RefreshUi();
     }
 
+    /// <summary>
+    /// Shows a Steam problem and the button that retries it. Anything the
+    /// player cannot act on stays out of the window.
+    /// </summary>
     private void SetSteamMessage(string message)
     {
         SteamStatusText.Text = message;
+        SteamProblemPanel.Visibility = Visibility.Visible;
     }
 
     private bool IsIdentityBound => _identityService?.IsBound == true;

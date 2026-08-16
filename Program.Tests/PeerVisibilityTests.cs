@@ -68,6 +68,45 @@ public sealed class PeerVisibilityTests
     }
 
     /// <summary>
+    /// The directory keeps a peer alive as long as their keys are readable,
+    /// even when nothing about them changes - a friend sitting in the launcher
+    /// publishes the same presence for as long as they sit there, and used to
+    /// disappear from the list once the window's own timeout passed.
+    /// </summary>
+    [Fact]
+    public async Task APeerWhosePresenceNeverChanges_StaysListed()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
+        Assert.True(SteamId64.TryFrom(FriendSteamId, out var friendId));
+        foreach (var (key, value) in SteamPresenceCodec.Encode(FriendPresence(friendId)))
+        {
+            api.FriendPresence[(FriendSteamId, key)] = value;
+        }
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var directory = new SteamPeerDirectory(client);
+
+        var changes = 0;
+        directory.PeersChanged += (_, _) => changes++;
+        directory.Refresh();
+        directory.Refresh();
+        directory.Refresh();
+
+        // Only the first refresh is news, and the peer is still there after the
+        // quiet ones - the list, not the event, is the source of truth.
+        Assert.Equal(1, changes);
+        Assert.Single(directory.Peers);
+    }
+
+    /// <summary>
     /// A report is what a player sends when something went wrong, which is
     /// usually while the game is running or right after it failed to start.
     /// Nothing about being busy may take that away.
