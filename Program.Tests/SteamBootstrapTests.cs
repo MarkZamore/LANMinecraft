@@ -297,4 +297,7 @@ internal sealed class FakeSteamApi : ISteamApiFacade
         Initialized && FriendPresence.TryGetValue((steamId64, key), out var value) ? value : string.Empty;
 
     public bool RequestFriendRichPresence(ulong steamId64) => Initialized;
+
+    public int GetFriendRichPresenceKeyCount(ulong steamId64) =>
+        Initialized ? FriendPresence.Keys.Count(entry => entry.SteamId64 == steamId64) : 0;
 }
