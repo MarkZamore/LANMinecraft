@@ -125,7 +125,7 @@ public partial class MainWindow : Window
             await ConnectSteamAndBindIdentityAsync();
             _peerTransport = new SteamPeerTransport(_steamClient, _logger);
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
-            _peerDirectory = new SteamPeerDirectory(_steamClient, _logger);
+            _peerDirectory = new SteamPeerDirectory(_steamClient, _peerTransport, _logger);
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);

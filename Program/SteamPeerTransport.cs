@@ -34,9 +34,12 @@ public sealed class SteamPeerTransport : IPeerTransport
     private static readonly TimeSpan IdlePumpInterval = TimeSpan.FromMilliseconds(10);
     private const int MaxMessagesPerPoll = 32;
 
-    // A world transfer moves gigabytes: Steam's 1 MB/s default would turn a
-    // 3 GB world into a 50-minute wait even on a fast link.
-    private const int SendRateMaxBytesPerSecond = 100 * 1024 * 1024;
+    // A world transfer moves gigabytes and Steam's own default ceiling is
+    // 1 MB/s, which alone turns a 3 GB world into a 50-minute wait. The floor
+    // matters just as much: the rate estimator starts there and climbs, so a
+    // 1 MB/s floor spends the first minutes of every transfer ramping up.
+    private const int SendRateMaxBytesPerSecond = 256 * 1024 * 1024;
+    private const int SendRateMinBytesPerSecond = 8 * 1024 * 1024;
     private const int SendBufferBytes = 16 * 1024 * 1024;
     private const int ConnectionTimeoutMilliseconds = 10_000;
 
@@ -65,6 +68,9 @@ public sealed class SteamPeerTransport : IPeerTransport
     public string UnavailableReason =>
         IsAvailable ? string.Empty : _client.Status.Message;
 
+    public IReadOnlyCollection<SteamId64> ConnectedPeers =>
+        _channels.Values.Select(channel => channel.Peer).Distinct().ToArray();
+
     public async Task<PeerConnection> ConnectAsync(
         SteamId64 peer,
         string protocolName,
@@ -74,6 +80,10 @@ public sealed class SteamPeerTransport : IPeerTransport
         if (!peer.IsValid) throw new ArgumentException("The peer is not a Steam account.", nameof(peer));
         if (!IsAvailable) throw new InvalidOperationException(UnavailableReason);
 
+        // Applied before the connection exists: Steam reads these when it
+        // creates one, and a launcher that dials before it listens would
+        // otherwise get the 1 MB/s default.
+        ApplyConnectionTuning();
         var identity = new SteamNetworkingIdentity();
         identity.SetSteamID64(peer.Value);
         var handle = SteamNetworkingSockets.ConnectP2P(ref identity, VirtualPort, 0, null);
@@ -165,7 +175,7 @@ public sealed class SteamPeerTransport : IPeerTransport
     private void ApplyConnectionTuning()
     {
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax, SendRateMaxBytesPerSecond);
-        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, SendRateMaxBytesPerSecond / 100);
+        SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin, SendRateMinBytesPerSecond);
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendBufferSize, SendBufferBytes);
         SetGlobalInt32(
             ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_P2P_Transport_ICE_Enable,

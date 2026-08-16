@@ -50,6 +50,13 @@ public interface IPeerTransport : IAsyncDisposable
 
     Task StopListeningAsync();
 
+    /// <summary>
+    /// The peers this launcher currently holds a connection to. Being mid-
+    /// conversation with somebody is the strongest evidence they are there -
+    /// stronger than rich presence, which Steam serves on its own schedule.
+    /// </summary>
+    IReadOnlyCollection<SteamId64> ConnectedPeers { get; }
+
     /// <summary>Raised for every accepted connection; the router owns the rest.</summary>
     event EventHandler<PeerConnection>? ConnectionAccepted;
 }
@@ -78,6 +85,8 @@ public sealed class NullPeerTransport(string? unavailableReason = null) : IPeerT
 
     public string UnavailableReason { get; } =
         unavailableReason ?? "Соединение с другими игроками ещё не подключено.";
+
+    public IReadOnlyCollection<SteamId64> ConnectedPeers => [];
 
     public event EventHandler<PeerConnection>? ConnectionAccepted
     {
