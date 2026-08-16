@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 
 namespace Minecraft;
@@ -20,7 +20,7 @@ public sealed class SettingsService
 
     public AppSettings Load()
     {
-        var settingsFile = ResolveSettingsFileToRead();
+        var settingsFile = _paths.SettingsFile;
 
         if (!File.Exists(settingsFile))
         {
@@ -34,11 +34,6 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
-            // Load always re-saves, so a pre-Steam file loses its VPN and voice
-            // keys the moment this build starts. Keep one copy of the original.
-            // The version has to come from the JSON: a missing field means the
-            // pre-Steam schema, while the property itself defaults to current.
-            TryBackUpBeforeMigration(settingsFile, ReadSchemaVersion(json));
             settings = ApplyFallbacks(settings, useRecommendedMemory: !hasConfiguredMemory);
             TryPersistSafeDefaults(settings);
             return settings;
@@ -55,16 +50,6 @@ public sealed class SettingsService
     {
         settings = ApplyFallbacks(settings);
         AtomicFile.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
-    }
-
-    private string ResolveSettingsFileToRead()
-    {
-        if (File.Exists(_paths.SettingsFile))
-        {
-            return _paths.SettingsFile;
-        }
-
-        return _paths.LegacySettingsFiles.FirstOrDefault(File.Exists) ?? _paths.SettingsFile;
     }
 
     private static AppSettings ApplyFallbacks(AppSettings? source, bool useRecommendedMemory = false)
@@ -127,34 +112,6 @@ public sealed class SettingsService
         return document.RootElement.ValueKind == JsonValueKind.Object &&
                document.RootElement.EnumerateObject().Any(property =>
                    string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Copies the settings file next to itself once, the first time this build
-    /// reads a file written by an older schema. Never overwrites an existing
-    /// backup, and never blocks startup when it fails.
-    /// </summary>
-    internal string? TryBackUpBeforeMigration(string settingsFile, int loadedSchemaVersion)
-    {
-        if (loadedSchemaVersion >= CurrentSchemaVersion) return null;
-        try
-        {
-            var backupDirectory = Path.Combine(_paths.Personal, "Backups");
-            Directory.CreateDirectory(backupDirectory);
-            var backup = Path.Combine(
-                backupDirectory,
-                $"settings-v{loadedSchemaVersion}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
-            if (File.Exists(backup)) return backup;
-            File.Copy(settingsFile, backup);
-            _logger?.Info(
-                $"Settings migrated to schema {CurrentSchemaVersion}; the previous file was copied to {backup}.");
-            return backup;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            _logger?.Warn($"Settings backup before migration failed: {ex.Message}");
-            return null;
-        }
     }
 
     private void TryPersistSafeDefaults(AppSettings settings)

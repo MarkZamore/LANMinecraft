@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
@@ -93,7 +93,6 @@ public sealed class PackRuntimeService : IDisposable
         var temporaryRoot = Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads", SafePackName(packRelativePath));
         _paths.EnsureUnderRoot(temporaryRoot);
         Directory.CreateDirectory(runtimeRoot);
-        TryImportLegacyRuntime(runtimeRoot);
 
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Checking, "Проверка файлов"));
         var statePath = Path.Combine(runtimeRoot, RuntimeStateFileName);
@@ -104,7 +103,7 @@ public sealed class PackRuntimeService : IDisposable
             ValidateSourceClientJarState(sourceClientJar, state) &&
             ValidateState(runtimeRoot, state))
         {
-            CleanupLegacyRuntimeFiles(runtimeRoot, state);
+            CleanupUntrackedRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
@@ -210,8 +209,7 @@ public sealed class PackRuntimeService : IDisposable
             requiredFiles,
             token);
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(newState, _jsonOptions));
-        CleanupLegacyRuntimeFiles(runtimeRoot, newState);
-        CleanupLegacyLauncherRoot();
+        CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Сборка готова", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
@@ -448,43 +446,11 @@ public sealed class PackRuntimeService : IDisposable
         }
     }
 
-    private void TryImportLegacyRuntime(string runtimeRoot)
-    {
-        if (File.Exists(Path.Combine(runtimeRoot, RuntimeStateFileName)) ||
-            Directory.EnumerateFileSystemEntries(runtimeRoot).Any())
-        {
-            return;
-        }
-
-        var legacyEntries = new[] { "libraries", "assets", "natives", "versions", "java21-windows-x86-64" };
-        var moved = false;
-        foreach (var name in legacyEntries)
-        {
-            var source = Path.Combine(_paths.Launcher, name);
-            var destination = Path.Combine(runtimeRoot, name);
-            if (!Directory.Exists(source) || Directory.Exists(destination)) continue;
-            Directory.Move(source, destination);
-            moved = true;
-        }
-        if (moved) _logger.Info("Legacy fixed runtime moved into the selected pack runtime for verification and reuse.");
-    }
-
-    private void CleanupLegacyLauncherRoot()
-    {
-        var fileNames = new[]
-        {
-            "Start-MinecraftFromLauncher.ps1", "Start-Minecraft.ps1", "Start-Minecraft.cmd",
-            "standalone-classpath.txt", "standalone-jvmargs.txt", "standalone-clientargs.txt",
-            "minecraft-window-icon.jar",
-            "launcher-bootstrap-manifest.json", "runtime-bootstrap-manifest.json", "bootstrap-manifest.json"
-        };
-        foreach (var name in fileNames)
-        {
-            TryDeleteFile(Path.Combine(_paths.Launcher, name));
-        }
-    }
-
-    private static void CleanupLegacyRuntimeFiles(string runtimeRoot, RuntimeState state)
+    /// <summary>
+    /// Removes what preparation leaves behind and does not track: the loader
+    /// installer jar and any runtime directory the state no longer references.
+    /// </summary>
+    private static void CleanupUntrackedRuntimeFiles(string runtimeRoot, RuntimeState state)
     {
         foreach (var directoryName in new[] { "java21-windows-x86-64", "natives" })
         {
@@ -495,10 +461,10 @@ public sealed class PackRuntimeService : IDisposable
             if (!isTracked) TryDeleteDirectory(Path.Combine(runtimeRoot, directoryName));
         }
 
-        var legacyNeoForgeRoot = Path.Combine(runtimeRoot, "libraries", "net", "neoforged", "neoforge");
-        if (!Directory.Exists(legacyNeoForgeRoot)) return;
+        var neoForgeRoot = Path.Combine(runtimeRoot, "libraries", "net", "neoforged", "neoforge");
+        if (!Directory.Exists(neoForgeRoot)) return;
         foreach (var installer in Directory.EnumerateFiles(
-                     legacyNeoForgeRoot,
+                     neoForgeRoot,
                      "neoforge-*-installer.jar",
                      SearchOption.AllDirectories))
         {

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -716,7 +716,7 @@ public sealed class UpdateService
             ValidateDeltaPatchManifest(
                 manifest.DeltaPatch,
                 manifest.CommitSha,
-                requireLegacyAssetName: true);
+                requireExactAssetName: true);
         }
 
         if (manifest.DeltaPatches.Count > MaximumDeltaPatches)
@@ -725,7 +725,7 @@ public sealed class UpdateService
         }
         foreach (var delta in manifest.DeltaPatches)
         {
-            ValidateDeltaPatchManifest(delta, manifest.CommitSha, requireLegacyAssetName: false);
+            ValidateDeltaPatchManifest(delta, manifest.CommitSha, requireExactAssetName: false);
         }
         if (manifest.DeltaPatches
             .GroupBy(delta => NormalizeSha(delta.BaseSha256), StringComparer.OrdinalIgnoreCase)
@@ -738,7 +738,7 @@ public sealed class UpdateService
     private static void ValidateDeltaPatchManifest(
         DeltaPatchManifest delta,
         string targetCommitSha,
-        bool requireLegacyAssetName)
+        bool requireExactAssetName)
     {
         if (!string.Equals(delta.Algorithm, DeltaPatchAlgorithm, StringComparison.Ordinal))
         {
@@ -753,7 +753,7 @@ public sealed class UpdateService
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base commit.");
         }
-        if (requireLegacyAssetName && !string.Equals(delta.AssetName, DeltaPatchAssetName, StringComparison.Ordinal))
+        if (requireExactAssetName && !string.Equals(delta.AssetName, DeltaPatchAssetName, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Update manifest contains an unexpected delta asset name.");
         }
@@ -761,7 +761,7 @@ public sealed class UpdateService
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta asset name.");
         }
-        if (!requireLegacyAssetName && delta.BaseReleaseNumber < 1)
+        if (!requireExactAssetName && delta.BaseReleaseNumber < 1)
         {
             throw new InvalidOperationException("Update manifest contains an invalid delta base release number.");
         }

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -15,7 +15,7 @@ public sealed class PackInstanceService : IDisposable
     private const int StateSchemaVersion = 1;
     private const string StateFileName = ".portable-instance.json";
 
-    internal static readonly HashSet<string> LegacyDirectories = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> InstanceOwnedDirectories = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mixin.out",
         "blueprints",
@@ -36,7 +36,7 @@ public sealed class PackInstanceService : IDisposable
         "xaero"
     };
 
-    internal static readonly HashSet<string> LegacyFiles = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> InstanceOwnedFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "command_history.txt",
         "observable_announce",
@@ -203,11 +203,6 @@ public sealed class PackInstanceService : IDisposable
         Directory.CreateDirectory(gameDir);
         var statePath = Path.Combine(gameDir, StateFileName);
         var state = ReadState(statePath, packRelativePath);
-        if (!state.LegacyMigrationCompleted)
-        {
-            MigrateLegacyPersonalData(packDir, gameDir, packRelativePath, descriptor.ClientJar, token);
-            state.LegacyMigrationCompleted = true;
-        }
 
         EnsureMods(packDir, gameDir, state, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, token);
@@ -422,145 +417,6 @@ public sealed class PackInstanceService : IDisposable
         return allHardLinks;
     }
 
-    private void MigrateLegacyPersonalData(
-        string packDir,
-        string gameDir,
-        string packRelativePath,
-        string clientJarName,
-        CancellationToken token)
-    {
-        var conflictRoot = Path.Combine(_paths.PackConflicts, SafePackName(packRelativePath), $"migration-{DateTime.UtcNow:yyyyMMdd-HHmmss}");
-        var migrated = false;
-        foreach (var entry in Directory.EnumerateFileSystemEntries(packDir).ToArray())
-        {
-            token.ThrowIfCancellationRequested();
-            var name = Path.GetFileName(entry);
-            if (string.Equals(name, "mods", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, clientJarName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (Directory.Exists(entry) &&
-                (LegacyDirectories.Contains(name) || name.StartsWith("XaeroWaypoints_BACKUP", StringComparison.OrdinalIgnoreCase)))
-            {
-                if (string.Equals(name, "saves", StringComparison.OrdinalIgnoreCase))
-                {
-                    MigrateLegacySaves(entry, conflictRoot);
-                }
-                else
-                {
-                    MigrateLegacyDirectory(entry, Path.Combine(gameDir, name), conflictRoot);
-                }
-                migrated = true;
-            }
-            else if (File.Exists(entry) && LegacyFiles.Contains(name))
-            {
-                MoveLegacyFile(entry, Path.Combine(gameDir, name), conflictRoot);
-                migrated = true;
-            }
-        }
-
-        var legacyGeneratedRoot = Path.Combine(_paths.Personal, "Logs", "Packs_" + SafePackName(packRelativePath));
-        if (Directory.Exists(legacyGeneratedRoot))
-        {
-            foreach (var entry in Directory.EnumerateFileSystemEntries(legacyGeneratedRoot).ToArray())
-            {
-                token.ThrowIfCancellationRequested();
-                var name = Path.GetFileName(entry);
-                if (Directory.Exists(entry))
-                {
-                    MoveDirectoryContents(entry, Path.Combine(gameDir, name), Path.Combine(conflictRoot, name));
-                }
-                else if (File.Exists(entry))
-                {
-                    MoveLegacyFile(entry, Path.Combine(gameDir, name), conflictRoot);
-                }
-            }
-            TryDeleteDirectoryIfEmpty(legacyGeneratedRoot);
-            TryDeleteDirectoryIfEmpty(Path.GetDirectoryName(legacyGeneratedRoot)!);
-            migrated = true;
-        }
-
-        if (migrated)
-        {
-            _logger.Info($"Migrated legacy writable pack data into Personal/Instances/{packRelativePath}.");
-        }
-        TryDeleteDirectoryIfEmpty(conflictRoot);
-    }
-
-    private void MigrateLegacySaves(string savesPath, string conflictRoot)
-    {
-        if (TryGetAttributes(savesPath, out var attributes) && (attributes & FileAttributes.ReparsePoint) != 0)
-        {
-            Directory.Delete(savesPath);
-            return;
-        }
-
-        Directory.CreateDirectory(_paths.Worlds);
-        MoveDirectoryContents(savesPath, _paths.Worlds, Path.Combine(conflictRoot, "saves"));
-        TryDeleteDirectoryIfEmpty(savesPath);
-    }
-
-    private void MigrateLegacyDirectory(string sourcePath, string destinationPath, string conflictRoot)
-    {
-        if (TryGetAttributes(sourcePath, out var attributes) && (attributes & FileAttributes.ReparsePoint) != 0)
-        {
-            var target = ResolveLinkTarget(sourcePath);
-            _paths.EnsureUnderRoot(target);
-            if (Directory.Exists(target))
-            {
-                MoveDirectoryContents(target, destinationPath, Path.Combine(conflictRoot, Path.GetFileName(sourcePath)));
-                TryDeleteDirectoryIfEmpty(target);
-            }
-            Directory.Delete(sourcePath);
-            return;
-        }
-
-        MoveDirectoryContents(sourcePath, destinationPath, Path.Combine(conflictRoot, Path.GetFileName(sourcePath)));
-        TryDeleteDirectoryIfEmpty(sourcePath);
-    }
-
-    private static void MoveDirectoryContents(string sourceDir, string destinationDir, string conflictDir)
-    {
-        if (!Directory.Exists(sourceDir)) return;
-        if (!Directory.Exists(destinationDir))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(destinationDir)!);
-            Directory.Move(sourceDir, destinationDir);
-            return;
-        }
-
-        foreach (var directory in Directory.EnumerateDirectories(sourceDir).ToArray())
-        {
-            MoveDirectoryContents(directory, Path.Combine(destinationDir, Path.GetFileName(directory)), Path.Combine(conflictDir, Path.GetFileName(directory)));
-        }
-        foreach (var file in Directory.EnumerateFiles(sourceDir).ToArray())
-        {
-            MoveLegacyFile(file, Path.Combine(destinationDir, Path.GetFileName(file)), conflictDir);
-        }
-        TryDeleteDirectoryIfEmpty(sourceDir);
-    }
-
-    private static void MoveLegacyFile(string source, string destination, string conflictDir)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        if (!File.Exists(destination))
-        {
-            File.Move(source, destination);
-            return;
-        }
-        if (HashesEqual(HashFile(source), HashFile(destination)))
-        {
-            File.Delete(source);
-            return;
-        }
-
-        Directory.CreateDirectory(conflictDir);
-        File.Move(source, Path.Combine(conflictDir, Path.GetFileName(source)), overwrite: true);
-    }
-
     private IEnumerable<string> EnumerateSourceFiles(string packDir, string clientJarName)
     {
         foreach (var entry in EnumerateCanonicalEntries(packDir, clientJarName))
@@ -588,8 +444,8 @@ public sealed class PackInstanceService : IDisposable
                 string.Equals(name, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, PortablePackSyncService.SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, PortablePackSyncService.SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
-                LegacyDirectories.Contains(name) ||
-                LegacyFiles.Contains(name) ||
+                InstanceOwnedDirectories.Contains(name) ||
+                InstanceOwnedFiles.Contains(name) ||
                 name.StartsWith("XaeroWaypoints_BACKUP", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -844,7 +700,6 @@ public sealed class PackInstanceService : IDisposable
     {
         public int SchemaVersion { get; set; } = StateSchemaVersion;
         public string PackRelativePath { get; set; } = "";
-        public bool LegacyMigrationCompleted { get; set; }
         public string ModsMode { get; set; } = "";
         public Dictionary<string, SourceFileState> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, SourceFileState> ModFiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);

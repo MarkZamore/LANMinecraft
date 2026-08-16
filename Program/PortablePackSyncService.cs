@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -943,8 +943,8 @@ public sealed partial class PortablePackSyncService
 
     private static bool IsProtectedRootName(string name) =>
         IsServiceRelativePath(name) ||
-        PackInstanceService.LegacyDirectories.Contains(name) ||
-        PackInstanceService.LegacyFiles.Contains(name);
+        PackInstanceService.InstanceOwnedDirectories.Contains(name) ||
+        PackInstanceService.InstanceOwnedFiles.Contains(name);
 
     private static string FirstSegment(string path)
     {

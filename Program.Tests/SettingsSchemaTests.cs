@@ -4,9 +4,8 @@ namespace Minecraft.Tests;
 
 /// <summary>
 /// Settings are re-saved on every load, so the first launch of a new build
-/// rewrites the file in its own shape. These tests pin the migration contract:
-/// nothing the player configured is lost, and the pre-Steam file survives as a
-/// backup so an older launcher can be restored by hand.
+/// rewrites the file in its own shape. What is pinned here is that this never
+/// costs the player anything they configured, whatever else the file contains.
 /// </summary>
 public sealed class SettingsSchemaTests : IDisposable
 {
@@ -19,12 +18,16 @@ public sealed class SettingsSchemaTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 
+    /// <summary>
+    /// The keys of the VPN and voice era are gone from the model; a file that
+    /// still has them loads, keeps what matters, and drops the rest.
+    /// </summary>
     [Fact]
-    public void LoadingAPreSteamFile_KeepsTheSettingsAndBacksTheFileUpOnce()
+    public void AFileWithKeysThisBuildNoLongerHas_LoadsAndKeepsWhatMatters()
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
-        var legacy = """
+        File.WriteAllText(paths.SettingsFile, """
         {
           "playerName": "MarkZamore",
           "maxMemoryGb": 12,
@@ -34,37 +37,29 @@ public sealed class SettingsSchemaTests : IDisposable
           "voicePttMode": "Hold",
           "voiceInputVolume": 2
         }
-        """;
-        File.WriteAllText(paths.SettingsFile, legacy);
+        """);
 
-        var service = new SettingsService(paths);
-        var settings = service.Load();
+        var settings = new SettingsService(paths).Load();
 
         Assert.Equal("MarkZamore", settings.PlayerName);
         Assert.Equal(12, settings.MaxMemoryGb);
         Assert.Equal("Infinity", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
 
-        var backups = Directory.GetFiles(
-            Path.Combine(paths.Personal, "Backups"),
-            "settings-v1-*.json");
-        var backup = Assert.Single(backups);
-        Assert.Contains("selectedNetworkAddress", File.ReadAllText(backup), StringComparison.Ordinal);
-
-        // The saved file carries the new version, and a second load neither
-        // re-backs-up nor changes anything.
-        var saved = JsonDocument.Parse(File.ReadAllText(paths.SettingsFile));
+        var saved = File.ReadAllText(paths.SettingsFile);
+        Assert.DoesNotContain("selectedNetworkAddress", saved, StringComparison.Ordinal);
+        Assert.DoesNotContain("voicePttMode", saved, StringComparison.Ordinal);
         Assert.Equal(
             SettingsService.CurrentSchemaVersion,
-            saved.RootElement.GetProperty("schemaVersion").GetInt32());
+            JsonDocument.Parse(saved).RootElement.GetProperty("schemaVersion").GetInt32());
 
         var reloaded = new SettingsService(paths).Load();
         Assert.Equal("MarkZamore", reloaded.PlayerName);
-        Assert.Single(Directory.GetFiles(Path.Combine(paths.Personal, "Backups"), "settings-v1-*.json"));
+        Assert.Equal(12, reloaded.MaxMemoryGb);
     }
 
     [Fact]
-    public void AFreshInstall_StartsAtTheCurrentSchemaWithoutABackup()
+    public void AFreshInstall_StartsAtTheCurrentSchema()
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
@@ -72,10 +67,6 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
-        var backupDirectory = Path.Combine(paths.Personal, "Backups");
-        Assert.True(
-            !Directory.Exists(backupDirectory) ||
-            Directory.GetFiles(backupDirectory, "settings-v*.json").Length == 0);
     }
 
     [Fact]
