@@ -2,15 +2,30 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Minecraft;
 
 public sealed class WorldPlayerManifestService
 {
     public const string ManifestFileName = ".minecraft-portable-players.json";
-    private const int CurrentSchemaVersion = 2;
+    /// <summary>3 = entries may name a Steam account; 2 knew only UUIDs.</summary>
+    internal const int CurrentSchemaVersion = 3;
+
+    /// <summary>
+    /// The oldest shape still accepted. A world that has not been opened by
+    /// this build yet is still a perfectly good world.
+    /// </summary>
+    internal const int MinimumSupportedSchemaVersion = 2;
     private static readonly string[] ProfileDirectories = ["playerdata", "stats", "advancements"];
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    /// <summary>
+    /// A Steam id is stored only when it is a real SteamID64; an unbound
+    /// machine leaves the field out rather than writing an empty string.
+    /// </summary>
+    private static string? NormalizeSteamId(string? value) =>
+        SteamId64.TryNormalize(value, out var canonical) ? canonical : null;
 
     public WorldPlayersManifest Write(string worldPath, LocalIdentityContext? currentHolder)
     {
@@ -38,6 +53,11 @@ public sealed class WorldPlayerManifestService
                 LastKnownName = isCurrentHolder && currentHolder is not null
                     ? currentHolder.IdentityName
                     : existing?.LastKnownName ?? string.Empty,
+                // Only the player at this machine can tell us their own Steam
+                // account; everyone else's is whatever the file already knew.
+                SteamId64 = isCurrentHolder && currentHolder is not null
+                    ? NormalizeSteamId(currentHolder.SteamId64.ToString()) ?? existing?.SteamId64
+                    : existing?.SteamId64,
                 Files = files
             });
         }
@@ -48,6 +68,9 @@ public sealed class WorldPlayerManifestService
             CurrentHolderUuid = currentHolder is null
                 ? previous?.CurrentHolderUuid ?? string.Empty
                 : effectiveHolderUuid?.ToString("D").ToLowerInvariant() ?? string.Empty,
+            CurrentHolderSteamId64 = currentHolder is null
+                ? previous?.CurrentHolderSteamId64
+                : NormalizeSteamId(currentHolder.SteamId64.ToString()),
             UpdatedAtUtc = DateTimeOffset.UtcNow,
             Players = players
         };
@@ -59,7 +82,9 @@ public sealed class WorldPlayerManifestService
     {
         var manifest = Read(worldPath)
             ?? throw new InvalidDataException($"Player manifest is missing in world {Path.GetFileName(worldPath)}.");
-        if (manifest.SchemaVersion != CurrentSchemaVersion)
+        // A world may arrive from a build that has not learned about Steam
+        // accounts yet; the fields it lacks are ones nothing validates.
+        if (manifest.SchemaVersion is < MinimumSupportedSchemaVersion or > CurrentSchemaVersion)
         {
             throw new InvalidDataException($"Unsupported player manifest schema {manifest.SchemaVersion}.");
         }
@@ -271,8 +296,19 @@ public sealed class WorldPlayerManifestService
 
 public sealed class WorldPlayersManifest
 {
-    public int SchemaVersion { get; set; } = 2;
+    // A schema-less document is a v2 one: v2 is the shape that shipped before
+    // the version was ever bumped here.
+    public int SchemaVersion { get; set; } = WorldPlayerManifestService.MinimumSupportedSchemaVersion;
+
     public string CurrentHolderUuid { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Absent (not empty) on machines without a Steam binding, so a world that
+    /// never met Steam keeps producing the bytes it always did.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CurrentHolderSteamId64 { get; set; }
+
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public List<WorldPlayerManifestEntry> Players { get; set; } = [];
 }
@@ -282,6 +318,10 @@ public sealed class WorldPlayerManifestEntry
     public string PortableUuid { get; set; } = string.Empty;
     public string MinecraftUuid { get; set; } = string.Empty;
     public string LastKnownName { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SteamId64 { get; set; }
+
     public List<WorldPlayerFileManifestEntry> Files { get; set; } = [];
 }
 

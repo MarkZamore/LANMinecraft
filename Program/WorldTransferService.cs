@@ -243,7 +243,14 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 RaiseProgress(0, 0, "Подключение к получателю");
                 var worldName = Path.GetFileName(worldDir);
                 var worldMetadata = _worldMetadata.Read(worldDir);
-                var ownerId = ResolveOwnerIdentity(worldMetadata?.OwnerIdentityId, worldMetadata?.OwnerIdentityName, settings, identity.MinecraftUuid, identity.IdentityName);
+                var ownerId = ResolveOwnerIdentity(
+                    worldMetadata?.OwnerIdentityId,
+                    worldMetadata?.OwnerIdentityName,
+                    settings,
+                    identity.MinecraftUuid,
+                    identity.IdentityName,
+                    metadataOwnerSteamId: worldMetadata?.OwnerSteamId64,
+                    localOwnerSteamId: identity.SteamId64.ToString());
                 var transferId = Guid.NewGuid().ToString("N");
                 var transactionRoot = CreateTransactionDirectory(transferId);
                 var stagingWorld = Path.Combine(transactionRoot, "staging-world");
@@ -337,6 +344,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                         SenderSteamId64 = identity.SteamId64.ToString(),
                         SenderIdentityName = identity.IdentityName,
                         OwnerIdentityId = ownerId.id,
+                        OwnerSteamId64 = ownerId.steamId,
                         OwnerIdentityName = ownerId.name,
                         Size = fileInfo.Length,
                         WorldSha256 = worldSha,
@@ -614,7 +622,16 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             string sourceManifestSha = "";
             string waypointManifestSha = "";
             string installedManifestSha = "";
-            var owner = ResolveOwnerIdentity(null, null, settings, identity.MinecraftUuid, identity.IdentityName, header.OwnerIdentityId, header.OwnerIdentityName);
+            var owner = ResolveOwnerIdentity(
+                null,
+                null,
+                settings,
+                identity.MinecraftUuid,
+                identity.IdentityName,
+                header.OwnerIdentityId,
+                header.OwnerIdentityName,
+                headerOwnerSteamId: header.OwnerSteamId64,
+                localOwnerSteamId: identity.SteamId64.ToString());
             await RunWithHeartbeatAsync(progressChannel, () =>
             {
                 _playerProfiles.ValidatePlayerManifest(stagedWorldPath);
@@ -633,11 +650,21 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 _playerProfiles.PrepareReceivedWorldForIdentity(stagedWorldPath, identity);
                 _playerProfiles.ValidatePlayerManifest(stagedWorldPath);
                 installedManifestSha = _playerProfiles.GetPlayerManifestHash(stagedWorldPath);
-                if (!_worldMetadata.TryWriteOwnerMetadata(stagedWorldPath, owner.id, owner.name, overwriteExistingOwner: false))
+                if (!_worldMetadata.TryWriteOwnerMetadata(
+                        stagedWorldPath,
+                        owner.id,
+                        owner.name,
+                        overwriteExistingOwner: false,
+                        ownerSteamId64: owner.steamId))
                 {
                     throw new InvalidOperationException("Could not preserve world creator metadata.");
                 }
-                if (!_worldMetadata.TryWriteCurrentHolderMetadata(stagedWorldPath, identity.MinecraftUuid, identity.IdentityName, transferred: true))
+                if (!_worldMetadata.TryWriteCurrentHolderMetadata(
+                        stagedWorldPath,
+                        identity.MinecraftUuid,
+                        identity.IdentityName,
+                        transferred: true,
+                        holderSteamId64: identity.SteamId64.ToString()))
                 {
                     throw new InvalidOperationException("Could not update current world holder metadata.");
                 }
@@ -1563,19 +1590,29 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 
     private const string UnknownIdentityName = "\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E";
 
-    private static (string id, string name) ResolveOwnerIdentity(
+    /// <summary>
+    /// Who created a world, in order of authority: what the sender said, then
+    /// what the local metadata remembers, then this machine. The Steam id rides
+    /// along with the UUID it belongs to - never mixed between sources, because
+    /// a Steam id attached to somebody else's UUID would mislabel ownership.
+    /// </summary>
+    private static (string id, string name, string steamId) ResolveOwnerIdentity(
         string? metadataOwnerId,
         string? metadataOwnerName,
         AppSettings settings,
         string? localOwnerId,
         string? localOwnerName,
         string? headerOwnerId = null,
-        string? headerOwnerName = null)
+        string? headerOwnerName = null,
+        string? headerOwnerSteamId = null,
+        string? metadataOwnerSteamId = null,
+        string? localOwnerSteamId = null)
     {
         var resolvedHeaderId = !string.IsNullOrWhiteSpace(headerOwnerId) ? headerOwnerId.Trim() : null;
         var resolvedHeaderName = !string.IsNullOrWhiteSpace(headerOwnerName) ? headerOwnerName.Trim() : null;
         var resolvedLocalId = !string.IsNullOrWhiteSpace(localOwnerId) ? localOwnerId.Trim() : string.Empty;
         var resolvedLocalName = !string.IsNullOrWhiteSpace(localOwnerName) ? localOwnerName.Trim() : string.Empty;
+        var resolvedLocalSteamId = !string.IsNullOrWhiteSpace(localOwnerSteamId) ? localOwnerSteamId.Trim() : string.Empty;
 
         if (!string.IsNullOrWhiteSpace(resolvedHeaderId) || !string.IsNullOrWhiteSpace(resolvedHeaderName))
         {
@@ -1586,7 +1623,19 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 headerName = string.IsNullOrWhiteSpace(resolvedLocalName) ? UnknownIdentityName : resolvedLocalName;
             }
 
-            return (resolvedHeaderId ?? string.Empty, headerName ?? UnknownIdentityName);
+            var headerSteamId = !string.IsNullOrWhiteSpace(headerOwnerSteamId)
+                ? headerOwnerSteamId.Trim()
+                : string.Empty;
+            // The sender may not know their own Steam id yet; when the owner is
+            // this machine we do.
+            if (headerSteamId.Length == 0 &&
+                resolvedLocalSteamId.Length != 0 &&
+                string.Equals(resolvedHeaderId, resolvedLocalId, StringComparison.OrdinalIgnoreCase))
+            {
+                headerSteamId = resolvedLocalSteamId;
+            }
+
+            return (resolvedHeaderId ?? string.Empty, headerName ?? UnknownIdentityName, headerSteamId);
         }
 
         var resolvedMetadataId = !string.IsNullOrWhiteSpace(metadataOwnerId) ? metadataOwnerId.Trim() : null;
@@ -1600,13 +1649,23 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 metadataName = string.IsNullOrWhiteSpace(resolvedLocalName) ? UnknownIdentityName : resolvedLocalName;
             }
 
-            return (resolvedMetadataId ?? string.Empty, metadataName ?? UnknownIdentityName);
+            var metadataSteamId = !string.IsNullOrWhiteSpace(metadataOwnerSteamId)
+                ? metadataOwnerSteamId.Trim()
+                : string.Empty;
+            if (metadataSteamId.Length == 0 &&
+                resolvedLocalSteamId.Length != 0 &&
+                string.Equals(resolvedMetadataId, resolvedLocalId, StringComparison.OrdinalIgnoreCase))
+            {
+                metadataSteamId = resolvedLocalSteamId;
+            }
+
+            return (resolvedMetadataId ?? string.Empty, metadataName ?? UnknownIdentityName, metadataSteamId);
         }
 
         var settingsId = string.IsNullOrWhiteSpace(localOwnerId) ? string.Empty : localOwnerId.Trim();
         var settingsName = string.IsNullOrWhiteSpace(localOwnerName) ? UnknownIdentityName : localOwnerName.Trim();
 
-        return (settingsId, settingsName);
+        return (settingsId, settingsName, resolvedLocalSteamId);
     }
 
     public static bool IsMinecraftWorldDirectory(string path)
