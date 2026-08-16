@@ -147,6 +147,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set
         {
             if (!Set(ref _protocolVersion, value)) return;
+            OnPropertyChanged(nameof(IsPresenceKnown));
             OnPropertyChanged(nameof(IsCompatible));
             OnPropertyChanged(nameof(SupportsDiagnosticLogs));
             OnPropertyChanged(nameof(DisplayName));
@@ -177,11 +178,27 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); }
     }
 
-    /// <summary>False while the two launchers cannot understand each other.</summary>
-    public bool IsCompatible => PortableFormat.CanSpeak(ProtocolVersion);
+    /// <summary>
+    /// Whether we know what this peer speaks at all. Zero means their presence
+    /// could not be read - they are listed because we hold a connection to
+    /// them, which is proof they are there and no evidence about their version.
+    /// No launcher announces zero.
+    /// </summary>
+    public bool IsPresenceKnown => ProtocolVersion > 0;
+
+    /// <summary>
+    /// False only when we know they cannot understand us. An unread presence is
+    /// not a version mismatch: two players on the same build were told to update
+    /// because Steam would not serve one of them, and the transfer refused to
+    /// start. The handshake checks versions properly and says so - guessing
+    /// here only made it lie.
+    /// </summary>
+    public bool IsCompatible => !IsPresenceKnown || PortableFormat.CanSpeak(ProtocolVersion);
 
     public bool SupportsDiagnosticLogs =>
-        IsCompatible && PortableFormat.CanSpeak(DiagnosticProtocolVersion) && DiagnosticProtocolVersion > 0;
+        IsCompatible &&
+        (!IsPresenceKnown ||
+         (PortableFormat.CanSpeak(DiagnosticProtocolVersion) && DiagnosticProtocolVersion > 0));
 
     /// <summary>Both names when they differ, because either one may be the familiar one.</summary>
     public string DisplayName
@@ -197,7 +214,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
                     ? minecraftName
                     : $"{minecraftName} ({steamName})";
             // Saying it in the list is the only way the pair of them find out
-            // which side has to update.
+            // which side has to update - but only when it is true.
+            if (!IsPresenceKnown) return $"{name} — на связи, данные Steam недоступны";
             return IsCompatible ? name : $"{name} — нужно обновить лаунчер";
         }
     }
