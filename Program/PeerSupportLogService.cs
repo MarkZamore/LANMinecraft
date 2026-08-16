@@ -802,6 +802,10 @@ internal sealed class PeerSupportLogService : IAsyncDisposable, IPortableProtoco
                     break;
             }
         }
+
+        // The collector stopped: whatever was still batched is the tail of the
+        // last log line the player will ever see for this session.
+        await batch.FlushAsync(token).ConfigureAwait(false);
     }
 
     /// <summary>

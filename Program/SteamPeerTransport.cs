@@ -85,6 +85,14 @@ public sealed class SteamPeerTransport : IPeerTransport
         SteamNetworkingSockets.SetConnectionName(
             handle,
             $"lanmc:{protocolName}");
+        // Steam dispatches state changes on the callback pump, which may have
+        // reported Connected while this method was still registering; without
+        // this the connection would sit there until the timeout.
+        if (SteamNetworkingSockets.GetConnectionInfo(handle, out var current) &&
+            current.m_eState == ESteamNetworkingConnectionState.k_ESteamNetworkingConnectionState_Connected)
+        {
+            OnConnected(handle, peer.Value);
+        }
 
         try
         {
