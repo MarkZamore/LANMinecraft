@@ -64,7 +64,6 @@ public partial class MainWindow : Window
     private VoiceChannelService? _voiceChannel;
     private VoiceNetworkCoordinator? _voiceNetwork;
     private PeerSupportLogService? _peerSupportLogs;
-    private VoiceSettingsWindow? _voiceSettingsWindow;
     private GlobalPttHotkeyService? _pttHotkey;
     private NetworkEnvironmentSnapshot _networkSnapshot = new();
     private NetworkEndpointInfo? _primaryEndpoint;
@@ -93,6 +92,7 @@ public partial class MainWindow : Window
     private bool _suppressMemoryTextChanged;
     private bool _suppressVoicePersistence;
     private bool _suppressNetworkAddressSelection;
+    private bool _suppressDiagnosticTargetSelection;
     private string _lastVoicePeerListSignature = "";
     private string _lastVoiceTransportPeerSignature = "";
     private PeerViewModel? _localVoicePeer;
@@ -200,7 +200,7 @@ public partial class MainWindow : Window
             {
                 _diagnosticLogTargetIdentityId =
                     _peerSupportLogs?.CurrentTargetIdentityId ?? string.Empty;
-                RefreshVoiceSettingsWindow();
+                RefreshDiagnosticsPanel();
             });
             _lanRelay.DiagnosticEvent += OnLanRelayDiagnosticEvent;
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _lanRelay, _network, _peerRoutes);
@@ -305,7 +305,6 @@ public partial class MainWindow : Window
             if (_discovery is not null) await _discovery.DisposeAsync();
             if (_lanAdvertisement is not null) await _lanAdvertisement.DisposeAsync();
             _pttHotkey?.Dispose();
-            _voiceSettingsWindow?.Close();
             if (_voiceChannel is not null) await _voiceChannel.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_peerSupportLogs is not null) await _peerSupportLogs.DisposeAsync();
@@ -789,40 +788,53 @@ public partial class MainWindow : Window
             _settingsService.Save(_settings);
         }
 
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
-    internal void RefreshVoiceSettingsWindow(VoiceSettingsWindow? window = null)
+    /// <summary>
+    /// Pushes the diagnostics state into the panel in the main window. It used
+    /// to live in the voice settings dialog, which is why so many call sites
+    /// refresh it.
+    /// </summary>
+    internal void RefreshDiagnosticsPanel()
     {
-        var target = window ?? _voiceSettingsWindow;
-        if (target is null || _settings is null || _voiceChannel is null)
+        var targets = BuildDiagnosticLogTargets();
+        _suppressDiagnosticTargetSelection = true;
+        try
+        {
+            DiagnosticLogTargetComboBox.ItemsSource = targets;
+            DiagnosticLogTargetComboBox.SelectedItem = targets.FirstOrDefault(option =>
+                string.Equals(
+                    option.IdentityId,
+                    _diagnosticLogTargetIdentityId,
+                    StringComparison.OrdinalIgnoreCase)) ??
+                targets.FirstOrDefault(option => option.IsNobody);
+        }
+        finally
+        {
+            _suppressDiagnosticTargetSelection = false;
+        }
+
+        DiagnosticLogStatusText.Text = _peerSupportLogs?.StatusText ?? "Передача логов выключена.";
+        OpenSupportLogsButton.IsEnabled = _peerSupportLogs?.HasReceivedLogs == true;
+    }
+
+    private void DiagnosticLogTargetComboBox_SelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (_suppressDiagnosticTargetSelection ||
+            DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption option)
         {
             return;
         }
 
-        var inputDevices = _voiceChannel.GetInputDevices();
-        var outputDevices = _voiceChannel.GetOutputDevices();
-        target.ApplyState(
-            inputDevices,
-            outputDevices,
-            _settings.VoiceInputDeviceId,
-            _settings.VoiceOutputDeviceId,
-            _settings.VoicePttMode,
-            PttInputBinding.Parse(_settings.VoicePushToTalkBinding).DisplayName,
-            _settings.VoiceInputVolume,
-            _settings.VoiceOutputVolume,
-            BuildDiagnosticLogTargets(),
-            _diagnosticLogTargetIdentityId,
-            _peerSupportLogs?.StatusText ?? "Передача логов выключена.",
-            _peerSupportLogs?.HasReceivedLogs == true);
+        SetDiagnosticLogTarget(option);
     }
 
-    internal void ClearVoiceSettingsWindow(VoiceSettingsWindow window)
+    private void OpenSupportLogsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ReferenceEquals(_voiceSettingsWindow, window))
-        {
-            _voiceSettingsWindow = null;
-        }
+        OpenSupportLogsDirectory();
     }
 
     internal async void SetDiagnosticLogTarget(DiagnosticLogTargetOption option)
@@ -870,7 +882,7 @@ public partial class MainWindow : Window
             if (changeVersion == Volatile.Read(
                     ref _diagnosticLogTargetChangeVersion))
             {
-                RefreshVoiceSettingsWindow();
+                RefreshDiagnosticsPanel();
             }
         }
     }
@@ -972,7 +984,7 @@ public partial class MainWindow : Window
         _settings.VoiceInputVolume = Math.Clamp(volume, 0d, 2d);
         _settingsService.Save(_settings);
         _voiceChannel.SetInputVolume(_settings.VoiceInputVolume);
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     internal void SetVoiceOutputVolume(double volume)
@@ -984,7 +996,7 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         _voiceChannel.SetOutputVolume(_settings.VoiceOutputVolume);
         VoiceMasterVolumeSlider.Value = _settings.VoiceOutputVolume;
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     internal void SetVoicePttMode(string mode)
@@ -996,7 +1008,7 @@ public partial class MainWindow : Window
         _voicePttToggleActive = false;
         _settingsService.Save(_settings);
         ApplyVoiceTransmissionState();
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     internal void ToggleVoiceMute()
@@ -1037,7 +1049,7 @@ public partial class MainWindow : Window
         var clamped = Math.Clamp(volume, 0d, 2d);
         peer.VoiceVolume = clamped;
         _voiceChannel.SetPeerVolume(peerId, clamped);
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     internal void SetVoicePushToTalkKey(Key key)
@@ -1053,7 +1065,7 @@ public partial class MainWindow : Window
         _settings.VoicePushToTalkBinding = $"Key:{key}";
         _settingsService.Save(_settings);
         _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     internal void SetVoicePushToTalkBinding(string binding)
@@ -1072,7 +1084,7 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         _pttHotkey?.SetBinding(_settings.VoicePushToTalkBinding);
         ApplyVoiceTransmissionState();
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     private void InitializePttHotkey()
@@ -1230,7 +1242,7 @@ public partial class MainWindow : Window
         }
 
         UpdateVoicePeersFromDiscovery();
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     private void UpdateVoicePeersFromDiscovery()
@@ -1781,7 +1793,7 @@ public partial class MainWindow : Window
             }
 
             peer.IsSpeaking = isSpeaking;
-            RefreshVoiceSettingsWindow();
+            RefreshDiagnosticsPanel();
         });
     }
 
@@ -1841,28 +1853,6 @@ public partial class MainWindow : Window
         PostToUi(RefreshUi);
     }
 
-    internal double GetCurrentUiScale()
-    {
-        try
-        {
-            if (RootGrid.ActualWidth <= 0 || RootGrid.ActualHeight <= 0)
-            {
-                return 1d;
-            }
-
-            var bounds = RootGrid.TransformToAncestor(this)
-                .TransformBounds(new Rect(0, 0, RootGrid.ActualWidth, RootGrid.ActualHeight));
-            var scaleX = bounds.Width / RootGrid.ActualWidth;
-            var scaleY = bounds.Height / RootGrid.ActualHeight;
-            var scale = Math.Min(scaleX, scaleY);
-            return double.IsFinite(scale) && scale > 0 ? scale : 1d;
-        }
-        catch
-        {
-            return 1d;
-        }
-    }
-
     private void ApplyPeer(PeerAnnouncement announcement)
     {
         var localIdentity = ResolveActiveLocalIdentity();
@@ -1911,7 +1901,7 @@ public partial class MainWindow : Window
         RefreshVoicePeers();
         UpdateVoicePeersFromDiscovery();
         RefreshLanAdvertisementState();
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
         RefreshUi();
     }
 
@@ -1957,7 +1947,7 @@ public partial class MainWindow : Window
                 SetDiagnosticLogTarget(DiagnosticLogTargetOption.Nobody);
             }
         }
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
     }
 
     private void RefreshLanAdvertisementState()
@@ -3210,19 +3200,6 @@ public partial class MainWindow : Window
         });
     }
 
-    private void VoiceSettingsButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_voiceSettingsWindow is { IsVisible: true })
-        {
-            _voiceSettingsWindow.Activate();
-            return;
-        }
-
-        _voiceSettingsWindow = new VoiceSettingsWindow(this, GetCurrentUiScale());
-        _voiceSettingsWindow.Show();
-        RefreshVoiceSettingsWindow(_voiceSettingsWindow);
-    }
-
     private void EnsureVoiceDevicesSelection()
     {
         if (_settings is null || _voiceChannel is null) return;
@@ -3489,7 +3466,6 @@ public partial class MainWindow : Window
         UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
 
         VoiceJoinButton.IsEnabled = !_voiceBusy && _voiceChannel is not null;
-        VoiceSettingsButton.IsEnabled = voiceEnabled;
         VoiceProtectionButton.IsEnabled = _voiceChannel is { IsJoined: true } && !_voiceBusy;
         VoicePttButton.IsEnabled = _voiceChannel is { IsJoined: true };
         VoiceInputComboBox.IsEnabled = voiceEnabled;
@@ -3525,7 +3501,7 @@ public partial class MainWindow : Window
             VoiceDeafenButton.Content = "Звук";
         }
         VoiceStatusText.Text = string.Empty;
-        RefreshVoiceSettingsWindow();
+        RefreshDiagnosticsPanel();
         RefreshTransferStatus();
     }
 
