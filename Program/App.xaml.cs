@@ -10,6 +10,14 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Transport spike harness (temporary, see SteamSpikeRunner): runs the
+        // Steam checks in a console instead of opening the launcher window.
+        if (SteamSpikeRunner.TryRun(e.Args))
+        {
+            Shutdown();
+            return;
+        }
+
         if (!e.Args.Any(argument => argument.StartsWith(SkipPrestartUpdateArgument, StringComparison.OrdinalIgnoreCase)))
         {
             try
