@@ -54,7 +54,6 @@ public sealed class AppPaths
     public string SettingsFile => Path.Combine(Personal, "settings.json");
     public string IdentityFile => Path.Combine(Personal, "UUID.json");
     public string NetworkPeersFile => Path.Combine(Personal, "network-peers.json");
-    public string LanRelayPortsFile => Path.Combine(Personal, "lan-relay-ports.json");
     public string PackHashesFile => Path.Combine(Personal, "pack-hashes.json");
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");
     public string MinecraftWindowPlacementFile => Path.Combine(Personal, "minecraft-window-placement.json");
