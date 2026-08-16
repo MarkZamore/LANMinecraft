@@ -203,17 +203,30 @@ public sealed class SteamPeerTransport : IPeerTransport
         SetGlobalInt32(ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_TimeoutConnected, ConnectedTimeoutMilliseconds);
     }
 
-    private static void SetGlobalInt32(ESteamNetworkingConfigValue value, int amount)
+    /// <summary>
+    /// Applies one tuning value, and says so if Steam declined it. The return
+    /// value used to be discarded, which meant nothing in this program had ever
+    /// confirmed that any of this tuning took effect - and if the send rate
+    /// silently failed to apply, Steam's own formula permits 4.38e9 divided by
+    /// the ping in microseconds, which at a 100 ms relay is 42 KiB/s. A
+    /// multi-gigabyte world at 42 KiB/s is a progress bar that never visibly
+    /// moves, which is exactly what a player reported.
+    /// </summary>
+    private void SetGlobalInt32(ESteamNetworkingConfigValue value, int amount)
     {
         var handle = GCHandle.Alloc(amount, GCHandleType.Pinned);
         try
         {
-            SteamNetworkingUtils.SetConfigValue(
+            var applied = SteamNetworkingUtils.SetConfigValue(
                 value,
                 ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Global,
                 IntPtr.Zero,
                 ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Int32,
                 handle.AddrOfPinnedObject());
+            if (!applied)
+            {
+                _logger?.Warn($"Steam refused the connection setting {value} = {amount}.");
+            }
         }
         finally
         {
