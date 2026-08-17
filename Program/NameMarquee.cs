@@ -64,25 +64,32 @@ internal sealed class NameMarquee
             new PropertyMetadata(0d, OnHorizontalOffsetChanged));
 
     private readonly TextBox _field;
+    private readonly Logger? _logger;
     private bool _allowed = true;
     private double _walking;
+    private bool _told;
 
-    public NameMarquee(TextBox field)
+    public NameMarquee(TextBox field, Logger? logger = null)
     {
         _field = field ?? throw new ArgumentNullException(nameof(field));
+        _logger = logger;
         _field.TextChanged += (_, _) => Refresh();
         _field.SizeChanged += (_, _) => Refresh();
         _field.Loaded += (_, _) => Refresh();
-        // Until the field has been through a layout pass it cannot say how much
-        // of the name it is showing, and the first name is put in before that.
-        // This waits for the first pass that can answer, then stops listening.
+        // The field can only say how much of the name it hides once it has been
+        // laid out, and the first name is put in before that. Every later pass
+        // is watched too: the window lays out constantly - progress bars, lists,
+        // the timer - and one pass that answered oddly used to stop the walk for
+        // good. The check here is two property reads, and only a real
+        // disagreement reaches Refresh.
         _field.LayoutUpdated += OnLayoutUpdated;
     }
 
     private void OnLayoutUpdated(object? sender, EventArgs e)
     {
-        if (_field.ViewportWidth <= 0) return;
-        _field.LayoutUpdated -= OnLayoutUpdated;
+        if (!_allowed || _field.ViewportWidth <= 0) return;
+        var tail = Math.Max(0, _field.ExtentWidth - _field.ViewportWidth);
+        if (Math.Abs(tail - _walking) < SmallestTail) return;
         Refresh();
     }
 
@@ -103,8 +110,17 @@ internal sealed class NameMarquee
     /// <summary>Starts, stops or re-paces the walk to match what the field now holds.</summary>
     public void Refresh()
     {
+        if (!_allowed)
+        {
+            Stop();
+            return;
+        }
         var tail = HiddenTail();
-        if (!_allowed || tail < SmallestTail)
+        // Mid-layout the field answers zero for a moment. A name already walking
+        // keeps walking through that: stopping on it is how the walk used to
+        // disappear a second after it started, never to return.
+        if (tail < SmallestTail && _walking > 0 && _field.ViewportWidth <= 0) return;
+        if (tail < SmallestTail)
         {
             Stop();
             return;
@@ -160,6 +176,13 @@ internal sealed class NameMarquee
         walk.KeyFrames.Add(new LinearDoubleKeyFrame(0, KeyTime.FromTimeSpan(at)));
         _field.BeginAnimation(HorizontalOffsetProperty, walk);
         _walking = tail;
+        if (!_told)
+        {
+            // Once per run: the number behind "the name does not move".
+            _logger?.Info($"The name walks {tail:0.0} px, {schedule.Travel.TotalSeconds:0.0} s each way " +
+                          $"(field {_field.ActualWidth:0.0}, showing {_field.ViewportWidth:0.0}, text {_field.ExtentWidth:0.0}).");
+            _told = true;
+        }
     }
 
     private void Stop()
