@@ -127,7 +127,7 @@
                     </Grid.ColumnDefinitions>
                     <Button Grid.Column="0" x:Name="SkinButton" Content="Скин" Click="SkinButton_Click"/>
                     <TextBlock Grid.Column="1" Text="RAM" Style="{StaticResource LabelTextStyle}" Margin="{StaticResource Gap.Left3Right2}"/>
-                    <TextBox Grid.Column="2" x:Name="MemoryTextBox" FontSize="{StaticResource Font.SizeInput}"
+                    <TextBox Grid.Column="2" x:Name="MemoryTextBox" FontSize="{StaticResource Font.SizeInput}" TextAlignment="Center"
                              PreviewTextInput="MemoryTextBox_PreviewTextInput"
                              TextChanged="MemoryTextBox_TextChanged"
                              DataObject.Pasting="MemoryTextBox_Pasting"
