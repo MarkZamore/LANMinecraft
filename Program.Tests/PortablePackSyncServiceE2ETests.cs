@@ -17,7 +17,7 @@ public sealed class PortablePackSyncServiceE2ETests : IDisposable
     private static readonly string[] ManifestRoots =
     [
         "mods", "config", "kubejs", "scripts", "defaultconfigs", "data",
-        "resourcepacks", "shaderpacks", "configureddefaults"
+        "resourcepacks", "shaderpacks", "configureddefaults", "launcher"
     ];
 
     private readonly string _root = Path.Combine(

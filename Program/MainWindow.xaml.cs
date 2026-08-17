@@ -82,6 +82,8 @@ public partial class MainWindow : Window
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
+    private ControlsPresetService? _controlsPreset;
+    private ControlsPresetStatus _controlsPresetStatus;
 
     /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
     private double ClientAspect()
@@ -128,6 +130,7 @@ public partial class MainWindow : Window
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
+            _controlsPreset = new ControlsPresetService(_logger);
             _steamClient = new SteamClientService(
                 new SteamworksApiFacade(),
                 new SteamNativeLibraryService(_paths, _logger),
@@ -186,6 +189,7 @@ public partial class MainWindow : Window
             });
             LoadSettingsIntoUi();
             RefreshBuilds();
+            RefreshControlsPresetStatus();
             RefreshMemoryText(saveIfChanged: true);
             RefreshWorlds();
             InitializeUpdateUi();
@@ -1004,6 +1008,7 @@ public partial class MainWindow : Window
             if (!isRunning)
             {
                 RefreshWorlds();
+                RefreshControlsPresetStatus();
             }
             RefreshUi();
         });
@@ -1064,6 +1069,7 @@ public partial class MainWindow : Window
             }
 
             await RefreshPackHashAsync();
+            RefreshControlsPresetStatus();
             if (_localPackHash == "missing")
             {
                 throw new InvalidOperationException($"Pack validation failed: ./Minecraft/Packs/{settings.ClientRelativePath} is missing.");
@@ -1098,6 +1104,68 @@ public partial class MainWindow : Window
             _minecraftPreparing = _minecraft?.IsClientPreparing == true;
             RefreshUi();
         }
+    }
+
+    /// <summary>
+    /// The pack directory and the instance directory of the selected build, or
+    /// null while nothing is selected. Both may not exist yet.
+    /// </summary>
+    private (string Pack, string Instance)? ResolveSelectedBuildDirectories()
+    {
+        if (_paths is null || BuildComboBox.SelectedItem is not ClientBuildViewModel build) return null;
+        try
+        {
+            return (_paths.CombineUnderPacks(build.RelativePath), _paths.CombineUnderInstances(build.RelativePath));
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Re-reads where the selected build stands against its pack's controls
+    /// preset. Cheap - two small files - and called at the moments either can
+    /// change: a build is picked, the pack syncs, the game exits, the button
+    /// is pressed.
+    /// </summary>
+    private void RefreshControlsPresetStatus()
+    {
+        var directories = ResolveSelectedBuildDirectories();
+        _controlsPresetStatus = _controlsPreset is not null && directories is not null
+            ? _controlsPreset.Evaluate(directories.Value.Pack, directories.Value.Instance)
+            : default;
+    }
+
+    private void ControlsPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_minecraftRunning || _controlsPreset is null) return;
+        var directories = ResolveSelectedBuildDirectories();
+        if (directories is null) return;
+
+        var answer = MessageBox.Show(
+            this,
+            "Настройки управления будут заменены пресетом сборки: раскладка без конфликтов " +
+            "для всех модов. Продолжить?",
+            "Пресет настроек управления",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes) return;
+
+        try
+        {
+            var changed = _controlsPreset.Apply(directories.Value.Pack, directories.Value.Instance);
+            SetState(changed == 0
+                ? "Controls preset already in place"
+                : $"Controls preset applied: {changed} key(s) changed");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            RequireLogger().Warn($"Controls preset failed: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Пресет настроек управления", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        RefreshControlsPresetStatus();
+        RefreshUi();
     }
 
     private void SkinButton_Click(object sender, RoutedEventArgs e)
@@ -1623,6 +1691,7 @@ public partial class MainWindow : Window
         _settings.ClientRelativePath = build.RelativePath;
         _settingsService.Save(_settings);
         InitializeRuntimeProgressUi();
+        RefreshControlsPresetStatus();
         await RefreshPackHashAsync();
         if (_startupComplete) await StartNetworkingAsync();
         SetState($"Build selected: {build.Name}");
@@ -2117,6 +2186,19 @@ public partial class MainWindow : Window
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;
+        // The layout is read when the game starts, like the skin, so the button
+        // stays live while the pack downloads. It goes quiet when there is
+        // nothing to do: no preset for this build, the preset already in place,
+        // or a game that has the options file open.
+        var preset = _controlsPresetStatus;
+        ControlsPresetButton.IsEnabled = preset.HasPreset && !preset.IsApplied && !_minecraftRunning;
+        ControlsPresetButton.ToolTip = _minecraftRunning
+            ? "Игра запущена - настройки управления сейчас у неё"
+            : !preset.HasPreset
+                ? "Для выбранной сборки нет пресета управления"
+                : preset.IsApplied
+                    ? "Пресет применён - настройки управления совпадают со сборкой"
+                    : "Заменить настройки управления раскладкой сборки без конфликтов";
         // A list with nothing to choose between is not a control, it is a
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is

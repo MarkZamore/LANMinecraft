@@ -260,6 +260,39 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal(rows - 1, footerRow);
     }
 
+    /// <summary>
+    /// The pack's key layout is applied by one button, and it lives where the
+    /// build is chosen: same row, same grid, to the right of the list. It
+    /// explains itself when it is off, so ShowOnDisabled is part of it.
+    /// </summary>
+    [Fact]
+    public void MainWindowXaml_PutsTheControlsPresetButtonBesideTheBuild()
+    {
+        var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
+        XNamespace presentation =
+            "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x =
+            "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        var builds = document
+            .Descendants()
+            .Single(element => (string?)element.Attribute(x + "Name") == "BuildComboBox");
+        var button = document
+            .Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ControlsPresetButton");
+
+        Assert.Equal("Пресет настроек управления", (string?)button.Attribute("Content"));
+        Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
+        // The list sits in a wrapper grid inside the row grid; the button is a
+        // direct child of that same row grid, in a later column.
+        var row = builds.Parent?.Parent;
+        Assert.NotNull(row);
+        Assert.Same(row, button.Parent);
+        var listColumn = int.Parse((string)builds.Parent!.Attribute("Grid.Column")!, System.Globalization.CultureInfo.InvariantCulture);
+        var buttonColumn = int.Parse((string)button.Attribute("Grid.Column")!, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(buttonColumn > listColumn, $"list column {listColumn}, button column {buttonColumn}");
+    }
+
     /// <summary>The Grid.Row of the nearest element that declares one.</summary>
     private static int RowOf(XElement element) =>
         int.Parse(

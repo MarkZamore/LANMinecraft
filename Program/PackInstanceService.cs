@@ -487,11 +487,17 @@ public sealed class PackInstanceService : IDisposable
         }
     }
 
+    /// <summary>The pack root that holds data for the launcher, not the game.</summary>
+    internal const string LauncherDataRoot = "launcher";
+
     private static bool ShouldExcludeDirectory(string packDir, string directory)
     {
         var relative = NormalizeRelativePath(Path.GetRelativePath(packDir, directory));
         return relative.Equals("config/jei/world/server", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith("config/jei/world/server/", StringComparison.OrdinalIgnoreCase);
+               relative.StartsWith("config/jei/world/server/", StringComparison.OrdinalIgnoreCase) ||
+               // The controls preset and whatever joins it: read by the launcher
+               // straight from the pack, meaningless inside the game directory.
+               relative.Equals(LauncherDataRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ShouldExcludeSourceFile(string path)

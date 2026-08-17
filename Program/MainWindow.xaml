@@ -168,10 +168,14 @@
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
                     <TextBlock Grid.Column="3" Text="GB" Margin="6,0,0,0"/>
                 </Grid>
-                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,10,12,0">
+                <!-- The build, and beside it the pack's key layout: one press writes
+                     the layout into the game's options, and the button stays put
+                     until something - the player in game, or the pack - changes it. -->
+                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Сборка"/>
                     <Grid Grid.Column="1" Margin="8,0,0,0">
@@ -186,6 +190,11 @@
                                    IsHitTestVisible="False"
                                    Visibility="Collapsed"/>
                     </Grid>
+                    <Button Grid.Column="2" x:Name="ControlsPresetButton"
+                            Content="Пресет настроек управления"
+                            Click="ControlsPresetButton_Click"
+                            Margin="8,0,0,0"
+                            ToolTipService.ShowOnDisabled="True"/>
                 </Grid>
             </Grid>
 
