@@ -112,7 +112,18 @@ jobs:
           }
 
           $previousDir = Join-Path $env:RUNNER_TEMP 'minecraft-base-latest'
-          $previous = Get-ValidatedBase 'latest' $previousDir
+          try {
+            $previous = Get-ValidatedBase 'latest' $previousDir
+          }
+          catch {
+            # A publish that died between the executable and its manifest
+            # leaves the release without the pointer that names it. Launchers
+            # ignore such a release by design, and so must this job: it has no
+            # base to build a delta against, which is a reason to ship the full
+            # file, not a reason to stop shipping.
+            Write-Host "The published latest release cannot serve as a delta base ($($_.Exception.Message)); a full-only release will be created."
+            exit 0
+          }
           $currentCommit = '${{ github.sha }}'.ToLowerInvariant()
 
           $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
@@ -350,8 +361,17 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
             }
 
-            gh release upload latest (Join-Path $artifactDir 'update.json') --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Update manifest could not be published." }
+            # GitHub answered 502 here once and left the release without its
+            # pointer, which took the next build down with it. One upload is
+            # not worth that: try again before giving up.
+            $manifest = Join-Path $artifactDir 'update.json'
+            foreach ($attempt in 1..3) {
+              gh release upload latest $manifest --clobber
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 3) { throw "Update manifest could not be published." }
+              Write-Host "Upload of update.json failed (attempt $attempt/3); retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
 
             gh release edit latest `
               --target "${{ github.sha }}" `
