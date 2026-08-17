@@ -127,7 +127,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             document.Descendants(presentation + "Button"),
             element =>
                 (string?)element.Attribute(x + "Name") == "SendBugReportButton" &&
-                (string?)element.Attribute("Content") == "Отправить отчёт");
+                (string?)element.Attribute("Content") == "Отправить");
         // Nothing in the panel explains Steam or offers a folder to browse:
         // the player picks a friend, says what happened, and presses send.
         Assert.DoesNotContain(
@@ -193,6 +193,71 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             element =>
                 (string?)element.Attribute(x + "Name") == "RetrySteamButton" &&
                 (string?)element.Attribute("Content") == "Повторить");
+    }
+
+    /// <summary>
+    /// Preparing the game is shown inside the button that started it: a fill and
+    /// a caption in the Play button, and no separate bar anywhere in the window.
+    /// </summary>
+    [Fact]
+    public void MainWindowXaml_ShowsPreparationInsideThePlayButton()
+    {
+        var xamlPath = FindRepositoryFile("Program", "MainWindow.xaml");
+        var document = XDocument.Load(xamlPath);
+        XNamespace presentation =
+            "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x =
+            "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        var play = document
+            .Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "PlayButton");
+        var bar = play
+            .Descendants(presentation + "ProgressBar")
+            .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "PlayProgressBar");
+        Assert.NotNull(bar);
+        // Hidden until there is something to report, and drawn under the caption.
+        Assert.Equal("Collapsed", (string?)bar.Attribute("Visibility"));
+        Assert.Contains(
+            play.Descendants(presentation + "TextBlock"),
+            element => (string?)element.Attribute(x + "Name") == "PlayButtonText");
+
+        var xaml = File.ReadAllText(xamlPath);
+        Assert.DoesNotContain("RuntimeProgress", xaml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The version history fills the left column exactly: it spans every row but
+    /// the footer, so the two columns end together and the list scrolls instead
+    /// of stretching the window.
+    /// </summary>
+    [Fact]
+    public void MainWindowXaml_LetsTheChangelogSpanEveryRowButTheFooter()
+    {
+        var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
+        XNamespace presentation =
+            "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x =
+            "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        var root = document
+            .Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "RootGrid");
+        var rows = root
+            .Elements(presentation + "Grid.RowDefinitions")
+            .Single()
+            .Elements()
+            .Count();
+        var column = document
+            .Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute("Grid.Column") == "2" &&
+                               element.Attribute("Grid.RowSpan") is not null);
+
+        Assert.Equal(rows - 1, int.Parse((string)column.Attribute("Grid.RowSpan")!,
+            System.Globalization.CultureInfo.InvariantCulture));
+        var footerRow = RowOf(document.Descendants(presentation + "TextBlock")
+            .Single(element => (string?)element.Attribute(x + "Name") == "VersionTextBlock"));
+        Assert.Equal(rows - 1, footerRow);
     }
 
     /// <summary>The Grid.Row of the nearest element that declares one.</summary>

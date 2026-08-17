@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -6,14 +6,15 @@ using System.Text;
 namespace Minecraft;
 
 /// <summary>One version of the launcher and what it changed, in the player's words.</summary>
-public sealed record ChangelogEntry(int Version, IReadOnlyList<string> Lines);
+public sealed record ChangelogEntry(int Version, string Text);
 
 /// <summary>
 /// Reads the version history the window shows.
 ///
 /// The history is a hand-written Markdown file embedded in the executable:
-/// a <c>## N</c> heading per version, newest first, followed by <c>- </c>
-/// lines in plain Russian. N is the commit count the release was built from,
+/// a <c>## N</c> heading per version, newest first, each followed by one
+/// <c>- </c> paragraph in plain Russian - one version reads as one thought,
+/// so the list stays skimmable. N is the commit count the release was built from,
 /// so a version on screen and a commit in git name the same thing. The
 /// release workflow refuses to build a number the file does not know.
 ///
@@ -46,26 +47,26 @@ public static class ChangelogService
 
     /// <summary>
     /// Parses the history text. Throws <see cref="FormatException"/> naming the
-    /// line for anything that is not a heading, a bullet, a blank line or the
-    /// file's title.
+    /// line for anything that is not a heading, a single paragraph, a blank line
+    /// or the file's title.
     /// </summary>
     public static IReadOnlyList<ChangelogEntry> Parse(string markdown)
     {
         ArgumentNullException.ThrowIfNull(markdown);
         var entries = new List<ChangelogEntry>();
         int? version = null;
-        var lines = new List<string>();
+        string? text = null;
         var number = 0;
 
         void Close()
         {
             if (version is null) return;
-            if (lines.Count == 0)
+            if (text is null)
             {
-                throw new FormatException($"Version {version} has no lines (before line {number}).");
+                throw new FormatException($"Version {version} has no text (before line {number}).");
             }
-            entries.Add(new ChangelogEntry(version.Value, lines.ToArray()));
-            lines.Clear();
+            entries.Add(new ChangelogEntry(version.Value, text));
+            text = null;
         }
 
         foreach (var raw in markdown.Split('\n'))
@@ -77,10 +78,10 @@ public static class ChangelogService
             if (line.StartsWith("## ", StringComparison.Ordinal))
             {
                 Close();
-                var text = line[3..].Trim();
-                if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed < 1)
+                var heading = line[3..].Trim();
+                if (!int.TryParse(heading, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed < 1)
                 {
-                    throw new FormatException($"Line {number}: '{text}' is not a version number.");
+                    throw new FormatException($"Line {number}: '{heading}' is not a version number.");
                 }
                 if (entries.Count > 0 && parsed >= entries[^1].Version)
                 {
@@ -95,14 +96,22 @@ public static class ChangelogService
             {
                 if (version is null)
                 {
-                    throw new FormatException($"Line {number}: a bullet before any version heading.");
+                    throw new FormatException($"Line {number}: a paragraph before any version heading.");
                 }
-                var text = line[2..].Trim();
-                if (text.Length == 0)
+                if (text is not null)
                 {
-                    throw new FormatException($"Line {number}: an empty bullet.");
+                    throw new FormatException($"Line {number}: version {version} has a second paragraph; one version is one paragraph.");
                 }
-                lines.Add(text);
+                var paragraph = line[2..].Trim();
+                if (paragraph.Length == 0)
+                {
+                    throw new FormatException($"Line {number}: an empty paragraph.");
+                }
+                if (paragraph.Contains('—'))
+                {
+                    throw new FormatException($"Line {number}: an em dash; the descriptions use a plain hyphen.");
+                }
+                text = paragraph;
                 continue;
             }
 

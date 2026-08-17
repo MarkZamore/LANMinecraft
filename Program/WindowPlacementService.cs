@@ -27,7 +27,12 @@ public sealed class WindowPlacementService
     private const int SizingBottomLeft = 7;
     private const int GwlStyle = -16;
     private const int WsMaximizeBox = 0x00010000;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoZOrder = 0x0004;
     private readonly string _placementFile;
+    private double _clientAspect = 1;
+    private int _chromeWidth;
+    private int _chromeHeight;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -38,60 +43,90 @@ public sealed class WindowPlacementService
         _placementFile = paths.WindowPlacementFile;
     }
 
-    public void Apply(Window window)
+    /// <summary>
+    /// Restores where the window was and keeps its shape. The canvas behind the
+    /// Viewbox has one shape, and any other is empty bands, so the window is held
+    /// to that ratio while it is dragged.
+    /// </summary>
+    public void Apply(Window window, double clientAspect)
     {
         ArgumentNullException.ThrowIfNull(window);
-        window.Width = window.MinWidth;
-        window.Height = window.MinHeight;
+        if (!double.IsFinite(clientAspect) || clientAspect <= 0) clientAspect = 1;
+        _clientAspect = clientAspect;
         window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var saved = TryRead();
         window.SourceInitialized += (_, _) =>
         {
-            KeepSquare(window);
+            KeepAspect(window);
             if (saved is not null) ApplyAfterSourceInitialized(window, saved);
         };
     }
 
     /// <summary>
-    /// The window is a square: the canvas behind its Viewbox is square, so any
-    /// other shape is empty bands. Resizing from an edge sets the other side to
-    /// match; from a corner the larger side wins. Maximising cannot be square,
-    /// so its button goes.
+    /// Holds the window to the shape of the canvas while it is dragged, and takes
+    /// the maximise button away - a maximised window is the shape of the screen.
     /// </summary>
-    private static void KeepSquare(Window window)
+    private void KeepAspect(Window window)
     {
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero) return;
-        var style = GetWindowLong(handle, GwlStyle);
-        SetWindowLong(handle, GwlStyle, style & ~WsMaximizeBox);
-        HwndSource.FromHwnd(handle)?.AddHook(SquareSizingHook);
+        SetWindowLong(handle, GwlStyle, GetWindowLong(handle, GwlStyle) & ~WsMaximizeBox);
+        MeasureChrome(handle);
+        if (!GetWindowRect(handle, out var outer)) return;
+        // The size in the markup is a starting point; the ratio settles the rest.
+        var fitted = FitOuterSize(
+            outer.Right - outer.Left, outer.Bottom - outer.Top,
+            SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
+        SetWindowPos(handle, IntPtr.Zero, 0, 0, fitted.Width, fitted.Height, SwpNoMove | SwpNoZOrder);
+        HwndSource.FromHwnd(handle)?.AddHook(AspectSizingHook);
     }
 
-    private static IntPtr SquareSizingHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    /// <summary>
+    /// The outer size whose client area keeps the ratio. The edge being dragged
+    /// decides which side leads: a vertical edge sets the height, a horizontal
+    /// one sets the width, and a corner follows the width.
+    /// </summary>
+    internal static (int Width, int Height) FitOuterSize(
+        int width, int height, int edge, double clientAspect, int chromeWidth, int chromeHeight)
+    {
+        if (!double.IsFinite(clientAspect) || clientAspect <= 0) return (width, height);
+        if (edge is SizingTop or SizingBottom)
+        {
+            var clientHeight = Math.Max(1, height - chromeHeight);
+            return ((int)Math.Round(clientHeight * clientAspect) + chromeWidth, height);
+        }
+
+        var clientWidth = Math.Max(1, width - chromeWidth);
+        return (width, (int)Math.Round(clientWidth / clientAspect) + chromeHeight);
+    }
+
+    private IntPtr AspectSizingHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (message != WmSizing) return IntPtr.Zero;
         var rect = Marshal.PtrToStructure<NativeRect>(lParam);
-        var width = rect.Right - rect.Left;
-        var height = rect.Bottom - rect.Top;
-        if (width == height) return IntPtr.Zero;
-
         var edge = (int)wParam;
-        var side = edge switch
-        {
-            SizingLeft or SizingRight => width,
-            SizingTop or SizingBottom => height,
-            _ => Math.Max(width, height)
-        };
+        var fitted = FitOuterSize(
+            rect.Right - rect.Left, rect.Bottom - rect.Top, edge, _clientAspect, _chromeWidth, _chromeHeight);
+        if (fitted.Width == rect.Right - rect.Left && fitted.Height == rect.Bottom - rect.Top) return IntPtr.Zero;
+
         // Grow or shrink away from the edge being dragged, so the opposite
         // edge - the one the player is not holding - is the one that moves.
-        if (edge is SizingLeft or SizingTopLeft or SizingBottomLeft) rect.Left = rect.Right - side;
-        else rect.Right = rect.Left + side;
-        if (edge is SizingTop or SizingTopLeft or SizingTopRight) rect.Top = rect.Bottom - side;
-        else rect.Bottom = rect.Top + side;
+        if (edge is SizingLeft or SizingTopLeft or SizingBottomLeft) rect.Left = rect.Right - fitted.Width;
+        else rect.Right = rect.Left + fitted.Width;
+        if (edge is SizingTop or SizingTopLeft or SizingTopRight) rect.Top = rect.Bottom - fitted.Height;
+        else rect.Bottom = rect.Top + fitted.Height;
         Marshal.StructureToPtr(rect, lParam, false);
         handled = true;
         return (IntPtr)1;
+    }
+
+    /// <summary>Title bar and borders: the part the client area does not get.</summary>
+    private void MeasureChrome(IntPtr handle)
+    {
+        if (!GetWindowRect(handle, out var outer) || !GetClientRect(handle, out var client)) return;
+        _chromeWidth = (outer.Right - outer.Left) - (client.Right - client.Left);
+        _chromeHeight = (outer.Bottom - outer.Top) - (client.Bottom - client.Top);
     }
 
     public void Save(Window window)
@@ -145,13 +180,16 @@ public sealed class WindowPlacementService
         {
             var handle = new WindowInteropHelper(window).Handle;
             var dpiScale = Math.Max(1d, GetDpiForWindow(handle) / 96d);
-            var side = Math.Min(saved.Right - saved.Left, saved.Bottom - saved.Top);
+            // A placement saved under an older shape comes back in this one.
+            var fitted = FitOuterSize(
+                saved.Right - saved.Left, saved.Bottom - saved.Top,
+                SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
             var bounds = ClampToNearestWorkArea(new NativeRect
             {
                 Left = saved.Left,
                 Top = saved.Top,
-                Right = saved.Left + side,
-                Bottom = saved.Top + side
+                Right = saved.Left + fitted.Width,
+                Bottom = saved.Top + fitted.Height
             },
             (int)Math.Ceiling(window.MinWidth * dpiScale),
             (int)Math.Ceiling(window.MinHeight * dpiScale));
@@ -160,8 +198,23 @@ public sealed class WindowPlacementService
                 return;
             }
 
+            // The clamp trims each side on its own, so the shape is settled once
+            // more afterwards: the height follows the width, unless that is what
+            // did not fit, in which case the width follows the height.
+            var height = bounds.Bottom - bounds.Top;
+            var shaped = FitOuterSize(
+                bounds.Right - bounds.Left, height, SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
+            if (shaped.Height > height)
+            {
+                shaped = FitOuterSize(
+                    shaped.Width, height, SizingBottom, _clientAspect, _chromeWidth, _chromeHeight);
+            }
+            bounds.Right = bounds.Left + shaped.Width;
+            bounds.Bottom = bounds.Top + shaped.Height;
+
             var placement = WindowPlacement.Create();
-            // A maximised window is not square; it comes back at its normal size.
+            // A maximised window is the shape of the screen, not of the canvas;
+            // it comes back at its normal size.
             placement.ShowCommand = ShowNormal;
             placement.NormalPosition = bounds;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
@@ -252,6 +305,19 @@ public sealed class WindowPlacementService
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(IntPtr window, out NativeRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter,
+        int x, int y, int width, int height, uint flags);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
     private static extern int GetWindowLong(IntPtr window, int index);

@@ -76,17 +76,26 @@ public partial class MainWindow : Window
     private bool _startupComplete;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
+    private string? _playProgressText;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
 
+    /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
+    private double ClientAspect()
+    {
+        var width = RootGrid.Width + RootGrid.Margin.Left + RootGrid.Margin.Right;
+        var height = RootGrid.Height + RootGrid.Margin.Top + RootGrid.Margin.Bottom;
+        return height > 0 ? width / height : 1;
+    }
+
     public MainWindow()
     {
         InitializeComponent();
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
-        _windowPlacement.Apply(this);
+        _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
         WorldComboBox.ItemsSource = _worlds;
@@ -1013,6 +1022,7 @@ public partial class MainWindow : Window
     {
         if (_minecraftPreparing || _minecraftRunning) return;
         _minecraftPreparing = true;
+        _playProgressText = "Проверка сборки";
         RefreshUi();
         try
         {
@@ -1712,15 +1722,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void LoadChangelog()
     {
-        var current = UpdateService.CurrentReleaseNumber;
         var entries = ChangelogService.Load(_logger);
         ChangelogList.ItemsSource = entries
-            .Select(entry => new ChangelogEntryViewModel
-            {
-                Version = entry.Version,
-                Lines = entry.Lines,
-                IsCurrent = entry.Version == current
-            })
+            .Select(entry => new ChangelogEntryViewModel { Version = entry.Version, Text = entry.Text })
             .ToList();
         ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -1738,22 +1742,29 @@ public partial class MainWindow : Window
     private void InitializeRuntimeProgressUi()
     {
         _runtimeRate.Reset();
-        RuntimeProgressBar.Value = 0;
-        RuntimeProgressBar.IsIndeterminate = false;
-        SetProgressActivity(RuntimeProgressBar, active: false);
-        RuntimeProgressText.Text = "В ожидании игры";
+        _playProgressText = null;
+        PlayProgressBar.Value = 0;
+        PlayProgressBar.IsIndeterminate = false;
+        PlayProgressBar.Visibility = Visibility.Collapsed;
+        RefreshUi();
     }
 
+    /// <summary>
+    /// Preparation is shown inside the Play button: the fill is the progress and
+    /// the caption is the stage. One control instead of a bar the player had to
+    /// look away to find, and it is exactly where they just clicked.
+    /// </summary>
     private void ApplyRuntimeProgress(RuntimePreparationProgress progress)
     {
-        SetProgressActivity(
-            RuntimeProgressBar,
-            progress.Stage is RuntimePreparationStage.Checking or
-                RuntimePreparationStage.SyncingPack or
-                RuntimePreparationStage.Downloading or
-                RuntimePreparationStage.InstallingJava or
-                RuntimePreparationStage.InstallingLoader or
-                RuntimePreparationStage.Verifying);
+        var busy = progress.Stage is RuntimePreparationStage.Checking or
+            RuntimePreparationStage.SyncingPack or
+            RuntimePreparationStage.Downloading or
+            RuntimePreparationStage.InstallingJava or
+            RuntimePreparationStage.InstallingLoader or
+            RuntimePreparationStage.Verifying;
+        PlayProgressBar.Visibility = busy || progress.Stage == RuntimePreparationStage.Ready
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         var phase = progress.PhaseCount > 1 &&
                     progress.PhaseIndex > 0 &&
                     progress.PhaseIndex <= progress.PhaseCount
@@ -1766,7 +1777,7 @@ public partial class MainWindow : Window
             ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.PhaseIndex}/{progress.PhaseCount}")
             : 0;
         if (!isByteStage) _runtimeRate.Reset();
-        RuntimeProgressText.Text = progress.Stage switch
+        _playProgressText = progress.Stage switch
         {
             RuntimePreparationStage.SyncingPack when progress.TotalBytes > 0 =>
                 $"Обновление сборки: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
@@ -1779,21 +1790,16 @@ public partial class MainWindow : Window
             RuntimePreparationStage.InstallingLoader => progress.Message + phase,
             _ => progress.Message
         };
-        RuntimeProgressBar.IsIndeterminate = progress.Fraction is null &&
-                                             progress.Stage is RuntimePreparationStage.Checking or
-                                                 RuntimePreparationStage.SyncingPack or
-                                                 RuntimePreparationStage.Downloading or
-                                                 RuntimePreparationStage.InstallingJava or
-                                                 RuntimePreparationStage.InstallingLoader or
-                                                 RuntimePreparationStage.Verifying;
+        PlayProgressBar.IsIndeterminate = progress.Fraction is null && busy;
         if (progress.Fraction is not null)
         {
-            RuntimeProgressBar.Value = Math.Clamp(progress.Fraction.Value * 100d, 0d, 100d);
+            PlayProgressBar.Value = Math.Clamp(progress.Fraction.Value * 100d, 0d, 100d);
         }
-        else if (!RuntimeProgressBar.IsIndeterminate)
+        else if (!PlayProgressBar.IsIndeterminate)
         {
-            RuntimeProgressBar.Value = progress.Stage == RuntimePreparationStage.Ready ? 100d : 0d;
+            PlayProgressBar.Value = progress.Stage == RuntimePreparationStage.Ready ? 100d : 0d;
         }
+        RefreshUi();
     }
 
     private async Task CheckForUpdatesAsync(CancellationToken token)
@@ -2084,8 +2090,30 @@ public partial class MainWindow : Window
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        PlayButton.Content = "Играть";
-        PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
+        // Three states of one control: idle, preparing (the fill and the stage
+        // are inside it), and a game that is already up. While preparing it stays
+        // enabled so its text keeps its colour, and simply does not take clicks -
+        // PlayButton_Click refuses them anyway.
+        if (_minecraftRunning)
+        {
+            PlayButtonText.Text = "Игра запущена";
+            PlayProgressBar.Visibility = Visibility.Collapsed;
+            PlayButton.IsHitTestVisible = true;
+            PlayButton.IsEnabled = false;
+        }
+        else if (_minecraftPreparing)
+        {
+            PlayButtonText.Text = _playProgressText ?? "Проверка сборки";
+            PlayButton.IsHitTestVisible = false;
+            PlayButton.IsEnabled = true;
+        }
+        else
+        {
+            PlayButtonText.Text = "Играть";
+            PlayProgressBar.Visibility = Visibility.Collapsed;
+            PlayButton.IsHitTestVisible = true;
+            PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
+        }
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;

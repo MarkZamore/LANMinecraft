@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Minecraft"
-        Title="LANMinecraft" Height="560" Width="560" MinHeight="560" MinWidth="560"
+        Title="LANMinecraft" Width="720" Height="442" MinWidth="600" MinHeight="300"
         WindowStartupLocation="CenterScreen"
         Icon="Minecraft.ico" Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
@@ -75,43 +75,19 @@
                        TextAlignment="Center"
                        HorizontalAlignment="Stretch"/>
         </DataTemplate>
-        <!-- One version in "Что нового": a heading and its lines. The implicit
+        <!-- One version in "Что нового": a heading and one paragraph. The implicit
              TextBlock style centres vertically, so alignment is set here. -->
         <DataTemplate x:Key="ChangelogEntryTemplate">
             <StackPanel Margin="0,0,0,8">
-                <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold"
-                           VerticalAlignment="Top">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsCurrent}" Value="True">
-                                    <Setter Property="Foreground" Value="{DynamicResource ProgressActiveBrush}"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-                <ItemsControl ItemsSource="{Binding Lines}" Focusable="False">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,1,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="12"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="•" FontSize="11" VerticalAlignment="Top"/>
-                                <TextBlock Grid.Column="1" Text="{Binding}" FontSize="11"
-                                           TextWrapping="Wrap" VerticalAlignment="Top"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Top"/>
+                <TextBlock Text="{Binding Text}" FontSize="11" TextWrapping="Wrap"
+                           VerticalAlignment="Top" Margin="0,1,0,0"/>
             </StackPanel>
         </DataTemplate>
     </Window.Resources>
 
     <Viewbox Stretch="Uniform" StretchDirection="Both">
-        <Grid x:Name="RootGrid" Width="820" Height="820" Margin="14">
+        <Grid x:Name="RootGrid" Width="820" Height="458" Margin="14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1*"/>
                 <ColumnDefinition Width="1*"/>
@@ -123,15 +99,32 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <!-- A few pixels of slack: the canvas is fixed at what the left
+                     column needs, so this row is all but invisible. It is here
+                     because the version history beside it spans these rows, and
+                     without a star row to hand its overflow to the rows above
+                     would stretch to fit the whole history. -->
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
+            <!-- The button is also the progress bar: while the pack and the game are
+                 being prepared, the fill draws inside it under the stage text; once
+                 the game is up, it is the disabled button that says so. -->
             <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,10">
-                <Button x:Name="PlayButton" Content="Играть" Click="PlayButton_Click"
-                        MinHeight="38" FontSize="16" FontWeight="SemiBold"/>
+                <Button x:Name="PlayButton" Click="PlayButton_Click"
+                        MinHeight="38" FontSize="16" FontWeight="SemiBold" Padding="0"
+                        HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                    <Grid>
+                        <ProgressBar x:Name="PlayProgressBar" Minimum="0" Maximum="100"
+                                     Background="Transparent"
+                                     Foreground="{StaticResource ProgressActiveBrush}"
+                                     Visibility="Collapsed"/>
+                        <TextBlock x:Name="PlayButtonText" Text="Играть"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                </Button>
             </Grid>
 
             <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,10">
@@ -159,20 +152,7 @@
                 <Button Grid.Row="0" Grid.Column="2" x:Name="ChangePlayerNameButton"
                         Content="Изменить" Click="ChangePlayerNameButton_Click"
                         MinWidth="72" Margin="0,0,12,0"/>
-                <TextBlock Grid.Row="0" Grid.Column="3" Text="Сборка"/>
-                <Grid Grid.Row="0" Grid.Column="4" Margin="8,0,0,0">
-                    <local:CenteredDropDown x:Name="BuildComboBox"
-                                            ItemTemplate="{StaticResource BuildItemTemplate}"
-                                            SelectionChanged="BuildComboBox_SelectionChanged"/>
-                    <TextBlock x:Name="BuildPlaceholderText"
-                               Text="Нет сборок"
-                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               IsHitTestVisible="False"
-                               Visibility="Collapsed"/>
-                </Grid>
-                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,10,12,0">
+                <Grid Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="2" Margin="8,0,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -187,6 +167,25 @@
                              DataObject.Pasting="MemoryTextBox_Pasting"
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
                     <TextBlock Grid.Column="3" Text="GB" Margin="6,0,0,0"/>
+                </Grid>
+                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,10,12,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Сборка"/>
+                    <Grid Grid.Column="1" Margin="8,0,0,0">
+                        <local:CenteredDropDown x:Name="BuildComboBox"
+                                                ItemTemplate="{StaticResource BuildItemTemplate}"
+                                                SelectionChanged="BuildComboBox_SelectionChanged"/>
+                        <TextBlock x:Name="BuildPlaceholderText"
+                                   Text="Нет сборок"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False"
+                                   Visibility="Collapsed"/>
+                    </Grid>
                 </Grid>
             </Grid>
 
@@ -255,6 +254,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="70"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Кому"/>
                     <Grid Grid.Column="1">
@@ -267,6 +267,8 @@
                                    IsHitTestVisible="False"
                                    Visibility="Collapsed"/>
                     </Grid>
+                    <Button Grid.Column="2" x:Name="SendBugReportButton" Content="Отправить"
+                            Click="SendBugReportButton_Click" Margin="8,0,0,0" MinWidth="88"/>
                 </Grid>
                 <Grid Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
@@ -299,20 +301,10 @@
                         </TextBlock>
                     </Grid>
                 </Grid>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" x:Name="DiagnosticLogStatusText"
-                               TextWrapping="Wrap" VerticalAlignment="Center"/>
-                    <Button Grid.Column="1" x:Name="SendBugReportButton" Content="Отправить отчёт"
-                            Click="SendBugReportButton_Click" Margin="8,0,0,0" MinWidth="88"
-                            VerticalAlignment="Top"/>
-                </Grid>
+                <TextBlock x:Name="DiagnosticLogStatusText" TextWrapping="Wrap" MinHeight="18"/>
             </StackPanel>
 
-            <Grid Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,6">
+            <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -329,19 +321,10 @@
                         Click="UpdateButton_Click" Margin="8,0,0,0" MinWidth="88" IsEnabled="False"/>
             </Grid>
 
-            <Grid Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,8">
-                <Border Style="{StaticResource ProgressFrameStyle}">
-                    <ProgressBar x:Name="RuntimeProgressBar" Minimum="0" Maximum="100"
-                                 Foreground="{StaticResource ProgressIdleBrush}"/>
-                </Border>
-                <TextBlock x:Name="RuntimeProgressText" Text="В ожидании игры"
-                           HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/>
-            </Grid>
-
             <!-- The right column is the version history. Its star row is bounded
-                 by the fixed 700px surface, which is what makes the list scroll
+                 by the canvas's fixed height, which is what makes the list scroll
                  instead of growing off the bottom. -->
-            <Grid Grid.Column="2" Grid.Row="0" Grid.RowSpan="8" Margin="10,0,0,0">
+            <Grid Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="10,0,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
@@ -366,7 +349,7 @@
             <!-- Steam lives in the footer: the account it signed in as, or - when
                  it could not - the one button that tries again. The reason sits
                  in the button's tooltip and in the log. -->
-            <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2"
+            <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
                         Orientation="Horizontal" HorizontalAlignment="Left">
                 <TextBlock Text="Лучше TLauncher" FontSize="11"/>
                 <TextBlock Text="Steam:" FontSize="11" Margin="16,0,4,0"/>
@@ -374,7 +357,7 @@
                 <Button x:Name="RetrySteamButton" Content="Повторить" FontSize="11"
                         MinHeight="20" Padding="8,0" Click="RetrySteamButton_Click"/>
             </StackPanel>
-            <TextBlock Grid.Row="8" Grid.Column="2" x:Name="VersionTextBlock"
+            <TextBlock Grid.Row="7" Grid.Column="2" x:Name="VersionTextBlock"
                        HorizontalAlignment="Right" TextAlignment="Right" FontSize="11"/>
 
             <Grid Visibility="Collapsed">
