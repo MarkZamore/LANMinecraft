@@ -2,39 +2,51 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Name="ControlRoot"
-             MinHeight="28"
+             MinHeight="{DynamicResource Size.Control}"
              Focusable="False"
              PreviewKeyDown="ControlRoot_PreviewKeyDown">
+    <!-- The launcher's drop-down: a surface like every other control, the
+         chosen value reading left like every other value, and a list below on
+         the same surface. Colours and sizes are the tokens in App.xaml, named
+         dynamically: this control is compiled and built inside other markup,
+         and a static lookup would run before the tokens are in reach. -->
     <UserControl.Resources>
         <Style x:Key="DropDownToggleStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="{DynamicResource ControlSurfaceBrush}"/>
-            <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource Brush.Surface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/>
+            <Setter Property="BorderThickness" Value="{DynamicResource Border.Control}"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Border x:Name="Surface"
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}">
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{DynamicResource Radius.Control}"
+                                SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Surface" Property="BorderBrush"
-                                        Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"/>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Surface" Property="Opacity" Value="0.85"/>
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfacePressed}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Surface" Property="BorderBrush"
-                                        Value="{DynamicResource ControlDisabledBorderBrush}"/>
-                                <Setter Property="Foreground"
-                                        Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceDisabled}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.BorderDisabled}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -44,10 +56,9 @@
     </UserControl.Resources>
     <Grid>
         <ToggleButton x:Name="DropDownButton"
-                      MinHeight="28"
-                      Padding="0"
-                      Background="{DynamicResource ControlSurfaceBrush}"
-                      Style="{StaticResource DropDownToggleStyle}"
+                      MinHeight="{DynamicResource Size.Control}"
+                      Padding="{DynamicResource Pad.None}"
+                      Style="{DynamicResource DropDownToggleStyle}"
                       HorizontalContentAlignment="Stretch"
                       VerticalContentAlignment="Stretch"
                       Checked="DropDownButton_Checked"
@@ -57,11 +68,12 @@
                                   ContentTemplate="{Binding ItemTemplate, ElementName=ControlRoot}"
                                   HorizontalAlignment="Stretch"
                                   VerticalAlignment="Center"
-                                  Margin="20,0"/>
+                                  Margin="{DynamicResource Pad.Text}"/>
                 <TextBlock Text="⌄"
+                           Foreground="{DynamicResource Brush.TextMuted}"
                            HorizontalAlignment="Right"
                            VerticalAlignment="Center"
-                           Margin="0,0,7,2"
+                           Margin="{DynamicResource Gap.Right2}"
                            IsHitTestVisible="False"/>
             </Grid>
         </ToggleButton>
@@ -74,40 +86,24 @@
                Opened="DropDownPopup_Opened"
                Closed="DropDownPopup_Closed">
             <Border Width="{Binding ActualWidth, ElementName=ControlRoot}"
-                    MaxHeight="260"
-                    Background="{DynamicResource ControlSurfaceBrush}"
-                    BorderBrush="{DynamicResource ControlBorderBrush}"
-                    BorderThickness="1">
+                    MaxHeight="{DynamicResource Size.PopupMax}"
+                    Margin="{DynamicResource Gap.Above1}"
+                    Background="{DynamicResource Brush.Surface}"
+                    BorderBrush="{DynamicResource Brush.BorderStrong}"
+                    BorderThickness="{DynamicResource Border.Control}"
+                    CornerRadius="{DynamicResource Radius.Control}"
+                    SnapsToDevicePixels="True">
                 <ListBox x:Name="ItemsList"
                          ItemsSource="{Binding ItemsSource, ElementName=ControlRoot}"
                          ItemTemplate="{Binding ItemTemplate, ElementName=ControlRoot}"
-                         Background="{DynamicResource ControlSurfaceBrush}"
-                         BorderThickness="0"
+                         Background="Transparent"
+                         BorderThickness="{DynamicResource Border.None}"
+                         Padding="{DynamicResource Pad.None}"
                          HorizontalContentAlignment="Stretch"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          PreviewKeyDown="ControlRoot_PreviewKeyDown"
                          PreviewMouseLeftButtonUp="ItemsList_PreviewMouseLeftButtonUp"
-                         SelectionChanged="ItemsList_SelectionChanged">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="MinHeight" Value="28"/>
-                            <Setter Property="Padding" Value="5,3"/>
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="VerticalContentAlignment" Value="Center"/>
-                            <Setter Property="Background" Value="{DynamicResource ControlSurfaceBrush}"/>
-                            <Style.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter Property="Background" Value="{DynamicResource ControlSurfaceBrush}"/>
-                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                </Trigger>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="{DynamicResource ControlSurfaceBrush}"/>
-                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                </Trigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                </ListBox>
+                         SelectionChanged="ItemsList_SelectionChanged"/>
             </Border>
         </Popup>
     </Grid>

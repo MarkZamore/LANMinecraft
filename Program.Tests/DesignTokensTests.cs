@@ -104,6 +104,15 @@ public sealed class DesignTokensTests
         var xaml = File.ReadAllText(FindRepositoryFile("Program", file));
 
         Assert.DoesNotMatch(@"#[0-9A-Fa-f]{6}\b", xaml);
+        Assert.DoesNotContain("SystemColors", xaml, StringComparison.Ordinal);
+        // Sizes and gaps are tokens too; a bare number on one of these is a
+        // decision made outside the system. Window geometry (Width, Height,
+        // MinWidth, MinHeight on the Window itself) and grid stars are
+        // structure, not style, and stay literal.
+        var literal = Regex.Matches(xaml, @"\b(Margin|Padding|FontSize|CornerRadius|BorderThickness)=""[0-9]")
+            .Select(match => match.Value)
+            .ToArray();
+        Assert.True(literal.Length == 0, $"{file} sets a literal where a token belongs: {string.Join(", ", literal)}");
     }
 
     private static HashSet<string> TokenKeys()

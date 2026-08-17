@@ -22,8 +22,10 @@ public sealed class WindowCanvasTests
         {
             var window = LoadWindow();
             var canvas = (Grid)window.FindName("RootGrid")!;
+            // The content stays in the window: implicit styles are found by
+            // walking up to the window's resources, and a detached tree has no
+            // window to walk up to.
             var content = (FrameworkElement)window.Content;
-            window.Content = null;
 
             // The right column is a scrolling list: it would answer with the
             // height of the whole history, so it is asked to stand aside.
@@ -90,6 +92,11 @@ public sealed class WindowCanvasTests
         xaml = xaml.Replace(@"Icon=""Minecraft.ico""", "");
         // A loose XAML resolves clr-namespace against the assembly parsing it.
         xaml = xaml.Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
+        // The typeface's pack URI is served only inside an Application; the
+        // same files are read from the repository, so the metrics are the real ones.
+        var fonts = new Uri(Path.Combine(program, "Fonts") + Path.DirectorySeparatorChar).AbsoluteUri;
+        resources = resources.Replace(
+            "pack://application:,,,/LANMinecraft;component/Fonts/#Montserrat", fonts + "#Montserrat");
         xaml = xaml.Replace("<Window.Resources>", "<Window.Resources>" + resources);
         return (Window)XamlReader.Parse(xaml);
     }
