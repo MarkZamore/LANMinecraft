@@ -21,7 +21,9 @@ public sealed class ChangelogTests
                 entries[index].Version < entries[index - 1].Version,
                 $"{entries[index].Version} follows {entries[index - 1].Version}; the file lists newest first");
         }
-        Assert.All(entries, entry => Assert.Contains(entry.Lines, line => !string.IsNullOrWhiteSpace(line)));
+        Assert.All(entries, entry => Assert.False(string.IsNullOrWhiteSpace(entry.Text), $"version {entry.Version}"));
+        // One version is one paragraph, and the paragraphs use a plain hyphen.
+        Assert.All(entries, entry => Assert.DoesNotContain('\u2014', entry.Text));
         // History starts with the first public release and never skips a number.
         Assert.Equal(1, entries[^1].Version);
         Assert.Equal(entries[0].Version, entries.Count);
@@ -34,8 +36,7 @@ public sealed class ChangelogTests
             # Что нового
 
             ## 3
-            - Первая строка.
-            - Вторая строка.
+            - Одна строка описания.
 
             ## 2
             - Одна строка.
@@ -46,8 +47,8 @@ public sealed class ChangelogTests
         var entries = ChangelogService.Parse(sample);
 
         Assert.Equal([3, 2, 1], entries.Select(entry => entry.Version).ToArray());
-        Assert.Equal(["Первая строка.", "Вторая строка."], entries[0].Lines);
-        Assert.Equal(["Начало."], entries[2].Lines);
+        Assert.Equal("Одна строка описания.", entries[0].Text);
+        Assert.Equal("Начало.", entries[2].Text);
     }
 
     [Theory]
@@ -59,6 +60,8 @@ public sealed class ChangelogTests
     [InlineData("## x\n- a")]
     [InlineData("## 1\nplain text")]
     [InlineData("## 1\n- ")]
+    [InlineData("## 2\n- a\n- b\n## 1\n- c")]
+    [InlineData("## 1\n- a \u2014 b")]
     public void Parse_RejectsMalformedInput(string sample)
     {
         Assert.Throws<FormatException>(() => ChangelogService.Parse(sample));
