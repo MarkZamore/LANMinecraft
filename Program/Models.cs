@@ -284,6 +284,15 @@ public sealed class ClientBuildViewModel
     public bool IsInstalled { get; init; } = true;
 }
 
+/// <summary>One row of the "Что нового" list.</summary>
+public sealed class ChangelogEntryViewModel
+{
+    public required int Version { get; init; }
+    public required IReadOnlyList<string> Lines { get; init; }
+    public bool IsCurrent { get; init; }
+    public string Title => IsCurrent ? $"Версия {Version} · у вас" : $"Версия {Version}";
+}
+
 public sealed class WorldTransferHeader
 {
     public string Protocol { get; set; } = "";

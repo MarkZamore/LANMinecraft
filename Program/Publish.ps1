@@ -68,6 +68,20 @@ function Get-ExistingExecutableReleaseNumber {
     return 0
 }
 
+function Test-ChangelogHasEntry([int]$number) {
+    # The launcher shows a hand-written history; a build whose number that
+    # history does not know is not ready to ship. Same rule as the workflow.
+    $changelogPath = Join-Path $programDir "Changelog.md"
+    if (-not (Test-Path -LiteralPath $changelogPath -PathType Leaf)) {
+        throw "Changelog was not found: $changelogPath"
+    }
+    $pattern = '(?m)^## {0}\s*$' -f $number
+    if ((Get-Content -LiteralPath $changelogPath -Raw) -notmatch $pattern) {
+        throw ("Program/Changelog.md has no entry for release $number. " +
+               "Add a '## $number' section with a line or two in Russian describing this commit and publish again.")
+    }
+}
+
 function Resolve-ReleaseNumber([string]$revision) {
     $environmentNumber = Get-PositiveInteger $env:RELEASE_NUMBER
     if ($environmentNumber -gt 0) {
@@ -125,6 +139,7 @@ if ($ReleaseNumber -eq 0) {
     $ReleaseNumber = Resolve-ReleaseNumber $SourceRevisionId
 }
 Write-Host "Release number: $ReleaseNumber"
+Test-ChangelogHasEntry $ReleaseNumber
 
 try {
     if (-not $NoRestore) {
