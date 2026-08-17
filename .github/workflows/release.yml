@@ -40,6 +40,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
+
           # A release is named after the commit it is built from: the number is
           # how many commits main carries, so a version in a bug report points
           # straight at a line of history.
@@ -64,7 +66,7 @@ jobs:
           # players actually have.
           function Get-ValidatedBase([string]$Tag, [string]$Directory) {
             New-Item -ItemType Directory -Path $Directory -Force | Out-Null
-            gh release download $Tag `
+            Invoke-Gh release download $Tag `
               --pattern 'update.json' `
               --dir $Directory `
               --clobber | Out-Null
@@ -87,7 +89,7 @@ jobs:
               throw "Release $Tag manifest is invalid."
             }
 
-            gh release download $Tag `
+            Invoke-Gh release download $Tag `
               --pattern 'LANMinecraft.exe' `
               --dir $Directory `
               --clobber | Out-Null
@@ -113,7 +115,7 @@ jobs:
             }
           }
 
-          gh release view latest --json tagName *> $null
+          Invoke-Gh release view latest --json tagName *> $null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "No previous latest release is available; a full-only release will be created."
             exit 0
@@ -148,7 +150,7 @@ jobs:
 
           $bases = [System.Collections.Generic.List[object]]::new()
           if ($previous.commitSha -ne $currentCommit) { $bases.Add($previous) }
-          $releaseRows = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          $releaseRows = Invoke-Gh release list --limit 100 --json tagName | ConvertFrom-Json
           $archiveTags = $releaseRows.tagName |
             Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |
             Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
@@ -307,12 +309,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
+
           $tag = "update-base-$env:PREVIOUS_RELEASE_NUMBER"
-          if (gh release view $tag 2>$null) {
-            gh release delete $tag --cleanup-tag --yes
+          if (Invoke-Gh release view $tag 2>$null) {
+            Invoke-Gh release delete $tag --cleanup-tag --yes
             if ($LASTEXITCODE -ne 0) { throw "Could not replace archive $tag." }
           }
-          gh release create $tag `
+          Invoke-Gh release create $tag `
             $env:PREVIOUS_EXE `
             $env:PREVIOUS_MANIFEST `
             --prerelease `
@@ -325,6 +329,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
+
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           $assets = @(
             (Join-Path $artifactDir 'LANMinecraft.exe'),
@@ -338,14 +344,14 @@ jobs:
           # launcher finds its update through this one tag, and a failed
           # re-create would leave all of them with nothing to check.
           $exists = $false
-          gh release view latest *> $null
+          Invoke-Gh release view latest *> $null
           if ($LASTEXITCODE -eq 0) { $exists = $true }
 
           if (-not $exists) {
             if (git ls-remote --exit-code --tags origin refs/tags/latest 2>$null) {
               git push origin --delete latest
             }
-            gh release create latest `
+            Invoke-Gh release create latest `
               @assets `
               --target "${{ github.sha }}" `
               --latest `
@@ -358,40 +364,36 @@ jobs:
             # new build, a launcher checking mid-publish simply keeps the one
             # it has.
             $payload = @($assets | Where-Object { [System.IO.Path]::GetFileName($_) -ne 'update.json' })
-            gh release upload latest @payload --clobber
+            Invoke-Gh release upload latest @payload --clobber
             if ($LASTEXITCODE -ne 0) { throw "Release assets could not be uploaded." }
 
             $keep = @($assets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
-            $stale = (gh release view latest --json assets | ConvertFrom-Json).assets |
+            $stale = (Invoke-Gh release view latest --json assets | ConvertFrom-Json).assets |
               Where-Object { $_.name -notin $keep }
             foreach ($asset in $stale) {
-              gh release delete-asset latest $asset.name --yes
+              Invoke-Gh release delete-asset latest $asset.name --yes
               if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
             }
 
             # GitHub answered 502 here once and left the release without its
-            # pointer, which took the next build down with it. One upload is
-            # not worth that: try again before giving up.
+            # pointer, which took the next build down with it. Invoke-Gh is what
+            # keeps trying now, and it does the same for every call around this
+            # one.
             $manifest = Join-Path $artifactDir 'update.json'
-            foreach ($attempt in 1..3) {
-              gh release upload latest $manifest --clobber
-              if ($LASTEXITCODE -eq 0) { break }
-              if ($attempt -eq 3) { throw "Update manifest could not be published." }
-              Write-Host "Upload of update.json failed (attempt $attempt/3); retrying."
-              Start-Sleep -Seconds (10 * $attempt)
-            }
+            Invoke-Gh release upload latest $manifest --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Update manifest could not be published." }
 
-            gh release edit latest `
+            Invoke-Gh release edit latest `
               --target "${{ github.sha }}" `
               --title "Latest LANMinecraft.exe" `
               --notes "Automated build for commit ${{ github.sha }}"
             if ($LASTEXITCODE -ne 0) { throw "Latest release could not be retargeted." }
           }
 
-          $archiveTags = (gh release list --limit 100 --json tagName | ConvertFrom-Json).tagName |
+          $archiveTags = (Invoke-Gh release list --limit 100 --json tagName | ConvertFrom-Json).tagName |
             Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |
             Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
           foreach ($tag in @($archiveTags | Select-Object -Skip 2)) {
-            gh release delete $tag --cleanup-tag --yes
+            Invoke-Gh release delete $tag --cleanup-tag --yes
             if ($LASTEXITCODE -ne 0) { throw "Could not prune archive $tag." }
           }
