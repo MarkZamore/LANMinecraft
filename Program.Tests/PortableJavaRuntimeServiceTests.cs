@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,33 +22,52 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     [Fact]
-    public void PinnedTemurinArtifact_MatchesAdoptium25_0_3_9()
+    public void PinnedTemurinArtifact_MatchesAdoptium21_0_12_8()
     {
-        Assert.Equal("temurin-25.0.3+9", PortableJavaRuntimeService.PinnedRuntimeId);
-        Assert.Equal("25.0.3", PortableJavaRuntimeService.PinnedJavaVersion);
-        Assert.Equal("java-25", PortableJavaRuntimeService.InstallDirectoryName);
+        Assert.Equal("temurin-21.0.12+8", PortableJavaRuntimeService.PinnedRuntimeId);
+        Assert.Equal("21.0.12", PortableJavaRuntimeService.PinnedJavaVersion);
+        Assert.Equal(21, PortableJavaRuntimeService.PinnedMajorVersion);
+        Assert.Equal("java-21", PortableJavaRuntimeService.InstallDirectoryName);
         Assert.Equal(
-            "OpenJDK25U-jdk_x64_windows_hotspot_25.0.3_9.zip",
+            "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
             PortableJavaRuntimeService.ArchiveFileName);
-        Assert.Equal(141_131_903, PortableJavaRuntimeService.ArchiveSizeBytes);
+        Assert.Equal(205_069_442, PortableJavaRuntimeService.ArchiveSizeBytes);
         Assert.Equal(
-            "709312cd0420296d9b9de917fe6e28a5b979e875ee5ab91783fb79bcd5857235",
+            "9ba963ee2371874a74185d18bc7bb2ab9407df7683300855ed7606e0662321d0",
             PortableJavaRuntimeService.ArchiveSha256);
         Assert.Equal(
             [
-                "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.3%2B9/" +
-                "OpenJDK25U-jdk_x64_windows_hotspot_25.0.3_9.zip",
-                "https://api.adoptium.net/v3/binary/version/jdk-25.0.3%2B9/windows/x64/jdk/hotspot/normal/eclipse"
+                "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12%2B8/" +
+                "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
+                "https://api.adoptium.net/v3/binary/version/jdk-21.0.12%2B8/windows/x64/jdk/hotspot/normal/eclipse"
             ],
             PortableJavaRuntimeService.DownloadUris.Select(uri => uri.AbsoluteUri));
     }
 
     [Fact]
-    public void JavaCompatibilityArguments_CoverTheJdk25PoliciesAndCompactHeaders()
+    public void JavaCompatibilityArguments_AskJava21ForNothingItWouldRefuse()
     {
-        // The install-time flag probe runs exactly this list. Runtimes that
-        // installed before a flag was added skip the probe via the marker, so
-        // every addition must be a guaranteed option on the pinned JDK.
+        // The install-time flag probe runs exactly this list, and a JVM refuses
+        // to start on an option it never heard of: every one of the escape
+        // hatches below is a Java 24 or 25 option, so on the pinned 21 the game
+        // is launched with none of them.
+        Assert.Empty(MinecraftProcessService.JavaCompatibilityArguments);
+        Assert.Equal(
+            MinecraftProcessService.CompatibilityArgumentsFor(PortableJavaRuntimeService.PinnedMajorVersion),
+            MinecraftProcessService.JavaCompatibilityArguments);
+    }
+
+    [Fact]
+    public void CompatibilityArguments_HoldTheModernDoorsOpenWhenThePinMovesForward()
+    {
+        Assert.Empty(MinecraftProcessService.CompatibilityArgumentsFor(21));
+        Assert.Equal(
+            [
+                "--illegal-native-access=allow",
+                "--enable-native-access=ALL-UNNAMED",
+                "--sun-misc-unsafe-memory-access=allow"
+            ],
+            MinecraftProcessService.CompatibilityArgumentsFor(24));
         Assert.Equal(
             [
                 "--illegal-native-access=allow",
@@ -56,7 +75,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
                 "--sun-misc-unsafe-memory-access=allow",
                 "-XX:+UseCompactObjectHeaders"
             ],
-            MinecraftProcessService.JavaCompatibilityArguments);
+            MinecraftProcessService.CompatibilityArgumentsFor(25));
     }
 
     [Fact]

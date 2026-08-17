@@ -163,6 +163,10 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
+            // A launcher closed while the game plays leaves the game behind.
+            // This one picks it up, so the button says "Игра запущена" instead
+            // of offering a second client over the first.
+            _minecraft.AdoptRunningClients();
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
                 runtimeOptions: null,
                 confirmation: new WpfWorldTransferConfirmation(this));
@@ -1899,7 +1903,7 @@ public partial class MainWindow : Window
         _playProgressText = progress.Stage switch
         {
             RuntimePreparationStage.SyncingPack when progress.TotalBytes > 0 =>
-                $"Обновление сборки: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
+                $"Обновление: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
             RuntimePreparationStage.SyncingPack => "Проверка сборки",
             RuntimePreparationStage.Downloading when progress.TotalBytes > 0 =>
                 $"Скачивание файлов{phase}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",

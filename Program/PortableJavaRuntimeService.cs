@@ -15,20 +15,30 @@ namespace Minecraft;
 /// Installs the pinned Java runtime the game runs on. Minecraft's own metadata
 /// still names Mojang's Java 21 component, which keeps driving the loader
 /// installer, while the client itself runs on this runtime.
+///
+/// The pin is Java 21 because that is the version 1.21.1 and everything built
+/// for it targets, and because mods may refuse anything newer: Cobblemon
+/// declares javaVersion="[21,21.999999)" in its metadata, and NeoForge answers
+/// a broken feature bound by refusing to load a single mod, which reads as an
+/// unrelated crash deep inside another mod's static initialiser.
 /// </summary>
 public sealed partial class PortableJavaRuntimeService
 {
-    public const string PinnedRuntimeId = "temurin-25.0.3+9";
-    public const string PinnedJavaVersion = "25.0.3";
-    public const string InstallDirectoryName = "java-25";
-    public const string ArchiveFileName = "OpenJDK25U-jdk_x64_windows_hotspot_25.0.3_9.zip";
-    public const long ArchiveSizeBytes = 141_131_903;
+    public const string PinnedRuntimeId = "temurin-21.0.12+8";
+    public const string PinnedJavaVersion = "21.0.12";
+    public const string InstallDirectoryName = "java-21";
+    public const string ArchiveFileName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip";
+    public const long ArchiveSizeBytes = 205_069_442;
     public const string ArchiveSha256 =
-        "709312cd0420296d9b9de917fe6e28a5b979e875ee5ab91783fb79bcd5857235";
+        "9ba963ee2371874a74185d18bc7bb2ab9407df7683300855ed7606e0662321d0";
+
+    /// <summary>The feature release, which decides which JVM options the game gets.</summary>
+    public static int PinnedMajorVersion { get; } =
+        int.Parse(PinnedJavaVersion.Split('.')[0], CultureInfo.InvariantCulture);
 
     // Temurin packs everything under one versioned directory; it is stripped so
     // the install looks like Mojang's components and carries no '+' in its path.
-    private const string ArchiveRootPrefix = "jdk-25.0.3+9/";
+    private const string ArchiveRootPrefix = "jdk-21.0.12+8/";
     private const string MarkerFileName = ".portable-java.json";
     // A cache generation, not a data format: it is bumped to throw the cached
     // work away and redo it, so it is deliberately independent of
@@ -37,17 +47,17 @@ public sealed partial class PortableJavaRuntimeService
     private const int MarkerCacheGeneration = 1;
 
     // Measured from the extracted image, with headroom for the archive copy.
-    private const long RequiredFreeSpaceBytes = 700L * 1024 * 1024;
+    private const long RequiredFreeSpaceBytes = 800L * 1024 * 1024;
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan FlagProbeTimeout = TimeSpan.FromSeconds(30);
 
     public static Uri ReleaseDownloadUri { get; } = new(
-        "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.3%2B9/" +
-        "OpenJDK25U-jdk_x64_windows_hotspot_25.0.3_9.zip",
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12%2B8/" +
+        "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
         UriKind.Absolute);
 
     public static Uri ApiDownloadUri { get; } = new(
-        "https://api.adoptium.net/v3/binary/version/jdk-25.0.3%2B9/windows/x64/jdk/hotspot/normal/eclipse",
+        "https://api.adoptium.net/v3/binary/version/jdk-21.0.12%2B8/windows/x64/jdk/hotspot/normal/eclipse",
         UriKind.Absolute);
 
     public static IReadOnlyList<Uri> DownloadUris { get; } =
@@ -109,6 +119,7 @@ public sealed partial class PortableJavaRuntimeService
 
         if (TryDescribeInstalled(installRoot) is { } installed)
         {
+            RemoveSupersededRuntimes(installRoot);
             return installed;
         }
 
@@ -144,9 +155,51 @@ public sealed partial class PortableJavaRuntimeService
             $"Распаковка Java {_pin.JavaVersion}"));
         Install(cachePath, installRoot, token);
 
-        return TryDescribeInstalled(installRoot)
+        var prepared = TryDescribeInstalled(installRoot)
             ?? throw new InvalidDataException(
                 $"Java runtime {_pin.RuntimeId} did not verify after installation.");
+        RemoveSupersededRuntimes(installRoot);
+        return prepared;
+    }
+
+    /// <summary>
+    /// Deletes what an earlier pin left behind: the JDK sitting beside this one
+    /// and the archive cached to install it. A pinned runtime is replaced, not
+    /// collected, and a superseded pair costs half a gigabyte on every disk.
+    /// Only ever runs once this runtime is known good, and only over names this
+    /// service writes itself - Mojang's components are named otherwise and keep
+    /// driving the loader installer.
+    /// </summary>
+    private void RemoveSupersededRuntimes(string installRoot)
+    {
+        Sweep(
+            Path.GetDirectoryName(installRoot),
+            name => PortableInstallDirectoryRegex().IsMatch(name) &&
+                    !string.Equals(name, _pin.InstallDirectoryName, StringComparison.OrdinalIgnoreCase),
+            "Java install");
+        Sweep(
+            Path.GetDirectoryName(Path.GetDirectoryName(GetCachePath())),
+            name => !string.Equals(name, _pin.RuntimeId.Replace('+', '_'), StringComparison.OrdinalIgnoreCase),
+            "cached Java archive");
+    }
+
+    private void Sweep(string? parent, Func<string, bool> superseded, string what)
+    {
+        if (parent is null || !Directory.Exists(parent)) return;
+        foreach (var directory in Directory.EnumerateDirectories(parent))
+        {
+            var name = Path.GetFileName(directory);
+            if (!superseded(name)) continue;
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                _logger.Info($"Removed the superseded {what} {name}.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn($"The superseded {what} {name} could not be removed ({ex.Message}).");
+            }
+        }
     }
 
     internal string CachePath => GetCachePath();
@@ -624,6 +677,9 @@ public sealed partial class PortableJavaRuntimeService
 
     [GeneratedRegex("^JAVA_VERSION=\"([^\"]+)\"")]
     private static partial Regex JavaVersionRegex();
+
+    [GeneratedRegex("^java-[0-9]+$", RegexOptions.IgnoreCase)]
+    private static partial Regex PortableInstallDirectoryRegex();
 
     private sealed class JavaRuntimeMarker
     {
