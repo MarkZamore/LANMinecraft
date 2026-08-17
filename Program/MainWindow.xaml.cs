@@ -100,7 +100,7 @@ public partial class MainWindow : Window
         DarkTitleBar.Apply(this);
         // A name too long for its field walks itself so the whole of it
         // can be read; it holds still while the field is being edited.
-        _playerNameMarquee = new NameMarquee(PlayerNameTextBox);
+        _playerNameMarquee = new NameMarquee(PlayerNameTextBox, RequireLogger());
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
