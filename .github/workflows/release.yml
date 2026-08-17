@@ -47,6 +47,14 @@ jobs:
           if ($commitNumber -lt 1) { throw "The commit count could not be determined." }
           "HAS_PREVIOUS=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_NUMBER=$commitNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # The launcher shows a hand-written history; a build whose number
+          # that history does not know is not ready to ship.
+          $changelogPath = Join-Path $env:GITHUB_WORKSPACE 'Program\Changelog.md'
+          $changelogPattern = '(?m)^## {0}\s*$' -f $commitNumber
+          if ((Get-Content -LiteralPath $changelogPath -Raw) -notmatch $changelogPattern) {
+            throw ("Program/Changelog.md has no entry for release $commitNumber. " +
+                   "Add a '## $commitNumber' section with a line or two in Russian describing this commit, then push again.")
+          }
           $basesFile = Join-Path $env:RUNNER_TEMP 'minecraft-delta-bases.json'
           '[]' | Set-Content -LiteralPath $basesFile -Encoding UTF8
           "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

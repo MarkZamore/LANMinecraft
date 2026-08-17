@@ -110,6 +110,7 @@ public partial class MainWindow : Window
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
             _logger = new Logger(_paths.LogFile);
+            LoadChangelog();
             DeprecatedFileCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
@@ -1375,26 +1376,35 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Steam is only mentioned when it is in the way. A working connection
-    /// needs no line of its own, and the account number behind it is not
-    /// something a player has any use for.
+    /// Steam takes one spot in the footer: the name it signed in as, or - when
+    /// it could not - the button that tries again. The account number behind
+    /// the name is nothing a player has any use for.
     /// </summary>
     private void ApplySteamStatus(SteamClientStatus status)
     {
         var settled = status.IsReady && IsIdentityBound;
-        SteamProblemPanel.Visibility = settled ? Visibility.Collapsed : Visibility.Visible;
-        if (!settled) SetSteamMessage(status.Message);
+        if (settled)
+        {
+            SteamPersonaText.Text = status.PersonaName;
+            SteamPersonaText.Visibility = Visibility.Visible;
+            RetrySteamButton.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            SetSteamMessage(status.Message);
+        }
         RefreshUi();
     }
 
     /// <summary>
-    /// Shows a Steam problem and the button that retries it. Anything the
-    /// player cannot act on stays out of the window.
+    /// Puts the retry button in the footer with the reason as its tooltip. The
+    /// reason is also in the log; the window only shows what can be acted on.
     /// </summary>
     private void SetSteamMessage(string message)
     {
-        SteamStatusText.Text = message;
-        SteamProblemPanel.Visibility = Visibility.Visible;
+        RetrySteamButton.ToolTip = string.IsNullOrWhiteSpace(message) ? null : message;
+        RetrySteamButton.Visibility = Visibility.Visible;
+        SteamPersonaText.Visibility = Visibility.Collapsed;
     }
 
     private bool IsIdentityBound => _identityService?.IsBound == true;
@@ -1694,6 +1704,26 @@ public partial class MainWindow : Window
     // The number is the commit count, so it names the commit by itself - the
     // short hash it used to carry said the same thing twice.
     private static string BuildVersionText() => $"Версия {UpdateService.CurrentReleaseNumber}";
+
+    /// <summary>
+    /// Fills "Что нового" from the history embedded in the executable and marks
+    /// the version this build is. Newest first, so the current one is at the
+    /// top; a missing or broken history shows one line instead of an empty box.
+    /// </summary>
+    private void LoadChangelog()
+    {
+        var current = UpdateService.CurrentReleaseNumber;
+        var entries = ChangelogService.Load(_logger);
+        ChangelogList.ItemsSource = entries
+            .Select(entry => new ChangelogEntryViewModel
+            {
+                Version = entry.Version,
+                Lines = entry.Lines,
+                IsCurrent = entry.Version == current
+            })
+            .ToList();
+        ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     private void InitializeUpdateUi()
     {
