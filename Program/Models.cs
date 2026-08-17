@@ -288,9 +288,8 @@ public sealed class ClientBuildViewModel
 public sealed class ChangelogEntryViewModel
 {
     public required int Version { get; init; }
-    public required IReadOnlyList<string> Lines { get; init; }
-    public bool IsCurrent { get; init; }
-    public string Title => IsCurrent ? $"Версия {Version} · у вас" : $"Версия {Version}";
+    public required string Text { get; init; }
+    public string Title => $"Версия {Version}";
 }
 
 public sealed class WorldTransferHeader
