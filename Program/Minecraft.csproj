@@ -16,9 +16,8 @@
     <FileVersion>1.0.$(ReleaseNumber).0</FileVersion>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
-    <NuGetAudit>true</NuGetAudit>
-    <NuGetAuditMode>all</NuGetAuditMode>
-    <WarningsAsErrors>$(WarningsAsErrors);NU1902;NU1903;NU1904</WarningsAsErrors>
+    <!-- The dependency audit is in Directory.Build.props, shared with the
+         tests and the delta tool. -->
     <NoWarn>$(NoWarn);CA1822</NoWarn>
     <InformationalVersion Condition="'$(SourceRevisionId)' != ''">$(Version)+$(SourceRevisionId)</InformationalVersion>
   </PropertyGroup>

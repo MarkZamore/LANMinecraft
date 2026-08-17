@@ -2,7 +2,11 @@
     [string]$SourceRevisionId = "",
     [string]$PublishDir = "",
     [int]$ReleaseNumber = 0,
-    [switch]$NoRestore
+    [switch]$NoRestore,
+    # Leaves bin/obj in place. Locally they are swept so the checkout stays
+    # clean; on a build agent the checkout is thrown away, the sweep only costs
+    # seconds, and the delta tool built alongside is needed by the next step.
+    [switch]$KeepBuildOutput
 )
 
 $ErrorActionPreference = "Stop"
@@ -160,11 +164,13 @@ try {
         throw "LANMinecraft.exe was not published to $PublishDir."
     }
 } finally {
-    & dotnet build-server shutdown | Out-Null
-    for ($cleanupPass = 0; $cleanupPass -lt 3; $cleanupPass++) {
-        Start-Sleep -Seconds 1
-        foreach ($buildRoot in $buildRoots) {
-            Remove-BuildRoot $buildRoot ($cleanupPass -eq 2)
+    if (-not $KeepBuildOutput) {
+        & dotnet build-server shutdown | Out-Null
+        for ($cleanupPass = 0; $cleanupPass -lt 3; $cleanupPass++) {
+            Start-Sleep -Seconds 1
+            foreach ($buildRoot in $buildRoots) {
+                Remove-BuildRoot $buildRoot ($cleanupPass -eq 2)
+            }
         }
     }
 }

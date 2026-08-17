@@ -1,4 +1,4 @@
-# One retry rule for every call the release makes to GitHub.
+﻿# One retry rule for every call the release makes to GitHub.
 #
 # Publishing is a dozen requests to the same API, and any one of them meeting a
 # 503 used to end the job - which is how an incident on GitHub's side turns into
@@ -43,6 +43,12 @@ function Invoke-Gh {
     $arguments = $args
     $stderrFile = [System.IO.Path]::GetTempFileName()
     $attempts = $script:GhRetryDelays.Count + 1
+    # gh complaining is this function's business, not an error in the script
+    # that called it: under -ErrorAction Stop - which is what Actions sets for
+    # every pwsh step - an unguarded stderr line would end the job on the first
+    # 503, which is the one thing this function exists to survive.
+    $callerPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         for ($attempt = 1; ; $attempt++) {
             # Standard output stays a clean stream for the caller to parse; what
@@ -64,6 +70,7 @@ function Invoke-Gh {
         }
     }
     finally {
+        $ErrorActionPreference = $callerPreference
         Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
     }
 }
