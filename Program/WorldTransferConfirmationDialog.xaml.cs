@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace Minecraft;
 
@@ -12,6 +12,7 @@ public partial class WorldTransferConfirmationDialog : Window
     private WorldTransferConfirmationDialog(WorldTransferOffer offer)
     {
         InitializeComponent();
+        DarkTitleBar.Apply(this);
         var sender = string.IsNullOrWhiteSpace(offer.SenderPlayerName) ||
                      string.Equals(offer.SenderPlayerName, offer.SenderPersonaName, StringComparison.Ordinal)
             ? offer.SenderPersonaName

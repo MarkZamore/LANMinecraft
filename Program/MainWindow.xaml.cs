@@ -96,6 +96,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        DarkTitleBar.Apply(this);
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
@@ -2129,9 +2130,13 @@ public partial class MainWindow : Window
         _state = state;
     }
 
+    /// <summary>
+    /// A bar at rest shows its track and nothing else; a bar at work fills. Both
+    /// brushes are tokens of the design system.
+    /// </summary>
     private void SetProgressActivity(ProgressBar progressBar, bool active)
     {
-        progressBar.Foreground = (Brush)FindResource(active ? "ProgressActiveBrush" : "ProgressIdleBrush");
+        progressBar.Foreground = (Brush)FindResource(active ? "Brush.ProgressFill" : "Brush.ProgressTrack");
     }
 
     private void RefreshUi()

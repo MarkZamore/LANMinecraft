@@ -31,6 +31,7 @@
 | `Color.ProgressFill` / `Brush.ProgressFill` | `#276F4C` | заливка шкал — приглушённый изумруд, чтобы светлый текст поверх читался | текст 5,0:1 |
 | `Color.ScrollThumb` / `Brush.ScrollThumb` | `#3B414A` | ползунок скроллбара | |
 | `Color.ScrollThumbHover` / `Brush.ScrollThumbHover` | `#4B515B` | ползунок под курсором | |
+| `Brush.ProgressGlow` | градиент дорожка → заливка → дорожка | бегущий блик неопределённой шкалы | |
 
 Правила:
 - Акцент — только у одного главного действия на экране, у фокуса с клавиатуры и у состояния «готово». Второй акцентной кнопки на экране не бывает.
@@ -48,8 +49,9 @@ Montserrat, вшит в exe (`Program/Fonts/`, SIL Open Font License, текст
 | `Font.WeightBody` | Light (300) | весь текст по умолчанию |
 | `Font.WeightEmphasis` | Medium (500) | заголовки секций, версии в истории, текст активной шкалы, «Сохранить» в режиме правки имени |
 | `Font.SizeCaption` | 11 | футер, статус отчёта, абзацы «Что нового» — с интерлиньяжем `Font.LineHeightCaption` = 16 |
-| `Font.SizeBody` | 12 | подписи, значения полей, кнопки, пункты списков, заголовки секций (те — Medium, верхним регистром, цветом `TextMuted`) |
+| `Font.SizeBody` | 12 | подписи, значения полей, кнопки, пункты списков, заголовки секций (те — Medium, цветом `TextMuted`) |
 | `Font.SizeInput` | 14 | поле RAM |
+| `Font.SizeHeading` | 15 | заголовок диалога приёма мира |
 | `Font.SizeDisplay` | 22 | «Играть» / «Игра запущена» |
 
 Тонкий вес на тёмном фоне при 11–12 px «худеет», но окно масштабируется как одно полотно: на обычном окне в 1200 px тело — около 18 px реальных, где Light читается уверенно. Если где-то окажется тонко, меняется одна строка — `Font.WeightBody`.
@@ -58,11 +60,11 @@ Montserrat, вшит в exe (`Program/Fonts/`, SIL Open Font License, текст
 
 ## Отступы, размеры, форма
 
-Шкала отступов — пять шагов: `Space.1` 4, `Space.2` 8, `Space.3` 12, `Space.4` 16, `Space.5` 24. Для отступов, которые разметка пишет чаще всего, есть готовые `Thickness`: `Gap.Below1`, `Gap.Below2`, `Gap.Below4`, `Gap.Above2`, `Gap.Above4`, `Gap.Left2`, `Gap.Left3`, `Gap.Right2`, `Gap.Right5`, поле полотна `Gap.Canvas` (16); внутренние отступы контролов — `Pad.Control` (8,3), `Pad.Field` (8,2), `Pad.Text` (8,4).
+Шкала отступов — пять шагов: `Space.1` 4, `Space.2` 8, `Space.3` 12, `Space.4` 16, `Space.5` 24. Разметка не пишет чисел: для отступов есть готовые `Thickness` — односторонние `Gap.Below1`, `Gap.Below2`, `Gap.Below3`, `Gap.Below4`, `Gap.Above1`, `Gap.Above2`, `Gap.Above4`, `Gap.Left2`, `Gap.Left3`, `Gap.Left5`, `Gap.Right2`, `Gap.Right3`, двусторонние, названные по сторонам, — `Gap.Above2Right2`, `Gap.Left2Above2`, `Gap.Left3Right2`, `Gap.Left4Right1`, а также `Gap.None` и поле полотна `Gap.Canvas` (16); внутренние отступы контролов — `Pad.Control` (8,3), `Pad.Field` (8,2), `Pad.Text` (8,4), `Pad.Small` (8,0) для малой кнопки, `Pad.Wide` (16,4) для кнопок диалога, `Pad.None`. Новый отступ — сначала токен здесь и в `App.xaml`.
 
-Как раскладывать: между подписью и полем 8; между строками одной секции 8; между секциями 16; колонка истории отделена 24. Подписи всех блоков — одна колонка шириной `Size.LabelColumn` = 84 (Имя, Сборка, Мир, Игрок, Кому, Описание), чтобы левые края полей совпадали.
+Как раскладывать: между подписью и полем 8; между строками одной секции 8; между секциями 16; колонка истории отделена 24. Подписи всех блоков — одна колонка шириной `Size.LabelColumn` = 72 (Имя, Сборка, Мир, Игрок, Кому, Описание), чтобы левые края полей совпадали.
 
-Размеры: `Size.Control` 30 — кнопка, поле, список, шкала; `Size.Primary` 40 — «Играть»; `Size.Small` 24 — «Повторить» в футере; `Size.ButtonMin` 88 — «Передать», «Отправить», «Обновить», чтобы правый край образовывал колонку; `Size.Scrollbar` 8 — ползунок без стрелок; рамка `Size.BorderWidth` 1 (`Border.Control`), кольцо фокуса `Border.Focus` 1,5.
+Размеры: `Size.Control` 30 — кнопка, поле, список, шкала; `Size.Primary` 40 — «Играть»; `Size.Small` 24 — «Повторить» в футере; `Size.ButtonMin` 88 — «Передать», «Отправить», «Обновить», чтобы правый край образовывал колонку; `Size.TextArea` 96 — поле описания отчёта; `Size.PopupMax` 260 — предел высоты выпадающего списка; `Size.Scrollbar` 8 — ползунок без стрелок; колонки сетки — `Size.LabelColumn` 72, `Size.NumberField` 64 (поле RAM), `Size.HistoryColumn` 270 («Что нового»); рамка `Size.BorderWidth` 1 (`Border.Control`), кольцо фокуса `Border.Focus` 1,5, без рамки — `Border.None`.
 
 Форма: `Radius.Control` 6 у всех контролов, `Radius.Primary` 8 у «Играть», `Radius.Scrollbar` 4 у ползунка. Теней нет.
 
@@ -87,4 +89,5 @@ Montserrat, вшит в exe (`Program/Fonts/`, SIL Open Font License, текст
 ## Как проверять
 
 - `dotnet test Program.Tests -c Debug -p:SkipPortableIdentityAdapter=true` — `DesignTokensTests` (токены ↔ этот файл, шрифт в сборке, в разметке нет цветов), `WindowCanvasTests` (высота полотна = высоте левого столбца; после любой правки размеров или отступов в левом столбце перемерить `RootGrid.Height` и `Window Height`), `PeerDiagnosticUiAndDiscoveryTests` (структура окна).
-- Глазами — рендер настоящими контролами: `MeasureLayout` в scratchpad этой работы (net10-консоль, грузит `MainWindow.xaml` со сборкой лаунчера и пишет PNG); офлайн-рендер на Windows PowerShell подменяет выпадающий список и врёт по высоте на 6 px за список.
+- Глазами — рендер настоящими контролами: `MeasureLayout` в scratchpad этой работы (net10-консоль, грузит `MainWindow.xaml` со сборкой лаунчера и пишет PNG четырёх состояний: покой, подготовка, игра запущена, всё выключено); офлайн-рендер на Windows PowerShell подменяет выпадающий список и врёт по высоте на 6 px за список.
+- Полотно после редизайна: 820×544, окно 720×515 — измерено с Montserrat, не с Segoe UI (в тестах шрифт подставляется из `Program/Fonts` файловым URI).

@@ -6,18 +6,22 @@
         Width="520"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
-        ShowInTaskbar="False">
-    <StackPanel Margin="18">
+        ShowInTaskbar="False"
+        Style="{DynamicResource WindowStyle}">
+    <StackPanel Margin="{StaticResource Gap.Canvas}">
         <TextBlock Text="Принять мир от друга?"
-                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"/>
-        <TextBlock x:Name="ExplanationText" Margin="0,10,0,0" TextWrapping="Wrap"/>
-        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="11"
+                   FontSize="{StaticResource Font.SizeHeading}"
+                   Style="{StaticResource EmphasisTextStyle}"
+                   TextWrapping="Wrap"/>
+        <TextBlock x:Name="ExplanationText" Margin="{StaticResource Gap.Above2}" TextWrapping="Wrap"/>
+        <TextBlock Margin="{StaticResource Gap.Above2}"
+                   Style="{StaticResource ParagraphTextStyle}"
                    Text="Мир будет скопирован в Minecraft\Worlds. Ваши миры не изменятся. Если вы не ждёте передачу — откажитесь."/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
             <Button x:Name="AcceptButton" Content="Принять" IsDefault="True"
-                    Padding="16,4" Click="AcceptButton_Click"/>
+                    Padding="{StaticResource Pad.Wide}" Click="AcceptButton_Click"/>
             <Button x:Name="DeclineButton" Content="Отказаться" IsCancel="True"
-                    Margin="8,0,0,0" Padding="16,4" Click="DeclineButton_Click"/>
+                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}" Click="DeclineButton_Click"/>
         </StackPanel>
     </StackPanel>
 </Window>
