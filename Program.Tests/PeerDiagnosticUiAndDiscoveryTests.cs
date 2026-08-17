@@ -261,12 +261,13 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     /// <summary>
-    /// The pack's key layout is applied by one button, and it lives where the
-    /// build is chosen: same row, same grid, to the right of the list. It
+    /// The settings under the Play button are two halves of equal width: who
+    /// you are and what you play on the left, how it looks and what it may use
+    /// on the right. The preset button is the right half's second row, and it
     /// explains itself when it is off, so ShowOnDisabled is part of it.
     /// </summary>
     [Fact]
-    public void MainWindowXaml_PutsTheControlsPresetButtonBesideTheBuild()
+    public void MainWindowXaml_SplitsTheSettingsIntoTwoEqualHalves()
     {
         var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
         XNamespace presentation =
@@ -274,23 +275,50 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         XNamespace x =
             "http://schemas.microsoft.com/winfx/2006/xaml";
 
-        var builds = document
+        var settings = document
             .Descendants()
-            .Single(element => (string?)element.Attribute(x + "Name") == "BuildComboBox");
-        var button = document
-            .Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "PlayerNameTextBox")
+            .Ancestors(presentation + "Grid")
+            .First(grid => grid.Elements(presentation + "Grid.ColumnDefinitions").Any());
+        // The name row is itself a grid; the halves are its parent.
+        settings = settings.Ancestors(presentation + "Grid")
+            .First(grid => grid.Elements(presentation + "Grid.ColumnDefinitions").Any());
+        var widths = settings
+            .Elements(presentation + "Grid.ColumnDefinitions")
+            .Single()
+            .Elements()
+            .Select(column => (string?)column.Attribute("Width"))
+            .ToArray();
+        Assert.Equal(["1*", "1*"], widths.Select(width => width ?? string.Empty).ToArray());
+
+        // Which half a control lives in: the cell of whichever ancestor is a
+        // direct child of the halves grid.
+        (int Row, int Column) Cell(XElement element)
+        {
+            var cell = element.AncestorsAndSelf().First(candidate => candidate.Parent == settings);
+            return (
+                int.Parse((string?)cell.Attribute("Grid.Row") ?? "0", System.Globalization.CultureInfo.InvariantCulture),
+                int.Parse((string?)cell.Attribute("Grid.Column") ?? "0", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        var name = Cell(document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "PlayerNameTextBox"));
+        var build = Cell(document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "BuildComboBox"));
+        var skin = Cell(document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "SkinButton"));
+        var memory = Cell(document.Descendants().Single(e => (string?)e.Attribute(x + "Name") == "MemoryTextBox"));
+        var button = document.Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "ControlsPresetButton");
+        var preset = Cell(button);
+
+        // Left half: the name, then the build under it.
+        Assert.Equal((0, 0), name);
+        Assert.Equal((1, 0), build);
+        // Right half: the skin and the memory box share a row, the preset is under them.
+        Assert.Equal((0, 1), skin);
+        Assert.Equal((0, 1), memory);
+        Assert.Equal((1, 1), preset);
 
         Assert.Equal("Пресет настроек управления", (string?)button.Attribute("Content"));
         Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
-        // The list sits in a wrapper grid inside the row grid; the button is a
-        // direct child of that same row grid, in a later column.
-        var row = builds.Parent?.Parent;
-        Assert.NotNull(row);
-        Assert.Same(row, button.Parent);
-        var listColumn = int.Parse((string)builds.Parent!.Attribute("Grid.Column")!, System.Globalization.CultureInfo.InvariantCulture);
-        var buttonColumn = int.Parse((string)button.Attribute("Grid.Column")!, System.Globalization.CultureInfo.InvariantCulture);
-        Assert.True(buttonColumn > listColumn, $"list column {listColumn}, button column {buttonColumn}");
     }
 
     /// <summary>The Grid.Row of the nearest element that declares one.</summary>
