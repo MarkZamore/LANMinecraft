@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Markup;
@@ -72,13 +72,16 @@ public sealed class WindowCanvasTests
     private static Window LoadWindow()
     {
         var program = Path.GetDirectoryName(FindRepositoryFile("Program", "MainWindow.xaml"))!;
-        var resources = Regex.Match(
-            File.ReadAllText(Path.Combine(program, "App.xaml")),
-            @"<Application\.Resources>(.*)</Application\.Resources>",
-            RegexOptions.Singleline).Groups[1].Value;
+        var app = File.ReadAllText(Path.Combine(program, "App.xaml"));
+        var resources = Regex.Match(app, @"<Application\.Resources>(.*)</Application\.Resources>", RegexOptions.Singleline)
+            .Groups[1].Value;
+        // The tokens use namespaces App.xaml declares on its root; the window
+        // has to declare the same ones for the spliced resources to parse.
+        var namespaces = string.Concat(Regex.Matches(app, @"\sxmlns:(?!x=)[A-Za-z0-9]+=""[^""]*""")
+            .Select(match => match.Value));
 
         var xaml = File.ReadAllText(Path.Combine(program, "MainWindow.xaml"));
-        xaml = Regex.Replace(xaml, @"x:Class=""[^""]*""", "");
+        xaml = Regex.Replace(xaml, @"x:Class=""[^""]*""", namespaces);
         // Handlers live in the code-behind this loose copy does not have.
         xaml = Regex.Replace(
             xaml,
