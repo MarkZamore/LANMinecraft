@@ -73,6 +73,7 @@ public partial class MainWindow : Window
     private bool _transferActive;
     private bool _updateBusy;
     private bool _isEditingPlayerName;
+    private NameMarquee? _playerNameMarquee;
     private bool _startupComplete;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
@@ -97,6 +98,9 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
+        // A name too long for its field walks itself so the whole of it
+        // can be read; it holds still while the field is being edited.
+        _playerNameMarquee = new NameMarquee(PlayerNameTextBox);
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
@@ -2162,6 +2166,7 @@ public partial class MainWindow : Window
         PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
         ChangePlayerNameButton.IsEnabled = settingsEnabled;
         ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
+        _playerNameMarquee?.SetAllowed(!_isEditingPlayerName);
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         // Three states of one control: idle, preparing (the fill and the stage
