@@ -7,7 +7,8 @@ namespace Minecraft.Tests;
 /// The release is published by one workflow, and every step of it talks to the
 /// same API. A GitHub incident once ended a release twice over - a single 503
 /// on a call nobody had wrapped - so these keep the retry rule in place and
-/// prove it retries the right things.
+/// prove it retries the right things. The rest keep the workflow from quietly
+/// growing back the minutes that were taken out of it.
 /// </summary>
 public sealed class ReleaseWorkflowTests
 {
@@ -15,19 +16,135 @@ public sealed class ReleaseWorkflowTests
     [Fact]
     public void ReleaseWorkflow_CallsGhOnlyThroughTheRetryHelper()
     {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-
-        var bare = workflow
-            .Split('\n')
-            .Select((line, index) => (Text: line.TrimEnd('\r'), Number: index + 1))
-            .Where(line => !line.Text.TrimStart().StartsWith('#'))
-            .Where(line => Regex.IsMatch(line.Text, @"(?<![\w-])gh\s+(release|api|auth|run|workflow)\b"))
-            .Where(line => !line.Text.Contains("Invoke-Gh", StringComparison.Ordinal))
-            .Select(line => $"line {line.Number}: {line.Text.Trim()}")
-            .ToArray();
+        var bare = new List<string>();
+        foreach (var file in ReleaseScripts())
+        {
+            // The helper is where gh is finally called for real.
+            if (Path.GetFileName(file) == "GhRetry.ps1") continue;
+            bare.AddRange(Lines(File.ReadAllText(file))
+                .Select((line, index) => (Text: line, Number: index + 1))
+                .Where(line => !line.Text.TrimStart().StartsWith('#'))
+                .Where(line => Regex.IsMatch(line.Text, @"(?<![\w-])gh\s+(release|api|auth|run|workflow)\b"))
+                .Where(line => !line.Text.Contains("Invoke-Gh", StringComparison.Ordinal))
+                .Select(line => $"{Path.GetFileName(file)} line {line.Number}: {line.Text.Trim()}"));
+        }
 
         Assert.Empty(bare);
-        Assert.Contains("Invoke-Gh", workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "Invoke-Gh",
+            File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml")),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The .NET the image already carries is the .NET the release builds with;
+    /// downloading another SDK is a minute players spend waiting, so that step
+    /// is a fallback with a condition on it, not a fixture.
+    /// </summary>
+    [Fact]
+    public void TheSdkDownload_IsOnlyAFallback()
+    {
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+        var setup = workflow.Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
+            .Single(step => step.Contains("actions/setup-dotnet", StringComparison.Ordinal));
+
+        Assert.Contains("if:", setup, StringComparison.Ordinal);
+        Assert.Contains("preinstalled", setup, StringComparison.Ordinal);
+        // global.json decides which of the installed SDKs is used, so the
+        // fallback download and the preinstalled one agree on the version.
+        Assert.Contains("global-json-file: global.json", setup, StringComparison.Ordinal);
+        var globalJson = File.ReadAllText(FindRepositoryFile("global.json"));
+        Assert.Contains("\"rollForward\": \"latestFeature\"", globalJson, StringComparison.Ordinal);
+        Assert.Contains("10.0.", globalJson, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The delta tool is built once, in Prepare, and then run from its own
+    /// assembly: dotnet run would rebuild it for each of the four invocations.
+    /// </summary>
+    [Fact]
+    public void TheDeltaTool_IsBuiltOnceAndRunFromItsAssembly()
+    {
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+
+        var rebuilt = Lines(workflow)
+            .Where(line => !line.TrimStart().StartsWith('#'))
+            .Where(line => line.Contains("dotnet run", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Empty(rebuilt);
+        Assert.Contains("DeltaPatchTool.dll", workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "dotnet build Program\\Patch\\DeltaPatchTool.csproj -c Release --no-restore",
+            workflow,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The dependency audit lives in restore itself, for every project at once.
+    /// It replaced a listing step that printed findings and passed anyway, so
+    /// losing these properties would quietly lose the audit.
+    /// </summary>
+    [Fact]
+    public void TheDependencyAudit_IsPartOfEveryRestore()
+    {
+        var properties = File.ReadAllText(FindRepositoryFile("Directory.Build.props"));
+
+        Assert.Contains("<NuGetAudit>true</NuGetAudit>", properties, StringComparison.Ordinal);
+        Assert.Contains("<NuGetAuditMode>all</NuGetAuditMode>", properties, StringComparison.Ordinal);
+        foreach (var code in new[] { "NU1902", "NU1903", "NU1904" })
+        {
+            Assert.Contains(code, properties, StringComparison.Ordinal);
+        }
+
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+        Assert.DoesNotContain("--vulnerable", workflow, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Work that does not need other work runs beside it. A background job in
+    /// PowerShell reports failure only in its state, so every one of them is
+    /// waited for and then asked how it went - a job whose error is never
+    /// received is a release that ships without the thing the job was doing.
+    /// </summary>
+    [Fact]
+    public void EveryBackgroundJob_IsWaitedForAndChecked()
+    {
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+        var steps = workflow
+            .Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
+            .Where(step => step.Contains("Start-Job", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.NotEmpty(steps);
+        foreach (var step in steps)
+        {
+            var title = Lines(step).First().Trim();
+            Assert.True(step.Contains("Wait-Job", StringComparison.Ordinal), $"{title} never waits");
+            Assert.True(step.Contains("Receive-Job", StringComparison.Ordinal), $"{title} never receives");
+            Assert.True(
+                step.Contains("State -eq 'Failed'", StringComparison.Ordinal),
+                $"{title} never asks whether the job failed");
+        }
+    }
+
+    /// <summary>
+    /// A script started as a background job is invoked as a file, not handed
+    /// over as text: Start-Job -FilePath leaves $PSScriptRoot empty, and the
+    /// scripts find the retry helper next to themselves.
+    /// </summary>
+    [Fact]
+    public void BackgroundScripts_KeepTheirOwnDirectory()
+    {
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+
+        Assert.DoesNotContain("Start-Job -Name 'capture' -FilePath", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("-FilePath (Join-Path $env:GITHUB_WORKSPACE", workflow, StringComparison.Ordinal);
+        foreach (var script in new[] { "Capture-PreviousRelease.ps1", "Archive-PreviousBase.ps1" })
+        {
+            var text = File.ReadAllText(FindRepositoryFile(".github", "scripts", script));
+            Assert.Contains("$PSScriptRoot/GhRetry.ps1", text, StringComparison.Ordinal);
+            Assert.Contains("$env:GH_REPO", text, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Every step that calls gh dot-sources the helper first.</summary>
@@ -165,6 +282,21 @@ public sealed class ReleaseWorkflowTests
         }
 
         throw new InvalidOperationException("No PowerShell was found to run the release helper with.");
+    }
+
+    /// <summary>The text as lines, whichever way the file ends them.</summary>
+    private static IEnumerable<string> Lines(string text) =>
+        text.Split('\n').Select(line => line.TrimEnd('\r'));
+
+    /// <summary>Every PowerShell the release runs: the steps live in the YAML.</summary>
+    private static IEnumerable<string> ReleaseScripts()
+    {
+        yield return FindRepositoryFile(".github", "workflows", "release.yml");
+        var scripts = Path.GetDirectoryName(FindRepositoryFile(".github", "scripts", "GhRetry.ps1"))!;
+        foreach (var script in Directory.EnumerateFiles(scripts, "*.ps1").OrderBy(path => path))
+        {
+            yield return script;
+        }
     }
 
     private static string FindRepositoryFile(params string[] relativeParts)
