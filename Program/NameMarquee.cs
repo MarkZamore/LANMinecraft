@@ -19,9 +19,13 @@ internal readonly record struct MarqueeSchedule(TimeSpan Travel, TimeSpan Hold)
     // canvas is drawn. Slow enough to read a name letter by letter; the whole
     // window is scaled by its Viewbox, so a larger window walks it faster in
     // real pixels, which is what the eye expects.
-    private const double PixelsPerSecond = 30;
-    private static readonly TimeSpan ShortestTravel = TimeSpan.FromSeconds(0.4);
-    private static readonly TimeSpan RestAtEnd = TimeSpan.FromSeconds(1.2);
+    private const double PixelsPerSecond = 24;
+    // A name may hide only a letter - "MarkZamore" hides seven pixels of itself -
+    // and seven pixels crossed quickly is not motion, it is a flicker nobody
+    // notices. Every crossing takes at least this long, so the short ones drift
+    // slowly enough to be seen for what they are.
+    private static readonly TimeSpan ShortestTravel = TimeSpan.FromSeconds(1.5);
+    private static readonly TimeSpan RestAtEnd = TimeSpan.FromSeconds(0.9);
 
     /// <summary>The pace for a name whose tail hides <paramref name="distance"/> pixels.</summary>
     public static MarqueeSchedule For(double distance)

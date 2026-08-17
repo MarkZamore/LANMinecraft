@@ -20,21 +20,26 @@ public sealed class NameMarqueeTests
     [Fact]
     public void TheWalk_IsPacedByHowMuchIsHidden()
     {
-        var shortTail = MarqueeSchedule.For(30);
-        var longTail = MarqueeSchedule.For(60);
+        var shortTail = MarqueeSchedule.For(48);
+        var longTail = MarqueeSchedule.For(96);
 
-        Assert.Equal(TimeSpan.FromSeconds(1), shortTail.Travel);
-        Assert.Equal(TimeSpan.FromSeconds(2), longTail.Travel);
+        Assert.Equal(TimeSpan.FromSeconds(2), shortTail.Travel);
+        Assert.Equal(TimeSpan.FromSeconds(4), longTail.Travel);
         Assert.Equal(shortTail.Hold, longTail.Hold);
         Assert.Equal(longTail.Hold + longTail.Travel + longTail.Hold + longTail.Travel, longTail.Cycle);
     }
 
-    /// <summary>A tail of a few pixels still takes long enough to be seen as motion.</summary>
+    /// <summary>
+    /// A tail of a few pixels is the common case - a name one letter too long -
+    /// and it has to be slow enough to be seen as movement rather than a blink.
+    /// </summary>
     [Fact]
-    public void AVeryShortWalk_IsSlowedToARest()
+    public void AVeryShortWalk_IsSlowedDownUntilItReads()
     {
-        Assert.Equal(TimeSpan.FromSeconds(0.4), MarqueeSchedule.For(2).Travel);
-        Assert.Equal(TimeSpan.FromSeconds(0.4), MarqueeSchedule.For(0).Travel);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), MarqueeSchedule.For(7).Travel);
+        Assert.Equal(TimeSpan.FromSeconds(1.5), MarqueeSchedule.For(0).Travel);
+        Assert.True(MarqueeSchedule.For(7).Cycle > TimeSpan.FromSeconds(4),
+            "a seven pixel walk that is over in a moment is the flicker this was written to avoid");
     }
 
     /// <summary>
