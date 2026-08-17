@@ -86,6 +86,7 @@ public partial class MainWindow : Window
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
     private ControlsPresetService? _controlsPreset;
+    private ResourcePackDefaultsService? _resourcePackDefaults;
     private ControlsPresetStatus _controlsPresetStatus;
 
     /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
@@ -140,6 +141,7 @@ public partial class MainWindow : Window
             _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
+            _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
             _steamClient = new SteamClientService(
                 new SteamworksApiFacade(),
                 new SteamNativeLibraryService(_paths, _logger),
