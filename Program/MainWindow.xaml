@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Minecraft"
-        Title="LANMinecraft" Width="720" Height="442" MinWidth="600" MinHeight="300"
+        Title="LANMinecraft" Width="720" Height="463" MinWidth="600" MinHeight="300"
         WindowStartupLocation="CenterScreen"
         Icon="Minecraft.ico" Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
@@ -87,7 +87,7 @@
     </Window.Resources>
 
     <Viewbox Stretch="Uniform" StretchDirection="Both">
-        <Grid x:Name="RootGrid" Width="820" Height="458" Margin="14">
+        <Grid x:Name="RootGrid" Width="820" Height="483" Margin="14">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1*"/>
                 <ColumnDefinition Width="1*"/>
@@ -127,32 +127,61 @@
                 </Button>
             </Grid>
 
+            <!-- Two halves of equal width: on the left who you are and what you
+                 play, on the right how it looks, how much memory it may use and
+                 the pack's key layout. -->
             <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,10">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="1.1*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="1.4*"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="Имя"/>
-                <TextBox Grid.Row="0" Grid.Column="1" x:Name="PlayerNameTextBox"
-                         MaxLength="16"
-                         IsReadOnly="True"
-                         TextChanged="PlayerNameTextBox_TextChanged"
-                         PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
-                         DataObject.Pasting="PlayerNameTextBox_Pasting"
-                         LostFocus="PlayerNameTextBox_LostFocus"
-                         KeyDown="PlayerNameTextBox_KeyDown"
-                         Margin="8,0,6,0"/>
-                <Button Grid.Row="0" Grid.Column="2" x:Name="ChangePlayerNameButton"
-                        Content="Изменить" Click="ChangePlayerNameButton_Click"
-                        MinWidth="72" Margin="0,0,12,0"/>
-                <Grid Grid.Row="0" Grid.Column="3" Grid.ColumnSpan="2" Margin="8,0,0,0">
+
+                <Grid Grid.Row="0" Grid.Column="0" Margin="0,0,6,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Имя"/>
+                    <TextBox Grid.Column="1" x:Name="PlayerNameTextBox"
+                             MaxLength="16"
+                             IsReadOnly="True"
+                             TextChanged="PlayerNameTextBox_TextChanged"
+                             PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
+                             DataObject.Pasting="PlayerNameTextBox_Pasting"
+                             LostFocus="PlayerNameTextBox_LostFocus"
+                             KeyDown="PlayerNameTextBox_KeyDown"
+                             Margin="8,0,6,0"/>
+                    <Button Grid.Column="2" x:Name="ChangePlayerNameButton"
+                            Content="Изменить" Click="ChangePlayerNameButton_Click"
+                            MinWidth="72"/>
+                </Grid>
+
+                <Grid Grid.Row="1" Grid.Column="0" Margin="0,10,6,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Сборка"/>
+                    <Grid Grid.Column="1" Margin="8,0,0,0">
+                        <local:CenteredDropDown x:Name="BuildComboBox"
+                                                ItemTemplate="{StaticResource BuildItemTemplate}"
+                                                SelectionChanged="BuildComboBox_SelectionChanged"/>
+                        <TextBlock x:Name="BuildPlaceholderText"
+                                   Text="Нет сборок"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsHitTestVisible="False"
+                                   Visibility="Collapsed"/>
+                    </Grid>
+                </Grid>
+
+                <Grid Grid.Row="0" Grid.Column="1" Margin="6,0,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -168,34 +197,15 @@
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
                     <TextBlock Grid.Column="3" Text="GB" Margin="6,0,0,0"/>
                 </Grid>
-                <!-- The build, and beside it the pack's key layout: one press writes
-                     the layout into the game's options, and the button stays put
-                     until something - the player in game, or the pack - changes it. -->
-                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Margin="0,10,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Сборка"/>
-                    <Grid Grid.Column="1" Margin="8,0,0,0">
-                        <local:CenteredDropDown x:Name="BuildComboBox"
-                                                ItemTemplate="{StaticResource BuildItemTemplate}"
-                                                SelectionChanged="BuildComboBox_SelectionChanged"/>
-                        <TextBlock x:Name="BuildPlaceholderText"
-                                   Text="Нет сборок"
-                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   IsHitTestVisible="False"
-                                   Visibility="Collapsed"/>
-                    </Grid>
-                    <Button Grid.Column="2" x:Name="ControlsPresetButton"
-                            Content="Пресет настроек управления"
-                            Click="ControlsPresetButton_Click"
-                            Margin="8,0,0,0"
-                            ToolTipService.ShowOnDisabled="True"/>
-                </Grid>
+
+                <!-- One press writes the pack's key layout into the game's options,
+                     and the button stays quiet until something - the player in
+                     game, or the pack - changes what is there. -->
+                <Button Grid.Row="1" Grid.Column="1" x:Name="ControlsPresetButton"
+                        Content="Пресет настроек управления"
+                        Click="ControlsPresetButton_Click"
+                        Margin="6,10,0,0"
+                        ToolTipService.ShowOnDisabled="True"/>
             </Grid>
 
             <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,0,16,6">
