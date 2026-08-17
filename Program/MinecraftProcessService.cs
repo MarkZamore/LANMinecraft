@@ -268,7 +268,7 @@ public sealed class MinecraftProcessService
         // before the startup window closes, so the exit code travels through
         // the completion source instead of the Process.
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = MonitorClientExitAsync(minecraftProcess, settings.ClientRelativePath, exitCode);
+        _ = MonitorClientExitAsync(minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -286,7 +286,9 @@ public sealed class MinecraftProcessService
     private async Task MonitorClientExitAsync(
         Process process,
         string packRelativePath,
-        TaskCompletionSource<int> exitCode)
+        TaskCompletionSource<int> exitCode,
+        StartupOutputBuffer startupOutput,
+        string gameDir)
     {
         var processId = process.Id;
         try
@@ -300,6 +302,12 @@ public sealed class MinecraftProcessService
             }
             finally
             {
+                // A game that dies after the two second startup window used to
+                // leave no trace at all: the window had closed, so nobody
+                // reported the exit code and nobody kept what the process said
+                // on its way out. Everything known about it goes to the log the
+                // moment it happens.
+                ReportUnexpectedExit(process, startupOutput, gameDir);
                 // Published before any cleanup so the launch method never has
                 // to read the Process object this monitor is about to dispose.
                 TryPublishExitCode(process, exitCode);
@@ -329,6 +337,23 @@ public sealed class MinecraftProcessService
             {
                 NotifyClientRunningChanged(false);
             }
+        }
+    }
+
+    private void ReportUnexpectedExit(Process process, StartupOutputBuffer startupOutput, string gameDir)
+    {
+        try
+        {
+            if (process.ExitCode == 0) return;
+            _logger.Warn(
+                $"Minecraft exited with code {process.ExitCode}." +
+                startupOutput.Describe() +
+                ReadLatestLogTail(gameDir));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or SystemException)
+        {
+            // A process whose exit code cannot be read tells us nothing worth
+            // failing the cleanup over.
         }
     }
 
