@@ -74,6 +74,8 @@ public partial class MainWindow : Window
     private bool _updateBusy;
     private bool _isEditingPlayerName;
     private NameMarquee? _playerNameMarquee;
+    private ChangelogPager? _changelogPager;
+    private readonly ObservableCollection<ChangelogEntryViewModel> _changelogShown = [];
     private bool _startupComplete;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
@@ -1076,6 +1078,10 @@ public partial class MainWindow : Window
             }
 
             await RefreshPackHashAsync();
+            // Before the game reads its options: a mapping written twice stops
+            // NeoForge before its loading window, and the player cannot reach
+            // the preset button to fix it because the preset counts as applied.
+            RepairInstanceOptions();
             RefreshControlsPresetStatus();
             if (_localPackHash == "missing")
             {
@@ -1136,6 +1142,18 @@ public partial class MainWindow : Window
     /// change: a build is picked, the pack syncs, the game exits, the button
     /// is pressed.
     /// </summary>
+    private void RepairInstanceOptions()
+    {
+        var directories = ResolveSelectedBuildDirectories();
+        if (directories is null) return;
+        var removed = _controlsPreset?.RemoveDuplicateMappings(directories.Value.Instance) ?? 0;
+        if (removed > 0) SetState($"Repaired the controls file: {removed} repeated line(s)");
+        // The pack's own resource packs are switched on once, for an instance
+        // that has played before and would otherwise get the files and never
+        // see them selected. Afterwards the choice belongs to the player.
+        _resourcePackDefaults?.Apply(directories.Value.Pack, directories.Value.Instance);
+    }
+
     private void RefreshControlsPresetStatus()
     {
         var directories = ResolveSelectedBuildDirectories();
@@ -1799,10 +1817,33 @@ public partial class MainWindow : Window
     private void LoadChangelog()
     {
         var entries = ChangelogService.Load(_logger);
-        ChangelogList.ItemsSource = entries
-            .Select(entry => new ChangelogEntryViewModel { Version = entry.Version, Text = entry.Text })
-            .ToList();
+        _changelogPager = new ChangelogPager(entries);
+        _changelogShown.Clear();
+        ChangelogList.ItemsSource = _changelogShown;
+        ShowMoreChangelog();
         ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // The history only grows, so the panel takes it a page at a time and
+        // asks for the next one when the reader reaches the end of this one.
+        ChangelogScroll.ScrollChanged += ChangelogScroll_ScrollChanged;
+    }
+
+    private void ShowMoreChangelog()
+    {
+        if (_changelogPager is null) return;
+        foreach (var entry in _changelogPager.Next())
+        {
+            _changelogShown.Add(new ChangelogEntryViewModel { Version = entry.Version, Text = entry.Text });
+        }
+    }
+
+    private void ChangelogScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_changelogPager is null || !_changelogPager.HasMore) return;
+        // "Near the end" rather than "at the end": the last entry should not
+        // have to touch the bottom edge before the next page starts arriving.
+        var remaining = e.ExtentHeight - e.VerticalOffset - e.ViewportHeight;
+        if (remaining > e.ViewportHeight / 2) return;
+        ShowMoreChangelog();
     }
 
     private void InitializeUpdateUi()
