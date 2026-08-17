@@ -227,6 +227,65 @@ public sealed class ControlsPresetService(Logger? logger = null)
         return (text, changed);
     }
 
+    /// <summary>
+    /// Drops repeated <c>key_</c> lines from an instance's options, whoever
+    /// wrote them, and says how many went.
+    ///
+    /// One repeated line stops NeoForge in DisplayWindow.initialize with
+    /// "Duplicate key ... attempted merging values" - before the loading window,
+    /// before any mod, with nothing in the game's own log to show for it. The
+    /// game writes this file itself and a mod's key can end up in it twice, so
+    /// this runs before every launch rather than only when the preset is
+    /// applied: a player whose file is already broken never gets to press that
+    /// button, because the preset counts as applied and the button is off.
+    /// </summary>
+    public int RemoveDuplicateMappings(string instanceDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(instanceDirectory);
+        var optionsPath = Path.Combine(instanceDirectory, OptionsFileName);
+        try
+        {
+            if (!File.Exists(optionsPath)) return 0;
+            var (text, removed) = WithoutDuplicateMappings(File.ReadAllText(optionsPath, Utf8NoBom));
+            if (removed == 0) return 0;
+            AtomicFile.WriteAllText(optionsPath, text, Utf8NoBom);
+            logger?.Info($"Removed {removed} repeated key line(s) from {optionsPath}; that pair stops the game before its loading window.");
+            return removed;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger?.Warn($"The instance options could not be repaired ({ex.Message}): {optionsPath}");
+            return 0;
+        }
+    }
+
+    /// <summary>The same options text with only the first line of each mapping.</summary>
+    public static (string Text, int Removed) WithoutDuplicateMappings(string options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var endsWithNewline = options.Length == 0 || options.EndsWith('\n');
+        var lines = options.Length == 0
+            ? []
+            : options.TrimEnd('\r', '\n').Split('\n').Select(line => line.TrimEnd('\r')).ToList();
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var removed = 0;
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var mapping = ParseMappingLine(lines[index]);
+            if (mapping is null) continue;
+            if (seen.Add(mapping.Value.Name)) continue;
+            lines.RemoveAt(index--);
+            removed++;
+        }
+        if (removed == 0) return (options, 0);
+
+        var text = string.Join(newline, lines);
+        if (lines.Count > 0 && endsWithNewline) text += newline;
+        return (text, removed);
+    }
+
     /// <summary>The key mappings an options file holds, by name.</summary>
     internal static Dictionary<string, string> ReadMappings(string options)
     {

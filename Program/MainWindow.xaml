@@ -281,7 +281,8 @@
                 </Grid.RowDefinitions>
                 <TextBlock Grid.Row="0" Text="Что нового" Style="{StaticResource SectionTitleStyle}"/>
                 <Grid Grid.Row="1" Margin="{StaticResource Gap.Below2}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                    <ScrollViewer x:Name="ChangelogScroll"
+                                  VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled"
                                   Padding="{StaticResource Gap.Right3}">
                         <ItemsControl x:Name="ChangelogList"
