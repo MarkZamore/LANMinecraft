@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -189,10 +189,22 @@ public sealed class ControlsPresetService(Logger? logger = null)
 
         var changed = 0;
         var lastKeyLine = -1;
+        // A file may already carry the same mapping twice, and one repeated
+        // key_ line is fatal: NeoForge reads these into a map and stops before
+        // its loading window with "Duplicate key ... attempted merging values".
+        // The game never shows that file to anyone, so this is the only place
+        // it can be healed - and it heals every mapping, not only ours.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var index = 0; index < lines.Count; index++)
         {
             var mapping = ParseMappingLine(lines[index]);
             if (mapping is null) continue;
+            if (!seen.Add(mapping.Value.Name))
+            {
+                lines.RemoveAt(index--);
+                changed++;
+                continue;
+            }
             lastKeyLine = index;
             if (!wanted.TryGetValue(mapping.Value.Name, out var value)) continue;
             wanted.Remove(mapping.Value.Name);
