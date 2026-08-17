@@ -102,7 +102,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     [Fact]
-    public void MainWindowXaml_HostsTheDiagnosticsPanelInItsOwnColumn()
+    public void MainWindowXaml_HostsTheBugReportBlockBetweenTransferAndUpdates()
     {
         var xamlPath = FindRepositoryFile("Program", "MainWindow.xaml");
         var document = XDocument.Load(xamlPath);
@@ -140,12 +140,67 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             document.Descendants(presentation + "TextBox"),
             element => (string?)element.Attribute(x + "Name") == "BugReportMessageTextBox");
 
-        // The panel owns the right-hand column, so it never competes for space
-        // with the play/pack controls.
+        // The block sits with the things a player does: after sending a world,
+        // before the bars that show what the launcher itself is doing.
         var panel = title.Parent;
         Assert.NotNull(panel);
-        Assert.Equal("2", (string?)panel.Attribute("Grid.Column"));
+        Assert.Equal("0", (string?)panel.Attribute("Grid.Column"));
+        Assert.Equal("2", (string?)panel.Attribute("Grid.ColumnSpan"));
+        var transferRow = RowOf(document.Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "TransferButton"));
+        var updateRow = RowOf(document.Descendants(presentation + "ProgressBar")
+            .Single(element => (string?)element.Attribute(x + "Name") == "UpdateProgressBar"));
+        var reportRow = RowOf(panel);
+        Assert.True(
+            transferRow < reportRow && reportRow < updateRow,
+            $"transfer row {transferRow}, report row {reportRow}, update row {updateRow}");
     }
+
+    /// <summary>
+    /// The right column is the version history: one list, scrollable, in the
+    /// place the bug report used to occupy. Steam is no longer a panel there.
+    /// </summary>
+    [Fact]
+    public void MainWindowXaml_HostsTheChangelogInTheRightColumn()
+    {
+        var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
+        XNamespace presentation =
+            "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x =
+            "http://schemas.microsoft.com/winfx/2006/xaml";
+
+        var title = document
+            .Descendants(presentation + "TextBlock")
+            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Что нового");
+        Assert.NotNull(title);
+        Assert.Equal("2", (string?)title.Parent?.Attribute("Grid.Column"));
+
+        var list = document
+            .Descendants(presentation + "ItemsControl")
+            .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "ChangelogList");
+        Assert.NotNull(list);
+        Assert.NotEmpty(list.Ancestors(presentation + "ScrollViewer"));
+
+        Assert.DoesNotContain(
+            document.Descendants(),
+            element => (string?)element.Attribute(x + "Name") is "SteamProblemPanel" or "SteamStatusText");
+        // Steam is one spot in the footer: the name, or the button that retries.
+        Assert.Contains(
+            document.Descendants(presentation + "TextBlock"),
+            element => (string?)element.Attribute(x + "Name") == "SteamPersonaText");
+        Assert.Contains(
+            document.Descendants(presentation + "Button"),
+            element =>
+                (string?)element.Attribute(x + "Name") == "RetrySteamButton" &&
+                (string?)element.Attribute("Content") == "Повторить");
+    }
+
+    /// <summary>The Grid.Row of the nearest element that declares one.</summary>
+    private static int RowOf(XElement element) =>
+        int.Parse(
+            (string)element.AncestorsAndSelf().First(candidate => candidate.Attribute("Grid.Row") is not null)
+                .Attribute("Grid.Row")!,
+            System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>The IP picker is gone from the window, not merely hidden.</summary>
     [Fact]
@@ -154,7 +209,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         var xaml = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
 
         Assert.DoesNotContain("NetworkAddress", xaml, StringComparison.Ordinal);
-        Assert.Contains("SteamStatusText", xaml, StringComparison.Ordinal);
+        Assert.Contains("RetrySteamButton", xaml, StringComparison.Ordinal);
     }
 
     private static PeerViewModel NewPeer()

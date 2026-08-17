@@ -17,6 +17,16 @@ public sealed class WindowPlacementService
     private const uint ShowMaximized = 3;
     private const uint RestoreToMaximized = 0x0002;
     private const uint MonitorDefaultToNearest = 0x00000002;
+    private const int WmSizing = 0x0214;
+    private const int SizingLeft = 1;
+    private const int SizingRight = 2;
+    private const int SizingTop = 3;
+    private const int SizingTopLeft = 4;
+    private const int SizingTopRight = 5;
+    private const int SizingBottom = 6;
+    private const int SizingBottomLeft = 7;
+    private const int GwlStyle = -16;
+    private const int WsMaximizeBox = 0x00010000;
     private readonly string _placementFile;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -36,12 +46,52 @@ public sealed class WindowPlacementService
         window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         var saved = TryRead();
-        if (saved is null)
+        window.SourceInitialized += (_, _) =>
         {
-            return;
-        }
+            KeepSquare(window);
+            if (saved is not null) ApplyAfterSourceInitialized(window, saved);
+        };
+    }
 
-        window.SourceInitialized += (_, _) => ApplyAfterSourceInitialized(window, saved);
+    /// <summary>
+    /// The window is a square: the canvas behind its Viewbox is square, so any
+    /// other shape is empty bands. Resizing from an edge sets the other side to
+    /// match; from a corner the larger side wins. Maximising cannot be square,
+    /// so its button goes.
+    /// </summary>
+    private static void KeepSquare(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero) return;
+        var style = GetWindowLong(handle, GwlStyle);
+        SetWindowLong(handle, GwlStyle, style & ~WsMaximizeBox);
+        HwndSource.FromHwnd(handle)?.AddHook(SquareSizingHook);
+    }
+
+    private static IntPtr SquareSizingHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != WmSizing) return IntPtr.Zero;
+        var rect = Marshal.PtrToStructure<NativeRect>(lParam);
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+        if (width == height) return IntPtr.Zero;
+
+        var edge = (int)wParam;
+        var side = edge switch
+        {
+            SizingLeft or SizingRight => width,
+            SizingTop or SizingBottom => height,
+            _ => Math.Max(width, height)
+        };
+        // Grow or shrink away from the edge being dragged, so the opposite
+        // edge - the one the player is not holding - is the one that moves.
+        if (edge is SizingLeft or SizingTopLeft or SizingBottomLeft) rect.Left = rect.Right - side;
+        else rect.Right = rect.Left + side;
+        if (edge is SizingTop or SizingTopLeft or SizingTopRight) rect.Top = rect.Bottom - side;
+        else rect.Bottom = rect.Top + side;
+        Marshal.StructureToPtr(rect, lParam, false);
+        handled = true;
+        return (IntPtr)1;
     }
 
     public void Save(Window window)
@@ -95,12 +145,13 @@ public sealed class WindowPlacementService
         {
             var handle = new WindowInteropHelper(window).Handle;
             var dpiScale = Math.Max(1d, GetDpiForWindow(handle) / 96d);
+            var side = Math.Min(saved.Right - saved.Left, saved.Bottom - saved.Top);
             var bounds = ClampToNearestWorkArea(new NativeRect
             {
                 Left = saved.Left,
                 Top = saved.Top,
-                Right = saved.Right,
-                Bottom = saved.Bottom
+                Right = saved.Left + side,
+                Bottom = saved.Top + side
             },
             (int)Math.Ceiling(window.MinWidth * dpiScale),
             (int)Math.Ceiling(window.MinHeight * dpiScale));
@@ -110,7 +161,8 @@ public sealed class WindowPlacementService
             }
 
             var placement = WindowPlacement.Create();
-            placement.ShowCommand = saved.Maximized ? ShowMaximized : ShowNormal;
+            // A maximised window is not square; it comes back at its normal size.
+            placement.ShowCommand = ShowNormal;
             placement.NormalPosition = bounds;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             SetWindowPlacement(handle, ref placement);
@@ -200,6 +252,12 @@ public sealed class WindowPlacementService
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong(IntPtr window, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong(IntPtr window, int index, int value);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     [return: MarshalAs(UnmanagedType.Bool)]
