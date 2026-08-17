@@ -98,9 +98,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
-        // A name too long for its field walks itself so the whole of it
-        // can be read; it holds still while the field is being edited.
-        _playerNameMarquee = new NameMarquee(PlayerNameTextBox, RequireLogger());
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
@@ -126,6 +123,11 @@ public partial class MainWindow : Window
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
             _logger = new Logger(_paths.LogFile);
+            // A name too long for its field walks itself so the whole of it can
+            // be read; it holds still while the field is being edited. It is
+            // built here rather than in the constructor because it reports what
+            // it measures, and there is no logger to report to until now.
+            _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
             LoadChangelog();
             DeprecatedFileCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
