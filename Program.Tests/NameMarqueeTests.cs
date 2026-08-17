@@ -37,6 +37,23 @@ public sealed class NameMarqueeTests
         Assert.Equal(TimeSpan.FromSeconds(0.4), MarqueeSchedule.For(0).Travel);
     }
 
+    /// <summary>
+    /// A drawn field knows exactly how much of the name it is hiding, and that
+    /// answer wins: the room inside a TextBox is not its width less padding and
+    /// border, and guessing it that way once cost a real name its walk.
+    /// </summary>
+    [Fact]
+    public void TheFieldsOwnAnswer_WinsOverTheGuess()
+    {
+        // The numbers a real launcher window reports for "MarkZamore": the field
+        // hides 7 pixels of it, while padding and border suggest 13 to spare.
+        Assert.Equal(7.1, NameMarquee.HiddenTail(extentWidth: 76.8, viewportWidth: 69.7, textWidth: 76.8, room: 89.7), 3);
+        // Before the first layout the field has nothing to say, so the guess stands.
+        Assert.Equal(20, NameMarquee.HiddenTail(extentWidth: 0, viewportWidth: 0, textWidth: 100, room: 80), 3);
+        // And a name that fits hides nothing, never a negative tail.
+        Assert.Equal(0, NameMarquee.HiddenTail(extentWidth: 40, viewportWidth: 80, textWidth: 40, room: 80), 3);
+    }
+
     /// <summary>A name that fits stands still; the field is left where it was.</summary>
     [Fact]
     public void AName_ThatFits_DoesNotMove()
