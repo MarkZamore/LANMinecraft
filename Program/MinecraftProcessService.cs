@@ -34,18 +34,43 @@ public sealed class MinecraftProcessService
         environment.Remove(SteamworksApiFacade.NoOverlayVariable);
     }
 
-    public static IReadOnlyList<string> JavaCompatibilityArguments { get; } = Array.AsReadOnly<string>(
-    [
-        "--illegal-native-access=allow",
-        "--enable-native-access=ALL-UNNAMED",
-        "--sun-misc-unsafe-memory-access=allow",
-        // Product flag since JDK 25 (JEP 519): smaller object headers typically
-        // cut a modded heap by 10-20%, which means fewer and shorter G1 cycles.
-        "-XX:+UseCompactObjectHeaders"
-    ]);
+    /// <summary>
+    /// The options one feature release of Java needs to run a modded game, and
+    /// none it does not: a JVM refuses to start on an option it never heard of,
+    /// so this list follows the pinned runtime rather than leading it.
+    /// </summary>
+    /// <param name="javaMajorVersion">The feature release the game will run on.</param>
+    public static IReadOnlyList<string> CompatibilityArgumentsFor(int javaMajorVersion)
+    {
+        var arguments = new List<string>();
+        if (javaMajorVersion >= 24)
+        {
+            // JEP 472 and JEP 498 turned the native calls and the sun.misc.Unsafe
+            // memory access a modded stack lives on into warnings, then errors.
+            arguments.Add("--illegal-native-access=allow");
+            arguments.Add("--enable-native-access=ALL-UNNAMED");
+            arguments.Add("--sun-misc-unsafe-memory-access=allow");
+        }
+        if (javaMajorVersion >= 25)
+        {
+            // Product flag since JDK 25 (JEP 519): smaller object headers typically
+            // cut a modded heap by 10-20%, which means fewer and shorter G1 cycles.
+            arguments.Add("-XX:+UseCompactObjectHeaders");
+        }
+        return arguments.AsReadOnly();
+    }
+
+    /// <summary>
+    /// What the game is launched with on the pinned runtime, and what the
+    /// install-time flag probe checks that runtime against. Java 21 is the
+    /// release 1.21.1 and its mods were built for and needs none of the above.
+    /// </summary>
+    public static IReadOnlyList<string> JavaCompatibilityArguments { get; } =
+        CompatibilityArgumentsFor(PortableJavaRuntimeService.PinnedMajorVersion);
 
     private readonly GameLogConfigurationService _gameLogConfiguration;
     private readonly AppPaths _paths;
+    private readonly ClientPresenceService _presence;
     private readonly Logger _logger;
     private readonly IIdentityService _identityService;
     private readonly PortableIdentityAdapterService _identityAdapter;
@@ -84,6 +109,7 @@ public sealed class MinecraftProcessService
     {
         _paths = paths;
         _logger = logger;
+        _presence = new ClientPresenceService(paths, logger);
         _gameLogConfiguration = new GameLogConfigurationService(logger);
         _identityService = identityService;
         _identityAdapter = identityAdapter;
@@ -260,6 +286,9 @@ public sealed class MinecraftProcessService
         }
 
         var processId = minecraftProcess.Id;
+        // Written down before anything else can go wrong: a launcher restarted
+        // while this game plays reads it and knows not to offer another.
+        _presence.Remember(minecraftProcess, settings.ClientRelativePath);
         if (_activeClientProcesses.TryAdd(processId, 0) && _activeClientProcesses.Count == 1)
         {
             NotifyClientRunningChanged(true);
@@ -332,6 +361,7 @@ public sealed class MinecraftProcessService
             // startup wait; 0 keeps the crash path silent rather than inventing
             // an exit code for a process whose state is unknown.
             exitCode.TrySetResult(0);
+            _presence.Forget(processId);
             CleanupJavaTemporaryDirectory(packRelativePath);
             if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
             {
@@ -426,6 +456,36 @@ public sealed class MinecraftProcessService
     private static void TryDeleteDirectoryIfEmpty(string path)
     {
         if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
+    }
+
+    /// <summary>
+    /// Picks up the games a previous launcher left running, so this one shows
+    /// "Игра запущена" instead of offering to start a second client over the
+    /// first. Returns how many were found.
+    /// </summary>
+    public int AdoptRunningClients()
+    {
+        var adopted = 0;
+        foreach (var session in _presence.ReadLiveSessions())
+        {
+            Process process;
+            try
+            {
+                process = Process.GetProcessById(session.ProcessId);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                continue;
+            }
+            if (!_activeClientProcesses.TryAdd(session.ProcessId, 0)) { process.Dispose(); continue; }
+            adopted++;
+            _logger.Info($"A game started by an earlier launcher is still running (process {session.ProcessId}, {session.PackRelativePath}).");
+            var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ = MonitorClientExitAsync(process, session.PackRelativePath, exitCode, new StartupOutputBuffer(),
+                _paths.CombineUnderInstances(session.PackRelativePath));
+        }
+        if (adopted > 0) NotifyClientRunningChanged(true);
+        return adopted;
     }
 
     private void NotifyClientRunningChanged(bool isRunning)

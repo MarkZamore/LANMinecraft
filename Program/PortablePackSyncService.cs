@@ -399,7 +399,7 @@ public sealed partial class PortablePackSyncService
             var bounded = Math.Clamp(current, 0, totalBytes);
             progress?.Report(new RuntimePreparationProgress(
                 RuntimePreparationStage.SyncingPack,
-                "Обновление сборки",
+                "Обновление",
                 totalBytes > 0 ? (double)bounded / totalBytes : null,
                 bounded,
                 totalBytes));
@@ -407,7 +407,7 @@ public sealed partial class PortablePackSyncService
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.SyncingPack,
-            "Обновление сборки",
+            "Обновление",
             totalBytes > 0 ? 0d : null,
             0,
             totalBytes));
