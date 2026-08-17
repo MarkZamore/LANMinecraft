@@ -57,6 +57,12 @@
         <SolidColorBrush x:Key="Brush.ProgressFill" Color="{StaticResource Color.ProgressFill}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumb" Color="{StaticResource Color.ScrollThumb}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumbHover" Color="{StaticResource Color.ScrollThumbHover}"/>
+        <!-- The moving highlight of an indeterminate bar: the fill, fading at both ends -->
+        <LinearGradientBrush x:Key="Brush.ProgressGlow" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="{StaticResource Color.ProgressTrack}" Offset="0"/>
+            <GradientStop Color="{StaticResource Color.ProgressFill}" Offset="0.5"/>
+            <GradientStop Color="{StaticResource Color.ProgressTrack}" Offset="1"/>
+        </LinearGradientBrush>
 
         <!-- ===== Type ===== -->
         <!-- Montserrat, embedded; the assembly is named so the same URI resolves
@@ -67,6 +73,7 @@
         <sys:Double x:Key="Font.SizeCaption">11</sys:Double>
         <sys:Double x:Key="Font.SizeBody">12</sys:Double>
         <sys:Double x:Key="Font.SizeInput">14</sys:Double>
+        <sys:Double x:Key="Font.SizeHeading">15</sys:Double>
         <sys:Double x:Key="Font.SizeDisplay">22</sys:Double>
         <sys:Double x:Key="Font.LineHeightCaption">16</sys:Double>
 
@@ -78,42 +85,464 @@
         <sys:Double x:Key="Space.4">16</sys:Double>
         <sys:Double x:Key="Space.5">24</sys:Double>
         <!-- The same scale as Thickness, for the Margins the markup writes most -->
+        <Thickness x:Key="Gap.None">0</Thickness>
         <Thickness x:Key="Gap.Below1">0,0,0,4</Thickness>
         <Thickness x:Key="Gap.Below2">0,0,0,8</Thickness>
+        <Thickness x:Key="Gap.Below3">0,0,0,12</Thickness>
         <Thickness x:Key="Gap.Below4">0,0,0,16</Thickness>
+        <Thickness x:Key="Gap.Above1">0,4,0,0</Thickness>
         <Thickness x:Key="Gap.Above2">0,8,0,0</Thickness>
         <Thickness x:Key="Gap.Above4">0,16,0,0</Thickness>
         <Thickness x:Key="Gap.Left2">8,0,0,0</Thickness>
         <Thickness x:Key="Gap.Left3">12,0,0,0</Thickness>
+        <Thickness x:Key="Gap.Left5">24,0,0,0</Thickness>
         <Thickness x:Key="Gap.Right2">0,0,8,0</Thickness>
-        <Thickness x:Key="Gap.Right5">0,0,24,0</Thickness>
+        <Thickness x:Key="Gap.Right3">0,0,12,0</Thickness>
+        <!-- Two-sided gaps the settings row and the footer need; named by their sides -->
+        <Thickness x:Key="Gap.Above2Right2">0,8,8,0</Thickness>
+        <Thickness x:Key="Gap.Left2Above2">8,8,0,0</Thickness>
+        <Thickness x:Key="Gap.Left3Right2">12,0,8,0</Thickness>
+        <Thickness x:Key="Gap.Left4Right1">16,0,4,0</Thickness>
         <Thickness x:Key="Gap.Canvas">16</Thickness>
+        <Thickness x:Key="Pad.None">0</Thickness>
         <Thickness x:Key="Pad.Control">8,3</Thickness>
         <Thickness x:Key="Pad.Field">8,2</Thickness>
         <Thickness x:Key="Pad.Text">8,4</Thickness>
+        <Thickness x:Key="Pad.Small">8,0</Thickness>
+        <Thickness x:Key="Pad.Wide">16,4</Thickness>
 
         <sys:Double x:Key="Size.Control">30</sys:Double>
         <sys:Double x:Key="Size.Primary">40</sys:Double>
         <sys:Double x:Key="Size.Small">24</sys:Double>
-        <sys:Double x:Key="Size.LabelColumn">84</sys:Double>
         <sys:Double x:Key="Size.ButtonMin">88</sys:Double>
+        <sys:Double x:Key="Size.TextArea">96</sys:Double>
+        <sys:Double x:Key="Size.PopupMax">260</sys:Double>
         <sys:Double x:Key="Size.Scrollbar">8</sys:Double>
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
+        <!-- Grid columns: the label column every block shares, the memory box, the history -->
+        <GridLength x:Key="Size.LabelColumn">72</GridLength>
+        <GridLength x:Key="Size.NumberField">64</GridLength>
+        <GridLength x:Key="Size.HistoryColumn">270</GridLength>
         <Thickness x:Key="Border.Control">1</Thickness>
         <Thickness x:Key="Border.Focus">1.5</Thickness>
+        <Thickness x:Key="Border.None">0</Thickness>
 
         <CornerRadius x:Key="Radius.Control">6</CornerRadius>
         <CornerRadius x:Key="Radius.Primary">8</CornerRadius>
         <CornerRadius x:Key="Radius.Scrollbar">4</CornerRadius>
 
-        <!-- ===== Aliases the markup and code still name (stage 1) =====
-             The five keys the window was built on. They keep the old light
-             colours until the restyle lands, so nothing changes on screen yet;
-             the restyle retires them. -->
-        <SolidColorBrush x:Key="ControlSurfaceBrush" Color="#DDDDDD"/>
-        <SolidColorBrush x:Key="ControlBorderBrush" Color="#B4B4B4"/>
-        <SolidColorBrush x:Key="ControlDisabledBorderBrush" Color="#D0D0D0"/>
-        <SolidColorBrush x:Key="ProgressActiveBrush" Color="#37A957"/>
-        <SolidColorBrush x:Key="ProgressIdleBrush" Color="#DDDDDD"/>
+        <!-- ===== Windows ===== -->
+        <!-- Applied by every window of ours; the canvas colour and the type
+             ride down to everything inside by inheritance. -->
+        <Style x:Key="WindowStyle" TargetType="Window">
+            <Setter Property="Background" Value="{StaticResource Brush.Canvas}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="FontFamily" Value="{StaticResource Font.Family}"/>
+            <Setter Property="FontSize" Value="{StaticResource Font.SizeBody}"/>
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightBody}"/>
+        </Style>
+
+        <!-- ===== Text ===== -->
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <!-- A section's name: the emphasis weight in the muted ink, sitting on the
+             gap that separates it from the row below. -->
+        <Style x:Key="SectionTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightEmphasis}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}"/>
+            <Setter Property="Margin" Value="{StaticResource Gap.Below2}"/>
+        </Style>
+        <Style x:Key="LabelTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}"/>
+        </Style>
+        <Style x:Key="EmphasisTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightEmphasis}"/>
+        </Style>
+        <Style x:Key="CaptionTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontSize" Value="{StaticResource Font.SizeCaption}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}"/>
+        </Style>
+        <!-- Running text: the caption size with room between lines -->
+        <Style x:Key="ParagraphTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="LineHeight" Value="{StaticResource Font.LineHeightCaption}"/>
+            <Setter Property="LineStackingStrategy" Value="BlockLineHeight"/>
+            <Setter Property="VerticalAlignment" Value="Top"/>
+        </Style>
+        <!-- Grey text laid over an empty field or list, out of the way of clicks -->
+        <Style x:Key="PlaceholderTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextMuted}"/>
+            <Setter Property="Margin" Value="{StaticResource Pad.Text}"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+        </Style>
+        <!-- The words over a progress bar: centred, and weighted so they hold
+             against the fill moving under them -->
+        <Style x:Key="ProgressTextStyle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightEmphasis}"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+        </Style>
+
+        <!-- ===== Buttons ===== -->
+        <Style TargetType="Button">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/>
+            <Setter Property="Padding" Value="{StaticResource Pad.Control}"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}"/>
+            <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource Radius.Control}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="False"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceHover}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderStrong}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfacePressed}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceDisabled}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderDisabled}"/>
+                                <Setter Property="Foreground" Value="{StaticResource Brush.TextDisabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- The one accent on the screen. It is also the preparation bar: while
+             the game is being readied it turns into an ordinary surface with the
+             fill drawing inside it (the code parks it at IsHitTestVisible=False
+             for that stretch), and while the game runs it is the disabled
+             surface that says so. -->
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Primary}"/>
+            <Setter Property="Padding" Value="{StaticResource Pad.None}"/>
+            <Setter Property="FontSize" Value="{StaticResource Font.SizeDisplay}"/>
+            <Setter Property="Background" Value="{StaticResource Brush.Accent}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.OnAccent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource Radius.Primary}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="False"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.AccentHover}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.AccentHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.AccentPressed}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.AccentPressed}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.OnAccent}"/>
+                            </Trigger>
+                            <!-- Preparing: an ordinary surface with the progress inside -->
+                            <Trigger Property="IsHitTestVisible" Value="False">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.Surface}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.Border}"/>
+                                <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+                            </Trigger>
+                            <!-- Running: it says so, and it is out of the way -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceDisabled}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderDisabled}"/>
+                                <Setter Property="Foreground" Value="{StaticResource Brush.TextDisabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SmallButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Small}"/>
+            <Setter Property="Padding" Value="{StaticResource Pad.Small}"/>
+            <Setter Property="FontSize" Value="{StaticResource Font.SizeCaption}"/>
+        </Style>
+
+        <!-- ===== Fields ===== -->
+        <Style TargetType="TextBox">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/>
+            <Setter Property="Padding" Value="{StaticResource Pad.Field}"/>
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="SelectionBrush" Value="{StaticResource Brush.Accent}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}"/>
+            <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Surface"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource Radius.Control}"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Focusable="False"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderStrong}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceDisabled}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderDisabled}"/>
+                                <Setter Property="Foreground" Value="{StaticResource Brush.TextDisabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===== Progress ===== -->
+        <!-- A track with a fill; the words go over it in the markup. The glow is
+             what WPF slides along the track when the bar is indeterminate. -->
+        <Style TargetType="ProgressBar">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/>
+            <Setter Property="Background" Value="{StaticResource Brush.ProgressTrack}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.ProgressFill}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}"/>
+            <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Border x:Name="PART_Track"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource Radius.Control}"
+                                SnapsToDevicePixels="True">
+                            <Grid ClipToBounds="True">
+                                <Border x:Name="PART_Indicator"
+                                        Background="{TemplateBinding Foreground}"
+                                        CornerRadius="{StaticResource Radius.Control}"
+                                        HorizontalAlignment="Left"/>
+                                <Border x:Name="PART_GlowRect"
+                                        Width="120"
+                                        Background="{StaticResource Brush.ProgressGlow}"
+                                        CornerRadius="{StaticResource Radius.Control}"
+                                        HorizontalAlignment="Left"
+                                        Visibility="Collapsed"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsIndeterminate" Value="True">
+                                <Setter TargetName="PART_Indicator" Property="Background" Value="Transparent"/>
+                                <Setter TargetName="PART_GlowRect" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="PART_Track" Property="Background" Value="{StaticResource Brush.SurfaceDisabled}"/>
+                                <Setter TargetName="PART_Track" Property="BorderBrush" Value="{StaticResource Brush.BorderDisabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- The bar that lives inside the Play button: no track of its own, the
+             button is the track; the fill takes the button's rounder corners. -->
+        <Style x:Key="PlayProgressBarStyle" TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="{StaticResource Border.None}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Border x:Name="PART_Track" Background="{TemplateBinding Background}">
+                            <Grid ClipToBounds="True">
+                                <Border x:Name="PART_Indicator"
+                                        Background="{TemplateBinding Foreground}"
+                                        CornerRadius="{StaticResource Radius.Primary}"
+                                        HorizontalAlignment="Left"/>
+                                <Border x:Name="PART_GlowRect"
+                                        Width="120"
+                                        Background="{StaticResource Brush.ProgressGlow}"
+                                        CornerRadius="{StaticResource Radius.Primary}"
+                                        HorizontalAlignment="Left"
+                                        Visibility="Collapsed"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsIndeterminate" Value="True">
+                                <Setter TargetName="PART_Indicator" Property="Background" Value="Transparent"/>
+                                <Setter TargetName="PART_GlowRect" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===== Lists ===== -->
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}"/>
+            <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
+        </Style>
+        <!-- One row of a list: the surface, then the hover surface, then - chosen -
+             the accent ink at the emphasis weight. No system highlight. -->
+        <Style TargetType="ListBoxItem">
+            <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/>
+            <Setter Property="Padding" Value="{StaticResource Pad.Control}"/>
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Row"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Row" Property="Background" Value="{StaticResource Brush.SurfaceHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Brush.Accent}"/>
+                                <Setter Property="FontWeight" Value="{StaticResource Font.WeightEmphasis}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===== Scrolling ===== -->
+        <!-- A thin thumb on a bare track, no arrows: the list is the thing, not
+             the bar beside it. -->
+        <Style x:Key="ScrollThumbStyle" TargetType="Thumb">
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="Grip"
+                                Background="{StaticResource Brush.ScrollThumb}"
+                                CornerRadius="{StaticResource Radius.Scrollbar}"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Grip" Property="Background" Value="{StaticResource Brush.ScrollThumbHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Grip" Property="Background" Value="{StaticResource Brush.ScrollThumbHover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ScrollPageButtonStyle" TargetType="RepeatButton">
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="{StaticResource Size.Scrollbar}"/>
+            <Setter Property="MinWidth" Value="{StaticResource Size.Scrollbar}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="{TemplateBinding Background}">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource ScrollPageButtonStyle}" Command="ScrollBar.PageUpCommand"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource ScrollThumbStyle}"/>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Style="{StaticResource ScrollPageButtonStyle}" Command="ScrollBar.PageDownCommand"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                    <Setter Property="Height" Value="{StaticResource Size.Scrollbar}"/>
+                    <Setter Property="MinHeight" Value="{StaticResource Size.Scrollbar}"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ScrollBar">
+                                <Grid Background="{TemplateBinding Background}">
+                                    <Track x:Name="PART_Track">
+                                        <Track.DecreaseRepeatButton>
+                                            <RepeatButton Style="{StaticResource ScrollPageButtonStyle}" Command="ScrollBar.PageLeftCommand"/>
+                                        </Track.DecreaseRepeatButton>
+                                        <Track.Thumb>
+                                            <Thumb Style="{StaticResource ScrollThumbStyle}"/>
+                                        </Track.Thumb>
+                                        <Track.IncreaseRepeatButton>
+                                            <RepeatButton Style="{StaticResource ScrollPageButtonStyle}" Command="ScrollBar.PageRightCommand"/>
+                                        </Track.IncreaseRepeatButton>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Application.Resources>
 </Application>
