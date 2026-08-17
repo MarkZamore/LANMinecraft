@@ -24,10 +24,28 @@ jobs:
           # to be here - a shallow clone would count one.
           fetch-depth: 0
 
+      - name: Find .NET
+        id: dotnet
+        shell: pwsh
+        run: |
+          # The image already carries several 10.0.x SDKs and global.json takes
+          # the newest of them. Downloading one more is a minute that stands
+          # between a push and the players; the step below is the way back if
+          # an image ever ships without one.
+          $installed = @(& dotnet --list-sdks | Where-Object { $_ -match '^10\.0\.' })
+          if ($installed) {
+            Write-Host "Using a preinstalled .NET SDK: $($installed[-1])"
+          } else {
+            Write-Host "No 10.0.x SDK is installed here; one will be downloaded."
+          }
+          $answer = if ($installed) { 'true' } else { 'false' }
+          "preinstalled=$answer" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Setup .NET
+        if: steps.dotnet.outputs.preinstalled != 'true'
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -35,171 +53,118 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Capture previous release
+      - name: Prepare
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
-
           # A release is named after the commit it is built from: the number is
           # how many commits main carries, so a version in a bug report points
           # straight at a line of history.
           $commitNumber = [int](git rev-list --count HEAD)
           if ($commitNumber -lt 1) { throw "The commit count could not be determined." }
-          "HAS_PREVIOUS=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_NUMBER=$commitNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          # The launcher shows a hand-written history; a build whose number
-          # that history does not know is not ready to ship.
+          # The launcher shows a hand-written history; a build whose number that
+          # history does not know is not ready to ship. Asked first, so a
+          # missing entry costs a second instead of a whole build.
           $changelogPath = Join-Path $env:GITHUB_WORKSPACE 'Program\Changelog.md'
           $changelogPattern = '(?m)^## {0}\s*$' -f $commitNumber
           if ((Get-Content -LiteralPath $changelogPath -Raw) -notmatch $changelogPattern) {
             throw ("Program/Changelog.md has no entry for release $commitNumber. " +
                    "Add a '## $commitNumber' section with a line or two in Russian describing this commit, then push again.")
           }
+
+          # Three errands that do not need each other: fetching the releases a
+          # delta will be built against is network, restoring is disk, and the
+          # delta tool is a small build of its own. Together they cost what the
+          # slowest one costs.
           $basesFile = Join-Path $env:RUNNER_TEMP 'minecraft-delta-bases.json'
-          '[]' | Set-Content -LiteralPath $basesFile -Encoding UTF8
+          $capture = Start-Job -Name 'capture' -ScriptBlock {
+            param($script, $commitNumber, $sha, $basesFile, $workDirectory, $repository)
+            & $script -CommitNumber $commitNumber -CommitSha $sha -BasesFile $basesFile `
+              -WorkDirectory $workDirectory -Repository $repository
+          } -ArgumentList (Join-Path $env:GITHUB_WORKSPACE '.github\scripts\Capture-PreviousRelease.ps1'),
+                          $commitNumber, '${{ github.sha }}', $basesFile, $env:RUNNER_TEMP,
+                          '${{ github.repository }}'
+          $tool = Start-Job -Name 'delta tool' -ScriptBlock {
+            param($workspace)
+            Set-Location -LiteralPath $workspace
+            & dotnet restore Program\Patch\DeltaPatchTool.csproj -p:Configuration=Release
+            if ($LASTEXITCODE -ne 0) { throw "The delta tool could not be restored." }
+            & dotnet build Program\Patch\DeltaPatchTool.csproj -c Release --no-restore
+            if ($LASTEXITCODE -ne 0) { throw "The delta tool could not be built." }
+          } -ArgumentList $env:GITHUB_WORKSPACE
+
+          # Restore is also the dependency audit: NuGetAudit in
+          # Directory.Build.props turns a vulnerable package, direct or
+          # transitive, into a restore error.
+          & dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw "The launcher could not be restored." }
+          & dotnet restore Program.Tests\Program.Tests.csproj -r win-x64 -p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) { throw "The tests could not be restored." }
+
+          $jobs = @($capture, $tool)
+          Wait-Job -Job $jobs | Out-Null
+          $captured = Receive-Job -Job $capture -ErrorAction Continue
+          Receive-Job -Job $tool -ErrorAction Continue
+          foreach ($job in $jobs) {
+            if ($job.State -eq 'Failed') {
+              throw "Preparing the release failed in '$($job.Name)': $($job.ChildJobs[0].JobStateInfo.Reason.Message)"
+            }
+          }
+          Remove-Job -Job $jobs
+
+          # The job answers with one object; anything else it printed is a
+          # diagnostic and not the answer.
+          $previous = @($captured) |
+            Where-Object { $null -ne $_ -and $null -ne $_.HasPrevious } |
+            Select-Object -Last 1
+          if ($null -eq $previous) { throw "The previous release could not be captured." }
+
           "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          # Downloads a previous release and proves its executable is the one
-          # its manifest describes, so a delta is only ever built against bytes
-          # players actually have.
-          function Get-ValidatedBase([string]$Tag, [string]$Directory) {
-            New-Item -ItemType Directory -Path $Directory -Force | Out-Null
-            Invoke-Gh release download $Tag `
-              --pattern 'update.json' `
-              --dir $Directory `
-              --clobber | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "Release $Tag could not be downloaded." }
-
-            $manifestPath = Join-Path $Directory 'update.json'
-            if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-              throw "Release $Tag is incomplete."
-            }
-
-            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-            $commit = ([string]$manifest.commitSha).ToLowerInvariant()
-            $sha = ([string]$manifest.sha256).ToLowerInvariant()
-            $size = [long]$manifest.sizeBytes
-            $releaseNumber = [int]$manifest.releaseNumber
-            if ($commit -notmatch '^[0-9a-f]{40}$' -or
-                $sha -notmatch '^[0-9a-f]{64}$' -or
-                $size -le 0 -or
-                $releaseNumber -lt 1) {
-              throw "Release $Tag manifest is invalid."
-            }
-
-            Invoke-Gh release download $Tag `
-              --pattern 'LANMinecraft.exe' `
-              --dir $Directory `
-              --clobber | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "Release $Tag executable could not be downloaded." }
-            $exe = Join-Path $Directory 'LANMinecraft.exe'
-            if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-              throw "Release $Tag is incomplete."
-            }
-            $file = Get-Item -LiteralPath $exe
-            $actualSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($file.Length -ne $size -or $actualSha -ne $sha) {
-              throw "Release $Tag executable does not match its manifest."
-            }
-
-            return [pscustomobject]@{
-              tag = $Tag
-              executablePath = $exe
-              manifestPath = $manifestPath
-              releaseNumber = $releaseNumber
-              commitSha = $commit
-              sha256 = $sha
-              sizeBytes = $size
-            }
-          }
-
-          Invoke-Gh release view latest --json tagName *> $null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "No previous latest release is available; a full-only release will be created."
-            exit 0
-          }
-
-          $previousDir = Join-Path $env:RUNNER_TEMP 'minecraft-base-latest'
-          try {
-            $previous = Get-ValidatedBase 'latest' $previousDir
-          }
-          catch {
-            # A publish that died between the executable and its manifest
-            # leaves the release without the pointer that names it. Launchers
-            # ignore such a release by design, and so must this job: it has no
-            # base to build a delta against, which is a reason to ship the full
-            # file, not a reason to stop shipping.
-            Write-Host "The published latest release cannot serve as a delta base ($($_.Exception.Message)); a full-only release will be created."
-            exit 0
-          }
-          $currentCommit = '${{ github.sha }}'.ToLowerInvariant()
-
-          $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
-            $previous.releaseNumber
+          "RELEASE_NUMBER=$([int]$previous.ReleaseNumber)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($previous.HasPrevious) {
+            "HAS_PREVIOUS=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "PREVIOUS_EXE=$($previous.PreviousExe)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "PREVIOUS_MANIFEST=$($previous.PreviousManifest)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "PREVIOUS_COMMIT=$($previous.PreviousCommit)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "PREVIOUS_SHA256=$($previous.PreviousSha256)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "PREVIOUS_RELEASE_NUMBER=$([int]$previous.PreviousReleaseNumber)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           } else {
-            $commitNumber
-          }
-          # Updates are offered by number, so it must never walk backwards -
-          # which is what a rewritten history would do.
-          if ($releaseNumber -le $previous.releaseNumber -and $previous.commitSha -ne $currentCommit) {
-            throw ("The commit count $commitNumber is not above the published release " +
-                   "$($previous.releaseNumber); was the history rewritten?")
+            "HAS_PREVIOUS=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
-          $bases = [System.Collections.Generic.List[object]]::new()
-          if ($previous.commitSha -ne $currentCommit) { $bases.Add($previous) }
-          $releaseRows = Invoke-Gh release list --limit 100 --json tagName | ConvertFrom-Json
-          $archiveTags = $releaseRows.tagName |
-            Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |
-            Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
-          foreach ($tag in $archiveTags) {
-            if ($bases.Count -ge 2) { break }
-            $number = [int]($tag -replace '^update-base-', '')
-            if ($number -ge $previous.releaseNumber) { continue }
-            $archive = Get-ValidatedBase $tag (Join-Path $env:RUNNER_TEMP "minecraft-$tag")
-            if (-not ($bases | Where-Object { $_.sha256 -eq $archive.sha256 })) {
-              $bases.Add($archive)
-            }
-          }
-          ConvertTo-Json -InputObject @($bases) -Depth 4 |
-            Set-Content -LiteralPath $basesFile -Encoding UTF8
-
-          "HAS_PREVIOUS=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PREVIOUS_EXE=$($previous.executablePath)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PREVIOUS_MANIFEST=$($previous.manifestPath)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PREVIOUS_COMMIT=$($previous.commitSha)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PREVIOUS_SHA256=$($previous.sha256)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PREVIOUS_RELEASE_NUMBER=$($previous.releaseNumber)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_NUMBER=$releaseNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Restore
-        run: |
-          dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release
-          dotnet restore Program.Tests\Program.Tests.csproj -r win-x64 -p:Configuration=Release
-          dotnet restore Program\Patch\DeltaPatchTool.csproj -p:Configuration=Release
-
-      - name: Audit dependencies
-        run: |
-          dotnet list Program\Minecraft.csproj package --vulnerable --include-transitive
-          dotnet list Program.Tests\Program.Tests.csproj package --vulnerable --include-transitive
-          dotnet list Program\Patch\DeltaPatchTool.csproj package --vulnerable --include-transitive
-
-      - name: Test
-        run: dotnet test Program.Tests\Program.Tests.csproj -c Release --no-restore
-
-      - name: Publish
+      - name: Test and publish
         shell: pwsh
-        run: >
-          .\Program\Publish.ps1
-          -SourceRevisionId "${{ github.sha }}"
-          -ReleaseNumber "$env:RELEASE_NUMBER"
-          -PublishDir "${{ github.workspace }}\artifacts"
-          -NoRestore
+        run: |
+          # The tests build Debug and the release builds Release, so the two
+          # compilers write to different obj and bin trees and neither waits
+          # for the other. Both are already restored; the launcher has no
+          # DEBUG-only code, so what is tested is what ships.
+          $tests = Start-Job -Name 'tests' -ScriptBlock {
+            param($workspace)
+            Set-Location -LiteralPath $workspace
+            & dotnet test Program.Tests\Program.Tests.csproj -c Debug --no-restore
+            if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
+          } -ArgumentList $env:GITHUB_WORKSPACE
+
+          .\Program\Publish.ps1 `
+            -SourceRevisionId "${{ github.sha }}" `
+            -ReleaseNumber "$env:RELEASE_NUMBER" `
+            -PublishDir "${{ github.workspace }}\artifacts" `
+            -NoRestore `
+            -KeepBuildOutput
+
+          Wait-Job -Job $tests | Out-Null
+          Receive-Job -Job $tests -ErrorAction Continue
+          if ($tests.State -eq 'Failed') {
+            throw "Tests failed: $($tests.ChildJobs[0].JobStateInfo.Reason.Message)"
+          }
+          Remove-Job -Job $tests
 
       - name: Create delta and update manifest
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           $exe = Join-Path $artifactDir 'LANMinecraft.exe'
@@ -207,13 +172,38 @@ jobs:
             throw "Published LANMinecraft.exe was not found: $exe"
           }
 
+          # Keeping the executable this release replaces is upload bandwidth
+          # and the deltas below are processor, so the archive rides along
+          # here. The publish still waits for it: a base that was never kept
+          # is a chain that breaks two releases later.
+          $archive = $null
+          if ($env:HAS_PREVIOUS -eq 'true' -and $env:PREVIOUS_COMMIT -ne '${{ github.sha }}') {
+            $archive = Start-Job -Name 'archive' -ScriptBlock {
+              param($script, $number, $exe, $manifest, $sha, $repository)
+              & $script -ReleaseNumber $number -ExecutablePath $exe -ManifestPath $manifest `
+                -CommitSha $sha -Repository $repository
+            } -ArgumentList (Join-Path $env:GITHUB_WORKSPACE '.github\scripts\Archive-PreviousBase.ps1'),
+                            ([int]$env:PREVIOUS_RELEASE_NUMBER), $env:PREVIOUS_EXE, $env:PREVIOUS_MANIFEST,
+                            '${{ github.sha }}', '${{ github.repository }}'
+          }
+
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $size = (Get-Item -LiteralPath $exe).Length
-          $deltaManifests = [System.Collections.Generic.List[object]]::new()
           $bases = @(
-            Get-Content -LiteralPath $env:DELTA_BASES_FILE -Raw | ConvertFrom-Json
+            Get-Content -LiteralPath $env:DELTA_BASES_FILE -Raw |
+              ConvertFrom-Json |
+              Where-Object { $null -ne $_ }
           ) | Select-Object -First 2
 
+          # bsdiff over 66 MB is a minute of one core, and there are two bases
+          # and more than two cores. The tool was built in Prepare, so it is
+          # run straight from its assembly rather than through dotnet run,
+          # which would build it again for every invocation.
+          $tool = Join-Path $env:GITHUB_WORKSPACE 'Program\Patch\bin\Release\net10.0\DeltaPatchTool.dll'
+          if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+            throw "The delta tool was not built: $tool"
+          }
+          $deltaJobs = @()
           for ($index = 0; $index -lt $bases.Count; $index++) {
             $base = $bases[$index]
             $assetName = if ($index -eq 0) {
@@ -221,31 +211,45 @@ jobs:
             } else {
               "LANMinecraft.from-$($base.releaseNumber).bsdiff"
             }
-            $patch = Join-Path $artifactDir $assetName
-            $roundTrip = Join-Path $env:RUNNER_TEMP "LANMinecraft.delta-roundtrip-$($base.releaseNumber).exe"
-            dotnet run `
-              --project Program\Patch\DeltaPatchTool.csproj `
-              -c Release `
-              -- create $base.executablePath $exe $patch
-            if ($LASTEXITCODE -ne 0) { throw "Delta patch generation failed for release $($base.releaseNumber)." }
+            $deltaJobs += Start-Job -Name "delta from $($base.releaseNumber)" -ScriptBlock {
+              param($tool, $basePath, $baseNumber, $exe, $patch, $roundTrip, $hash, $size)
+              & dotnet $tool create $basePath $exe $patch
+              if ($LASTEXITCODE -ne 0) { throw "Delta patch generation failed for release $baseNumber." }
 
-            dotnet run `
-              --project Program\Patch\DeltaPatchTool.csproj `
-              -c Release `
-              --no-build `
-              --no-restore `
-              -- apply $base.executablePath $patch $roundTrip
-            if ($LASTEXITCODE -ne 0) { throw "Delta patch roundtrip failed for release $($base.releaseNumber)." }
+              & dotnet $tool apply $basePath $patch $roundTrip
+              if ($LASTEXITCODE -ne 0) { throw "Delta patch roundtrip failed for release $baseNumber." }
 
-            $roundTripHash = (Get-FileHash -LiteralPath $roundTrip -Algorithm SHA256).Hash.ToLowerInvariant()
-            $roundTripSize = (Get-Item -LiteralPath $roundTrip).Length
-            Remove-Item -LiteralPath $roundTrip -Force
-            if ($roundTripHash -ne $hash -or $roundTripSize -ne $size) {
-              throw "Delta patch from release $($base.releaseNumber) does not reproduce the published executable."
+              $roundTripHash = (Get-FileHash -LiteralPath $roundTrip -Algorithm SHA256).Hash.ToLowerInvariant()
+              $roundTripSize = (Get-Item -LiteralPath $roundTrip).Length
+              Remove-Item -LiteralPath $roundTrip -Force
+              if ($roundTripHash -ne $hash -or $roundTripSize -ne $size) {
+                throw "Delta patch from release $baseNumber does not reproduce the published executable."
+              }
+
+              return [pscustomobject]@{
+                sha256 = (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant()
+                sizeBytes = (Get-Item -LiteralPath $patch).Length
+              }
+            } -ArgumentList $tool, $base.executablePath, ([int]$base.releaseNumber), $exe,
+                            (Join-Path $artifactDir $assetName),
+                            (Join-Path $env:RUNNER_TEMP "LANMinecraft.delta-roundtrip-$($base.releaseNumber).exe"),
+                            $hash, $size
+          }
+
+          $deltaManifests = [System.Collections.Generic.List[object]]::new()
+          if ($deltaJobs.Count -gt 0) { Wait-Job -Job $deltaJobs | Out-Null }
+          for ($index = 0; $index -lt $deltaJobs.Count; $index++) {
+            $job = $deltaJobs[$index]
+            $patched = Receive-Job -Job $job -ErrorAction Continue
+            if ($job.State -eq 'Failed') {
+              throw "A delta patch failed in '$($job.Name)': $($job.ChildJobs[0].JobStateInfo.Reason.Message)"
             }
-
-            $patchHash = (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant()
-            $patchSize = (Get-Item -LiteralPath $patch).Length
+            $base = $bases[$index]
+            $assetName = if ($index -eq 0) {
+              'LANMinecraft.bsdiff'
+            } else {
+              "LANMinecraft.from-$($base.releaseNumber).bsdiff"
+            }
             $deltaManifests.Add([ordered]@{
               algorithm = 'bsdiff'
               algorithmVersion = 1
@@ -253,10 +257,11 @@ jobs:
               baseCommitSha = [string]$base.commitSha
               baseSha256 = [string]$base.sha256
               assetName = $assetName
-              sha256 = $patchHash
-              sizeBytes = $patchSize
+              sha256 = [string]$patched.sha256
+              sizeBytes = [long]$patched.sizeBytes
             })
           }
+          if ($deltaJobs.Count -gt 0) { Remove-Job -Job $deltaJobs }
 
           $manifest = [ordered]@{
             schemaVersion = 2
@@ -270,6 +275,15 @@ jobs:
             deltaPatches = @($deltaManifests)
           }
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Encoding UTF8
+
+          if ($null -ne $archive) {
+            Wait-Job -Job $archive | Out-Null
+            Receive-Job -Job $archive -ErrorAction Continue
+            if ($archive.State -eq 'Failed') {
+              throw "The previous release could not be archived: $($archive.ChildJobs[0].JobStateInfo.Reason.Message)"
+            }
+            Remove-Job -Job $archive
+          }
 
       - name: Verify release contents
         shell: pwsh
@@ -302,27 +316,6 @@ jobs:
           if ($unexpected -or $missing -or $files.Count -ne $expected.Count) {
             throw "Release contents are invalid. Missing: $missing; unexpected: $unexpected"
           }
-
-      - name: Archive previous base
-        if: env.HAS_PREVIOUS == 'true' && env.PREVIOUS_COMMIT != github.sha
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
-
-          $tag = "update-base-$env:PREVIOUS_RELEASE_NUMBER"
-          if (Invoke-Gh release view $tag 2>$null) {
-            Invoke-Gh release delete $tag --cleanup-tag --yes
-            if ($LASTEXITCODE -ne 0) { throw "Could not replace archive $tag." }
-          }
-          Invoke-Gh release create $tag `
-            $env:PREVIOUS_EXE `
-            $env:PREVIOUS_MANIFEST `
-            --prerelease `
-            --title "Update base $env:PREVIOUS_RELEASE_NUMBER" `
-            --notes "Binary base for commit $env:PREVIOUS_COMMIT retained for direct delta generation."
-          if ($LASTEXITCODE -ne 0) { throw "Could not create archive $tag." }
 
       - name: Publish latest release
         shell: pwsh
