@@ -69,6 +69,17 @@ internal sealed class NameMarquee
         _field.TextChanged += (_, _) => Refresh();
         _field.SizeChanged += (_, _) => Refresh();
         _field.Loaded += (_, _) => Refresh();
+        // Until the field has been through a layout pass it cannot say how much
+        // of the name it is showing, and the first name is put in before that.
+        // This waits for the first pass that can answer, then stops listening.
+        _field.LayoutUpdated += OnLayoutUpdated;
+    }
+
+    private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        if (_field.ViewportWidth <= 0) return;
+        _field.LayoutUpdated -= OnLayoutUpdated;
+        Refresh();
     }
 
     /// <summary>True while the name is walking; false when it fits or editing is on.</summary>
@@ -99,17 +110,21 @@ internal sealed class NameMarquee
     }
 
     /// <summary>
-    /// What the field cannot show, in pixels: the name laid out in the field's
-    /// own typeface, less the room inside its border and padding. The field's
-    /// own ExtentWidth would say the same, but only once it has been drawn,
-    /// and the answer is needed the moment a name is put in.
+    /// What the field cannot show, in pixels. Once the field has been laid out
+    /// it answers this itself, and its answer is the one the eye agrees with:
+    /// the room inside a TextBox is not simply its width less padding and
+    /// border. Before that first pass there is nothing to ask, so the name is
+    /// laid out in the field's own typeface instead and compared with the room
+    /// there appears to be - a guess that only has to last until the field can
+    /// speak for itself.
     /// </summary>
     private double HiddenTail()
     {
+        if (string.IsNullOrEmpty(_field.Text)) return 0;
         var room = _field.ActualWidth
                    - _field.Padding.Left - _field.Padding.Right
                    - _field.BorderThickness.Left - _field.BorderThickness.Right;
-        if (room <= 0 || string.IsNullOrEmpty(_field.Text)) return 0;
+        if (room <= 0) return 0;
         var name = new FormattedText(
             _field.Text,
             CultureInfo.CurrentCulture,
@@ -118,8 +133,12 @@ internal sealed class NameMarquee
             _field.FontSize,
             Brushes.Black,
             VisualTreeHelper.GetDpi(_field).PixelsPerDip);
-        return Math.Max(0, name.WidthIncludingTrailingWhitespace - room);
+        return HiddenTail(_field.ExtentWidth, _field.ViewportWidth, name.WidthIncludingTrailingWhitespace, room);
     }
+
+    /// <summary>The rule itself: the field when it can answer, the text when it cannot.</summary>
+    internal static double HiddenTail(double extentWidth, double viewportWidth, double textWidth, double room)
+        => Math.Max(0, viewportWidth > 0 ? extentWidth - viewportWidth : textWidth - room);
 
     private void Walk(double tail)
     {
