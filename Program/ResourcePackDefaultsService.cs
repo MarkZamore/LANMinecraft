@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -89,9 +89,16 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         {
             if (File.Exists(optionsPath))
             {
-                var (text, count) = Select(File.ReadAllText(optionsPath, Utf8NoBom), defaults.Value);
+                var options = File.ReadAllText(optionsPath, Utf8NoBom);
+                var (text, count) = Select(options, defaults.Value);
                 added = count;
-                if (count > 0) AtomicFile.WriteAllText(optionsPath, text, Utf8NoBom);
+                // Written on any difference, not only on a new entry: giving the
+                // pack's own packs the order the pack declares changes nothing
+                // about which are selected and everything about which wins.
+                if (!string.Equals(text, options, StringComparison.Ordinal))
+                {
+                    AtomicFile.WriteAllText(optionsPath, text, Utf8NoBom);
+                }
             }
             // An instance without options.txt has not run yet: the game will
             // take the pack's seed options, which already list these packs.
@@ -103,7 +110,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             return 0;
         }
 
-        if (added > 0) logger?.Info($"Selected {added} resource pack(s) of the pack in {optionsPath}.");
+        logger?.Info($"Applied the pack's resource packs in {optionsPath}: {added} newly selected.");
         return added;
     }
 
@@ -120,14 +127,37 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             ? []
             : options.TrimEnd('\r', '\n').Split('\n').Select(line => line.TrimEnd('\r')).ToList();
 
-        var added = 0;
-        added += Extend(lines, SelectedPrefix, defaults.Entries);
-        added += Extend(lines, IncompatiblePrefix, defaults.Incompatible);
-        if (added == 0) return (options, 0);
+        var (added, rearranged) = Arrange(lines, SelectedPrefix, defaults.Entries);
+        // The second list is bookkeeping the game keeps about packs built for an
+        // older version, so it counts towards rewriting the file and not towards
+        // the number of packs the player just gained.
+        var incompatible = Extend(lines, IncompatiblePrefix, defaults.Incompatible);
+        if (!rearranged && incompatible == 0) return (options, 0);
 
         var text = string.Join(newline, lines);
         if (lines.Count > 0 && endsWithNewline) text += newline;
         return (text, added);
+    }
+
+    /// <summary>
+    /// Lays the pack's own entries out in the order the pack declares, above
+    /// everything else the player has selected. Anything that is not the pack's
+    /// keeps its place and its order, and the player's later changes are not
+    /// touched again: the list is applied once per version of itself.
+    /// </summary>
+    private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, IReadOnlyList<string> wanted)
+    {
+        if (wanted.Count == 0) return (0, false);
+        var index = lines.FindIndex(line => line.StartsWith(prefix, StringComparison.Ordinal));
+        var current = index >= 0 ? ReadList(lines[index][prefix.Length..]) : [];
+        var mine = new HashSet<string>(wanted, StringComparer.Ordinal);
+        var arranged = current.Where(entry => !mine.Contains(entry)).Concat(wanted).ToList();
+        if (arranged.SequenceEqual(current, StringComparer.Ordinal)) return (0, false);
+
+        var added = wanted.Count(entry => !current.Contains(entry, StringComparer.Ordinal));
+        var line = prefix + WriteList(arranged);
+        if (index >= 0) lines[index] = line; else lines.Add(line);
+        return (added, true);
     }
 
     private static int Extend(List<string> lines, string prefix, IReadOnlyList<string> wanted)
