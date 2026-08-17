@@ -18,6 +18,22 @@ public sealed class MinecraftProcessService
     /// wall of log noise. The runtime service also probes these before installing,
     /// so a runtime that rejects them fails with a message instead of a silent exit.
     /// </summary>
+    /// <summary>
+    /// Prepares the environment the game inherits from the launcher.
+    ///
+    /// The launcher turns Steam's overlay off for itself: a WPF window gives it
+    /// nothing to hook. That setting is process-wide, and a child process gets a
+    /// copy of it - which silently took Shift+Tab away from the game, where the
+    /// overlay is the whole point, because inviting a friend into a Steam
+    /// session happens through it.
+    /// </summary>
+    internal static void ConfigureChildEnvironment(IDictionary<string, string?> environment, string javaTempDir)
+    {
+        environment["TEMP"] = javaTempDir;
+        environment["TMP"] = javaTempDir;
+        environment.Remove(SteamworksApiFacade.NoOverlayVariable);
+    }
+
     public static IReadOnlyList<string> JavaCompatibilityArguments { get; } = Array.AsReadOnly<string>(
     [
         "--illegal-native-access=allow",
@@ -220,8 +236,7 @@ public sealed class MinecraftProcessService
         // without these pipes the only trace of the failure would be an exit code.
         minecraftProcess.StartInfo.RedirectStandardOutput = true;
         minecraftProcess.StartInfo.RedirectStandardError = true;
-        minecraftProcess.StartInfo.Environment["TEMP"] = javaTempDir;
-        minecraftProcess.StartInfo.Environment["TMP"] = javaTempDir;
+        ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir);
         var startupOutput = new StartupOutputBuffer();
         minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
         minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);

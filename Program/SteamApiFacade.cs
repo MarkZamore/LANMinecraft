@@ -45,6 +45,13 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
     /// </summary>
     public const uint SharedAppId = 480;
 
+    /// <summary>
+    /// Steam reads this to decide whether to draw its overlay in a process.
+    /// The launcher sets it for itself and clears it for the game, so keep the
+    /// name in one place.
+    /// </summary>
+    public const string NoOverlayVariable = "SteamNoOverlayUIDrawing";
+
     private bool _initialized;
 
     public bool Initialize(out string failureReason)
@@ -55,7 +62,8 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
         Environment.SetEnvironmentVariable("SteamAppId", SharedAppId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Environment.SetEnvironmentVariable("SteamGameId", SharedAppId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         // The launcher draws its own UI; the overlay has nothing to hook here.
-        Environment.SetEnvironmentVariable("SteamNoOverlayUIDrawing", "1");
+        // The game must not inherit this - see MinecraftProcessService.
+        Environment.SetEnvironmentVariable(NoOverlayVariable, "1");
 
         try
         {
