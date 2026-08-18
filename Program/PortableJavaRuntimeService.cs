@@ -125,7 +125,7 @@ public sealed partial class PortableJavaRuntimeService
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingJava,
-            $"Установка Java {_pin.JavaVersion}"));
+            $"Java {_pin.JavaVersion}"));
 
         var cachePath = GetCachePath();
         if (!IsValidArchive(cachePath))
@@ -152,7 +152,7 @@ public sealed partial class PortableJavaRuntimeService
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingJava,
-            $"Распаковка Java {_pin.JavaVersion}"));
+            $"Java {_pin.JavaVersion}"));
         Install(cachePath, installRoot, token);
 
         var prepared = TryDescribeInstalled(installRoot)
@@ -423,7 +423,7 @@ public sealed partial class PortableJavaRuntimeService
                 lastReport = total;
                 progress?.Report(new RuntimePreparationProgress(
                     RuntimePreparationStage.InstallingJava,
-                    "Скачивание Java 25",
+                    $"Java {PinnedJavaVersion}",
                     (double)total / expectedSize,
                     total,
                     expectedSize));

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Windows.Controls;
 
 namespace Minecraft.Tests;
@@ -39,6 +39,57 @@ public sealed class MainWindowStartupTests
 
         Assert.True(logger > 0 && marquee > 0, "both lines should still exist");
         Assert.True(marquee > logger, "the marquee takes the logger, so it cannot be built before it");
+    }
+
+    /// <summary>
+    /// The window opens, connects to Steam and starts the skin service before
+    /// it ever paints a state, so until then every control wears what the
+    /// markup gave it. A button that acts on a state must therefore start
+    /// switched off in the markup and be switched on by the first refresh -
+    /// otherwise the launcher opens offering to apply a preset already applied.
+    /// </summary>
+    [Fact]
+    public void TheStateDrivenButtons_DoNotStartEnabledInTheMarkup()
+    {
+        var markup = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
+        var button = markup[markup.IndexOf("x:Name=\"ControlsPresetButton\"", StringComparison.Ordinal)..];
+        button = button[..button.IndexOf("/>", StringComparison.Ordinal)];
+
+        Assert.Contains("IsEnabled=\"False\"", button, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The transfer bar says "В ожидании мира" even when nothing could ever
+    /// arrive: the game holds the world, no world is chosen, or there is nobody
+    /// to send it to. It starts quiet in the markup and is lit by the same
+    /// condition that lights the button beside it.
+    /// </summary>
+    [Fact]
+    public void TheTransferBar_StartsQuietAndFollowsItsButton()
+    {
+        var markup = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
+        var area = markup[markup.IndexOf("x:Name=\"TransferProgressArea\"", StringComparison.Ordinal)..];
+        area = area[..area.IndexOf(">", StringComparison.Ordinal)];
+        Assert.Contains("IsEnabled=\"False\"", area, StringComparison.Ordinal);
+
+        var source = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml.cs"));
+        Assert.Contains("TransferButton.IsEnabled = canTransfer;", source, StringComparison.Ordinal);
+        Assert.Contains("TransferProgressArea.IsEnabled = _transferActive || canTransfer;", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>And the first refresh has to happen while the window is loading.</summary>
+    [Fact]
+    public void Startup_PaintsTheRealStateItself()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml.cs"));
+        var loaded = source[source.IndexOf("private async void Window_Loaded(", StringComparison.Ordinal)..];
+        var end = loaded.IndexOf("private async void Window_Closing(", StringComparison.Ordinal);
+        if (end > 0) loaded = loaded[..end];
+        var status = loaded.IndexOf("RefreshControlsPresetStatus();", StringComparison.Ordinal);
+        var refresh = loaded.IndexOf("RefreshUi();", status, StringComparison.Ordinal);
+
+        Assert.True(status > 0, "startup should still work out whether the preset is applied");
+        Assert.True(refresh > status, "and it should put that on the buttons, not wait for the timer");
     }
 
     private static string FindRepositoryFile(params string[] relativeParts)

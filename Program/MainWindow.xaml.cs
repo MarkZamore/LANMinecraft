@@ -209,6 +209,12 @@ public partial class MainWindow : Window
             RefreshWorlds();
             InitializeUpdateUi();
             InitializeRuntimeProgressUi();
+            // Every control that a state decides - the preset button above all -
+            // wears whatever the markup gave it until this runs. Without it the
+            // window opens with the preset button live over a preset already in
+            // place, and stays wrong until the two-second timer ticks or the
+            // pack hash finishes, whichever loses.
+            RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
             _uiTimer.Start();
             SetState("Ready");
@@ -1900,19 +1906,7 @@ public partial class MainWindow : Window
             ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.PhaseIndex}/{progress.PhaseCount}")
             : 0;
         if (!isByteStage) _runtimeRate.Reset();
-        _playProgressText = progress.Stage switch
-        {
-            RuntimePreparationStage.SyncingPack when progress.TotalBytes > 0 =>
-                $"Обновление: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
-            RuntimePreparationStage.SyncingPack => "Проверка сборки",
-            RuntimePreparationStage.Downloading when progress.TotalBytes > 0 =>
-                $"Скачивание файлов{phase}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
-            RuntimePreparationStage.Downloading => $"Скачивание файлов{phase}",
-            RuntimePreparationStage.InstallingJava when progress.TotalBytes > 0 =>
-                $"{progress.Message}: {FormatBytes(progress.DownloadedBytes)} / {FormatBytes(progress.TotalBytes)} ({FormatBytes((long)runtimeSpeed)}/с)",
-            RuntimePreparationStage.InstallingLoader => progress.Message + phase,
-            _ => progress.Message
-        };
+        _playProgressText = PlayButtonCaption.For(progress, runtimeSpeed);
         PlayProgressBar.IsIndeterminate = progress.Fraction is null && busy;
         if (progress.Fraction is not null)
         {
@@ -2270,11 +2264,18 @@ public partial class MainWindow : Window
         OnlinePlayerComboBox.IsEnabled = configurationEnabled && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        TransferButton.IsEnabled = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
-                                   WorldComboBox.SelectedItem is WorldViewModel &&
-                                   selectedRecipient is not null &&
-                                   !selectedRecipient.IsMinecraftRunning &&
-                                   !selectedRecipient.IsMinecraftPreparing;
+        var canTransfer = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
+                          WorldComboBox.SelectedItem is WorldViewModel &&
+                          selectedRecipient is not null &&
+                          !selectedRecipient.IsMinecraftRunning &&
+                          !selectedRecipient.IsMinecraftPreparing;
+        TransferButton.IsEnabled = canTransfer;
+        // The bar reads "В ожидании мира" whether or not anything could ever
+        // arrive. It waits for nothing while the game holds the world, while no
+        // world is chosen, or while there is nobody to send it to, so it goes
+        // quiet with the button and speaks only when a transfer is possible or
+        // already running.
+        TransferProgressArea.IsEnabled = _transferActive || canTransfer;
         MemoryTextBox.IsEnabled = settingsEnabled;
         UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
 
