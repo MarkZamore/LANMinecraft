@@ -44,9 +44,11 @@ public sealed class SettingsSchemaTests : IDisposable
         Assert.Equal("MarkZamore", settings.PlayerName);
         // 12 was written when the number meant the Java heap alone. It becomes
         // the smallest budget that still leaves that heap, so the game keeps
-        // exactly the memory it had.
-        Assert.Equal(MemorySizingService.GetBudgetForHeapGb(12), settings.MaxMemoryGb);
-        Assert.Equal(12, MemorySizingService.GetHeapGb(settings.MaxMemoryGb));
+        // exactly the memory it had. There is no pack under this root, so the
+        // split is the one the launcher uses for a pack it cannot see.
+        var unseen = PackMemoryProfile.Unknown;
+        Assert.Equal(MemorySizingService.GetBudgetForHeapGb(unseen, 12), settings.MaxMemoryGb);
+        Assert.Equal(12, MemorySizingService.GetHeapGb(unseen, settings.MaxMemoryGb));
         Assert.True(settings.MemorySettingIsWholeGame);
         Assert.Equal("Infinity", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
@@ -74,6 +76,69 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
+    }
+
+    /// <summary>
+    /// A number the launcher suggested follows the pack it is for: put a
+    /// vanilla pack under a file nobody has edited by hand, and the suggestion
+    /// comes down to what vanilla wants rather than staying at a modpack's.
+    /// </summary>
+    [Fact]
+    public void ANumberTheLauncherChose_FollowsThePack()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        WriteVanillaPack(paths, "Vanilla");
+        WriteSettings(paths, memoryGb: 20, chosenByPlayer: false, pack: "Vanilla");
+
+        var settings = new SettingsService(paths).Load();
+
+        var vanilla = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
+        Assert.True(vanilla.IsKnown);
+        Assert.Equal(MemorySizingService.GetRecommendedDefaultMemoryGb(vanilla), settings.MaxMemoryGb);
+        Assert.True(settings.MaxMemoryGb < 20, "vanilla must not keep a modpack's number");
+    }
+
+    /// <summary>And a number the player typed is left where they put it.</summary>
+    [Fact]
+    public void ANumberThePlayerChose_IsLeftAlone()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        WriteVanillaPack(paths, "Vanilla");
+        WriteSettings(paths, memoryGb: 20, chosenByPlayer: true, pack: "Vanilla");
+
+        var settings = new SettingsService(paths).Load();
+
+        Assert.Equal(20, settings.MaxMemoryGb);
+        Assert.True(settings.MemoryChosenByPlayer);
+    }
+
+    private static void WriteSettings(AppPaths paths, int memoryGb, bool chosenByPlayer, string pack)
+    {
+        File.WriteAllText(paths.SettingsFile, $$"""
+        {
+          "schemaVersion": {{SettingsService.CurrentSchemaVersion}},
+          "maxMemoryGb": {{memoryGb}},
+          "memorySettingIsWholeGame": true,
+          "memoryChosenByPlayer": {{(chosenByPlayer ? "true" : "false")}},
+          "clientRelativePath": "{{pack}}"
+        }
+        """);
+    }
+
+    private static void WriteVanillaPack(AppPaths paths, string name)
+    {
+        var pack = Path.Combine(paths.Packs, name);
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, PackManifestService.ManifestFileName), $$"""
+        {
+          "schemaVersion": {{PackManifestService.CurrentSchemaVersion}},
+          "minecraftVersion": "1.21.1",
+          "loader": {"type": "vanilla"},
+          "clientJar": "client.jar"
+        }
+        """);
     }
 
     [Fact]

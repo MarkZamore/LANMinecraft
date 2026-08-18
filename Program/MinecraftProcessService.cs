@@ -229,12 +229,24 @@ public sealed class MinecraftProcessService
         session.UserType = "mojang";
         session.Xuid = "";
         // The setting is everything the game may take. The heap gets what is
-        // left after the room kept for the rest of it - class data, compiled
-        // code, thread stacks, and the buffers Sodium hands the driver.
-        var heapGb = MemorySizingService.GetHeapGb(settings.MaxMemoryGb);
+        // left after the room this pack keeps beside it - class data, compiled
+        // code, thread stacks, and the buffers Sodium hands the driver - and
+        // that room is weighed from the pack on disk rather than assumed, so
+        // vanilla on an old version and a pack of nine hundred mods each get
+        // the split they deserve out of the same number.
+        var packMemory = PackMemoryProfile.Measure(packDir);
+        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb);
         var maximumRamMb = checked(heapGb * 1024);
         _logger.Info(
-            $"Memory: {settings.MaxMemoryGb} GB for the game, of which {heapGb} GB is the Java heap.");
+            $"Memory: {settings.MaxMemoryGb} GB for the game ({packMemory.ModCount} mods, " +
+            $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap.");
+        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory);
+        if (settings.MaxMemoryGb < smallestUsefulBudgetGb)
+        {
+            _logger.Warn(
+                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory)} GB outside its heap, " +
+                $"so {settings.MaxMemoryGb} GB is under the {smallestUsefulBudgetGb} GB it takes to stay inside that number.");
+        }
         var extraJvmArguments = new List<MArgument>
         {
             new("-Dfile.encoding=UTF-8"),

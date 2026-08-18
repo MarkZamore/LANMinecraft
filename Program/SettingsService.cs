@@ -18,6 +18,65 @@ public sealed class SettingsService
         _logger = logger;
     }
 
+    /// <summary>
+    /// The pack the memory rules are sized against, as last measured. Unknown
+    /// until a pack is installed, and re-measured whenever the player picks
+    /// another build or one finishes downloading.
+    /// </summary>
+    public PackMemoryProfile PackMemory { get; private set; } = PackMemoryProfile.Unknown;
+
+    /// <summary>
+    /// Looks at a pack folder and remembers what it weighs. Cheap enough for a
+    /// build switch and far too dear for a keystroke, which is why the result is
+    /// kept rather than taken again.
+    /// </summary>
+    public PackMemoryProfile MeasurePack(string? clientRelativePath)
+    {
+        var relativePath = clientRelativePath?.Trim() ?? "";
+        if (relativePath.Length == 0)
+        {
+            PackMemory = PackMemoryProfile.Unknown;
+            return PackMemory;
+        }
+
+        try
+        {
+            PackMemory = PackMemoryProfile.Measure(_paths.CombineUnderPacks(relativePath));
+        }
+        catch (InvalidOperationException)
+        {
+            // A path that escapes the portable root is not a pack.
+            PackMemory = PackMemoryProfile.Unknown;
+        }
+
+        return PackMemory;
+    }
+
+    /// <summary>
+    /// Puts the launcher's own suggestion back in step with the pack it is for.
+    /// A number the player typed is left exactly as it is - for ever, and on
+    /// every pack. Returns true when the number moved.
+    /// </summary>
+    public bool ApplyPackRecommendation(AppSettings settings)
+    {
+        if (settings.MemoryChosenByPlayer) return false;
+
+        var recommended = MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory);
+        if (settings.MaxMemoryGb == recommended) return false;
+
+        _logger?.Info(
+            $"Memory for this pack ({DescribePack()}): {recommended} GB for the game, " +
+            $"of which {MemorySizingService.GetHeapGb(PackMemory, recommended)} GB is the Java heap.");
+        settings.MaxMemoryGb = recommended;
+        Save(settings);
+        return true;
+    }
+
+    private string DescribePack() =>
+        PackMemory.IsKnown
+            ? $"{PackMemory.ModCount} mods, Minecraft {PackMemory.MinecraftVersion ?? "unknown"}"
+            : "not installed yet";
+
     public AppSettings Load()
     {
         var settingsFile = _paths.SettingsFile;
@@ -34,19 +93,30 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
+            var pack = MeasurePack(settings.ClientRelativePath);
             // Up to schema 11 the number was the Java heap alone; from 12 it is
             // everything the game may take. A stored heap is carried across as
             // the smallest budget that still leaves it, so no one's game shrinks
             // on the launch that changed the meaning.
             if (hasConfiguredMemory && !HasJsonProperty(json, "memorySettingIsWholeGame"))
             {
-                var budget = MemorySizingService.GetBudgetForHeapGb(settings.MaxMemoryGb);
+                var budget = MemorySizingService.GetBudgetForHeapGb(pack, settings.MaxMemoryGb);
                 _logger?.Info(
                     $"Memory setting carried across: {settings.MaxMemoryGb} GB of heap becomes {budget} GB for the whole game.");
                 settings.MaxMemoryGb = budget;
             }
             settings.MemorySettingIsWholeGame = true;
-            settings = ApplyFallbacks(settings, useRecommendedMemory: !hasConfiguredMemory);
+            // Whose number is it? A file written before the launcher asked is
+            // asked once, and answers by arithmetic: a number the launcher would
+            // have suggested on this machine is the launcher's, and from now on
+            // it follows the pack; anything else was typed by hand and stays.
+            if (hasConfiguredMemory && !HasJsonProperty(json, "memoryChosenByPlayer"))
+            {
+                settings.MemoryChosenByPlayer = settings.MaxMemoryGb !=
+                    MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown);
+            }
+            settings = ApplyFallbacks(settings, pack, useRecommendedMemory: !hasConfiguredMemory);
+            ApplyPackRecommendation(settings);
             TryPersistSafeDefaults(settings);
             return settings;
         }
@@ -60,11 +130,14 @@ public sealed class SettingsService
 
     public void Save(AppSettings settings)
     {
-        settings = ApplyFallbacks(settings);
+        settings = ApplyFallbacks(settings, PackMemory);
         AtomicFile.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
 
-    private static AppSettings ApplyFallbacks(AppSettings? source, bool useRecommendedMemory = false)
+    private static AppSettings ApplyFallbacks(
+        AppSettings? source,
+        PackMemoryProfile pack,
+        bool useRecommendedMemory = false)
     {
         var settings = source ?? new AppSettings();
 
@@ -78,7 +151,7 @@ public sealed class SettingsService
             settings.MaxMemoryGb < MemorySizingService.MinMemoryGb ||
             settings.MaxMemoryGb > MemorySizingService.MaxMemoryGb)
         {
-            settings.MaxMemoryGb = MemorySizingService.GetRecommendedDefaultMemoryGb();
+            settings.MaxMemoryGb = MemorySizingService.GetRecommendedDefaultMemoryGb(pack);
         }
         else
         {
@@ -95,9 +168,9 @@ public sealed class SettingsService
         return settings;
     }
 
-    private static AppSettings CreateSafeDefaults()
+    private AppSettings CreateSafeDefaults()
     {
-        return ApplyFallbacks(new AppSettings(), useRecommendedMemory: true);
+        return ApplyFallbacks(new AppSettings(), PackMemory, useRecommendedMemory: true);
     }
 
     /// <summary>1 when the file predates the version field.</summary>

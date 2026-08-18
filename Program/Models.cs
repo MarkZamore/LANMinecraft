@@ -36,6 +36,14 @@ public sealed class AppSettings
     /// </summary>
     public bool MemorySettingIsWholeGame { get; set; }
 
+    /// <summary>
+    /// True once the number above is the player's own. Until then it is the
+    /// launcher's suggestion, and it follows the pack: a build of nine hundred
+    /// mods and a vanilla one do not want the same number, and the player who
+    /// never touched the field should not have to work that out.
+    /// </summary>
+    public bool MemoryChosenByPlayer { get; set; }
+
     public string ClientRelativePath { get; set; } = "";
     public string SkinPath { get; set; } = "";
     public string SelectedWorldRelativePath { get; set; } = "";
