@@ -63,6 +63,8 @@ public partial class MainWindow : Window
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
+    /// <summary>False on every launch: the column opens on the assistant.</summary>
+    private bool _sidePanelShowsNews;
     private bool _bugReportSending;
     private string _bugReportStatus = string.Empty;
     private readonly TransferRateTracker _bugReportRate = new();
@@ -128,7 +130,6 @@ public partial class MainWindow : Window
     {
         try
         {
-            VersionTextBlock.Text = BuildVersionText();
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
             LogCleanupService.RunCleanup(_paths);
@@ -139,6 +140,7 @@ public partial class MainWindow : Window
             // it measures, and there is no logger to report to until now.
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
             LoadChangelog();
+            ShowSidePanel(news: false);
             DeprecatedFileCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
@@ -1941,6 +1943,34 @@ public partial class MainWindow : Window
     private static string BuildVersionText() => $"Версия {UpdateService.CurrentReleaseNumber}";
 
     /// <summary>
+    /// What the update bar says when there is nothing to fetch. The number
+    /// rides along: the corner that used to hold it is a button now, and a
+    /// player asked what version they are on has to be able to read it off the
+    /// one line that is already about versions.
+    /// </summary>
+    private static string LatestVersionText() =>
+        $"Вы на последней версии ({UpdateService.CurrentReleaseNumber})";
+
+    /// <summary>
+    /// The right column shows one of its two faces: the assistant it opens on,
+    /// or the version history. The footer button carries the name of the other
+    /// one, because that is what pressing it brings.
+    /// </summary>
+    private void ShowSidePanel(bool news)
+    {
+        _sidePanelShowsNews = news;
+        ChangelogPanel.Visibility = news ? Visibility.Visible : Visibility.Collapsed;
+        ChatPanel.Visibility = news ? Visibility.Collapsed : Visibility.Visible;
+        SidePanelTitle.Text = news ? "Что нового" : "Чат";
+        SidePanelToggleButton.Content = news ? "Чат" : "Новости";
+    }
+
+    private void SidePanelToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSidePanel(!_sidePanelShowsNews);
+    }
+
+    /// <summary>
     /// Fills "Что нового" from the history embedded in the executable and marks
     /// the version this build is. Newest first, so the current one is at the
     /// top; a missing or broken history shows one line instead of an empty box.
@@ -1983,7 +2013,7 @@ public partial class MainWindow : Window
         UpdateProgressBar.Value = 0;
         UpdateProgressBar.IsIndeterminate = false;
         SetProgressActivity(UpdateProgressBar, active: false);
-        UpdateProgressText.Text = "Вы на последней версии";
+        UpdateProgressText.Text = LatestVersionText();
         UpdateButton.IsEnabled = false;
     }
 
@@ -2080,7 +2110,7 @@ public partial class MainWindow : Window
                         SetProgressActivity(UpdateProgressBar, active: false);
                         UpdateProgressText.Text = result.IsUnavailable
                             ? "Не удалось проверить обновления"
-                            : "Вы на последней версии";
+                            : LatestVersionText();
                     });
                 }
             }
@@ -2143,7 +2173,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 0;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = "Вы на последней версии";
+                    UpdateProgressText.Text = LatestVersionText();
                 });
             }
         }
@@ -2179,7 +2209,7 @@ public partial class MainWindow : Window
             if (prepared is null)
             {
                 _preparedUpdate = null;
-                UpdateProgressText.Text = "Вы на последней версии";
+                UpdateProgressText.Text = LatestVersionText();
                 UpdateProgressBar.Value = 0;
                 SetProgressActivity(UpdateProgressBar, active: false);
                 return;
