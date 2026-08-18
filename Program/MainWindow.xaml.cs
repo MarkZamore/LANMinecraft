@@ -170,6 +170,7 @@ public partial class MainWindow : Window
             await _skinService.StartAsync(_lifetimeCts.Token);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
+            _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
             // A launcher closed while the game plays leaves the game behind.
             // This one picks it up, so the button says "Игра запущена" instead
@@ -1064,6 +1065,18 @@ public partial class MainWindow : Window
             }
             RefreshUi();
         });
+    }
+
+    /// <summary>
+    /// The game closed because it ran out of memory. It is said in the line
+    /// under the report panel: that is where the launcher already speaks, and
+    /// the button that sends the logs is right beside it.
+    /// </summary>
+    private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
+    {
+        PostToUi(() => SetBugReportStatus(
+            (maxMemoryGb > 0 ? $"Игре не хватило памяти: ей выделено {maxMemoryGb} ГБ. " : "Игре не хватило памяти. ") +
+            "Мир не пострадал - игра закрылась, не успев предложить открыть его без модов."));
     }
 
     private void OnMinecraftClientPreparingChanged(bool isPreparing)
@@ -2237,11 +2250,32 @@ public partial class MainWindow : Window
         {
             MemoryTextBox.Text = text;
             MemoryTextBox.CaretIndex = MemoryTextBox.Text.Length;
+            DescribeMemorySplit(text);
         }
         finally
         {
             _suppressMemoryTextChanged = false;
         }
+    }
+
+    /// <summary>
+    /// The number is everything the game may take, so the field says how it is
+    /// divided: what the Java heap gets and what is kept for the rest of the
+    /// game - the class data of the mods, the compiled code and the buffers
+    /// Sodium hands the graphics driver.
+    /// </summary>
+    private void DescribeMemorySplit(string text)
+    {
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var budgetGb))
+        {
+            MemoryTextBox.ToolTip = null;
+            return;
+        }
+        var heapGb = MemorySizingService.GetHeapGb(budgetGb);
+        MemoryTextBox.ToolTip =
+            $"Столько памяти игра может занять всего - до {budgetGb} ГБ. " +
+            $"Из них {heapGb} ГБ достаётся куче Java, остальное держат классы модов, " +
+            "скомпилированный код и буферы Sodium.";
     }
 
     private async Task RunUiActionAsync(Func<Task> action)

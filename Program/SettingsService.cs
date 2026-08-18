@@ -34,6 +34,18 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
+            // Up to schema 11 the number was the Java heap alone; from 12 it is
+            // everything the game may take. A stored heap is carried across as
+            // the smallest budget that still leaves it, so no one's game shrinks
+            // on the launch that changed the meaning.
+            if (hasConfiguredMemory && !HasJsonProperty(json, "memorySettingIsWholeGame"))
+            {
+                var budget = MemorySizingService.GetBudgetForHeapGb(settings.MaxMemoryGb);
+                _logger?.Info(
+                    $"Memory setting carried across: {settings.MaxMemoryGb} GB of heap becomes {budget} GB for the whole game.");
+                settings.MaxMemoryGb = budget;
+            }
+            settings.MemorySettingIsWholeGame = true;
             settings = ApplyFallbacks(settings, useRecommendedMemory: !hasConfiguredMemory);
             TryPersistSafeDefaults(settings);
             return settings;

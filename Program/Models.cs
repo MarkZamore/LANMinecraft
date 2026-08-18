@@ -24,7 +24,17 @@ public sealed class AppSettings
     [JsonIgnore]
     public string LocalIdentityName { get; set; } = "";
 
+    /// <summary>
+    /// Everything the game may take: the Java heap and the room beside it for
+    /// class data, compiled code and the buffers Sodium hands the driver.
+    /// </summary>
     public int MaxMemoryGb { get; set; } = 16;
+
+    /// <summary>
+    /// False in a settings file written when this number was the heap alone.
+    /// The launcher reads it once, converts, and never asks again.
+    /// </summary>
+    public bool MemorySettingIsWholeGame { get; set; }
 
     public string ClientRelativePath { get; set; } = "";
     public string SkinPath { get; set; } = "";

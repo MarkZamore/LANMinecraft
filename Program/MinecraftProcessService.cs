@@ -93,6 +93,15 @@ public sealed class MinecraftProcessService
     public string DiagnosticGameVersion => Volatile.Read(ref _lastGameVersion);
     public string DiagnosticProfileId => Volatile.Read(ref _lastProfileId);
     public event Action<bool>? ClientRunningChanged;
+
+    /// <summary>
+    /// The game died for want of memory, carrying the size it was given. Worth
+    /// its own event: it is the one ending the player can do something about.
+    /// </summary>
+    public event Action<int>? ClientRanOutOfMemory;
+
+    /// <summary>What the log says when the heap is spent.</summary>
+    private const string OutOfMemoryMarker = "OutOfMemoryError";
     public event Action<bool>? ClientPreparingChanged;
 
     public MinecraftProcessService(
@@ -219,7 +228,13 @@ public sealed class MinecraftProcessService
         session.AccessToken = identityContext.SessionAccessToken;
         session.UserType = "mojang";
         session.Xuid = "";
-        var maximumRamMb = checked(settings.MaxMemoryGb * 1024);
+        // The setting is everything the game may take. The heap gets what is
+        // left after the room kept for the rest of it - class data, compiled
+        // code, thread stacks, and the buffers Sodium hands the driver.
+        var heapGb = MemorySizingService.GetHeapGb(settings.MaxMemoryGb);
+        var maximumRamMb = checked(heapGb * 1024);
+        _logger.Info(
+            $"Memory: {settings.MaxMemoryGb} GB for the game, of which {heapGb} GB is the Java heap.");
         var extraJvmArguments = new List<MArgument>
         {
             new("-Dfile.encoding=UTF-8"),
@@ -237,7 +252,18 @@ public sealed class MinecraftProcessService
             // A property rather than the config file because ModernFix rewrites
             // that file on every launch, so a pack copy can never reach an
             // instance without the sync flagging it as a local edit.
-            new("-Dmodernfix.config.mixin.perf.dynamic_resources=true")
+            new("-Dmodernfix.config.mixin.perf.dynamic_resources=true"),
+            // Die at the first OutOfMemoryError instead of carrying on.
+            //
+            // The game's own answer to running out of memory while a world's
+            // data packs load is a screen offering to open that world with the
+            // vanilla data pack alone - and a modded world opened without its
+            // data packs loses every block, item and entity they define the
+            // moment it saves. The offer arrives seconds before the "out of
+            // memory" screen does, so the dangerous button is the one a player
+            // sees first. A JVM that exits on the spot never shows either, and
+            // the launcher says what happened instead.
+            new("-XX:+ExitOnOutOfMemoryError")
         };
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
@@ -300,7 +326,8 @@ public sealed class MinecraftProcessService
         // before the startup window closes, so the exit code travels through
         // the completion source instead of the Process.
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = MonitorClientExitAsync(minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir);
+        _ = MonitorClientExitAsync(
+            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir, settings.MaxMemoryGb);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -320,7 +347,8 @@ public sealed class MinecraftProcessService
         string packRelativePath,
         TaskCompletionSource<int> exitCode,
         StartupOutputBuffer startupOutput,
-        string gameDir)
+        string gameDir,
+        int maxMemoryGb)
     {
         var processId = process.Id;
         try
@@ -339,7 +367,7 @@ public sealed class MinecraftProcessService
                 // reported the exit code and nobody kept what the process said
                 // on its way out. Everything known about it goes to the log the
                 // moment it happens.
-                ReportUnexpectedExit(process, startupOutput, gameDir);
+                ReportUnexpectedExit(process, startupOutput, gameDir, maxMemoryGb);
                 // Published before any cleanup so the launch method never has
                 // to read the Process object this monitor is about to dispose.
                 TryPublishExitCode(process, exitCode);
@@ -373,15 +401,25 @@ public sealed class MinecraftProcessService
         }
     }
 
-    private void ReportUnexpectedExit(Process process, StartupOutputBuffer startupOutput, string gameDir)
+    private void ReportUnexpectedExit(
+        Process process, StartupOutputBuffer startupOutput, string gameDir, int maxMemoryGb)
     {
         try
         {
             if (process.ExitCode == 0) return;
+            var tail = ReadLatestLogTail(gameDir);
             _logger.Warn(
                 $"Minecraft exited with code {process.ExitCode}." +
                 startupOutput.Describe() +
-                ReadLatestLogTail(gameDir));
+                tail);
+            // Out of memory is the one ending a player can act on, and the one
+            // the game itself would have answered with a dangerous offer, so it
+            // is said in the window rather than left in the log.
+            if (tail.Contains(OutOfMemoryMarker, StringComparison.Ordinal))
+            {
+                _logger.Warn($"The game ran out of the {maxMemoryGb} GB it was given.");
+                ClientRanOutOfMemory?.Invoke(maxMemoryGb);
+            }
         }
         catch (Exception ex) when (ex is InvalidOperationException or SystemException)
         {
@@ -484,8 +522,11 @@ public sealed class MinecraftProcessService
             adopted++;
             _logger.Info($"A game started by an earlier launcher is still running (process {session.ProcessId}, {session.PackRelativePath}).");
             var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            // A game this launcher did not start: its size was another
+            // launcher's setting, so 0 stands for "not known" and the ending is
+            // still named, without a number that might be someone else's.
             _ = MonitorClientExitAsync(process, session.PackRelativePath, exitCode, new StartupOutputBuffer(),
-                _paths.CombineUnderInstances(session.PackRelativePath));
+                _paths.CombineUnderInstances(session.PackRelativePath), maxMemoryGb: 0);
         }
         if (adopted > 0) NotifyClientRunningChanged(true);
         return adopted;

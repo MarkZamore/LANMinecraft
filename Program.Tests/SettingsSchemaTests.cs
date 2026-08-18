@@ -42,7 +42,12 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal("MarkZamore", settings.PlayerName);
-        Assert.Equal(12, settings.MaxMemoryGb);
+        // 12 was written when the number meant the Java heap alone. It becomes
+        // the smallest budget that still leaves that heap, so the game keeps
+        // exactly the memory it had.
+        Assert.Equal(MemorySizingService.GetBudgetForHeapGb(12), settings.MaxMemoryGb);
+        Assert.Equal(12, MemorySizingService.GetHeapGb(settings.MaxMemoryGb));
+        Assert.True(settings.MemorySettingIsWholeGame);
         Assert.Equal("Infinity", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
 
@@ -53,9 +58,11 @@ public sealed class SettingsSchemaTests : IDisposable
             SettingsService.CurrentSchemaVersion,
             JsonDocument.Parse(saved).RootElement.GetProperty("schemaVersion").GetInt32());
 
+        // And the conversion happens once: a file that has already been carried
+        // across is read as it stands, not converted again.
         var reloaded = new SettingsService(paths).Load();
         Assert.Equal("MarkZamore", reloaded.PlayerName);
-        Assert.Equal(12, reloaded.MaxMemoryGb);
+        Assert.Equal(settings.MaxMemoryGb, reloaded.MaxMemoryGb);
     }
 
     [Fact]
