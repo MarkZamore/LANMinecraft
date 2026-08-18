@@ -13,6 +13,33 @@ namespace Minecraft.Tests;
 public sealed class ResourcePackDefaultsTests
 {
     /// <summary>
+    /// The "!" mark is not decoration and not free. It puts a pack into the
+    /// game's own list of incompatible ones, and the game deselects any pack it
+    /// finds there and then judges compatible - which on NeoForge is nearly all
+    /// of them. So taking a mark off has to count as a new list, and the mark
+    /// itself has to be withdrawn from the game's list, or the pack the player
+    /// was given stays dark launch after launch.
+    /// </summary>
+    [Fact]
+    public void TakingTheMarkOff_CountsAsANewList_AndWithdrawsIt()
+    {
+        var marked = ResourcePackDefaultsService.Parse(string.Join('\n', ["file/One.zip", "!file/Old.zip"]));
+        var plain = ResourcePackDefaultsService.Parse(string.Join('\n', ["file/One.zip", "file/Old.zip"]));
+
+        Assert.Equal(marked.Entries, plain.Entries);
+        Assert.NotEqual(marked.Sha256, plain.Sha256);
+        Assert.Equal(["file/Old.zip"], marked.Incompatible);
+        Assert.Empty(plain.Incompatible);
+
+        var (withMark, _) = ResourcePackDefaultsService.Select("resourcePacks:[\"vanilla\"]", marked);
+        Assert.Contains("incompatibleResourcePacks:[\"file/Old.zip\"]", withMark, StringComparison.Ordinal);
+
+        var (withoutMark, _) = ResourcePackDefaultsService.Select(withMark, plain);
+        Assert.Contains("incompatibleResourcePacks:[]", withoutMark, StringComparison.Ordinal);
+        Assert.Contains("\"file/One.zip\",\"file/Old.zip\"", withoutMark, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A pack the build used to ship and ships no longer has its file taken away
     /// by the instance mirror; its line in the selection has to go too, or the
     /// game warns about a missing pack at every start. The player's own packs

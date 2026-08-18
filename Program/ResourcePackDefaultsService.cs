@@ -53,19 +53,26 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         ArgumentNullException.ThrowIfNull(text);
         var entries = new List<string>();
         var incompatible = new List<string>();
+        var marked = new List<string>();
         foreach (var raw in text.Split('\n'))
         {
             var line = raw.Split("  #", 2)[0].Trim();
             if (line.Length == 0 || line.StartsWith('#')) continue;
             // "!" marks a pack the game will call outdated; it still plays, but
-            // the game keeps such packs in a list of their own.
+            // the game keeps such packs in a list of their own. Use it only for
+            // a pack the game truly refuses: told a pack is incompatible and
+            // then finding it compatible, the game takes it off the selection.
             var outdated = line.StartsWith('!');
             if (outdated) line = line[1..].Trim();
             if (line.Length == 0) continue;
             entries.Add(line);
+            marked.Add(outdated ? "!" + line : line);
             if (outdated) incompatible.Add(line);
         }
-        var digest = Convert.ToHexString(SHA256.HashData(Utf8NoBom.GetBytes(string.Join("\n", entries)))).ToLowerInvariant();
+        // The marks are part of the list's identity: taking one off changes
+        // nothing about which packs are named and everything about whether the
+        // game keeps them selected, so it has to count as a new list.
+        var digest = Convert.ToHexString(SHA256.HashData(Utf8NoBom.GetBytes(string.Join("\n", marked)))).ToLowerInvariant();
         return new ResourcePackDefaults(digest, entries, incompatible);
     }
 
@@ -146,7 +153,17 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         // older version, so it counts towards rewriting the file and not towards
         // the number of packs the player just gained.
         var incompatible = Extend(lines, IncompatiblePrefix, defaults.Incompatible);
-        var forgotten = Remove(lines, IncompatiblePrefix, dropped);
+        // Everything the pack owns and no longer calls incompatible comes out of
+        // that list. A pack sitting there that the game then judges compatible
+        // is one the game quietly deselects, so a stale mark is not a harmless
+        // leftover - it is the reason a pack the player was given goes dark.
+        var forgotten = Remove(
+            lines,
+            IncompatiblePrefix,
+            defaults.Entries
+                .Where(entry => !defaults.Incompatible.Contains(entry, StringComparer.Ordinal))
+                .Concat(dropped)
+                .ToList());
         if (!rearranged && incompatible == 0 && !forgotten) return (options, 0);
 
         var text = string.Join(newline, lines);

@@ -534,13 +534,14 @@ public partial class MainWindow : Window
             }
         }
 
-        DiagnosticLogTargetComboBox.IsEnabled = targets.Count > 0;
+        // Nothing here is ever switched off. This is the panel a player reaches
+        // for when something has gone wrong, and what goes wrong first is Steam
+        // and the friends list - the very things the panel used to wait for
+        // before it would let itself be touched. It stays live and says why
+        // instead: the reason belongs in the line under the button, where it can
+        // be read, not in a grey button that explains nothing.
         DiagnosticLogTargetPlaceholderText.Visibility =
             targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        var recipient = DiagnosticLogTargetComboBox.SelectedItem as DiagnosticLogTargetOption;
-        SendBugReportButton.IsEnabled =
-            !_bugReportSending && IsIdentityBound && recipient is not null;
         DiagnosticLogStatusText.Text = _bugReportStatus;
     }
 
@@ -551,10 +552,24 @@ public partial class MainWindow : Window
     /// </summary>
     private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_bugReports is null || _bugReportSending) return;
+        if (_bugReports is null)
+        {
+            SetBugReportStatus("Лаунчер ещё готовится - отчёт можно будет отправить через несколько секунд.");
+            return;
+        }
+        if (_bugReportSending)
+        {
+            SetBugReportStatus(_bugReportStatus);
+            return;
+        }
+        if (!IsIdentityBound)
+        {
+            SetBugReportStatus("Steam ещё не подключился - без него отчёт некому передать.");
+            return;
+        }
         if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient)
         {
-            SetBugReportStatus("Выберите, кому отправить отчёт.");
+            SetBugReportStatus("Некому отправить отчёт: в сети нет игроков с лаунчером.");
             return;
         }
 
@@ -1186,12 +1201,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Works out whether the pack's controls preset is already in the instance's
-    /// options. Called on every tick, so it reads the two files only when one of
-    /// them has changed since the last answer - the preset is six hundred lines
-    /// and the options as many, and neither moves between launches.
-    /// </summary>
-    /// <summary>
     /// Fetches the pack's own launcher folder - the controls preset, the
     /// resource pack list, the reset tokens - without waiting for a launch, and
     /// looks at the preset again once it lands. Tens of kilobytes: the button
@@ -1215,6 +1224,12 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Works out whether the pack's controls preset is already in the instance's
+    /// options. Called on every tick, so it reads the two files only when one of
+    /// them has changed since the last answer - the preset is six hundred lines
+    /// and the options as many, and neither moves between launches.
+    /// </summary>
     private void RefreshControlsPresetStatus()
     {
         var directories = ResolveSelectedBuildDirectories();
