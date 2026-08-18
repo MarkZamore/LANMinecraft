@@ -13,7 +13,12 @@ public sealed record ControlsPreset(string Sha256, IReadOnlyList<ControlsPresetE
 /// <summary>Where a build stands against its pack's preset.</summary>
 /// <param name="HasPreset">The pack ships a readable preset.</param>
 /// <param name="IsApplied">Every line of it already stands in the instance's options.txt.</param>
-public readonly record struct ControlsPresetStatus(bool HasPreset, bool IsApplied);
+/// <param name="FirstDifference">
+/// The name of the first mapping that does not, and null when they all do. A
+/// lit button has to be able to say what it is offering: without this the only
+/// answer to "but I already applied it" was to read six hundred lines by hand.
+/// </param>
+public readonly record struct ControlsPresetStatus(bool HasPreset, bool IsApplied, string? FirstDifference = null);
 
 /// <summary>
 /// Puts a pack's key layout into a player's game.
@@ -120,17 +125,24 @@ public sealed class ControlsPresetService(Logger? logger = null)
         var optionsPath = Path.Combine(instanceDirectory, OptionsFileName);
         try
         {
-            if (!File.Exists(optionsPath)) return new ControlsPresetStatus(HasPreset: true, IsApplied: false);
+            if (!File.Exists(optionsPath))
+            {
+                return new ControlsPresetStatus(HasPreset: true, IsApplied: false, FirstDifference: OptionsFileName);
+            }
             var current = ReadMappings(File.ReadAllText(optionsPath, Utf8NoBom));
-            var applied = preset.Entries.All(entry =>
-                current.TryGetValue(entry.Name, out var value) &&
-                string.Equals(value, entry.Value, StringComparison.Ordinal));
-            return new ControlsPresetStatus(HasPreset: true, IsApplied: applied);
+            var difference = preset.Entries.FirstOrDefault(entry =>
+                !current.TryGetValue(entry.Name, out var value) ||
+                !string.Equals(value, entry.Value, StringComparison.Ordinal));
+            var applied = difference == default;
+            return new ControlsPresetStatus(
+                HasPreset: true,
+                IsApplied: applied,
+                FirstDifference: applied ? null : difference.Name);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger?.Warn($"The instance options could not be read ({ex.Message}): {optionsPath}");
-            return new ControlsPresetStatus(HasPreset: true, IsApplied: false);
+            return new ControlsPresetStatus(HasPreset: true, IsApplied: false, FirstDifference: OptionsFileName);
         }
     }
 
