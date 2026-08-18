@@ -1,12 +1,13 @@
-using System.IO;
+﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace Minecraft;
 
 /// <summary>
-/// Puts every player of a world back on the plain Steve model of Yes Steve
-/// Model, once, when the pack asks for it.
+/// Puts every player of a world back on the ordinary Minecraft model - their
+/// own body, their own skin - by switching Yes Steve Model off for them, once,
+/// when the pack asks for it.
 ///
 /// The mod keeps a player's chosen model not in a config file but on the
 /// player themselves - a NeoForge attachment inside <c>playerdata/*.dat</c>
@@ -25,13 +26,20 @@ public sealed class PlayerModelResetService(Logger? logger = null)
     internal const string AttachmentsName = "neoforge:attachments";
     internal const string ModelAttachmentName = "yes_steve_model:model_id";
     /// <summary>
-    /// What the mod writes for a player who has chosen no model of its own: the
-    /// game draws them itself, in the ordinary Minecraft body and their own
-    /// skin. Not "default" - that is the name of one of the mod's own models,
-    /// a shorter figure with its own texture, and setting it gave every player
-    /// that model instead of themselves.
+    /// The switch that turns the mod off for one player: with it set the game
+    /// draws them itself, in the ordinary Minecraft body and their own skin.
+    ///
+    /// It took two wrong turns to find. The mod's <c>model_id</c> is only the
+    /// name of a model, and "default" is the name of one of the mod's own -
+    /// a shorter figure with its own texture, which is what every player got.
+    /// Writing "disabled" as the id was no better: no model answers to that
+    /// name, so the mod fell back to its own default and saved it over us on
+    /// the next join. The mod keeps the real answer beside the id, as a
+    /// boolean, and this is it.
     /// </summary>
-    internal const string DefaultModelId = "disabled";
+    internal const string DisabledFlagName = "disabled";
+    /// <summary>The mod's own name for its own model; a valid id to leave behind.</summary>
+    internal const string DefaultModelId = "default";
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -60,7 +68,7 @@ public sealed class PlayerModelResetService(Logger? logger = null)
     }
 
     /// <summary>
-    /// Sets the model of every player in the world to the default, once.
+    /// Turns the mod off for every player in the world, once.
     /// Returns how many players were changed; zero when nothing was to be done.
     /// </summary>
     public int Apply(string packDirectory, string worldPath)
@@ -88,26 +96,47 @@ public sealed class PlayerModelResetService(Logger? logger = null)
         WriteMarker(worldPath, token);
         if (changed > 0)
         {
-            logger?.Info($"World {Path.GetFileName(worldPath)}: {changed} player model(s) put back on the default Steve.");
+            logger?.Info($"World {Path.GetFileName(worldPath)}: {changed} player(s) put back on the ordinary Minecraft model.");
         }
         return changed;
     }
 
     /// <summary>
-    /// Changes the model in one file when it names another one. Everything else
-    /// in the file is written back exactly as it was read.
+    /// Turns the mod off for one player. Everything else in the file is
+    /// written back exactly as it was read.
     /// </summary>
     internal static bool ResetModel(NbtCompoundTag player)
     {
         ArgumentNullException.ThrowIfNull(player);
+        // A player who has never opened the mod carries no attachment at all,
+        // and the mod gives them its own model the first time they join. So the
+        // switch is written for them too, not only for those who already chose.
         var attachments = player.GetCompound(AttachmentsName);
-        var model = attachments?.GetCompound(ModelAttachmentName);
-        if (model is null) return false;
-        if (string.Equals(model.GetString("model_id"), DefaultModelId, StringComparison.Ordinal)) return false;
-        model.Set("model_id", new NbtStringTag(DefaultModelId));
-        // No model, no texture chosen inside one: the skin the player wears is
-        // the one the game already has for them.
-        model.Set("select_texture", new NbtStringTag(string.Empty));
+        if (attachments is null)
+        {
+            attachments = new NbtCompoundTag();
+            player.Set(AttachmentsName, attachments);
+        }
+        var model = attachments.GetCompound(ModelAttachmentName);
+        if (model is null)
+        {
+            model = new NbtCompoundTag();
+            attachments.Set(ModelAttachmentName, model);
+        }
+        else if (model.GetByte(DisabledFlagName) == 1)
+        {
+            return false;
+        }
+
+        model.Set(DisabledFlagName, new NbtByteTag(1));
+        // The id stays a name the mod knows, so its own screen has something to
+        // show when a player switches the model back on.
+        var id = model.GetString("model_id");
+        if (string.IsNullOrEmpty(id) || string.Equals(id, DisabledFlagName, StringComparison.Ordinal))
+        {
+            model.Set("model_id", new NbtStringTag(DefaultModelId));
+            model.Set("select_texture", new NbtStringTag(DefaultModelId));
+        }
         return true;
     }
 
