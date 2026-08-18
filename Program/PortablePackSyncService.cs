@@ -76,6 +76,10 @@ public sealed partial class PortablePackSyncService
     private const string StagingDirectoryName = ".pack-sync-stage";
     private const int MaximumParallelDownloads = 4;
     private const int ManifestFetchAttempts = 3;
+    /// <summary>The pack's word to the launcher: preset, pack list, reset tokens.</summary>
+    private const string LauncherDataPrefix = "launcher/";
+    /// <summary>A ceiling that keeps this to text files, never a pack's jars.</summary>
+    private const long MaximumLauncherDataBytes = 8L * 1024 * 1024;
     private const int AssetDownloadAttempts = 3;
     private const int ReplaceAttempts = 5;
     private const int ReplaceRetryDelay = 120;
@@ -168,6 +172,99 @@ public sealed partial class PortablePackSyncService
             if (marker is null || !IsLegacyDefaultSource(marker)) return;
         }
         WriteSourceMarker(packDir, DefaultPackSource);
+    }
+
+    /// <summary>
+    /// Brings just the pack's <c>launcher/</c> folder up to date, without
+    /// touching the rest of the pack.
+    ///
+    /// That folder is what the pack says to the launcher rather than to the
+    /// game: the controls preset, the resource pack list, the reset tokens.
+    /// All of it is one small asset in the manifest, tens of kilobytes against
+    /// the pack's three gigabytes, so it can be fetched while the window opens.
+    /// Without this the launcher answers questions about a preset it has not
+    /// seen yet - it would call a layout published an hour ago "applied" and
+    /// keep its button grey until somebody pressed Play for other reasons.
+    ///
+    /// Everything is verified against the manifest before it lands, and a
+    /// failure is silent: this is a convenience, and the full sync at launch
+    /// remains the thing that guarantees the pack.
+    /// </summary>
+    /// <returns>True when a file was replaced, so the caller can look again.</returns>
+    public async Task<bool> RefreshLauncherDataAsync(string packRelativePath, CancellationToken token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
+        var source = TryResolveSource(packRelativePath);
+        if (source is null) return false;
+        var packDir = _paths.CombineUnderPacks(packRelativePath);
+        if (!PackManifestService.HasManifest(packDir)) return false;
+
+        var staging = Path.Combine(packDir, StagingDirectoryName + "launcher-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
+            var manifest = ValidateRemoteManifest(dto, packDir);
+
+            var wanted = manifest.Files
+                .Where(file => file.Path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal))
+                .Where(file => !HasFileWithHash(packDir, file))
+                .ToList();
+            if (wanted.Count == 0) return false;
+
+            var assets = wanted
+                .Select(file => manifest.AssetByCoveredPath[file.Path])
+                .DistinctBy(asset => asset.Name)
+                .ToList();
+            // Only ever the small ones: this runs on a window opening, not on a
+            // launch, and a pack's mod jars have no business here.
+            if (assets.Sum(asset => asset.SizeBytes) > MaximumLauncherDataBytes) return false;
+
+            var stageAssets = Path.Combine(staging, "assets");
+            var stageExtract = Path.Combine(staging, "extract");
+            Directory.CreateDirectory(stageAssets);
+            Directory.CreateDirectory(stageExtract);
+            foreach (var asset in assets)
+            {
+                await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token)
+                    .ConfigureAwait(false);
+            }
+            ExtractAndVerifyStagedSources(
+                manifest,
+                assets,
+                wanted.Select(file => file.Path).ToList(),
+                stageAssets,
+                stageExtract,
+                token);
+
+            foreach (var file in wanted)
+            {
+                var staged = ResolveStagedSource(manifest.AssetByCoveredPath[file.Path], stageAssets, stageExtract, file.Path);
+                PlaceStagedFile(packDir, file.Path, staged);
+            }
+            _logger.Info($"Pack {packRelativePath}: {wanted.Count} launcher file(s) refreshed ahead of a full sync.");
+            return true;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException or KeyNotFoundException)
+        {
+            _logger.Warn($"The pack's launcher data could not be refreshed ({ex.Message}); the next launch will bring it.");
+            return false;
+        }
+        finally
+        {
+            TryDeleteDirectory(staging);
+        }
+    }
+
+    /// <summary>True when the pack already holds exactly this file.</summary>
+    private static bool HasFileWithHash(string packDir, ValidatedFile file)
+    {
+        var path = Path.Combine(packDir, file.Path.Replace('/', Path.DirectorySeparatorChar));
+        var info = new FileInfo(path);
+        return info.Exists && info.Length == file.SizeBytes && HashesEqual(HashFile(path), file.Sha256);
     }
 
     public async Task<PackSyncResult> SyncAsync(

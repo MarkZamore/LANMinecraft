@@ -89,6 +89,7 @@ public partial class MainWindow : Window
     private ResourcePackDefaultsService? _resourcePackDefaults;
     private MinimapResetService? _minimapReset;
     private ControlsPresetStatus _controlsPresetStatus;
+    private string? _controlsPresetStamp;
 
     /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
     private double ClientAspect()
@@ -114,6 +115,11 @@ public partial class MainWindow : Window
             RefreshSteamPeers();
             PruneStalePeers();
             RefreshLocalPresence();
+            // The preset changes under the launcher's feet: a pack sync brings a
+            // new one, the game rewrites the options on exit. Asking here means
+            // the button offers itself the moment there is something to apply,
+            // instead of waiting for the next launch to notice.
+            RefreshControlsPresetStatus();
             RefreshUi();
         };
     }
@@ -218,6 +224,10 @@ public partial class MainWindow : Window
             // pack hash finishes, whichever loses.
             RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
+            if (BuildComboBox.SelectedItem is ClientBuildViewModel startupBuild)
+            {
+                _ = RefreshLauncherDataAsync(startupBuild.RelativePath);
+            }
             _uiTimer.Start();
             SetState("Ready");
             _logger.Info("Minecraft portable launcher started.");
@@ -433,11 +443,15 @@ public partial class MainWindow : Window
             BuildComboBox.SelectedItem = null;
         }
 
+        // A build the launcher chose on its own is still the player's build: it
+        // is written down like any other choice, and its preset is looked at
+        // straight away, because the selection handler is suppressed for it.
         if (selectedBuild is not null &&
             !string.Equals(_settings.ClientRelativePath, selectedBuild.RelativePath, StringComparison.OrdinalIgnoreCase))
         {
             _settings.ClientRelativePath = selectedBuild.RelativePath;
             _settingsService.Save(_settings);
+            RefreshControlsPresetStatus();
             _ = RefreshPackHashAndNetworkingAsync();
         }
     }
@@ -1171,12 +1185,73 @@ public partial class MainWindow : Window
         _minimapReset?.Apply(directories.Value.Pack, directories.Value.Instance);
     }
 
+    /// <summary>
+    /// Works out whether the pack's controls preset is already in the instance's
+    /// options. Called on every tick, so it reads the two files only when one of
+    /// them has changed since the last answer - the preset is six hundred lines
+    /// and the options as many, and neither moves between launches.
+    /// </summary>
+    /// <summary>
+    /// Fetches the pack's own launcher folder - the controls preset, the
+    /// resource pack list, the reset tokens - without waiting for a launch, and
+    /// looks at the preset again once it lands. Tens of kilobytes: the button
+    /// can offer a layout published minutes ago instead of claiming the old one
+    /// is applied until somebody presses Play.
+    /// </summary>
+    private async Task RefreshLauncherDataAsync(string packRelativePath)
+    {
+        if (_packSync is null) return;
+        try
+        {
+            var refreshed = await _packSync
+                .RefreshLauncherDataAsync(packRelativePath, _lifetimeCts.Token)
+                .ConfigureAwait(true);
+            if (!refreshed) return;
+            RefreshControlsPresetStatus();
+            RefreshUi();
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        {
+        }
+    }
+
     private void RefreshControlsPresetStatus()
     {
         var directories = ResolveSelectedBuildDirectories();
-        _controlsPresetStatus = _controlsPreset is not null && directories is not null
-            ? _controlsPreset.Evaluate(directories.Value.Pack, directories.Value.Instance)
-            : default;
+        if (_controlsPreset is null || directories is null)
+        {
+            _controlsPresetStatus = default;
+            _controlsPresetStamp = null;
+            return;
+        }
+
+        var stamp = ControlsPresetStamp(directories.Value.Pack, directories.Value.Instance);
+        if (stamp is not null && stamp == _controlsPresetStamp) return;
+        _controlsPresetStamp = stamp;
+        _controlsPresetStatus = _controlsPreset.Evaluate(directories.Value.Pack, directories.Value.Instance);
+    }
+
+    /// <summary>
+    /// What the two files looked like: their paths, sizes and moments of
+    /// writing. Null when either cannot be looked at, which forces a real read.
+    /// </summary>
+    private static string? ControlsPresetStamp(string packDirectory, string instanceDirectory)
+    {
+        try
+        {
+            var preset = new FileInfo(Path.Combine(
+                packDirectory, ControlsPresetService.PresetRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var options = new FileInfo(Path.Combine(instanceDirectory, ControlsPresetService.OptionsFileName));
+            return string.Join(
+                '|',
+                packDirectory,
+                preset.Exists ? preset.Length + "@" + preset.LastWriteTimeUtc.Ticks : "none",
+                options.Exists ? options.Length + "@" + options.LastWriteTimeUtc.Ticks : "none");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     private void ControlsPresetButton_Click(object sender, RoutedEventArgs e)
@@ -1734,6 +1809,7 @@ public partial class MainWindow : Window
         _settingsService.Save(_settings);
         InitializeRuntimeProgressUi();
         RefreshControlsPresetStatus();
+        _ = RefreshLauncherDataAsync(build.RelativePath);
         await RefreshPackHashAsync();
         if (_startupComplete) await StartNetworkingAsync();
         SetState($"Build selected: {build.Name}");
