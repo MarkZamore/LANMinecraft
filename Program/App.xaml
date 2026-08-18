@@ -110,6 +110,10 @@
         <Thickness x:Key="Pad.Text">8,4</Thickness>
         <Thickness x:Key="Pad.Small">8,0</Thickness>
         <Thickness x:Key="Pad.Wide">16,4</Thickness>
+        <!-- Where the typing lands inside a field: Pad.Text past the border. A
+             hint laid over an empty field takes this, so it stands on the line
+             the first letter will take and not in the corner above it. -->
+        <Thickness x:Key="Pad.FieldText">9,5</Thickness>
 
         <sys:Double x:Key="Size.Control">30</sys:Double>
         <sys:Double x:Key="Size.Primary">40</sys:Double>
@@ -320,8 +324,12 @@
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="{StaticResource Radius.Control}"
                                 SnapsToDevicePixels="True">
+                            <!-- No margin of its own: WPF already lays the text
+                                 out inside Padding, so handing the same padding
+                                 to the scroll viewer applied it twice and put
+                                 the typing 8 px right and 4 px down of where a
+                                 hint over the field expects it. -->
                             <ScrollViewer x:Name="PART_ContentHost"
-                                          Margin="{TemplateBinding Padding}"
                                           VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                           Focusable="False"
                                           HorizontalScrollBarVisibility="Hidden"

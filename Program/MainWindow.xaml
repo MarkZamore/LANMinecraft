@@ -238,7 +238,8 @@
                                  VerticalContentAlignment="Top"
                                  MaxLength="4000"/>
                         <TextBlock Text="Что случилось (необязательно)"
-                                   VerticalAlignment="Top">
+                                   VerticalAlignment="Top"
+                                   Margin="{StaticResource Pad.FieldText}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
                                     <Setter Property="Visibility" Value="Collapsed"/>
