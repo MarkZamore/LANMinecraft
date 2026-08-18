@@ -2347,7 +2347,10 @@ public partial class MainWindow : Window
                 ? "Для выбранной сборки нет пресета управления"
                 : preset.IsApplied
                     ? "Пресет применён - настройки управления совпадают со сборкой"
-                    : "Заменить настройки управления раскладкой сборки без конфликтов";
+                    // A lit button says what it found: the first line of the
+                    // preset the game does not have. Otherwise the only answer
+                    // to "but I applied it already" is six hundred lines by hand.
+                    : $"Заменить настройки управления раскладкой сборки без конфликтов. Отличается: {preset.FirstDifference}";
         // A list with nothing to choose between is not a control, it is a
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is
