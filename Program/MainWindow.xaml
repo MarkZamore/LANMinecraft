@@ -273,29 +273,58 @@
                         MinWidth="{StaticResource Size.ButtonMin}" IsEnabled="False"/>
             </Grid>
 
-            <!-- The right column is the version history. Its star row is bounded
-                 by the canvas's fixed height, which is what makes the list scroll
-                 instead of growing off the bottom. -->
+            <!-- The right column has two faces and one place: the assistant, which
+                 every launch opens on, and the version history. The button in the
+                 footer swaps them and the heading says which one is showing. Its
+                 star row is bounded by the canvas's fixed height, which is what
+                 makes either face scroll instead of growing off the bottom. -->
             <Grid Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="{StaticResource Gap.Left5}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="Что нового" Style="{StaticResource SectionTitleStyle}"/>
+                <TextBlock Grid.Row="0" x:Name="SidePanelTitle" Text="Чат"
+                           Style="{StaticResource SectionTitleStyle}"/>
                 <Grid Grid.Row="1" Margin="{StaticResource Gap.Below2}">
-                    <ScrollViewer x:Name="ChangelogScroll"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled"
-                                  Padding="{StaticResource Gap.Right3}">
-                        <ItemsControl x:Name="ChangelogList"
-                                      ItemTemplate="{StaticResource ChangelogEntryTemplate}"
-                                      Focusable="False"/>
-                    </ScrollViewer>
-                    <TextBlock x:Name="ChangelogUnavailableText"
-                               Text="История изменений недоступна"
-                               Style="{StaticResource CaptionTextStyle}"
-                               VerticalAlignment="Top"
-                               Visibility="Collapsed"/>
+                    <Grid x:Name="ChangelogPanel" Visibility="Collapsed">
+                        <ScrollViewer x:Name="ChangelogScroll"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Padding="{StaticResource Gap.Right3}">
+                            <ItemsControl x:Name="ChangelogList"
+                                          ItemTemplate="{StaticResource ChangelogEntryTemplate}"
+                                          Focusable="False"/>
+                        </ScrollViewer>
+                        <TextBlock x:Name="ChangelogUnavailableText"
+                                   Text="История изменений недоступна"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   VerticalAlignment="Top"
+                                   Visibility="Collapsed"/>
+                    </Grid>
+                    <!-- The assistant is still a promise: the field and the button
+                         are there, and they say so themselves rather than leaving
+                         a player to press and wonder. -->
+                    <Grid x:Name="ChatPanel">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="AI-помощник, обученный на твоей сборке Minecraft"
+                                   Style="{StaticResource ParagraphTextStyle}"
+                                   TextAlignment="Center" VerticalAlignment="Center"
+                                   Margin="{StaticResource Gap.Right3}"/>
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" x:Name="ChatMessageTextBox"
+                                     Text="Пока не работает :("
+                                     IsReadOnly="True" IsEnabled="False"/>
+                            <Button Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
+                                    Margin="{StaticResource Gap.Left2}" IsEnabled="False"/>
+                        </Grid>
+                    </Grid>
                 </Grid>
             </Grid>
 
@@ -310,9 +339,12 @@
                 <Button x:Name="RetrySteamButton" Content="Повторить"
                         Style="{StaticResource SmallButtonStyle}" Click="RetrySteamButton_Click"/>
             </StackPanel>
-            <TextBlock Grid.Row="7" Grid.Column="2" x:Name="VersionTextBlock"
-                       Style="{StaticResource CaptionTextStyle}"
-                       HorizontalAlignment="Right" TextAlignment="Right"/>
+            <!-- Where the version number used to sit: the switch between the two
+                 faces of the column above it. It is named for what pressing it
+                 brings, not for what is on screen. -->
+            <Button Grid.Row="7" Grid.Column="2" x:Name="SidePanelToggleButton" Content="Новости"
+                    Style="{StaticResource SmallButtonStyle}" Click="SidePanelToggleButton_Click"
+                    HorizontalAlignment="Right" MinWidth="{StaticResource Size.ButtonMin}"/>
 
             <Grid Visibility="Collapsed">
                 <TextBlock x:Name="PackHashText"/>

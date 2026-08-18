@@ -157,8 +157,10 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     /// <summary>
-    /// The right column is the version history: one list, scrollable, in the
-    /// place the bug report used to occupy. Steam is no longer a panel there.
+    /// The right column holds two faces in one place: the assistant it opens on
+    /// and the version history behind it. One list, scrollable; one heading that
+    /// names whichever is showing; one button in the footer that swaps them and
+    /// carries the name of the other face. Steam is no longer a panel there.
     /// </summary>
     [Fact]
     public void MainWindowXaml_HostsTheChangelogInTheRightColumn()
@@ -171,15 +173,51 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         var title = document
             .Descendants(presentation + "TextBlock")
-            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Что нового");
+            .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "SidePanelTitle");
         Assert.NotNull(title);
         Assert.Equal("2", (string?)title.Parent?.Attribute("Grid.Column"));
+        // The launcher opens on the assistant, so that is the heading it wears.
+        Assert.Equal("Чат", (string?)title.Attribute("Text"));
 
         var list = document
             .Descendants(presentation + "ItemsControl")
             .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "ChangelogList");
         Assert.NotNull(list);
         Assert.NotEmpty(list.Ancestors(presentation + "ScrollViewer"));
+
+        // Two faces, and the one that is not showing says so in the markup:
+        // whatever the launcher does later, it starts on the assistant.
+        var news = document
+            .Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ChangelogPanel");
+        var chat = document
+            .Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ChatPanel");
+        Assert.Equal("Collapsed", (string?)news.Attribute("Visibility"));
+        Assert.Null(chat.Attribute("Visibility"));
+        Assert.Contains(title.Parent, news.Ancestors());
+        Assert.Contains(title.Parent, chat.Ancestors());
+
+        // The assistant is a stub, and both of its controls are switched off.
+        var field = document
+            .Descendants(presentation + "TextBox")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ChatMessageTextBox");
+        Assert.Equal("False", (string?)field.Attribute("IsEnabled"));
+        var send = document
+            .Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ChatSendButton");
+        Assert.Equal("False", (string?)send.Attribute("IsEnabled"));
+
+        // The switch stands where the version number used to, and is named for
+        // what pressing it brings rather than for what is on screen.
+        var toggle = document
+            .Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelToggleButton");
+        Assert.Equal("Новости", (string?)toggle.Attribute("Content"));
+        Assert.Equal("SidePanelToggleButton_Click", (string?)toggle.Attribute("Click"));
+        Assert.DoesNotContain(
+            document.Descendants(),
+            element => (string?)element.Attribute(x + "Name") == "VersionTextBlock");
 
         Assert.DoesNotContain(
             document.Descendants(),
@@ -255,8 +293,8 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         Assert.Equal(rows - 1, int.Parse((string)column.Attribute("Grid.RowSpan")!,
             System.Globalization.CultureInfo.InvariantCulture));
-        var footerRow = RowOf(document.Descendants(presentation + "TextBlock")
-            .Single(element => (string?)element.Attribute(x + "Name") == "VersionTextBlock"));
+        var footerRow = RowOf(document.Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelToggleButton"));
         Assert.Equal(rows - 1, footerRow);
     }
 
