@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Steamworks;
 
@@ -21,15 +21,26 @@ namespace Minecraft;
 /// </summary>
 internal sealed class SendRateGovernor
 {
-    internal const int MinimumBytesPerSecond = 256 * 1024;
+    /// <summary>
+    /// The floor is a working transfer, not a heartbeat. At 256 KiB/s - where
+    /// this used to bottom out - a 338 MiB world takes twenty minutes, and a
+    /// real transfer spent 90 % of itself under 2 MiB/s after one relay change
+    /// cut the rate and nothing ever raised it again.
+    /// </summary>
+    internal const int MinimumBytesPerSecond = 2 * 1024 * 1024;
     internal const int MaximumBytesPerSecond = 100 * 1024 * 1024;
     internal const int InitialBytesPerSecond = 4 * 1024 * 1024;
 
     /// <summary>Below this share of packets arriving, the path is being flooded.</summary>
     internal const float LossyQuality = 0.9f;
 
-    /// <summary>Above this, the path has room to spare.</summary>
-    internal const float CleanQuality = 0.98f;
+    /// <summary>
+    /// Above this, the path has room to spare. Steam's remote quality on a
+    /// relayed connection sits in the high nineties and dips constantly; a
+    /// threshold of 0.98 meant the rate could fall on a bad minute and never
+    /// climb back, since almost no sample qualified as clean.
+    /// </summary>
+    internal const float CleanQuality = 0.95f;
 
     private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(3);
 
@@ -95,7 +106,7 @@ internal sealed class SendRateGovernor
     /// enough to throw the capacity away - and is acted on once: while
     /// <paramref name="holding"/> the stale average is ignored, and a reading
     /// that is merely still low but no longer falling is not a new event.
-    /// A clean path grows by an eighth per read, so a run of clean reads finds
+    /// A clean path grows by a quarter per read, so a run of clean reads finds
     /// the ceiling in under a minute without overshooting it by a multiple.
     /// </summary>
     internal static int Decide(int current, float remoteQuality, float previousQuality, bool holding)
@@ -109,7 +120,10 @@ internal sealed class SendRateGovernor
         }
         if (remoteQuality >= CleanQuality && !holding)
         {
-            var step = Math.Max(128 * 1024, current / 8);
+            // A quarter per reading: from the floor to a relay's real capacity
+            // in about half a minute, where an eighth took two and a half and
+            // a lost minute was never made up.
+            var step = Math.Max(1024 * 1024, current / 4);
             return (int)Math.Min(MaximumBytesPerSecond, (long)current + step);
         }
         return current;
@@ -121,12 +135,26 @@ internal sealed class SendRateGovernor
         try
         {
             var target = (IntPtr)_connection.m_HSteamNetConnection;
-            var min = SteamNetworkingUtils.SetConfigValue(
-                ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin,
-                ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Connection,
-                target,
-                ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Int32,
-                handle.AddrOfPinnedObject());
+            // Only the ceiling is ours. Giving Steam the same number for both
+            // bounds pins its own estimator to a constant and takes away the
+            // one thing it is good at: finding the rate between them. The floor
+            // stays where a transfer is still a transfer.
+            var floor = Math.Min(bytesPerSecond, MinimumBytesPerSecond);
+            var floorHandle = GCHandle.Alloc(floor, GCHandleType.Pinned);
+            bool min;
+            try
+            {
+                min = SteamNetworkingUtils.SetConfigValue(
+                    ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMin,
+                    ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Connection,
+                    target,
+                    ESteamNetworkingConfigDataType.k_ESteamNetworkingConfig_Int32,
+                    floorHandle.AddrOfPinnedObject());
+            }
+            finally
+            {
+                floorHandle.Free();
+            }
             var max = SteamNetworkingUtils.SetConfigValue(
                 ESteamNetworkingConfigValue.k_ESteamNetworkingConfig_SendRateMax,
                 ESteamNetworkingConfigScope.k_ESteamNetworkingConfig_Connection,
