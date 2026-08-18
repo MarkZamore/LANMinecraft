@@ -6,20 +6,26 @@ using System.Text;
 namespace Minecraft;
 
 /// <summary>
-/// Turns the pack's own resource packs on in an instance that already exists.
+/// Keeps the pack's own resource packs selected in an instance that already
+/// exists - and only the pack's own.
 ///
 /// A pack ships its resource packs in <c>resourcepacks/</c> and names the ones
 /// it wants on in <c>launcher/resourcepacks-default.txt</c>. The game only reads
 /// its seed options once, when an instance has none, so a player who has already
-/// played would get the files and never see them switched on. This switches them
-/// on once per version of that list: after that the player owns the choice, and
-/// turning one off stays off.
+/// played would get the files and never see them switched on. This applies the
+/// list once per version of it: the pack's packs go on, in the pack's order,
+/// and what the pack has since dropped comes off - the file is gone from the
+/// instance by then, and a selection naming a pack that is not there is a
+/// warning at every start. After that the player owns the choice. Packs the
+/// player added themselves are never in the pack's list, so they are never
+/// touched: not reordered, not switched off.
 /// </summary>
 /// <param name="logger">Where the one-line summary goes.</param>
 public sealed class ResourcePackDefaultsService(Logger? logger = null)
 {
     internal const string ListFileName = "resourcepacks-default.txt";
     internal const string MarkerFileName = ".resourcepacks-applied";
+    private const string MarkerListPrefix = "pack:";
     private const string OptionsFileName = "options.txt";
     private const string SelectedPrefix = "resourcePacks:";
     private const string IncompatiblePrefix = "incompatibleResourcePacks:";
@@ -68,7 +74,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     {
         var defaults = TryLoad(packDirectory);
         if (defaults is null) return false;
-        return ReadMarker(instanceDirectory) != defaults.Value.Sha256;
+        return ReadMarker(instanceDirectory).Sha256 != defaults.Value.Sha256;
     }
 
     /// <summary>
@@ -81,7 +87,8 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         ArgumentNullException.ThrowIfNull(instanceDirectory);
         var defaults = TryLoad(packDirectory);
         if (defaults is null) return 0;
-        if (ReadMarker(instanceDirectory) == defaults.Value.Sha256) return 0;
+        var marker = ReadMarker(instanceDirectory);
+        if (marker.Sha256 == defaults.Value.Sha256) return 0;
 
         var optionsPath = Path.Combine(instanceDirectory, OptionsFileName);
         var added = 0;
@@ -90,7 +97,12 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             if (File.Exists(optionsPath))
             {
                 var options = File.ReadAllText(optionsPath, Utf8NoBom);
-                var (text, count) = Select(options, defaults.Value);
+                // What the pack listed last time and lists no longer is the
+                // pack's to take back; the player's own packs were never listed.
+                var dropped = marker.Entries
+                    .Where(entry => !defaults.Value.Entries.Contains(entry, StringComparer.Ordinal))
+                    .ToList();
+                var (text, count) = Select(options, defaults.Value, dropped);
                 added = count;
                 // Written on any difference, not only on a new entry: giving the
                 // pack's own packs the order the pack declares changes nothing
@@ -102,7 +114,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             }
             // An instance without options.txt has not run yet: the game will
             // take the pack's seed options, which already list these packs.
-            WriteMarker(instanceDirectory, defaults.Value.Sha256);
+            WriteMarker(instanceDirectory, defaults.Value);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -116,23 +128,26 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
 
     /// <summary>
     /// Adds the pack's entries to the two lists the game keeps, leaving the
-    /// player's own choices and their order alone.
+    /// player's own choices and their order alone, and takes out the entries in
+    /// <paramref name="dropped"/> - what the pack used to list and no longer does.
     /// </summary>
-    public static (string Text, int Added) Select(string options, ResourcePackDefaults defaults)
+    public static (string Text, int Added) Select(string options, ResourcePackDefaults defaults, IReadOnlyList<string>? dropped = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        dropped ??= [];
         var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var endsWithNewline = options.Length == 0 || options.EndsWith('\n');
         var lines = options.Length == 0
             ? []
             : options.TrimEnd('\r', '\n').Split('\n').Select(line => line.TrimEnd('\r')).ToList();
 
-        var (added, rearranged) = Arrange(lines, SelectedPrefix, defaults.Entries);
+        var (added, rearranged) = Arrange(lines, SelectedPrefix, defaults.Entries, dropped);
         // The second list is bookkeeping the game keeps about packs built for an
         // older version, so it counts towards rewriting the file and not towards
         // the number of packs the player just gained.
         var incompatible = Extend(lines, IncompatiblePrefix, defaults.Incompatible);
-        if (!rearranged && incompatible == 0) return (options, 0);
+        var forgotten = Remove(lines, IncompatiblePrefix, dropped);
+        if (!rearranged && incompatible == 0 && !forgotten) return (options, 0);
 
         var text = string.Join(newline, lines);
         if (lines.Count > 0 && endsWithNewline) text += newline;
@@ -145,12 +160,12 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// keeps its place and its order, and the player's later changes are not
     /// touched again: the list is applied once per version of itself.
     /// </summary>
-    private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, IReadOnlyList<string> wanted)
+    private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, IReadOnlyList<string> wanted, IReadOnlyList<string> dropped)
     {
-        if (wanted.Count == 0) return (0, false);
+        if (wanted.Count == 0 && dropped.Count == 0) return (0, false);
         var index = lines.FindIndex(line => line.StartsWith(prefix, StringComparison.Ordinal));
         var current = index >= 0 ? ReadList(lines[index][prefix.Length..]) : [];
-        var mine = new HashSet<string>(wanted, StringComparer.Ordinal);
+        var mine = new HashSet<string>(wanted.Concat(dropped), StringComparer.Ordinal);
         var arranged = current.Where(entry => !mine.Contains(entry)).Concat(wanted).ToList();
         if (arranged.SequenceEqual(current, StringComparer.Ordinal)) return (0, false);
 
@@ -158,6 +173,19 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         var line = prefix + WriteList(arranged);
         if (index >= 0) lines[index] = line; else lines.Add(line);
         return (added, true);
+    }
+
+    /// <summary>Takes entries out of one of the game's lists; true when the line changed.</summary>
+    private static bool Remove(List<string> lines, string prefix, IReadOnlyList<string> unwanted)
+    {
+        if (unwanted.Count == 0) return false;
+        var index = lines.FindIndex(line => line.StartsWith(prefix, StringComparison.Ordinal));
+        if (index < 0) return false;
+        var current = ReadList(lines[index][prefix.Length..]);
+        var kept = current.Where(entry => !unwanted.Contains(entry, StringComparer.Ordinal)).ToList();
+        if (kept.Count == current.Count) return false;
+        lines[index] = prefix + WriteList(kept);
+        return true;
     }
 
     private static int Extend(List<string> lines, string prefix, IReadOnlyList<string> wanted)
@@ -205,25 +233,38 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     internal static string WriteList(IReadOnlyList<string> items) =>
         "[" + string.Join(",", items.Select(item => "\"" + item.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"")) + "]";
 
-    private static string? ReadMarker(string instanceDirectory)
+    /// <summary>
+    /// What was applied last time: the list's identity on the first line, then
+    /// the entries it held, so the next list knows what to take back. A marker
+    /// from before entries were recorded gives its identity and nothing else,
+    /// which only means the pack takes back nothing that once.
+    /// </summary>
+    private static (string? Sha256, IReadOnlyList<string> Entries) ReadMarker(string instanceDirectory)
     {
         var path = Path.Combine(instanceDirectory, MarkerFileName);
         try
         {
-            return File.Exists(path) ? File.ReadAllText(path, Utf8NoBom).Trim() : null;
+            if (!File.Exists(path)) return (null, []);
+            var lines = File.ReadAllText(path, Utf8NoBom).Split('\n').Select(line => line.Trim()).ToList();
+            var sha = lines.FirstOrDefault(line => line.Length > 0);
+            var entries = lines
+                .Where(line => line.StartsWith(MarkerListPrefix, StringComparison.Ordinal))
+                .Select(line => line[MarkerListPrefix.Length..])
+                .Where(entry => entry.Length > 0)
+                .ToList();
+            return (sha, entries);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return (null, []);
         }
     }
 
-    private static void WriteMarker(string instanceDirectory, string sha256)
+    private static void WriteMarker(string instanceDirectory, ResourcePackDefaults defaults)
     {
         Directory.CreateDirectory(instanceDirectory);
-        AtomicFile.WriteAllText(
-            Path.Combine(instanceDirectory, MarkerFileName),
-            sha256 + Environment.NewLine,
-            Utf8NoBom);
+        var text = new StringBuilder().Append(defaults.Sha256).Append('\n');
+        foreach (var entry in defaults.Entries) text.Append(MarkerListPrefix).Append(entry).Append('\n');
+        AtomicFile.WriteAllText(Path.Combine(instanceDirectory, MarkerFileName), text.ToString(), Utf8NoBom);
     }
 }
