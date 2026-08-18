@@ -79,7 +79,13 @@ public static class MemorySizingService
     /// number a player sets is what the game takes altogether rather than what
     /// one part of it takes.
     /// </summary>
-    public static int GetNativeReserveGb(int budgetGb) => Math.Clamp(budgetGb / 3, 2, 8);
+    /// <remarks>
+    /// Half the budget, and never more than eight: the measurement does not
+    /// scale with the heap - a pack of nine hundred mods holds its classes and
+    /// its buffers whatever size the heap is - so the reserve saturates instead
+    /// of growing, and a large budget spends the whole of the rest on the heap.
+    /// </remarks>
+    public static int GetNativeReserveGb(int budgetGb) => Math.Clamp(budgetGb / 2, 2, 8);
 
     /// <summary>The heap a budget leaves: what goes to <c>-Xmx</c>.</summary>
     public static int GetHeapGb(int budgetGb) =>

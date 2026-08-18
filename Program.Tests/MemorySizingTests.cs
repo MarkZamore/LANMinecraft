@@ -30,9 +30,9 @@ public sealed class MemorySizingTests
     /// </summary>
     [Theory]
     [InlineData(24, 8, 16)]
-    [InlineData(20, 6, 14)]
-    [InlineData(12, 4, 8)]
-    [InlineData(6, 2, 4)]
+    [InlineData(20, 8, 12)]
+    [InlineData(12, 6, 6)]
+    [InlineData(6, 3, 3)]
     public void TheBudget_SplitsIntoHeapAndTheRoomBesideIt(int budgetGb, int reserveGb, int heapGb)
     {
         Assert.Equal(reserveGb, MemorySizingService.GetNativeReserveGb(budgetGb));
