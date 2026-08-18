@@ -352,7 +352,10 @@ public sealed class BugReportService : IPortableProtocolHandler
                              .OrderByDescending(file => file.LastWriteTimeUtc)
                              .Take(2))
                 {
-                    entries.Add(($"game/{archived.Name}", archived.FullName, MaxSupportingLogTailBytes));
+                    // Named without the .gz: what lands in the report is the
+                    // text inside it, unpacked here rather than by the reader.
+                    var unpacked = archived.Name[..^".gz".Length];
+                    entries.Add(($"game/{unpacked}", archived.FullName, MaxSupportingLogTailBytes));
                 }
             }
 
@@ -425,10 +428,23 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// </summary>
     private string ReadSanitizedTail(string path, int maxBytes)
     {
-        using var stream = new FileStream(
+        using var file = new FileStream(
             path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var truncated = stream.Length > maxBytes;
-        if (truncated) stream.Seek(-maxBytes, SeekOrigin.End);
+        // The game keeps yesterday's sessions gzipped. Reading those bytes as
+        // text turns every byte outside ASCII into a replacement character, and
+        // what the report then carries is not the log but its wreckage: the
+        // archive has to be unpacked before a single line can be read.
+        Stream stream = file;
+        var truncated = false;
+        if (path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+        {
+            stream = Unpack(file, maxBytes, out truncated);
+        }
+        else
+        {
+            truncated = file.Length > maxBytes;
+            if (truncated) file.Seek(-maxBytes, SeekOrigin.End);
+        }
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
         var builder = new StringBuilder();
         // The first line after a seek is almost always half a line.
@@ -439,6 +455,41 @@ public sealed class BugReportService : IPortableProtocolHandler
             if (sanitized is not null) builder.AppendLine(sanitized);
         }
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// The tail of a gzipped log, as bytes. Only the last <paramref name="maxBytes"/>
+    /// are kept, and the stream is read through a window rather than into memory,
+    /// so a log that grew to gigabytes costs the same as one that did not.
+    /// </summary>
+    private static Stream Unpack(Stream file, int maxBytes, out bool truncated)
+    {
+        using var gzip = new GZipStream(file, CompressionMode.Decompress, leaveOpen: true);
+        var window = new byte[maxBytes];
+        var filled = 0;
+        var total = 0L;
+        var buffer = new byte[64 * 1024];
+        int read;
+        while ((read = gzip.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            total += read;
+            if (read >= window.Length)
+            {
+                Buffer.BlockCopy(buffer, read - window.Length, window, 0, window.Length);
+                filled = window.Length;
+                continue;
+            }
+            if (filled + read > window.Length)
+            {
+                var keep = window.Length - read;
+                Buffer.BlockCopy(window, filled - keep, window, 0, keep);
+                filled = keep;
+            }
+            Buffer.BlockCopy(buffer, 0, window, filled, read);
+            filled += read;
+        }
+        truncated = total > filled;
+        return new MemoryStream(window, 0, filled, writable: false);
     }
 
     private static void WriteTextEntry(ZipArchive zip, string name, string content)
