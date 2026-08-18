@@ -214,6 +214,7 @@ public partial class MainWindow : Window
             LoadSettingsIntoUi();
             RefreshBuilds();
             RefreshControlsPresetStatus();
+            RefreshPackMemory();
             RefreshMemoryText(saveIfChanged: true);
             RefreshWorlds();
             InitializeUpdateUi();
@@ -452,6 +453,7 @@ public partial class MainWindow : Window
         {
             _settings.ClientRelativePath = selectedBuild.RelativePath;
             _settingsService.Save(_settings);
+            RefreshPackMemory();
             RefreshControlsPresetStatus();
             _ = RefreshPackHashAndNetworkingAsync();
         }
@@ -1101,7 +1103,7 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
             ApplyPlayerName();
-            ApplyMemoryText();
+            ApplyMemoryText(chosenByPlayer: false);
             var settings = RequireSettings();
             if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
             {
@@ -1134,6 +1136,10 @@ public partial class MainWindow : Window
             }
 
             await RefreshPackHashAsync();
+            // The pack that just arrived may weigh something else than the one
+            // that was here: the split, and a suggestion nobody has overruled,
+            // are worked out again before the game is told its heap size.
+            RefreshPackMemory();
             // Before the game reads its options: a mapping written twice stops
             // NeoForge before its loading window, and the player cannot reach
             // the preset button to fix it because the preset counts as applied.
@@ -1761,7 +1767,7 @@ public partial class MainWindow : Window
 
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
-        ApplyMemoryText();
+        ApplyMemoryText(chosenByPlayer: true);
     }
 
     private void MemoryTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
@@ -1803,13 +1809,16 @@ public partial class MainWindow : Window
         var maxMemoryGb = GetAllowedMaxMemoryGb();
         if (!int.TryParse(digitsOnly, out var memoryGb) || memoryGb > maxMemoryGb)
         {
-            SetMemoryGb(maxMemoryGb);
+            SetMemoryGb(maxMemoryGb, chosenByPlayer: true);
             return;
         }
 
         if (memoryGb >= MinMemoryGb)
         {
             _settings.MaxMemoryGb = memoryGb;
+            // Typed by hand: from here the number is the player's, and no pack
+            // moves it again.
+            _settings.MemoryChosenByPlayer = true;
             _settingsService.Save(_settings);
         }
     }
@@ -1818,7 +1827,7 @@ public partial class MainWindow : Window
     {
         if (e.Key != Key.Enter) return;
 
-        ApplyMemoryText();
+        ApplyMemoryText(chosenByPlayer: true);
         Keyboard.ClearFocus();
         e.Handled = true;
     }
@@ -1835,6 +1844,7 @@ public partial class MainWindow : Window
 
         _settings.ClientRelativePath = build.RelativePath;
         _settingsService.Save(_settings);
+        RefreshPackMemory();
         InitializeRuntimeProgressUi();
         RefreshControlsPresetStatus();
         _ = RefreshLauncherDataAsync(build.RelativePath);
@@ -2197,24 +2207,46 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyMemoryText()
+    /// <summary>
+    /// Reads the field back into the settings. <paramref name="chosenByPlayer"/>
+    /// is false where the launcher is only re-applying what it put there
+    /// itself - pressing Play, above all - because a number the player never
+    /// touched goes on following the pack.
+    /// </summary>
+    private void ApplyMemoryText(bool chosenByPlayer)
     {
         if (int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb))
         {
-            SetMemoryGb(memoryGb);
+            SetMemoryGb(memoryGb, chosenByPlayer);
             return;
         }
 
-        SetMemoryGb(MinMemoryGb);
+        SetMemoryGb(MinMemoryGb, chosenByPlayer);
     }
 
-    private void SetMemoryGb(int memoryGb)
+    private void SetMemoryGb(int memoryGb, bool chosenByPlayer)
     {
         var settings = RequireSettings();
         var clamped = ClampMemoryGb(memoryGb);
         settings.MaxMemoryGb = clamped;
+        if (chosenByPlayer) settings.MemoryChosenByPlayer = true;
         RequireSettingsService().Save(settings);
         SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Weighs the pack that is selected - its mods, their bytes, the texture it
+    /// ships - and, when the number in the field is the launcher's own rather
+    /// than the player's, moves it to what that pack asks for. Vanilla on an old
+    /// version and a pack heavier than Limitless 8 are both packs here.
+    /// </summary>
+    private void RefreshPackMemory()
+    {
+        if (_settings is null || _settingsService is null) return;
+
+        _settingsService.MeasurePack(_settings.ClientRelativePath);
+        _settingsService.ApplyPackRecommendation(_settings);
+        RefreshMemoryText();
     }
 
     private void RefreshMemoryText(bool saveIfChanged = false)
@@ -2262,7 +2294,9 @@ public partial class MainWindow : Window
     /// The number is everything the game may take, so the field says how it is
     /// divided: what the Java heap gets and what is kept for the rest of the
     /// game - the class data of the mods, the compiled code and the buffers
-    /// Sodium hands the graphics driver.
+    /// Sodium hands the graphics driver. The division is the selected pack's,
+    /// so the same number reads differently for vanilla and for nine hundred
+    /// mods; and a number too small for the pack says so.
     /// </summary>
     private void DescribeMemorySplit(string text)
     {
@@ -2271,11 +2305,19 @@ public partial class MainWindow : Window
             MemoryTextBox.ToolTip = null;
             return;
         }
-        var heapGb = MemorySizingService.GetHeapGb(budgetGb);
-        MemoryTextBox.ToolTip =
+        var pack = _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
+        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb);
+        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(pack);
+        var tooltip =
             $"Столько памяти игра может занять всего - до {budgetGb} ГБ. " +
             $"Из них {heapGb} ГБ достаётся куче Java, остальное держат классы модов, " +
             "скомпилированный код и буферы Sodium.";
+        if (budgetGb < smallestUsefulBudgetGb)
+        {
+            tooltip += $" Этой сборке нужно хотя бы {smallestUsefulBudgetGb} ГБ - с меньшим числом " +
+                "игра всё равно возьмёт больше, чем здесь написано.";
+        }
+        MemoryTextBox.ToolTip = tooltip;
     }
 
     private async Task RunUiActionAsync(Func<Task> action)
