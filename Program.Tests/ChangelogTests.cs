@@ -29,6 +29,32 @@ public sealed class ChangelogTests
         Assert.Equal(entries[0].Version, entries.Count);
     }
 
+    /// <summary>
+    /// A version says two short sentences and stops. This is the window a
+    /// player opens to see what changed, not the commit that changed it: the
+    /// two most visible things go here and the rest stays in the history.
+    /// </summary>
+    [Fact]
+    public void EveryVersion_IsTwoShortSentences()
+    {
+        const int limit = 240;
+        foreach (var entry in ChangelogService.Load())
+        {
+            Assert.True(
+                entry.Text.Length <= limit,
+                $"version {entry.Version} is {entry.Text.Length} characters; {limit} is the most");
+            // A full stop ends a sentence when the text ends there or a space
+            // follows it; the one inside a file name like `.log.gz` does not.
+            var sentences = Enumerable.Range(0, entry.Text.Length)
+                .Count(index =>
+                    entry.Text[index] is '.' or '!' or '?' &&
+                    (index == entry.Text.Length - 1 || char.IsWhiteSpace(entry.Text[index + 1])));
+            Assert.True(
+                sentences <= 2,
+                $"version {entry.Version} says {sentences} sentences; two is the most");
+        }
+    }
+
     [Fact]
     public void Parse_ReadsHeadingsAndBullets()
     {
