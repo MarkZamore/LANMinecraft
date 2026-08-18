@@ -149,6 +149,10 @@ public sealed class WorldPlayerProfileService
         var canonicalUuid = GetCanonicalIdentityUuid(identity);
         var level = NbtFile.Read(levelPath);
         var data = level.Root.GetCompound("Data");
+        if (data is not null && !RestoreWorldGenSettings(worldPath, levelPath, data, _logger))
+        {
+            return;
+        }
         var currentPlayer = data?.GetCompound("Player");
         if (currentPlayer is not null)
         {
@@ -187,6 +191,53 @@ public sealed class WorldPlayerProfileService
             _logger?.Info($"World {Path.GetFileName(worldPath)} has no matching player profile for {reason}; level.dat Player tag removed.");
         }
         WriteManifest(worldPath, identity, transaction);
+    }
+
+    /// <summary>
+    /// A level.dat without Data.WorldGenSettings is a world the game will
+    /// refuse to open: it writes that compound through a codec and leaves it
+    /// out in silence when the encoding fails, which a dimension from a mod
+    /// that has since gone is enough to cause.
+    ///
+    /// Such a world is not touched. Every write here replaces a file, and the
+    /// copies beside it are what the settings can be taken back from - so if
+    /// one of them still has them, they are put back and the world opens where
+    /// the player left it; if none does, the file is left exactly as it is for
+    /// somebody to recover from, rather than being overwritten twice.
+    /// </summary>
+    /// <returns>False when the world must be left alone this launch.</returns>
+    internal static bool RestoreWorldGenSettings(string worldPath, string levelPath, NbtCompoundTag data, Logger? logger)
+    {
+        const string SettingsName = "WorldGenSettings";
+        if (data.GetCompound(SettingsName) is not null) return true;
+
+        var world = Path.GetFileName(worldPath);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(levelPath))!;
+        foreach (var donorName in new[] { "level.dat_old", NbtFile.LauncherBackupFileName })
+        {
+            var donorPath = Path.Combine(directory, donorName);
+            if (!File.Exists(donorPath)) continue;
+            NbtCompoundTag? settings;
+            try
+            {
+                settings = NbtFile.Read(donorPath).Root.GetCompound("Data")?.GetCompound(SettingsName);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            {
+                continue;
+            }
+            if (settings is null) continue;
+
+            data.Set(SettingsName, settings.Clone());
+            logger?.Info(
+                $"World {world} had lost its world generation settings; they were taken back from {donorName}.");
+            return true;
+        }
+
+        logger?.Warn(
+            $"World {world} has no world generation settings in level.dat and no copy beside it that has them; " +
+            "the game will refuse to open it. Its files are left untouched so the world can be recovered from a backup.");
+        return false;
     }
 
     public Guid? ReadLevelPlayerUuid(string worldPath)
@@ -436,6 +487,9 @@ internal sealed class NbtFile
         return new NbtFile(rootName, root);
     }
 
+    /// <summary>Where this writer keeps the copy it replaced; never the game's.</summary>
+    public const string LauncherBackupFileName = "level.dat.launcher-old";
+
     public void Write(string path)
     {
         using var raw = new MemoryStream();
@@ -463,11 +517,15 @@ internal sealed class NbtFile
             _ = Read(temporaryPath);
             if (File.Exists(fullPath))
             {
+                // Not level.dat_old: that slot belongs to the game, which puts
+                // its previous save there. Writing into it spends one generation
+                // of the only copy a player has when a save goes wrong, and two
+                // launches of a world the game refuses would spend both.
                 var backupPath = string.Equals(
                     Path.GetFileName(fullPath),
                     "level.dat",
                     StringComparison.OrdinalIgnoreCase)
-                    ? Path.Combine(directory, "level.dat_old")
+                    ? Path.Combine(directory, LauncherBackupFileName)
                     : null;
                 ReplaceWithRetry(temporaryPath, fullPath, backupPath);
             }

@@ -98,7 +98,7 @@ public sealed class PackRuntimeService : IDisposable
         _paths.EnsureUnderRoot(temporaryRoot);
         Directory.CreateDirectory(runtimeRoot);
 
-        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Checking, "Проверка файлов"));
+        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Checking, "Проверка"));
         var statePath = Path.Combine(runtimeRoot, RuntimeStateFileName);
         var state = ReadState(statePath);
         if (state is not null &&
@@ -111,7 +111,7 @@ public sealed class PackRuntimeService : IDisposable
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
-            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Сборка готова", 1));
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готово", 1));
             return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
 
@@ -157,7 +157,7 @@ public sealed class PackRuntimeService : IDisposable
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
-            $"Подготовка {LoaderDisplayName(descriptor.Loader.Type)}",
+            LoaderDisplayName(descriptor.Loader.Type),
             PhaseIndex: loaderPhase,
             PhaseCount: phaseCount));
         if (!_providers.TryGetValue(descriptor.Loader.Type, out var provider))
@@ -199,7 +199,7 @@ public sealed class PackRuntimeService : IDisposable
             retryToken => launcher.InstallAsync(profile, cancellationToken: retryToken).AsTask(),
             token).ConfigureAwait(false);
 
-        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Verifying, "Проверка файлов"));
+        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Verifying, "Проверка"));
         WindowIconAssetService.Apply(runtimeRoot, profile);
         var requiredFiles = await EnumerateRequiredFilesAsync(launcher, profile, clientFile.Path!, token).ConfigureAwait(false);
         var newState = CreateState(
@@ -214,7 +214,7 @@ public sealed class PackRuntimeService : IDisposable
             token);
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(newState, _jsonOptions));
         CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
-        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Сборка готова", 1));
+        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готово", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");

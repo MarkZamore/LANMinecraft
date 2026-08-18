@@ -141,6 +141,7 @@
                 <Button Grid.Row="1" Grid.Column="1" x:Name="ControlsPresetButton"
                         Content="Пресет настроек управления"
                         Click="ControlsPresetButton_Click"
+                        IsEnabled="False"
                         Margin="{StaticResource Gap.Left2Above2}"
                         ToolTipService.ShowOnDisabled="True"/>
             </Grid>
@@ -186,7 +187,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0">
+                <Grid Grid.Column="0" x:Name="TransferProgressArea" IsEnabled="False">
                     <ProgressBar x:Name="TransferProgressBar" Minimum="0" Maximum="100"
                                  Foreground="{StaticResource Brush.ProgressTrack}"/>
                     <TextBlock x:Name="TransferProgressText" Text="В ожидании мира"
