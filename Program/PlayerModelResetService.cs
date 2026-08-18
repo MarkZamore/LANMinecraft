@@ -24,7 +24,14 @@ public sealed class PlayerModelResetService(Logger? logger = null)
     internal const string MarkerFileName = ".player-model-reset";
     internal const string AttachmentsName = "neoforge:attachments";
     internal const string ModelAttachmentName = "yes_steve_model:model_id";
-    internal const string DefaultModelId = "default";
+    /// <summary>
+    /// What the mod writes for a player who has chosen no model of its own: the
+    /// game draws them itself, in the ordinary Minecraft body and their own
+    /// skin. Not "default" - that is the name of one of the mod's own models,
+    /// a shorter figure with its own texture, and setting it gave every player
+    /// that model instead of themselves.
+    /// </summary>
+    internal const string DefaultModelId = "disabled";
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -98,7 +105,9 @@ public sealed class PlayerModelResetService(Logger? logger = null)
         if (model is null) return false;
         if (string.Equals(model.GetString("model_id"), DefaultModelId, StringComparison.Ordinal)) return false;
         model.Set("model_id", new NbtStringTag(DefaultModelId));
-        model.Set("select_texture", new NbtStringTag("texture"));
+        // No model, no texture chosen inside one: the skin the player wears is
+        // the one the game already has for them.
+        model.Set("select_texture", new NbtStringTag(string.Empty));
         return true;
     }
 
