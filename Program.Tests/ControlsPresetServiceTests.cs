@@ -158,6 +158,48 @@ public sealed class ControlsPresetServiceTests : IDisposable
     }
 
     /// <summary>
+    /// The game writes down every mapping it registers whenever it saves its
+    /// options, so a preset line that file never mentions belongs to no mod in
+    /// the build - a mod update dropped the mapping, or it only existed in a
+    /// development build. Such a line cannot be applied by anyone: the launcher
+    /// writes it, the game drops it again on exit. It must not light the button,
+    /// or the button is lit after every session for ever.
+    /// </summary>
+    [Fact]
+    public void Evaluate_AMappingThisBuildDoesNotHave_IsNotHeldAgainstThePreset()
+    {
+        WritePreset(
+            "key_key.crawl:key.keyboard.c\n" +
+            "key_key.cobblemon.printmodelsettings:key.keyboard.unknown\n");
+        WriteOptions("fov:0.0\nkey_key.crawl:key.keyboard.c\nkey_key.forward:key.keyboard.w\n");
+
+        var status = _service.Evaluate(_pack, _instance);
+
+        Assert.True(status.IsApplied);
+        Assert.Null(status.FirstDifference);
+
+        // A mapping the build does have is still compared, absence and all.
+        WriteOptions("fov:0.0\nkey_key.crawl:key.keyboard.v\nkey_key.forward:key.keyboard.w\n");
+        Assert.Equal("key.crawl", _service.Evaluate(_pack, _instance).FirstDifference);
+    }
+
+    /// <summary>
+    /// An options file the game has never written says nothing about which
+    /// mappings exist, so there every line of the preset still counts.
+    /// </summary>
+    [Fact]
+    public void Evaluate_AnOptionsFileWithoutAnyMappings_StillOffersThePreset()
+    {
+        WritePreset("key_key.crawl:key.keyboard.c\n");
+        WriteOptions("fov:0.0\nguiScale:3\n");
+
+        var status = _service.Evaluate(_pack, _instance);
+
+        Assert.False(status.IsApplied);
+        Assert.Equal("key.crawl", status.FirstDifference);
+    }
+
+    /// <summary>
     /// A never-launched instance has no options.txt. The preset must not become
     /// the whole file: the pack's first-launch options come first, exactly as
     /// the ConfiguredDefaults mod would have copied them, then the keys.

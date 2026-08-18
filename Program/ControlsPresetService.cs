@@ -117,6 +117,19 @@ public sealed class ControlsPresetService(Logger? logger = null)
     /// Compares the instance's options with the pack's preset. No preset, no
     /// options file, or any line that differs: not applied.
     /// </summary>
+    /// <remarks>
+    /// A preset line naming a mapping the build does not have is not a
+    /// difference. The game writes down every mapping it registers each time it
+    /// saves options.txt, so a name that file never mentions belongs to no mod
+    /// in the pack any more - a mod update dropped it, or it was only ever
+    /// registered in a development build. Counting those as "not applied" lit
+    /// the button after every session and applying could not put them out: the
+    /// launcher wrote the lines, the game dropped them again on exit.
+    ///
+    /// The exception is an options file with no mappings at all, which the game
+    /// has plainly never written: there nothing is known about the build yet
+    /// and every line of the preset still counts.
+    /// </remarks>
     public ControlsPresetStatus Evaluate(string packDirectory, string instanceDirectory)
     {
         var preset = TryLoad(packDirectory);
@@ -130,10 +143,13 @@ public sealed class ControlsPresetService(Logger? logger = null)
                 return new ControlsPresetStatus(HasPreset: true, IsApplied: false, FirstDifference: OptionsFileName);
             }
             var current = ReadMappings(File.ReadAllText(optionsPath, Utf8NoBom));
+            var gameHasWrittenIt = current.Count > 0;
             var difference = preset.Entries.FirstOrDefault(entry =>
-                !current.TryGetValue(entry.Name, out var value) ||
-                !string.Equals(value, entry.Value, StringComparison.Ordinal));
+                current.TryGetValue(entry.Name, out var value)
+                    ? !string.Equals(value, entry.Value, StringComparison.Ordinal)
+                    : !gameHasWrittenIt);
             var applied = difference == default;
+            if (gameHasWrittenIt) ReportMappingsTheBuildDoesNotHave(preset, current);
             return new ControlsPresetStatus(
                 HasPreset: true,
                 IsApplied: applied,
@@ -145,6 +161,35 @@ public sealed class ControlsPresetService(Logger? logger = null)
             return new ControlsPresetStatus(HasPreset: true, IsApplied: false, FirstDifference: OptionsFileName);
         }
     }
+
+    /// <summary>
+    /// Names the preset lines this build has no mapping for - once per set, not
+    /// once per look, because the status is taken every couple of seconds. It is
+    /// the pack's cue to drop them from the layout.
+    /// </summary>
+    private void ReportMappingsTheBuildDoesNotHave(
+        ControlsPreset preset,
+        IReadOnlyDictionary<string, string> current)
+    {
+        if (logger is null) return;
+
+        var missing = preset.Entries
+            .Where(entry => !current.ContainsKey(entry.Name))
+            .Select(entry => entry.Name)
+            .ToList();
+        var report = string.Join(", ", missing);
+        if (string.Equals(report, _lastMissingReport, StringComparison.Ordinal)) return;
+
+        _lastMissingReport = report;
+        if (missing.Count > 0)
+        {
+            logger.Info(
+                $"The controls preset names {missing.Count} mapping(s) no mod in this build registers, " +
+                $"so they are not counted against it: {report}");
+        }
+    }
+
+    private string? _lastMissingReport;
 
     /// <summary>
     /// Writes the preset into the instance's options.txt and returns how many
