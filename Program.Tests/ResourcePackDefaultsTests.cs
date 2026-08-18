@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -12,6 +12,46 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class ResourcePackDefaultsTests
 {
+    /// <summary>
+    /// A pack the build used to ship and ships no longer has its file taken away
+    /// by the instance mirror; its line in the selection has to go too, or the
+    /// game warns about a missing pack at every start. The player's own packs
+    /// were never on the build's list, so they are never touched.
+    /// </summary>
+    [Fact]
+    public void APackTheBuildDropped_ComesOffTheSelection_AndThePlayersOwnStay()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ll8-defaults-" + Guid.NewGuid().ToString("N"));
+        var packDirectory = Path.Combine(root, "pack");
+        var instance = Path.Combine(root, "instance");
+        Directory.CreateDirectory(Path.Combine(packDirectory, "launcher"));
+        Directory.CreateDirectory(instance);
+        var list = Path.Combine(packDirectory, "launcher", "resourcepacks-default.txt");
+        var optionsPath = Path.Combine(instance, "options.txt");
+        var service = new ResourcePackDefaultsService();
+        try
+        {
+            File.WriteAllText(list, "file/One.zip\n!file/Meme.zip\nfile/Top.zip\n");
+            File.WriteAllText(optionsPath, "resourcePacks:[\"vanilla\",\"file/Mine.zip\"]\n");
+            service.Apply(packDirectory, instance);
+            Assert.Contains("\"file/Mine.zip\",\"file/One.zip\",\"file/Meme.zip\",\"file/Top.zip\"", File.ReadAllText(optionsPath), StringComparison.Ordinal);
+
+            // The build drops the meme pack.
+            File.WriteAllText(list, "file/One.zip\nfile/Top.zip\n");
+            Assert.True(ResourcePackDefaultsService.NeedsApplying(packDirectory, instance));
+            service.Apply(packDirectory, instance);
+
+            var options = File.ReadAllText(optionsPath);
+            Assert.DoesNotContain("file/Meme.zip", options, StringComparison.Ordinal);
+            Assert.Contains("resourcePacks:[\"vanilla\",\"file/Mine.zip\",\"file/One.zip\",\"file/Top.zip\"]", options, StringComparison.Ordinal);
+            Assert.Contains("incompatibleResourcePacks:[]", options, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private const string Wanted = """
         # a pack the game calls outdated still plays
         file/One.zip

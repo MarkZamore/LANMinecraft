@@ -193,6 +193,9 @@ public sealed class MinecraftProcessService
         ValidatePackCompatibility(packDir);
         EnsureModernFixShutdownWorkaround(gameDir);
         _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext);
+        // After the profiles are written: the reset edits playerdata and the
+        // Player compound of level.dat in place, and the game reads them on join.
+        ResetPlayerModelsIfAsked(packDir);
         await _waypointSync.PrepareForLaunchAsync(settings.ClientRelativePath, identityContext, token).ConfigureAwait(false);
 
         var launcher = _packRuntimes.CreateLocalLauncher(runtime);
@@ -513,6 +516,22 @@ public sealed class MinecraftProcessService
     }
 
     public static bool HasPackData(string packDirectory) => PackManifestService.HasManifest(packDirectory);
+
+    /// <summary>
+    /// The pack can ask, once, that every player of every world go back to the
+    /// plain Steve model; the mod keeps that choice on the player, so a file in
+    /// the pack cannot make it - the launcher has to.
+    /// </summary>
+    private void ResetPlayerModelsIfAsked(string packDir)
+    {
+        if (!Directory.Exists(_paths.Worlds)) return;
+        var reset = new PlayerModelResetService(_logger);
+        foreach (var world in Directory.EnumerateDirectories(_paths.Worlds))
+        {
+            if (!File.Exists(Path.Combine(world, "level.dat"))) continue;
+            reset.Apply(packDir, world);
+        }
+    }
 
     private void EnsureWorldsDirectoryAndSavesLink(string clientDir)
     {
