@@ -87,6 +87,7 @@ public partial class MainWindow : Window
     private readonly WindowPlacementService _windowPlacement;
     private ControlsPresetService? _controlsPreset;
     private ResourcePackDefaultsService? _resourcePackDefaults;
+    private MinimapResetService? _minimapReset;
     private ControlsPresetStatus _controlsPresetStatus;
 
     /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
@@ -142,6 +143,7 @@ public partial class MainWindow : Window
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
+            _minimapReset = new MinimapResetService(_logger);
             _steamClient = new SteamClientService(
                 new SteamworksApiFacade(),
                 new SteamNativeLibraryService(_paths, _logger),
@@ -1164,6 +1166,9 @@ public partial class MainWindow : Window
         // that has played before and would otherwise get the files and never
         // see them selected. Afterwards the choice belongs to the player.
         _resourcePackDefaults?.Apply(directories.Value.Pack, directories.Value.Instance);
+        // And when the pack has reset the world's chunks, the map a minimap has
+        // already drawn is a picture of ground that no longer exists.
+        _minimapReset?.Apply(directories.Value.Pack, directories.Value.Instance);
     }
 
     private void RefreshControlsPresetStatus()
