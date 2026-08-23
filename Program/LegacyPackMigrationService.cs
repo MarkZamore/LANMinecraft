@@ -175,7 +175,8 @@ public static class LegacyPackMigrationService
         {
             try
             {
-                if (!IsLegacyPack(metadata.Read(world)?.BuildRelativePath)) continue;
+                var recorded = metadata.Read(world)?.BuildRelativePath;
+                if (!IsLegacyPack(recorded)) continue;
                 if (WorldAccessGuard.IsOpen(world))
                 {
                     logger.Warn(
@@ -187,7 +188,7 @@ public static class LegacyPackMigrationService
                         world,
                         TeleportWorldConfigRelativePath.Replace('/', Path.DirectorySeparatorChar)),
                     logger);
-                if (metadata.TryRebindBuild(world, LegacyPackRelativePath, target, target)) rebound++;
+                if (metadata.TryRebindBuild(world, recorded!, target, target)) rebound++;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -246,7 +247,12 @@ public static class LegacyPackMigrationService
         }
     }
 
-    private static bool IsLegacyPack(string? relativePath)
+    /// <summary>
+    /// True when this is a name the built-in pack used to have. Public because a
+    /// world can arrive from a friend mid-session carrying an older name, long
+    /// after the start-of-launch migration has run.
+    /// </summary>
+    public static bool IsLegacyPack(string? relativePath)
     {
         var name = relativePath?.Trim().Trim('\\', '/');
         if (string.IsNullOrEmpty(name)) return false;
