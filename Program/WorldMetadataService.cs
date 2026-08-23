@@ -128,6 +128,35 @@ public sealed class WorldMetadataService
             right?.Trim().Trim('\\', '/'),
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Whether a world belongs to the build a player has selected, and so should
+    /// be offered to them. A world made on one pack has no business being opened
+    /// on another: its blocks and entities belong to mods the other pack may not
+    /// have, and opening it there is how a world loses content.
+    ///
+    /// Two kinds of world are shown anyway. One whose build was never recorded
+    /// cannot be attributed to anyone, and hiding it would be the launcher
+    /// losing somebody's world rather than protecting it. One recorded under a
+    /// name the built-in pack used to have belongs to the pack that was renamed,
+    /// and it is offered under the new name until the migration rewrites it.
+    /// </summary>
+    public static bool BelongsToBuild(string? recordedBuildRelativePath, string? selectedBuildRelativePath)
+    {
+        var recorded = recordedBuildRelativePath?.Trim().Trim('\\', '/');
+        if (string.IsNullOrEmpty(recorded)) return true;
+
+        var selected = selectedBuildRelativePath?.Trim().Trim('\\', '/');
+        if (string.IsNullOrEmpty(selected)) return true;
+
+        if (string.Equals(recorded, selected, StringComparison.OrdinalIgnoreCase)) return true;
+
+        return string.Equals(
+                   selected,
+                   PortablePackSyncService.DefaultPackRelativePath,
+                   StringComparison.OrdinalIgnoreCase) &&
+               LegacyPackMigrationService.IsLegacyPack(recorded);
+    }
+
     public string GetBuildName(string worldPath)
     {
         var metadata = Read(worldPath);
