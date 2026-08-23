@@ -111,7 +111,7 @@ public sealed class PackRuntimeService : IDisposable
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
-            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готово", 1));
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
             return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
 
@@ -214,7 +214,7 @@ public sealed class PackRuntimeService : IDisposable
             token);
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(newState, _jsonOptions));
         CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
-        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готово", 1));
+        progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");

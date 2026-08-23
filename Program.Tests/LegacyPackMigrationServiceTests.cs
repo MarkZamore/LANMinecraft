@@ -77,7 +77,9 @@ public sealed class LegacyPackMigrationServiceTests : IDisposable
             PortablePackSyncService.DefaultPackSource,
             new PortablePackSyncService(fixture.Paths, fixture.Logger).TryResolveSource(Target));
         var marker = ReadJson(Path.Combine(packDir, PortablePackSyncService.SourceMarkerFileName));
-        Assert.Equal("LL8", marker.GetProperty("repo").GetString());
+        Assert.Equal(
+            PortablePackSyncService.DefaultPackSource.Repo,
+            marker.GetProperty("repo").GetString());
 
         Assert.Equal(Target, fixture.Settings.ClientRelativePath);
         Assert.Equal(

@@ -46,17 +46,17 @@ public sealed partial class PortablePackSyncService
     public const string SourceMarkerFileName = "portable-pack-source.json";
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string PackManifestAssetName = "pack-manifest.json";
-    public const string DefaultPackRelativePath = "LL8";
+    public const string DefaultPackRelativePath = "LL8 Extended";
 
     public static PackSyncSource DefaultPackSource { get; } =
-        new("MarkZamore", "LL8", "pack-latest");
+        new("MarkZamore", "LL8-Extended", "pack-latest");
 
     /// <summary>
     /// Repositories the built-in pack was published from before the rename.
     /// A marker naming one of them inside the default pack folder is what the
     /// rename left behind, not a source the player chose.
     /// </summary>
-    private static readonly string[] LegacyDefaultSourceRepos = ["Infinity", "InfinityPack"];
+    private static readonly string[] LegacyDefaultSourceRepos = ["Infinity", "InfinityPack", "LL8"];
 
     internal const string OfflineCheckWarning =
         "Не удалось проверить обновления сборки — играем с локальной версией.";

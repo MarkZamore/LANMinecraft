@@ -247,7 +247,7 @@ public sealed class ControlsPresetServiceTests : IDisposable
     [Fact]
     public void ThePackPreset_ParsesWhenTheRepositoryIsAvailable()
     {
-        var packRepo = Path.GetFullPath(Path.Combine(FindRepositoryRoot(), "..", "LL8"));
+        var packRepo = Path.GetFullPath(Path.Combine(FindRepositoryRoot(), "..", "LL8 Extended"));
         var preset = Path.Combine(packRepo, "launcher", "controls-preset.txt");
         if (!File.Exists(preset)) return;
 

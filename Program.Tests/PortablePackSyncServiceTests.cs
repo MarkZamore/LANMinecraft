@@ -395,7 +395,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
 
         Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
         Assert.StartsWith(
-            "https://github.com/MarkZamore/LL8/releases/download/pack-latest/pack-manifest.json",
+            $"https://github.com/{PortablePackSyncService.DefaultPackSource.Owner}/{PortablePackSyncService.DefaultPackSource.Repo}/releases/download/{PortablePackSyncService.DefaultPackSource.Tag}/pack-manifest.json",
             handler.RequestUris[0].AbsoluteUri,
             StringComparison.Ordinal);
     }
@@ -427,7 +427,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         Assert.All(
             handler.RequestUris,
             uri => Assert.StartsWith(
-                "https://github.com/MarkZamore/LL8/releases/download/pack-latest/",
+                $"https://github.com/{PortablePackSyncService.DefaultPackSource.Owner}/{PortablePackSyncService.DefaultPackSource.Repo}/releases/download/{PortablePackSyncService.DefaultPackSource.Tag}/",
                 uri.AbsoluteUri,
                 StringComparison.Ordinal));
         Assert.Equal(
@@ -435,7 +435,9 @@ public sealed class PortablePackSyncServiceTests : IDisposable
             service.TryResolveSource(DefaultPack));
         using var marker = JsonDocument.Parse(
             File.ReadAllText(Path.Combine(packDir, PortablePackSyncService.SourceMarkerFileName)));
-        Assert.Equal("LL8", marker.RootElement.GetProperty("repo").GetString());
+        Assert.Equal(
+            PortablePackSyncService.DefaultPackSource.Repo,
+            marker.RootElement.GetProperty("repo").GetString());
     }
 
     [Fact]

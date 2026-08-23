@@ -31,7 +31,7 @@ if (-not $StateJson -or -not (Test-Path -LiteralPath $StateJson -PathType Leaf))
     throw "adapter-state.json was not found. Launch the game once so the launcher derives the mappings."
 }
 
-$runtimeRoot = Join-Path $projectRoot "Minecraft\Launcher\Runtimes\LL8"
+$runtimeRoot = Join-Path $projectRoot "Minecraft\Launcher\Runtimes\LL8 Extended"
 if (-not $JavaHome) {
     $JavaHome = Join-Path $runtimeRoot "runtime\windows-x64\java-runtime-delta"
 }

@@ -95,7 +95,7 @@ public sealed class PlayButtonCaptionTests
         {
             yield return PlayButtonCaption.For(new RuntimePreparationProgress(stage, "Проверка"), 0);
         }
-        yield return PlayButtonCaption.For(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готово", 1), 0);
+        yield return PlayButtonCaption.For(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1), 0);
     }
 
     private static double Measure(string text)

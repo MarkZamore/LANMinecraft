@@ -4,11 +4,11 @@ using Minecraft;
 namespace Minecraft.Tests;
 
 /// <summary>
-/// End-to-end sync against the real MarkZamore/LL8 pack-latest release.
+/// End-to-end sync against the real MarkZamore/LL8-Extended pack-latest release.
 /// Downloads the full pack (~1.2 GB), so it only runs when opted in:
 ///   PACKSYNC_E2E=1 dotnet test --filter PortablePackSyncServiceE2ETests
 /// PACKSYNC_E2E_REPO can point at a local checkout of the pack repository to
-/// compare the synced tree against (defaults to the sibling LL8 dir); when the
+/// compare the synced tree against (defaults to the sibling LL8 Extended dir); when the
 /// path does not exist the tree comparison is skipped.
 /// </summary>
 public sealed class PortablePackSyncServiceE2ETests : IDisposable
@@ -54,7 +54,7 @@ public sealed class PortablePackSyncServiceE2ETests : IDisposable
         var repo = Environment.GetEnvironmentVariable("PACKSYNC_E2E_REPO")
             ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Documents", "LL8");
+                "Documents", "LL8 Extended");
         if (Directory.Exists(repo))
         {
             var expected = EnumerateManifestFiles(repo)
