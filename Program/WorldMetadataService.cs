@@ -31,12 +31,25 @@ public sealed class WorldMetadataService
         }
     }
 
-    public WorldMetadata? EnsureMetadata(string worldPath, WorldMetadataContext? context)
+    /// <param name="claimBuild">
+    /// Whether a world that has no build recorded may be given the one in
+    /// <paramref name="context"/>. False for anything that merely looks at a
+    /// world: listing the worlds used to write the selected build into every
+    /// unlabelled one, so the filter that hides another build's worlds then
+    /// compared that fresh label against the build that had just written it and
+    /// always matched. A world was claimed by whichever build opened its list
+    /// first, and an LL8 world showed up under ATM10 for exactly that reason.
+    /// The build is only decided by playing the world - see
+    /// <see cref="StampPlayedWorlds"/>.
+    /// </param>
+    public WorldMetadata? EnsureMetadata(
+        string worldPath, WorldMetadataContext? context, bool claimBuild = true)
     {
-        lock (_gate) return EnsureMetadataCore(worldPath, context);
+        lock (_gate) return EnsureMetadataCore(worldPath, context, claimBuild);
     }
 
-    private WorldMetadata? EnsureMetadataCore(string worldPath, WorldMetadataContext? context)
+    private WorldMetadata? EnsureMetadataCore(
+        string worldPath, WorldMetadataContext? context, bool claimBuild = true)
     {
         var metadataPath = GetMetadataPath(worldPath);
         var existing = Read(worldPath);
@@ -63,9 +76,11 @@ public sealed class WorldMetadataService
         var metadata = new WorldMetadata
         {
             WorldId = Guid.NewGuid().ToString("D"),
-            BuildName = string.IsNullOrWhiteSpace(context.BuildName) ? UnknownBuildName : context.BuildName,
-            BuildRelativePath = context.BuildRelativePath,
-            PackHash = context.PackHash,
+            BuildName = claimBuild && !string.IsNullOrWhiteSpace(context.BuildName)
+                ? context.BuildName
+                : UnknownBuildName,
+            BuildRelativePath = claimBuild ? context.BuildRelativePath : string.Empty,
+            PackHash = claimBuild ? context.PackHash : string.Empty,
             OwnerIdentityId = string.IsNullOrWhiteSpace(context.OwnerIdentityId) ? "" : context.OwnerIdentityId.Trim(),
             OwnerIdentityName = string.IsNullOrWhiteSpace(context.OwnerIdentityName) ? UnknownOwnerName : context.OwnerIdentityName.Trim(),
             CurrentHolderIdentityId = string.IsNullOrWhiteSpace(context.OwnerIdentityId) ? "" : context.OwnerIdentityId.Trim(),
