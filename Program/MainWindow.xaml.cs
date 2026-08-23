@@ -740,7 +740,12 @@ public partial class MainWindow : Window
 
     private WorldViewModel CreateWorldViewModel(string path, WorldMetadataContext? metadataContext)
     {
-        var metadata = RequireWorldMetadata().EnsureMetadata(path, metadataContext);
+        // Listing a world never decides which build it belongs to. Writing the
+        // selected build into every unlabelled world made the filter below
+        // compare that label against the build that had just written it, so a
+        // world was claimed by whichever build opened its list first and shown
+        // there ever after. Only playing a world says where it belongs.
+        var metadata = RequireWorldMetadata().EnsureMetadata(path, metadataContext, claimBuild: false);
         if (metadataContext is not null)
         {
             _ = RequireWorldMetadata().TryWriteOwnerMetadata(
