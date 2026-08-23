@@ -39,6 +39,19 @@
     <Loggers>
         <!-- Mixin's own DEBUG stream was the second largest contributor. -->
         <Logger level="INFO" name="mixin"/>
+        <!--
+          Mod loading, in full, into latest.log.
+
+          When loading fails, the loader collects what went wrong and shows it
+          on a screen instead of writing it down. A player whose game died that
+          way sent three sets of logs in one evening and not one of them held
+          the name of the mod that failed - latest.log said only "1 errors
+          found". These two loggers are quiet in a healthy launch and are the
+          ones that speak when it is not, so they say it into the file that
+          actually travels in a report.
+        -->
+        <Logger level="DEBUG" name="net.neoforged.fml"/>
+        <Logger level="DEBUG" name="net.neoforged.neoforge.registries"/>
         <Logger level="INFO" name="net.minecraft.server.MinecraftServer"/>
         <Root level="INFO">
             <AppenderRef ref="SysOut" level="INFO"/>

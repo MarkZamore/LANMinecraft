@@ -26,6 +26,15 @@ public sealed record SteamPeerPresence
 
     public bool IsMinecraftRunning => State is SteamPresenceCodec.StateInGame or SteamPresenceCodec.StateHosting;
     public bool IsMinecraftPreparing => State == SteamPresenceCodec.StatePreparing;
+
+    /// <summary>
+    /// They said they were leaving. Steam keeps the last keys a launcher wrote
+    /// long after the launcher is gone, and a peer whose keys merely stop being
+    /// readable is given three minutes of grace because Steam drops them for no
+    /// reason all the time. A goodbye is the difference between the two: it is
+    /// a reading, not an absence, and it means the list can drop them at once.
+    /// </summary>
+    public bool HasLeft => State == SteamPresenceCodec.StateOffline;
 }
 
 /// <summary>
@@ -44,6 +53,13 @@ public static class SteamPresenceCodec
     public const string StatePreparing = "preparing";
     public const string StateInGame = "ingame";
     public const string StateHosting = "hosting";
+
+    /// <summary>
+    /// Written once, on the way out, so friends can take this launcher off
+    /// their list the moment they read it instead of waiting out the grace
+    /// period for keys that Steam will happily keep serving.
+    /// </summary>
+    public const string StateOffline = "offline";
 
     internal const string MarkerKey = "lanmc";
     internal const string VersionKey = "lanmc_v";
@@ -144,7 +160,7 @@ public static class SteamPresenceCodec
 
     private static string NormalizeState(string value) => value switch
     {
-        StatePreparing or StateInGame or StateHosting => value,
+        StatePreparing or StateInGame or StateHosting or StateOffline => value,
         _ => StateIdle
     };
 
