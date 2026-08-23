@@ -58,6 +58,39 @@ public sealed partial class PortablePackSyncService
     /// </summary>
     private static readonly string[] LegacyDefaultSourceRepos = ["Infinity", "InfinityPack", "LL8"];
 
+    /// <summary>
+    /// A pack the launcher knows how to fetch, and therefore may offer before it
+    /// exists on disk. Without an entry here a pack can only be seen by someone
+    /// who already has its folder, which is no way to hand a new build to
+    /// friends: they have nothing to press Play on.
+    /// </summary>
+    public sealed record KnownPack(string RelativePath, PackSyncSource Source);
+
+    /// <summary>
+    /// Every build the launcher offers. The first is the built-in one that a
+    /// fresh install lands on; the rest are offered beside it, each syncing from
+    /// its own repository.
+    /// </summary>
+    public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
+        new(DefaultPackRelativePath, DefaultPackSource),
+        new("ATM10", new PackSyncSource("MarkZamore", "ATM10", "pack-latest")),
+    ]);
+
+    /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
+    public static PackSyncSource? KnownSourceFor(string? packRelativePath)
+    {
+        var name = packRelativePath?.Trim().Trim('\\', '/');
+        if (string.IsNullOrEmpty(name)) return null;
+        foreach (var pack in KnownPacks)
+        {
+            if (string.Equals(pack.RelativePath, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return pack.Source;
+            }
+        }
+        return null;
+    }
+
     internal const string OfflineCheckWarning =
         "Не удалось проверить обновления сборки — играем с локальной версией.";
     internal const string OfflineSyncWarning =
@@ -119,9 +152,9 @@ public sealed partial class PortablePackSyncService
 
     /// <summary>
     /// Reads the pack's source marker. An invalid marker makes the pack custom
-    /// (never synced); an absent marker falls back to the built-in source only
-    /// for the default pack, and so does a marker the rename left pointing at
-    /// the pack's former repository.
+    /// (never synced); an absent marker falls back to the source of a pack the
+    /// launcher knows, and a marker the rename left pointing at the built-in
+    /// pack's former repository is treated as naming the current one.
     /// </summary>
     public PackSyncSource? TryResolveSource(string packRelativePath)
     {
@@ -153,7 +186,7 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return IsDefaultPack(packRelativePath) ? DefaultPackSource : null;
+        return KnownSourceFor(packRelativePath);
     }
 
     /// <summary>
