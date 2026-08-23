@@ -480,6 +480,11 @@ public partial class MainWindow : Window
             .Where(path => !Path.GetFileName(path).Contains(".backup-", StringComparison.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => CreateWorldViewModel(path, metadataContext))
+            // A world made on another pack is not offered here: its blocks belong
+            // to mods this one may not have, and opening it is how content is lost.
+            .Where(world => WorldMetadataService.BelongsToBuild(
+                world.BuildRelativePath,
+                _settings.ClientRelativePath))
             .ToList();
 
         var worldsMatch = _worlds.Count == worlds.Count &&
@@ -733,7 +738,8 @@ public partial class MainWindow : Window
         {
             Name = Path.GetFileName(path),
             Path = path,
-            BuildName = buildName
+            BuildName = buildName,
+            BuildRelativePath = metadata?.BuildRelativePath ?? ""
         };
     }
 

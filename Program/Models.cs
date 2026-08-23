@@ -291,6 +291,8 @@ public sealed class WorldViewModel
     public required string Name { get; init; }
     public required string Path { get; init; }
     public required string BuildName { get; init; }
+    /// <summary>The build folder this world records, used to offer it only there.</summary>
+    public string BuildRelativePath { get; init; } = "";
     public string DisplayName => $"{Name} ({BuildName})";
 }
 
