@@ -80,6 +80,36 @@ public sealed class SteamPeerDirectory(
     }
 
     /// <summary>
+    /// Says goodbye. Steam does not take a launcher's rich presence down when
+    /// the launcher closes - the keys sit there and friends keep reading them,
+    /// so a player who has quit stays in everyone's list, and a report sent to
+    /// them fails on a connection nobody is waiting on. Writing the leaving
+    /// state is the one message that says the difference between gone and
+    /// merely unreadable.
+    /// </summary>
+    /// <param name="presence">This launcher's presence, as last published.</param>
+    public void PublishDeparture(SteamPeerPresence presence)
+    {
+        ArgumentNullException.ThrowIfNull(presence);
+        if (!client.Status.IsReady) return;
+        var refused = 0;
+        foreach (var (key, value) in SteamPresenceCodec.Encode(presence with
+                 {
+                     State = SteamPresenceCodec.StateOffline,
+                     HostedWorldId = string.Empty,
+                     WaypointProviders = [],
+                     IsSkinAvailable = false
+                 }))
+        {
+            if (!client.SetPresence(key, value)) refused++;
+        }
+
+        logger?.Info(refused == 0
+            ? "Told Steam this launcher is leaving; friends drop it from their lists on the next read."
+            : $"Steam refused {refused} of the leaving keys; friends will wait out the grace period instead.");
+    }
+
+    /// <summary>
     /// A friend told us about themselves directly, over a connection, because
     /// Steam would not. Their account of their presence outranks the nothing
     /// Steam offered, and it lives as long as any other entry does.
@@ -142,6 +172,22 @@ public sealed class SteamPeerDirectory(
                 friend.PersonaName,
                 key => api.GetFriendRichPresence(friend.SteamId64, key));
             if (presence is null) continue;
+
+            // A goodbye is not a presence. Their launcher wrote it on the way
+            // out, so they go now rather than in three minutes - and they stay
+            // gone, because the keys that say it will still be there next time.
+            if (presence.HasLeft)
+            {
+                lock (_gate)
+                {
+                    if (_peers.Remove(friend.SteamId64))
+                    {
+                        changed = true;
+                        logger?.Info($"{friend.PersonaName} closed their launcher.");
+                    }
+                }
+                continue;
+            }
             // A friend who introduced themselves ages by the introduction, not
             // by a Steam read that keeps coming back empty.
 

@@ -305,6 +305,7 @@ public sealed class MinecraftProcessService
         minecraftProcess.StartInfo.RedirectStandardError = true;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir);
         var startupOutput = new StartupOutputBuffer();
+        startupOutput.MirrorTo(gameDir);
         minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
         minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
 
@@ -380,6 +381,8 @@ public sealed class MinecraftProcessService
                 // on its way out. Everything known about it goes to the log the
                 // moment it happens.
                 ReportUnexpectedExit(process, startupOutput, gameDir, maxMemoryGb);
+                // The pipes are done; what they carried is on disk for a report.
+                startupOutput.Close();
                 // Published before any cleanup so the launch method never has
                 // to read the Process object this monitor is about to dispose.
                 TryPublishExitCode(process, exitCode);
@@ -458,8 +461,70 @@ public sealed class MinecraftProcessService
     private sealed class StartupOutputBuffer
     {
         private const int MaximumCharacters = 8 * 1024;
+
+        /// <summary>
+        /// Everything the game wrote to its console, kept beside its own logs.
+        ///
+        /// log4j only starts once the JVM is up and the loader is running; a
+        /// heap setting the JVM refuses, a missing native, a loader that dies
+        /// before it opens latest.log all happen before that and used to leave
+        /// nothing but an exit code. The pipes were already being drained to
+        /// keep the game from blocking, so this only writes down what was
+        /// passing through, and a report carries it.
+        /// </summary>
+        internal const string FileName = "launcher-console.log";
+
+        /// <summary>Enough for any startup; a session that talks more than this loses the oldest.</summary>
+        private const long MaximumFileBytes = 4L * 1024 * 1024;
+
         private readonly Lock _gate = new();
         private readonly StringBuilder _lines = new();
+        private StreamWriter? _file;
+        private long _written;
+
+        /// <summary>Starts the file copy; failure to open one is never fatal to a launch.</summary>
+        public void MirrorTo(string gameDirectory)
+        {
+            try
+            {
+                var logs = Path.Combine(gameDirectory, "logs");
+                Directory.CreateDirectory(logs);
+                var writer = new StreamWriter(
+                    new FileStream(
+                        Path.Combine(logs, FileName),
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.ReadWrite),
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+                {
+                    AutoFlush = true
+                };
+                lock (_gate) _file = writer;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // The game still runs and still logs; only this copy is missing.
+            }
+        }
+
+        /// <summary>Closes the file copy once the process that fed it is gone.</summary>
+        public void Close()
+        {
+            StreamWriter? writer;
+            lock (_gate)
+            {
+                writer = _file;
+                _file = null;
+            }
+
+            try
+            {
+                writer?.Dispose();
+            }
+            catch (IOException)
+            {
+            }
+        }
 
         public void Append(string? line)
         {
@@ -470,6 +535,17 @@ public sealed class MinecraftProcessService
                 if (_lines.Length > MaximumCharacters)
                 {
                     _lines.Remove(0, _lines.Length - MaximumCharacters);
+                }
+
+                if (_file is null || _written >= MaximumFileBytes) return;
+                try
+                {
+                    _file.WriteLine(line);
+                    _written += line.Length + 2;
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    _file = null;
                 }
             }
         }

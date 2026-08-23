@@ -84,6 +84,7 @@ public partial class MainWindow : Window
     private string? _playProgressText;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
+    private SteamPeerPresence? _lastPublishedPresence;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -262,6 +263,23 @@ public partial class MainWindow : Window
         await Dispatcher.Yield(DispatcherPriority.Background);
 
         _uiTimer.Stop();
+
+        // Before anything is torn down, tell Steam this launcher is going.
+        // Steam keeps the keys of a closed launcher and keeps serving them, so
+        // without this the player stays on everybody's list and a report sent
+        // their way dies on a connection nobody is listening to.
+        if (_peerDirectory is not null && _lastPublishedPresence is not null)
+        {
+            try
+            {
+                _peerDirectory.PublishDeparture(_lastPublishedPresence);
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warn($"The leaving notice could not be published ({ex.Message}).");
+            }
+        }
+
         _lifetimeCts.Cancel();
         try
         {
@@ -829,6 +847,10 @@ public partial class MainWindow : Window
             DiagnosticProtocolVersion = BugReportManifest.ProtocolVersion
         };
         _peerDirectory.PublishLocalPresence(presence);
+        // Kept so the goodbye on the way out can be written without rebuilding
+        // any of this: at that point the skin and waypoint services are already
+        // going away.
+        _lastPublishedPresence = presence;
         // Steam decides per client whose presence it serves; a friend we can
         // see may not be able to see us. Telling them ourselves is the only
         // way to be sure the two lists agree.

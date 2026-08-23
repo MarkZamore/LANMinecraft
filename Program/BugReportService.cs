@@ -346,6 +346,24 @@ public sealed class BugReportService : IPortableProtocolHandler
                 {
                     entries.Add(("game/latest.log", latest, MaxLiveLogTailBytes));
                 }
+
+                // What the game said on its console, which is the only record of
+                // anything that went wrong before log4j existed - a heap size the
+                // JVM refused, a native that would not load, a loader that died
+                // on its way up.
+                var console = Path.Combine(logs, "launcher-console.log");
+                if (File.Exists(console))
+                {
+                    entries.Add(("game/launcher-console.log", console, MaxSupportingLogTailBytes));
+                }
+
+                // A pack that ships its own log4j2.xml keeps Minecraft's debug
+                // file; when it is there it is the fullest account of a launch.
+                var debug = Path.Combine(logs, "debug.log");
+                if (File.Exists(debug))
+                {
+                    entries.Add(("game/debug.log", debug, MaxSupportingLogTailBytes));
+                }
                 foreach (var archived in Directory.EnumerateFiles(logs, "*.log.gz")
                              .Select(path => new FileInfo(path))
                              .Where(file => file.LastWriteTimeUtc > _timeProvider.GetUtcNow().AddDays(-1))
@@ -370,6 +388,20 @@ public sealed class BugReportService : IPortableProtocolHandler
                 {
                     entries.Add(($"crash-reports/{crash.Name}", crash.FullName, MaxSupportingLogTailBytes));
                 }
+            }
+
+            // A JVM that dies at the native level writes one of these into the
+            // working directory and nothing anywhere else: no crash report, and
+            // a latest.log that simply stops mid-sentence. It is the whole
+            // account of a driver or an out-of-memory kill.
+            foreach (var fatal in new[] { "hs_err_pid*.log", "replay_pid*.log" }
+                         .SelectMany(pattern => Directory.EnumerateFiles(instance, pattern))
+                         .Select(path => new FileInfo(path))
+                         .Where(file => file.LastWriteTimeUtc > _timeProvider.GetUtcNow().AddDays(-1))
+                         .OrderByDescending(file => file.LastWriteTimeUtc)
+                         .Take(2))
+            {
+                entries.Add(($"jvm/{fatal.Name}", fatal.FullName, MaxSupportingLogTailBytes));
             }
         }
 
@@ -436,6 +468,8 @@ public sealed class BugReportService : IPortableProtocolHandler
         // archive has to be unpacked before a single line can be read.
         Stream stream = file;
         var truncated = false;
+        var head = string.Empty;
+        var dropped = 0L;
         if (path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
         {
             stream = Unpack(file, maxBytes, out truncated);
@@ -443,10 +477,38 @@ public sealed class BugReportService : IPortableProtocolHandler
         else
         {
             truncated = file.Length > maxBytes;
-            if (truncated) file.Seek(-maxBytes, SeekOrigin.End);
+            if (truncated)
+            {
+                // Keeping only the end of a log loses the launch, and the launch
+                // is where a game that would not start says why: the mod list,
+                // the loader's complaints, the first thing that threw. A long
+                // session used to push all of it past the window and the report
+                // arrived describing an evening of play and nothing else.
+                var headBytes = Math.Min(maxBytes / 4, (int)Math.Min(file.Length, int.MaxValue));
+                var buffer = new byte[headBytes];
+                file.ReadExactly(buffer);
+                head = Encoding.UTF8.GetString(buffer);
+                dropped = file.Length - maxBytes;
+                file.Seek(-(maxBytes - headBytes), SeekOrigin.End);
+            }
         }
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
         var builder = new StringBuilder();
+        if (head.Length > 0)
+        {
+            // The last line of the head is half a line; the reader's first line
+            // after the seek is the other kind of half.
+            var lines = head.Split('\n');
+            for (var index = 0; index < lines.Length - 1; index++)
+            {
+                var sanitized = _sanitizer.SanitizeLine(lines[index].TrimEnd('\r'));
+                if (sanitized is not null) builder.AppendLine(sanitized);
+            }
+
+            builder.AppendLine(
+                $"[launcher] ... {dropped:N0} bytes of this log are not in this report; " +
+                "its beginning and its end are ...");
+        }
         // The first line after a seek is almost always half a line.
         if (truncated) reader.ReadLine();
         while (reader.ReadLine() is { } line)
@@ -608,8 +670,11 @@ public sealed class BugReportService : IPortableProtocolHandler
             .AppendLine()
             .AppendLine("- `report.txt` - the same message plus the sender's environment")
             .AppendLine("- `launcher/logs.log` - the launcher's own log, sanitised")
-            .AppendLine("- `game/latest.log` - the game session, sanitised and trimmed to its end")
+            .AppendLine("- `game/latest.log` - the game session, sanitised; a long one keeps its start and its end")
+            .AppendLine("- `game/launcher-console.log` - what the game printed before its own logging existed")
+            .AppendLine("- `game/debug.log` - the game's debug log, when the pack keeps one")
             .AppendLine("- `crash-reports/` - crash reports from the last day, if any")
+            .AppendLine("- `jvm/` - hs_err files, when the Java runtime itself died")
             .ToString();
         File.WriteAllText(Path.Combine(directory, "README.md"), text, new UTF8Encoding(false));
     }
