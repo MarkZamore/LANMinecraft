@@ -1,0 +1,805 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "promotional banner" [ref=e4] [cursor=pointer]:
+        - /url: https://links.curseforge.com/pubg_mid_contest_winners_top
+        - img "promotional banner" [ref=e5]
+      - button "dismiss banner" [ref=e6] [cursor=pointer]
+    - banner [ref=e7]:
+      - navigation [ref=e8]:
+        - link "Goto home page" [ref=e9] [cursor=pointer]:
+          - /url: /
+        - list [ref=e11]:
+          - listitem [ref=e12]:
+            - link "Browse" [ref=e13] [cursor=pointer]:
+              - /url: https://www.curseforge.com/games
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - link "Browse all (126)":
+                      - /url: /games
+                  - list:
+                    - listitem:
+                      - link "icon Minecraft":
+                        - /url: /minecraft
+                        - img "icon"
+                        - text: Minecraft
+                    - listitem:
+                      - link "icon The Sims 4":
+                        - /url: /sims4
+                        - img "icon"
+                        - text: The Sims 4
+                    - listitem:
+                      - link "icon World of Warcraft":
+                        - /url: /wow
+                        - img "icon"
+                        - text: World of Warcraft
+                    - listitem:
+                      - link "icon Minecraft Bedrock":
+                        - /url: /minecraft-bedrock
+                        - img "icon"
+                        - text: Minecraft Bedrock
+                    - listitem:
+                      - link "icon Ark Survival Ascended":
+                        - /url: /ark-survival-ascended
+                        - img "icon"
+                        - text: Ark Survival Ascended
+                    - listitem:
+                      - link "icon Hytale":
+                        - /url: /hytale
+                        - img "icon"
+                        - text: Hytale
+                    - listitem:
+                      - link "icon inZOI":
+                        - /url: /inzoi
+                        - img "icon"
+                        - text: inZOI
+                    - listitem:
+                      - link "icon StarCraft II":
+                        - /url: /sc2
+                        - img "icon"
+                        - text: StarCraft II
+                    - listitem:
+                      - link "icon Kerbal Space Program":
+                        - /url: /kerbal
+                        - img "icon"
+                        - text: Kerbal Space Program
+                    - listitem:
+                      - link "icon Stardew Valley":
+                        - /url: /stardewvalley
+                        - img "icon"
+                        - text: Stardew Valley
+                    - listitem:
+                      - link "icon American Truck Simulator":
+                        - /url: /american-truck-simulator
+                        - img "icon"
+                        - text: American Truck Simulator
+                    - listitem:
+                      - link "icon Hogwarts Legacy":
+                        - /url: /hogwarts-legacy
+                        - img "icon"
+                        - text: Hogwarts Legacy
+                    - listitem:
+                      - link "icon Terraria":
+                        - /url: /terraria
+                        - img "icon"
+                        - text: Terraria
+                    - listitem:
+                      - link "icon WildStar":
+                        - /url: /wildstar
+                        - img "icon"
+                        - text: WildStar
+                    - listitem:
+                      - link "icon Palworld":
+                        - /url: /palworld
+                        - img "icon"
+                        - text: Palworld
+                    - listitem:
+                      - link "icon World of Tanks":
+                        - /url: /worldoftanks
+                        - img "icon"
+                        - text: World of Tanks
+                    - listitem:
+                      - link "icon Runes of Magic":
+                        - /url: /rom
+                        - img "icon"
+                        - text: Runes of Magic
+                    - listitem:
+                      - link "icon Rift":
+                        - /url: /rift
+                        - img "icon"
+                        - text: Rift
+                - generic:
+                  - generic: PUBG BATTLEGROUNDS UGC CONTEST
+                  - link "PUBG BATTLEGROUNDS UGC CONTEST Promo":
+                    - /url: https://links.curseforge.com/pubg_mid_contest_winners_nav
+          - listitem [ref=e14]:
+            - link "Create" [ref=e15] [cursor=pointer]:
+              - /url: https://authors.curseforge.com/welcome
+            - generic:
+              - generic:
+                - generic:
+                  - generic: MOD AUTHORS
+                  - list:
+                    - listitem:
+                      - link "Become an Author":
+                        - /url: https://authors.curseforge.com/welcome
+                    - listitem:
+                      - link "Start a Project":
+                        - /url: https://authors.curseforge.com/#/projects/create/choose-game
+                    - listitem:
+                      - link "Project Submission Guide":
+                        - /url: https://support.curseforge.com/en/support/solutions/articles/9000199552-project-submission-guide-and-tips
+                - generic:
+                  - generic: MODDING TOOL DEVELOPERS
+                  - list:
+                    - listitem:
+                      - link "Apply for an API Key":
+                        - /url: https://support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key
+                    - listitem:
+                      - link "Documentation":
+                        - /url: https://docs.curseforge.com/rest-api/#getting-started
+                    - listitem:
+                      - link "Terms & Conditions":
+                        - /url: https://support.curseforge.com/en/support/solutions/articles/9000207405-curse-forge-3rd-party-api-terms-and-conditions
+                - generic:
+                  - generic: SOCIAL
+                  - list:
+                    - listitem:
+                      - link "Join Our Discord!":
+                        - /url: https://www.discord.com/invite/curseforge
+                    - listitem:
+                      - link "Authors Discord":
+                        - /url: https://discord.gg/S3EaZArYz2
+                - generic:
+                  - generic: PUBG BATTLEGROUNDS UGC CONTEST
+                  - link "PUBG BATTLEGROUNDS UGC CONTEST Promo":
+                    - /url: https://links.curseforge.com/pubg_mid_contest_winners_nav
+          - listitem [ref=e16]:
+            - link "Studios" [ref=e17] [cursor=pointer]:
+              - /url: https://studios.curseforge.com/
+            - generic:
+              - generic:
+                - generic:
+                  - generic: GAME DEVELOPERS
+                  - list:
+                    - listitem:
+                      - link "Unlock Modding for Your Game":
+                        - /url: https://studios.curseforge.com
+                    - listitem:
+                      - link "Documentation":
+                        - /url: https://docs.curseforge.com/
+                - generic:
+                  - generic: PUBG BATTLEGROUNDS UGC CONTEST
+                  - link "PUBG BATTLEGROUNDS UGC CONTEST Promo":
+                    - /url: https://links.curseforge.com/pubg_mid_contest_winners_nav
+          - listitem
+        - list [ref=e18]:
+          - listitem [ref=e19]:
+            - link [ref=e20] [cursor=pointer]:
+              - /url: /premium?source=7
+          - listitem [ref=e21]:
+            - link [ref=e22] [cursor=pointer]:
+              - /url: /download/app
+        - link [ref=e26] [cursor=pointer]:
+          - /url: https://www.curseforge.com/api/v1/auth/login?returnUrl=https://www.curseforge.com/minecraft/modpacks/all-the-mods-10/files/all&registrationCompletedUrl=https://www.curseforge.com/signup/confirmation
+        - button "More options" [ref=e28] [cursor=pointer]
+    - generic [ref=e29]:
+      - navigation "Game navigation" [ref=e30]:
+        - generic [ref=e31]:
+          - generic [ref=e32]:
+            - link "Minecraft" [ref=e33] [cursor=pointer]:
+              - /url: /minecraft
+            - generic [ref=e34]:
+              - link "Discover" [ref=e35] [cursor=pointer]:
+                - /url: /minecraft
+              - link "Browse All" [ref=e36] [cursor=pointer]:
+                - /url: /minecraft/search?page=1&pageSize=20&sortBy=relevancy
+          - generic [ref=e40]:
+            - searchbox "Search for a project" [ref=e42]
+            - button "Search" [ref=e43] [cursor=pointer]
+      - main [ref=e47]:
+        - generic [ref=e50]:
+          - navigation "Breadcrumb" [ref=e51]:
+            - list [ref=e52]:
+              - listitem [ref=e53]:
+                - link "Minecraft" [ref=e54] [cursor=pointer]:
+                  - /url: /minecraft
+              - listitem [ref=e55]:
+                - link "Modpacks" [ref=e56] [cursor=pointer]:
+                  - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy
+          - button "Back To Top"
+          - generic [ref=e58]:
+            - link "Enlarge All the Mods 10 - ATM10 logo" [ref=e59] [cursor=pointer]:
+              - /url: "#project-logo"
+              - img "All the Mods 10 - ATM10 logo" [ref=e60]
+            - heading "All the Mods 10 - ATM10" [level=1] [ref=e62]
+            - list [ref=e63]:
+              - listitem [ref=e64]:
+                - generic [ref=e65]: By
+                - link "ATMTeam ATMTeam GrandArtisan tier icon" [ref=e67] [cursor=pointer]:
+                  - /url: /members/atmteam
+                  - img "ATMTeam" [ref=e68]
+                  - generic [ref=e69]: ATMTeam
+                  - img "GrandArtisan tier icon" [ref=e71]
+            - generic [ref=e72]: The top pack of 2026 with around 500 mods! Tons of quests and a proper endgame.
+          - complementary [ref=e73]:
+            - generic [ref=e74]:
+              - separator [ref=e75]
+              - generic [ref=e76]:
+                - generic: All the Mods 10 - ATM10
+                - generic [ref=e78]:
+                  - generic [ref=e82]:
+                    - link "Install via App" [ref=e83] [cursor=pointer]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/install/8649077
+                    - button [ref=e85] [cursor=pointer]
+                  - button "Add Project to Favorites" [ref=e86] [cursor=pointer]: Favorite
+                  - link [ref=e87] [cursor=pointer]:
+                    - /url: "#follow"
+                    - button "Follow Project" [ref=e88]: Follow
+              - separator [ref=e90]
+              - generic [ref=e91]:
+                - heading "Details" [level=3] [ref=e92]
+                - generic [ref=e93]:
+                  - term [ref=e94]: "Downloads:"
+                  - definition [ref=e95]: 21,107,253
+                  - term [ref=e96]: "Created:"
+                  - definition [ref=e97]:
+                    - generic [ref=e98]: 2 years ago
+                  - term [ref=e100]: "Updated:"
+                  - definition [ref=e101]:
+                    - generic [ref=e102]: 8 days ago
+                  - term [ref=e103]: "Project ID:"
+                  - definition [ref=e104]:
+                    - generic [ref=e105]:
+                      - generic [ref=e106]: "925200"
+                      - button "Copy to clipboard" [ref=e108] [cursor=pointer]
+                  - term [ref=e109]: "License:"
+                  - definition [ref=e110]:
+                    - link "All Rights Reserved" [ref=e111] [cursor=pointer]:
+                      - /url: "#license"
+              - separator [ref=e112]
+              - generic [ref=e113]:
+                - heading "Game Versions" [level=3] [ref=e114]
+                - list [ref=e115]:
+                  - link "1.21.1" [ref=e116] [cursor=pointer]:
+                    - /url: /minecraft/modpacks/all-the-mods-10/files/all?page=1&pageSize=20&version=1.21.1&showAlphaFiles=hide
+              - separator [ref=e117]
+              - generic [ref=e118]:
+                - heading "Mod Loaders" [level=3] [ref=e119]
+                - list [ref=e121]:
+                  - listitem [ref=e122]:
+                    - link "NeoForge" [ref=e123] [cursor=pointer]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/files/all?page=1&pageSize=20&gameVersionTypeId=6&showAlphaFiles=hide
+              - separator [ref=e124]
+              - link [ref=e127] [cursor=pointer]:
+                - /url: https://links.curseforge.com/mc_modjam_2026_fallback
+                - img "informative placeholder" [ref=e128]
+              - separator [ref=e129]
+              - generic [ref=e130]:
+                - heading "Class & Categories" [level=3] [ref=e131]
+                - list [ref=e132]:
+                  - listitem [ref=e133]:
+                    - link "Modpacks" [ref=e134] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy
+                  - listitem [ref=e135]
+                  - listitem [ref=e136]:
+                    - link "Exploration" [ref=e137] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy&categories=exploration
+                  - listitem [ref=e138]:
+                    - link "Extra Large" [ref=e139] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy&categories=extra-large
+                  - listitem [ref=e140]:
+                    - link "Quests" [ref=e141] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy&categories=quests
+                  - listitem [ref=e142]:
+                    - link "Magic" [ref=e143] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy&categories=magic
+                  - listitem [ref=e144]:
+                    - link "Tech" [ref=e145] [cursor=pointer]:
+                      - /url: /minecraft/search?class=modpacks&page=1&pageSize=20&sortBy=relevancy&categories=tech
+              - separator [ref=e146]
+              - generic [ref=e147]:
+                - heading "Links" [level=3] [ref=e148]
+                - link "Source" [ref=e155] [cursor=pointer]:
+                  - /url: https://github.com/AllTheMods/ATM-10
+              - separator [ref=e156]
+              - generic [ref=e157]:
+                - heading "Main File" [level=3] [ref=e158]
+                - heading "1.21.1" [level=4] [ref=e159]
+                - link "All the Mods 10-8.0 R 1.21.1 NeoForge Aug 14, 2026" [ref=e160] [cursor=pointer]:
+                  - /url: /minecraft/modpacks/all-the-mods-10/files/8649077
+                  - generic "All the Mods 10-8.0" [ref=e161]
+                  - list [ref=e162]:
+                    - listitem [ref=e163]:
+                      - generic [ref=e164]: R
+                    - listitem [ref=e167]: 1.21.1
+                    - listitem [ref=e168]: NeoForge
+                    - listitem [ref=e169]:
+                      - time [ref=e170]: Aug 14, 2026
+              - separator [ref=e171]
+              - generic [ref=e172]:
+                - heading [level=3] [ref=e173]:
+                  - text: Recent Files
+                  - link "View all" [ref=e174] [cursor=pointer]:
+                    - /url: /minecraft/modpacks/all-the-mods-10/files/all?page=1&pageSize=20&showAlphaFiles=hide&sortBy=dateCreated&sortOrder=desc
+                - generic [ref=e175]:
+                  - heading "Minecraft 1.21" [level=4] [ref=e176]
+                  - link "All the Mods 10-8.0 R 1.21.1 NeoForge Aug 14, 2026" [ref=e177] [cursor=pointer]:
+                    - /url: /minecraft/modpacks/all-the-mods-10/files/8649077
+                    - generic "All the Mods 10-8.0" [ref=e178]
+                    - list [ref=e179]:
+                      - listitem [ref=e180]:
+                        - generic [ref=e181]: R
+                      - listitem [ref=e184]: 1.21.1
+                      - listitem [ref=e185]: NeoForge
+                      - listitem [ref=e186]:
+                        - time [ref=e187]: Aug 14, 2026
+                  - heading "Minecraft 1.21 Server Packs" [level=4] [ref=e188]
+                  - link "ServerFiles-8.0.zip R 1.21.1 NeoForge Aug 14, 2026" [ref=e189] [cursor=pointer]:
+                    - /url: /minecraft/modpacks/all-the-mods-10/files/8649107
+                    - generic "ServerFiles-8.0.zip" [ref=e190]
+                    - list [ref=e191]:
+                      - listitem [ref=e192]:
+                        - generic [ref=e193]: R
+                      - listitem [ref=e196]: 1.21.1
+                      - listitem [ref=e197]: NeoForge
+                      - listitem [ref=e198]:
+                        - time [ref=e199]: Aug 14, 2026
+              - separator [ref=e200]
+              - link [ref=e201] [cursor=pointer]:
+                - /url: "#report"
+                - button "Report" [ref=e202]
+          - text: Favorite Follow
+          - list [ref=e204]:
+            - listitem [ref=e205]:
+              - link "Description" [ref=e206] [cursor=pointer]:
+                - /url: /minecraft/modpacks/all-the-mods-10
+            - listitem [ref=e207]:
+              - link "Files" [ref=e208] [cursor=pointer]:
+                - /url: /minecraft/modpacks/all-the-mods-10/files/all?page=1&pageSize=20&showAlphaFiles=hide
+            - listitem [ref=e209]:
+              - link "Gallery (7)" [ref=e210] [cursor=pointer]:
+                - /url: /minecraft/modpacks/all-the-mods-10/gallery
+            - listitem [ref=e211]:
+              - link "Relations" [ref=e212] [cursor=pointer]:
+                - /url: /minecraft/modpacks/all-the-mods-10/relations/dependencies
+            - listitem [ref=e213]:
+              - link "Issues" [ref=e214] [cursor=pointer]:
+                - /url: https://github.com/AllTheMods/ATM-10/issues/
+          - generic [ref=e215]:
+            - generic [ref=e218]:
+              - generic [ref=e219]:
+                - generic [ref=e220] [cursor=pointer]
+                - text: Show alpha files
+              - generic [ref=e227]:
+                - generic [ref=e229]:
+                  - generic [ref=e230]: All Game Versions
+                  - textbox "All Game Versions" [ref=e232]: Game Versions
+                  - list [ref=e233]:
+                    - list [ref=e234]:
+                      - listitem [ref=e235]: All Game Versions
+                      - listitem [ref=e236]: 1.21.1
+                - generic [ref=e239]:
+                  - generic [ref=e240]: All Mod Loaders
+                  - textbox "All Mod Loaders" [ref=e242]: Mod Loaders
+                  - list [ref=e243]:
+                    - list [ref=e244]:
+                      - listitem [ref=e245]: All Mod Loaders
+                      - listitem [ref=e246]: NeoForge
+            - generic [ref=e248]:
+              - generic [ref=e249]:
+                - generic [ref=e250]:
+                  - text: Showing
+                  - strong [ref=e251]: 1-20
+                  - text: of
+                  - strong [ref=e252]: "143"
+                  - text: results
+                - generic [ref=e253]:
+                  - generic [ref=e254]: "Show per page:"
+                  - generic [ref=e255]:
+                    - generic [ref=e256]: "50"
+                    - paragraph [ref=e257]:
+                      - generic: "20"
+                    - list [ref=e258]:
+                      - list [ref=e259]:
+                        - listitem [ref=e260]: "10"
+                        - listitem [ref=e261]: "20"
+                        - listitem [ref=e262]: "50"
+              - generic [ref=e264]:
+                - generic [ref=e265]:
+                  - generic "Type" [ref=e266] [cursor=pointer]
+                  - generic "Name" [ref=e267] [cursor=pointer]
+                  - generic "Game Versions" [ref=e268]
+                  - generic "Mod Loaders" [ref=e269]
+                  - generic "Size" [ref=e270] [cursor=pointer]
+                  - generic "Downloads" [ref=e271]
+                  - generic "Uploaded" [ref=e272] [cursor=pointer]
+                - generic [ref=e273]:
+                  - button "Expand file details" [ref=e275] [cursor=pointer]:
+                    - generic [ref=e279]: R
+                    - generic [ref=e286]:
+                      - generic "All the Mods 10-8.0" [ref=e287]
+                      - generic [ref=e288]: + 1
+                    - generic "1.21.1" [ref=e290]
+                    - generic [ref=e291]: NeoForge
+                    - generic [ref=e299]: 192.3 MB
+                    - generic [ref=e302]: 167.1K
+                    - generic [ref=e305]: Aug 14, 2026
+                    - link "Download file" [ref=e309]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/8649077
+                  - button "Expand file details" [ref=e311] [cursor=pointer]:
+                    - generic [ref=e315]: R
+                    - generic [ref=e322]:
+                      - generic "All the Mods 10-7.3" [ref=e323]
+                      - generic [ref=e324]: + 1
+                    - generic "1.21.1" [ref=e326]
+                    - generic [ref=e327]: NeoForge
+                    - generic [ref=e335]: 191.0 MB
+                    - generic [ref=e338]: 224.7K
+                    - generic [ref=e341]: Aug 2, 2026
+                    - link "Download file" [ref=e345]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/8558519
+                  - button "Expand file details" [ref=e347] [cursor=pointer]:
+                    - generic [ref=e351]: R
+                    - generic [ref=e358]:
+                      - generic "All the Mods 10-7.2" [ref=e359]
+                      - generic [ref=e360]: + 1
+                    - generic "1.21.1" [ref=e362]
+                    - generic [ref=e363]: NeoForge
+                    - generic [ref=e371]: 190.9 MB
+                    - generic [ref=e374]: 242.6K
+                    - generic [ref=e377]: Jul 20, 2026
+                    - link "Download file" [ref=e381]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/8469481
+                  - button "Expand file details" [ref=e383] [cursor=pointer]:
+                    - generic [ref=e387]: R
+                    - generic [ref=e394]:
+                      - generic "All the Mods 10-7.1" [ref=e395]
+                      - generic [ref=e396]: + 1
+                    - generic "1.21.1" [ref=e398]
+                    - generic [ref=e399]: NeoForge
+                    - generic [ref=e407]: 183.4 MB
+                    - generic [ref=e410]: 1.3M
+                    - generic [ref=e413]: Jun 26, 2026
+                    - link "Download file" [ref=e417]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/8323938
+                  - button "Expand file details" [ref=e419] [cursor=pointer]:
+                    - generic [ref=e423]: R
+                    - generic [ref=e430]:
+                      - generic "All the Mods 10-7.0" [ref=e431]
+                      - generic [ref=e432]: + 1
+                    - generic "1.21.1" [ref=e434]
+                    - generic [ref=e435]: NeoForge
+                    - generic [ref=e443]: 180.7 MB
+                    - generic [ref=e446]: 976.3K
+                    - generic [ref=e449]: May 15, 2026
+                    - link "Download file" [ref=e453]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/8091114
+                  - button "Expand file details" [ref=e455] [cursor=pointer]:
+                    - generic [ref=e459]: R
+                    - generic [ref=e466]:
+                      - generic "All the Mods 10-6.6" [ref=e467]
+                      - generic [ref=e468]: + 1
+                    - generic "1.21.1" [ref=e470]
+                    - generic [ref=e471]: NeoForge
+                    - generic [ref=e479]: 183.3 MB
+                    - generic [ref=e482]: 924.5K
+                    - generic [ref=e485]: Apr 8, 2026
+                    - link "Download file" [ref=e489]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7892974
+                  - button "Expand file details" [ref=e491] [cursor=pointer]:
+                    - generic [ref=e495]: R
+                    - generic [ref=e502]:
+                      - generic "All the Mods 10-6.5" [ref=e503]
+                      - generic [ref=e504]: + 1
+                    - generic "1.21.1" [ref=e506]
+                    - generic [ref=e507]: NeoForge
+                    - generic [ref=e515]: 183.3 MB
+                    - generic [ref=e518]: 104.6K
+                    - generic [ref=e521]: Apr 7, 2026
+                    - link "Download file" [ref=e525]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7889881
+                  - button "Expand file details" [ref=e527] [cursor=pointer]:
+                    - generic [ref=e531]: R
+                    - generic [ref=e538]:
+                      - generic "All the Mods 10-6.4" [ref=e539]
+                      - generic [ref=e540]: + 1
+                    - generic "1.21.1" [ref=e542]
+                    - generic [ref=e543]: NeoForge
+                    - generic [ref=e551]: 183.3 MB
+                    - generic [ref=e554]: 70.9K
+                    - generic [ref=e557]: Apr 5, 2026
+                    - link "Download file" [ref=e561]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7878495
+                  - button "Expand file details" [ref=e563] [cursor=pointer]:
+                    - generic [ref=e567]: R
+                    - generic [ref=e574]:
+                      - generic "All the Mods 10-6.3" [ref=e575]
+                      - generic [ref=e576]: + 1
+                    - generic "1.21.1" [ref=e578]
+                    - generic [ref=e579]: NeoForge
+                    - generic [ref=e587]: 183.3 MB
+                    - generic [ref=e590]: 77.5K
+                    - generic [ref=e593]: Apr 3, 2026
+                    - link "Download file" [ref=e597]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7865467
+                  - button "Expand file details" [ref=e599] [cursor=pointer]:
+                    - generic [ref=e603]: R
+                    - generic "All the Mods 10-6.2.1" [ref=e611]
+                    - generic "1.21.1" [ref=e613]
+                    - generic [ref=e614]: NeoForge
+                    - generic [ref=e622]: 182.9 MB
+                    - generic [ref=e625]: 90.6K
+                    - generic [ref=e628]: Mar 31, 2026
+                    - link "Download file" [ref=e632]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7852998
+                  - button "Expand file details" [ref=e634] [cursor=pointer]:
+                    - generic [ref=e638]: R
+                    - generic [ref=e645]:
+                      - generic "All the Mods 10-6.2" [ref=e646]
+                      - generic [ref=e647]: + 1
+                    - generic "1.21.1" [ref=e649]
+                    - generic [ref=e650]: NeoForge
+                    - generic [ref=e658]: 183.2 MB
+                    - generic [ref=e661]: 189.4K
+                    - generic [ref=e664]: Mar 24, 2026
+                    - link "Download file" [ref=e668]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7807041
+                  - button "Expand file details" [ref=e670] [cursor=pointer]:
+                    - generic [ref=e674]: R
+                    - generic [ref=e681]:
+                      - generic "All the Mods 10-6.1" [ref=e682]
+                      - generic [ref=e683]: + 1
+                    - generic "1.21.1" [ref=e685]
+                    - generic [ref=e686]: NeoForge
+                    - generic [ref=e694]: 192.2 MB
+                    - generic [ref=e697]: 412.9K
+                    - generic [ref=e700]: Mar 7, 2026
+                    - link "Download file" [ref=e704]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7722629
+                  - button "Expand file details" [ref=e706] [cursor=pointer]:
+                    - generic [ref=e710]: R
+                    - generic [ref=e717]:
+                      - generic "All the Mods 10-6.0" [ref=e718]
+                      - generic [ref=e719]: + 1
+                    - generic "1.21.1" [ref=e721]
+                    - generic [ref=e722]: NeoForge
+                    - generic [ref=e730]: 192.2 MB
+                    - generic [ref=e733]: 250.4K
+                    - generic [ref=e736]: Feb 25, 2026
+                    - link "Download file" [ref=e740]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7676054
+                  - button "Expand file details" [ref=e742] [cursor=pointer]:
+                    - generic [ref=e746]: R
+                    - generic [ref=e753]:
+                      - generic "All the Mods 10-5.5" [ref=e754]
+                      - generic [ref=e755]: + 1
+                    - generic "1.21.1" [ref=e757]
+                    - generic [ref=e758]: NeoForge
+                    - generic [ref=e766]: 190.1 MB
+                    - generic [ref=e769]: 680.7K
+                    - generic [ref=e772]: Feb 1, 2026
+                    - link "Download file" [ref=e776]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7558573
+                  - button "Expand file details" [ref=e778] [cursor=pointer]:
+                    - generic [ref=e782]: R
+                    - generic [ref=e789]:
+                      - generic "All the Mods 10-5.4" [ref=e790]
+                      - generic [ref=e791]: + 1
+                    - generic "1.21.1" [ref=e793]
+                    - generic [ref=e794]: NeoForge
+                    - generic [ref=e802]: 190.0 MB
+                    - generic [ref=e805]: 1.1M
+                    - generic [ref=e808]: Dec 21, 2025
+                    - link "Download file" [ref=e812]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7361423
+                  - button "Expand file details" [ref=e814] [cursor=pointer]:
+                    - generic [ref=e818]: R
+                    - generic [ref=e825]:
+                      - generic "All the Mods 10-5.3.1" [ref=e826]
+                      - generic [ref=e827]: + 1
+                    - generic "1.21.1" [ref=e829]
+                    - generic [ref=e830]: NeoForge
+                    - generic [ref=e838]: 192.8 MB
+                    - generic [ref=e841]: 489.9K
+                    - generic [ref=e844]: Dec 4, 2025
+                    - link "Download file" [ref=e848]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7294966
+                  - button "Expand file details" [ref=e850] [cursor=pointer]:
+                    - generic [ref=e854]: R
+                    - generic [ref=e861]:
+                      - generic "All the Mods 10-5.2" [ref=e862]
+                      - generic [ref=e863]: + 1
+                    - generic "1.21.1" [ref=e865]
+                    - generic [ref=e866]: NeoForge
+                    - generic [ref=e874]: 192.8 MB
+                    - generic [ref=e877]: 154.7K
+                    - generic [ref=e880]: Nov 28, 2025
+                    - link "Download file" [ref=e884]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7271400
+                  - button "Expand file details" [ref=e886] [cursor=pointer]:
+                    - generic [ref=e890]: R
+                    - generic [ref=e897]:
+                      - generic "All the Mods 10-5.1" [ref=e898]
+                      - generic [ref=e899]: + 1
+                    - generic "1.21.1" [ref=e901]
+                    - generic [ref=e902]: NeoForge
+                    - generic [ref=e910]: 192.7 MB
+                    - generic [ref=e913]: 491.2K
+                    - generic [ref=e916]: Nov 15, 2025
+                    - link "Download file" [ref=e920]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7223056
+                  - button "Expand file details" [ref=e922] [cursor=pointer]:
+                    - generic [ref=e926]: R
+                    - generic [ref=e933]:
+                      - generic "All the Mods 10-5.0" [ref=e934]
+                      - generic [ref=e935]: + 1
+                    - generic "1.21.1" [ref=e937]
+                    - generic [ref=e938]: NeoForge
+                    - generic [ref=e946]: 192.7 MB
+                    - generic [ref=e949]: 111.2K
+                    - generic [ref=e952]: Nov 13, 2025
+                    - link "Download file" [ref=e956]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7217009
+                  - button "Expand file details" [ref=e958] [cursor=pointer]:
+                    - generic [ref=e962]: R
+                    - generic [ref=e969]:
+                      - generic "All the Mods 10-4.15" [ref=e970]
+                      - generic [ref=e971]: + 1
+                    - generic "1.21.1" [ref=e973]
+                    - generic [ref=e974]: NeoForge
+                    - generic [ref=e982]: 192.7 MB
+                    - generic [ref=e985]: 90.0K
+                    - generic [ref=e988]: Nov 11, 2025
+                    - link "Download file" [ref=e992]:
+                      - /url: /minecraft/modpacks/all-the-mods-10/download/7211241
+              - generic [ref=e993]:
+                - generic [ref=e994]:
+                  - text: Showing
+                  - strong [ref=e995]: 1-20
+                  - text: of
+                  - strong [ref=e996]: "143"
+                  - text: results
+                - generic [ref=e997]:
+                  - button "Previous Page"
+                  - list
+                  - button "Next Page"
+    - contentinfo [ref=e998]:
+      - generic [ref=e999]:
+        - link "Goto home page":
+          - /url: /
+        - generic [ref=e1000]: CurseForge - a world of endless gaming possibilities for modders and gamers alike.Download the best mods and addons!
+        - navigation [ref=e1002]:
+          - list [ref=e1003]:
+            - listitem [ref=e1004]:
+              - generic [ref=e1005]: Games
+              - list [ref=e1006]:
+                - listitem [ref=e1007]:
+                  - link "All games" [ref=e1008] [cursor=pointer]:
+                    - /url: /games
+                - listitem [ref=e1009]:
+                  - link "Minecraft" [ref=e1010] [cursor=pointer]:
+                    - /url: /minecraft
+                - listitem [ref=e1011]:
+                  - link "World of Warcraft" [ref=e1012] [cursor=pointer]:
+                    - /url: /wow
+                - listitem [ref=e1013]:
+                  - link "The Sims 4" [ref=e1014] [cursor=pointer]:
+                    - /url: /sims4
+                - listitem [ref=e1015]:
+                  - link "Starcraft II" [ref=e1016] [cursor=pointer]:
+                    - /url: /sc2
+                - listitem [ref=e1017]:
+                  - link "Kerbal Space Program" [ref=e1018] [cursor=pointer]:
+                    - /url: /kerbal
+                - listitem [ref=e1019]:
+                  - link "Minecraft Dungeons" [ref=e1020] [cursor=pointer]:
+                    - /url: /minecraft-dungeons
+                - listitem [ref=e1021]:
+                  - link "World of Tanks" [ref=e1022] [cursor=pointer]:
+                    - /url: /worldoftanks
+            - listitem [ref=e1023]:
+              - generic [ref=e1024]: Create
+              - list [ref=e1025]:
+                - listitem [ref=e1026]:
+                  - link "Start a project" [ref=e1027] [cursor=pointer]:
+                    - /url: https://authors.curseforge.com/#/projects/create/choose-game
+                - listitem [ref=e1028]:
+                  - link "Project submission guide" [ref=e1029] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/solutions/articles/9000199552-project-submission-guide-and-tips
+                - listitem [ref=e1030]:
+                  - link "Author Rewards Program" [ref=e1031] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/solutions/articles/9000197898-rewards-program-terms-of-service
+                - listitem [ref=e1032]:
+                  - link "Apply for an API Key" [ref=e1033] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key
+                - listitem [ref=e1034]:
+                  - link "3rd Party API T&C" [ref=e1035] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/solutions/articles/9000207405-curse-forge-3rd-party-api-terms-and-conditions
+            - listitem [ref=e1036]:
+              - generic [ref=e1037]: Community
+              - list [ref=e1038]:
+                - listitem [ref=e1039]:
+                  - link "Join Our Discord!" [ref=e1040] [cursor=pointer]:
+                    - /url: https://discord.gg/curseforge
+                - listitem [ref=e1041]:
+                  - link "Ideas Portal" [ref=e1042] [cursor=pointer]:
+                    - /url: //curseforge-ideas.overwolf.com/
+                - listitem [ref=e1043]:
+                  - link "CF blog" [ref=e1044] [cursor=pointer]:
+                    - /url: //blog.curseforge.com/
+                - listitem [ref=e1045]:
+                  - link "Newsletter" [ref=e1046] [cursor=pointer]:
+                    - /url: //blog.curseforge.com/tag/newsletter/
+                - listitem [ref=e1047]:
+                  - link "Roadmap" [ref=e1048] [cursor=pointer]:
+                    - /url: //trello.com/b/Slaz6xBq/curseforge-roadmap
+                - listitem [ref=e1049]:
+                  - link "Bukkit forums" [ref=e1050] [cursor=pointer]:
+                    - /url: //bukkit.org/forums/
+                - listitem [ref=e1051]:
+                  - link "CurseForge Servers" [ref=e1052] [cursor=pointer]:
+                    - /url: //www.curseforge.com/servers/minecraft
+            - listitem [ref=e1053]:
+              - generic [ref=e1054]: Support
+              - list [ref=e1055]:
+                - listitem [ref=e1056]:
+                  - link "Knowledge base" [ref=e1057] [cursor=pointer]:
+                    - /url: //support.curseforge.com/
+                - listitem [ref=e1058]:
+                  - link "Troubleshooting" [ref=e1059] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/solutions/articles/9000194900-curseforge-troubleshooting
+                - listitem [ref=e1060]:
+                  - link "Contact us" [ref=e1061] [cursor=pointer]:
+                    - /url: //support.curseforge.com/en/support/tickets/new
+            - listitem [ref=e1062]:
+              - generic [ref=e1063]: Companions
+              - list [ref=e1064]:
+                - listitem [ref=e1065]:
+                  - link "Overwolf" [ref=e1066] [cursor=pointer]:
+                    - /url: //overwolf.com
+                - listitem [ref=e1067]:
+                  - link "CurseForge for Studios" [ref=e1068] [cursor=pointer]:
+                    - /url: //studios.curseforge.com
+                - listitem [ref=e1069]:
+                  - link "Tebex" [ref=e1070] [cursor=pointer]:
+                    - /url: //tebex.io
+                - listitem [ref=e1071]:
+                  - link "Nitro" [ref=e1072] [cursor=pointer]:
+                    - /url: //nitropay.com/
+        - list [ref=e1073]:
+          - listitem [ref=e1074]:
+            - link "Instagram link" [ref=e1075] [cursor=pointer]:
+              - /url: https://www.instagram.com/curseforgeofficial
+          - listitem [ref=e1076]:
+            - link "Tiktok link" [ref=e1077] [cursor=pointer]:
+              - /url: https://www.tiktok.com/@curseforge
+          - listitem [ref=e1078]:
+            - link "Youtube link" [ref=e1079] [cursor=pointer]:
+              - /url: https://www.youtube.com/@CurseForge
+          - listitem [ref=e1080]:
+            - link "Discord link" [ref=e1081] [cursor=pointer]:
+              - /url: https://discord.gg/curseforge
+          - listitem [ref=e1082]:
+            - link "X link" [ref=e1083] [cursor=pointer]:
+              - /url: https://x.com/CurseForge
+          - listitem [ref=e1084]:
+            - link "Reddit link" [ref=e1085] [cursor=pointer]:
+              - /url: https://www.reddit.com/r/CurseForge
+        - list [ref=e1087]:
+          - listitem [ref=e1088]:
+            - link "Terms of Service" [ref=e1089] [cursor=pointer]:
+              - /url: https://legal.overwolf.com/docs/overwolf/platform/platform-terms-of-use
+          - listitem [ref=e1090]:
+            - link "Privacy Policy" [ref=e1091] [cursor=pointer]:
+              - /url: https://legal.overwolf.com/docs/overwolf/platform/platform-privacy-policy
+          - listitem [ref=e1092]:
+            - link "Licenses" [ref=e1093] [cursor=pointer]:
+              - /url: //support.overwolf.com/en/support/solutions/articles/9000203492-licenses-we-use
+          - listitem [ref=e1094]:
+            - link "Mod Author Terms" [ref=e1095] [cursor=pointer]:
+              - /url: https://legal.overwolf.com/docs/curseforge/mod-authors-terms
+        - generic [ref=e1096]: © 2026 Overwolf. All rights reserved.
+  - alert [ref=e1097]
