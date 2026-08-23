@@ -157,6 +157,105 @@ public sealed class WorldMetadataService
                LegacyPackMigrationService.IsLegacyPack(recorded);
     }
 
+    /// <summary>
+    /// Gives a build to the worlds that were played in a session and had none.
+    ///
+    /// A world nobody stamped is offered in every build, because hiding a world
+    /// the launcher cannot attribute would be worse than showing it in the
+    /// wrong place. That leaves worlds from before this file existed, and ones
+    /// dropped into the folder by hand, permanently ambiguous - and a world
+    /// opened under the wrong build loses the blocks of every mod that build
+    /// does not have.
+    ///
+    /// The launcher cannot know which world the game will open: it prepares
+    /// them all and the player chooses inside the game. It can know which one
+    /// was opened, afterwards, because the game writes level.dat when it does.
+    /// So the answer is written when the session ends, from what happened
+    /// rather than from a guess, and only for worlds that had no build at all.
+    /// </summary>
+    /// <param name="worldsRoot">The portable Worlds folder.</param>
+    /// <param name="context">The build that just ran, and who is playing it.</param>
+    /// <param name="sessionStartedUtc">When the game was started.</param>
+    /// <returns>The names of the worlds that were given a build.</returns>
+    public IReadOnlyList<string> StampPlayedWorlds(
+        string worldsRoot,
+        WorldMetadataContext context,
+        DateTimeOffset sessionStartedUtc)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (string.IsNullOrWhiteSpace(context.BuildRelativePath)) return [];
+        if (string.IsNullOrWhiteSpace(worldsRoot) || !Directory.Exists(worldsRoot)) return [];
+
+        var stamped = new List<string>();
+        foreach (var worldPath in Directory.EnumerateDirectories(worldsRoot))
+        {
+            if (!File.Exists(Path.Combine(worldPath, "level.dat"))) continue;
+
+            // session.lock, and not level.dat: the game writes the lock the
+            // moment it opens a world and nothing else ever touches it, while
+            // level.dat is rewritten in every world before every launch when
+            // the launcher moves the player into it.
+            var lockFile = Path.Combine(worldPath, "session.lock");
+            if (!File.Exists(lockFile)) continue;
+            try
+            {
+                if (new FileInfo(lockFile).LastWriteTimeUtc < sessionStartedUtc.UtcDateTime) continue;
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            var existing = Read(worldPath);
+            if (existing is not null && !string.IsNullOrWhiteSpace(existing.BuildRelativePath))
+            {
+                continue;
+            }
+
+            lock (_gate)
+            {
+                // Re-read inside the lock; the listing writes here too.
+                var metadata = Read(worldPath);
+                if (metadata is not null && !string.IsNullOrWhiteSpace(metadata.BuildRelativePath))
+                {
+                    continue;
+                }
+
+                metadata ??= EnsureMetadataCore(worldPath, context);
+                if (metadata is null) continue;
+                if (!string.IsNullOrWhiteSpace(metadata.BuildRelativePath))
+                {
+                    // EnsureMetadataCore wrote a whole record, build included.
+                    stamped.Add(Path.GetFileName(worldPath));
+                    continue;
+                }
+
+                metadata.BuildRelativePath = context.BuildRelativePath;
+                metadata.BuildName = string.IsNullOrWhiteSpace(context.BuildName)
+                    ? UnknownBuildName
+                    : context.BuildName;
+                if (string.IsNullOrWhiteSpace(metadata.PackHash))
+                {
+                    metadata.PackHash = context.PackHash;
+                }
+
+                try
+                {
+                    AtomicFile.WriteAllText(
+                        GetMetadataPath(worldPath),
+                        JsonSerializer.Serialize(metadata, _jsonOptions));
+                    stamped.Add(Path.GetFileName(worldPath));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // The world is still playable; it simply stays unattributed.
+                }
+            }
+        }
+
+        return stamped;
+    }
+
     public string GetBuildName(string worldPath)
     {
         var metadata = Read(worldPath);

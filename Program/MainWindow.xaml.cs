@@ -85,6 +85,7 @@ public partial class MainWindow : Window
     private bool _shutdownStarted;
     private bool _shutdownComplete;
     private SteamPeerPresence? _lastPublishedPresence;
+    private DateTimeOffset? _sessionStartedUtc;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -1098,13 +1099,55 @@ public partial class MainWindow : Window
         PostToUi(() =>
         {
             _minecraftRunning = isRunning;
+            if (isRunning)
+            {
+                _sessionStartedUtc = DateTimeOffset.UtcNow;
+            }
+
             if (!isRunning)
             {
+                StampWorldsPlayedThisSession();
                 RefreshWorlds();
                 RefreshControlsPresetStatus();
             }
             RefreshUi();
         });
+    }
+
+    /// <summary>
+    /// Gives a build to any world that was played just now and had none.
+    ///
+    /// A world nobody stamped is offered in every build, on purpose: hiding a
+    /// world the launcher cannot place is worse than showing it in the wrong
+    /// list. But it leaves worlds older than this file, and worlds dropped into
+    /// the folder by hand, ambiguous forever - and opening one under the wrong
+    /// build is how the blocks of every missing mod are lost. Which world the
+    /// game will open is not the launcher's to know; which one it did open is
+    /// written in that world's session.lock, so the answer is taken from what
+    /// happened rather than from a guess.
+    /// </summary>
+    private void StampWorldsPlayedThisSession()
+    {
+        if (_sessionStartedUtc is not { } startedUtc) return;
+        _sessionStartedUtc = null;
+
+        var context = CreateWorldMetadataContext();
+        if (context is null || _paths is null) return;
+
+        try
+        {
+            var stamped = RequireWorldMetadata().StampPlayedWorlds(_paths.Worlds, context, startedUtc);
+            foreach (var world in stamped)
+            {
+                _logger?.Info(
+                    $"World {world} had no build recorded; it belongs to {context.BuildName} " +
+                    "from now on, because that is what it was played on.");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn($"Worlds played this session could not be attributed ({ex.Message}).");
+        }
     }
 
     /// <summary>
