@@ -205,6 +205,11 @@ public sealed class MinecraftProcessService
         // After the profiles are written: the reset edits playerdata and the
         // Player compound of level.dat in place, and the game reads them on join.
         ResetPlayerModelsIfAsked(packDir);
+        // The instance's own config, not a world's: this reaches the players who
+        // were already here, whose generated config the pack's copy never gets
+        // to replace.
+        new ModClientSettingService(_logger)
+            .Apply(packDir, gameDir, ModClientSettingService.YsmLoadingBanner);
         await _waypointSync.PrepareForLaunchAsync(settings.ClientRelativePath, identityContext, token).ConfigureAwait(false);
 
         var launcher = _packRuntimes.CreateLocalLauncher(runtime);
