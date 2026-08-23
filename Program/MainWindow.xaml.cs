@@ -389,18 +389,26 @@ public partial class MainWindow : Window
             })
             .ToList();
 
-        // The built-in pack has a sync source of its own, so it is offered even
-        // before it is installed; pressing Play downloads it.
-        if (!builds.Any(build => string.Equals(
-                build.RelativePath,
-                PortablePackSyncService.DefaultPackRelativePath,
-                StringComparison.OrdinalIgnoreCase)))
+        // Every pack the launcher knows how to fetch is offered even before it
+        // exists on disk - pressing Play downloads it. Without this a new build
+        // could only be seen by whoever already had its folder, which is no way
+        // to hand one to friends.
+        foreach (var known in PortablePackSyncService.KnownPacks)
         {
+            if (builds.Any(build => string.Equals(
+                    build.RelativePath,
+                    known.RelativePath,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
             builds.Add(new ClientBuildViewModel
             {
-                Name = $"{PortablePackSyncService.DefaultPackRelativePath} (не установлена)",
-                RelativePath = PortablePackSyncService.DefaultPackRelativePath,
-                FullPath = _paths.CombineUnderPacks(PortablePackSyncService.DefaultPackRelativePath),
+                // A star, not a word: the list is narrow and the name is what a
+                // player reads. Pressing Play on a starred build downloads it.
+                Name = $"{known.RelativePath}*",
+                RelativePath = known.RelativePath,
+                FullPath = _paths.CombineUnderPacks(known.RelativePath),
                 IsInstalled = false
             });
         }
