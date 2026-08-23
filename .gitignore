@@ -59,3 +59,6 @@ settings.json
 **/*minecraft*server*.jar
 **/server.jar
 Program/*_wpftmp.csproj
+
+# Snapshots the Playwright MCP browser writes while it is driven from here.
+.playwright-mcp/
