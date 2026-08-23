@@ -68,6 +68,30 @@ public sealed class MinecraftProcessService
     public static IReadOnlyList<string> JavaCompatibilityArguments { get; } =
         CompatibilityArgumentsFor(PortableJavaRuntimeService.PinnedMajorVersion);
 
+    /// <summary>
+    /// How the collector is asked to behave on a heap this size.
+    ///
+    /// The pause goal replaces G1's default 200 ms, which is four frames; the
+    /// reserve keeps a full heap from failing an evacuation; and the region
+    /// size matters most - a 16 GB heap defaults to 8 MB regions, so every
+    /// block-palette or LOD array over 4 MB becomes a "humongous" allocation on
+    /// a slower path, and a modded world makes those constantly.
+    ///
+    /// Every entry must be a product option. An experimental one needs
+    /// -XX:+UnlockExperimentalVMOptions written before it or the JVM refuses to
+    /// start at all: G1NewSizePercent shipped here for one release and players
+    /// got "Could not create the Java Virtual Machine" instead of a game. Check
+    /// a new flag with `java &lt;flag&gt; -version` on the pinned runtime before
+    /// adding it here.
+    /// </summary>
+    public static IReadOnlyList<string> HeapTuningArguments { get; } =
+    [
+        "-XX:MaxGCPauseMillis=40",
+        "-XX:G1ReservePercent=15",
+        "-XX:G1HeapRegionSize=32M",
+        "-XX:+ExplicitGCInvokesConcurrent"
+    ];
+
     private readonly GameLogConfigurationService _gameLogConfiguration;
     private readonly AppPaths _paths;
     private readonly ClientPresenceService _presence;
@@ -275,7 +299,7 @@ public sealed class MinecraftProcessService
             // memory" screen does, so the dangerous button is the one a player
             // sees first. A JVM that exits on the spot never shows either, and
             // the launcher says what happened instead.
-            new("-XX:+ExitOnOutOfMemoryError"),
+            new("-XX:+ExitOnOutOfMemoryError")
             // G1 tuned for a big modded heap. Left alone it grew the committed
             // heap from 2 GB to 9.4 GB in one session in resize steps, each a
             // pause a player feels as a stutter; Xms=Xmx below ends that. The
@@ -284,15 +308,17 @@ public sealed class MinecraftProcessService
             // with its own slow path - 32 MB regions put them back on the
             // normal one. The pause goal keeps mixed collections under a
             // frame and a half instead of the default 200 ms.
-            new("-XX:MaxGCPauseMillis=40"),
-            new("-XX:G1NewSizePercent=20"),
-            new("-XX:G1ReservePercent=15"),
-            new("-XX:G1HeapRegionSize=32M"),
-            // A mod calling System.gc() gets a concurrent cycle, not a
-            // stop-the-world full collection. None is caught doing it in the
-            // logs; this is insurance priced at one flag.
-            new("-XX:+ExplicitGCInvokesConcurrent")
+            //
+            // Every flag here is a product option. G1NewSizePercent was here
+            // for one release and is not any more: it is experimental, the JVM
+            // refuses to start without -XX:+UnlockExperimentalVMOptions ahead
+            // of it, and a player got "Could not create the Java Virtual
+            // Machine" instead of a game. Unlocking experimental options for
+            // one refinement is not worth it - the pause goal sizes the young
+            // generation on its own. Anything added here must survive
+            // `java <flag> -version` on the pinned runtime first.
         };
+        extraJvmArguments.AddRange(HeapTuningArguments.Select(argument => new MArgument(argument)));
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
         extraJvmArguments.AddRange(JavaCompatibilityArguments.Select(argument => new MArgument(argument)));
