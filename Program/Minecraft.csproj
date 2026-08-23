@@ -11,8 +11,8 @@
     <RootNamespace>Minecraft</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Minecraft.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
     <ReleaseNumber Condition="'$(ReleaseNumber)' == ''">1</ReleaseNumber>
+    <Version>1.0.$(ReleaseNumber)</Version>
     <FileVersion>1.0.$(ReleaseNumber).0</FileVersion>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
