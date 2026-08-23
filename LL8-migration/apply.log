@@ -1,0 +1,51 @@
+pack: 848 jars, 964 modIds, kubejs adds ['actuallyadditions', 'bigreactors', 'create', 'modern_industrialization', 'tnp'], present namespaces 970
+tags: 3628 c: tags in the old pack, 3436 in LL8
+preflight: world closed (C:\Users\Oskar\Documents\LANMinecraft\Minecraft\Worlds\Chebupeli)
+preflight: 87 NBT files round-trip byte-identically
+preflight: world 3.3 GiB, free 173.9 GiB (need 4.0 GiB)
+apply  backup C:\Users\Oskar\Documents\LANMinecraft\Minecraft\Worlds\Chebupeli -> C:\Users\Oskar\Documents\LANMinecraft\Minecraft\Personal\Backups\Worlds\Chebupeli-pre-ll8-20260817-012857
+backup complete: C:\Users\Oskar\Documents\LANMinecraft\Minecraft\Personal\Backups\Worlds\Chebupeli-pre-ll8-20260817-012857
+apply  delete DIM-1 (237.3 MiB) - non-overworld dimension data
+apply  delete DIM1 (107.6 MiB) - non-overworld dimension data
+apply  delete dimensions (99.1 MiB) - non-overworld dimension data
+apply  level.dat: drop Data.DragonFight (the regenerated End gets a fresh fight)
+apply  level.dat: drop Data.bei_ExtraDragonFight (the regenerated End gets a fresh fight)
+apply  level.dat: DataPacks taken from --fresh-level
+apply  rewrite playerdata/06c83c9e-980b-47d5-b7be-23d2bb649068.dat
+apply  rewrite playerdata/06c83c9e-980b-47d5-b7be-23d2bb649068.dat_old
+apply  rewrite playerdata/a4c56fa5-a630-42a6-9223-d6abfe63b130.dat
+apply  rewrite playerdata/a4c56fa5-a630-42a6-9223-d6abfe63b130.dat_old
+apply  rewrite playerdata/f0f5ec1a-14f5-47b6-9e27-b860f62c14e5.dat
+apply  rewrite playerdata/f0f5ec1a-14f5-47b6-9e27-b860f62c14e5.dat_old
+apply  rewrite level.dat
+apply  level.dat_old := copy of the migrated level.dat
+apply  AE2 disk_manager: item_count 281232 -> 279212
+apply  rewrite data/disk_manager.dat
+apply  rewrite data/sophisticatedbackpacks.dat
+WARN data/IFBackpack.dat: data.Backpacks.b604760c-9497-4e35-a7b6-fc239d8a0149.Slots.7.Stack replaced with an empty compound
+apply  rewrite data/IFBackpack.dat
+apply  data/waystones.dat: drop 44 non-overworld waystone(s), 137 kept
+apply  rewrite data/waystones.dat
+apply  delete data/map_2.dat (520 B) - map of minecraft:the_nether
+apply  delete data/map_7.dat (231 B) - map of minecraft:the_end
+apply  delete ftbquests (103.8 KiB) - LL8 ships its own quests/server config
+apply  delete serverconfig (572 B) - LL8 ships its own quests/server config
+apply  delete chunkloaders (107 B) - owner mod 'chunkloaders' is not in the pack
+apply  delete data/chunkloaders_loaded_chunks.dat (115 B) - owner mod 'chunkloaders' is not in the pack
+apply  delete dimpockets (16.1 KiB) - owner mod 'dimensionalpocketsii' is not in the pack
+apply  delete minformax_indices (66 B) - owner mod 'minformax' is not in the pack
+apply  delete deaths (91.3 KiB) - owner mod 'gravestone' is not in the pack
+apply  delete alternate-current.conf (53 B) - owner mod 'alternate_current' is not in the pack
+apply  delete data/dankstorage (0 B) - owner mod 'dankstorage' is not in the pack
+apply  delete data/avaritia_accelerated_blocks.dat (85 B) - owner mod 'avaritia' is not in the pack
+apply  delete data/crafttweaker_saved_data.dat (91 B) - owner mod 'crafttweaker' is not in the pack
+apply  delete data/minecolonies_colony_manager.dat (234 B) - owner mod 'minecolonies' is not in the pack
+apply  delete data/citadel_world_data.dat (81 B) - owner mod 'citadel' is not in the pack
+apply  delete data/InControlData.dat (117 B) - owner mod 'incontrol' is not in the pack
+apply  delete mfix_stronghold_cache_v2.nbt (1.1 KiB) - stale cache, regenerated on demand
+apply  waypoints anuvenn/ftb-chunks: drop minecraft_the_end/waypoints.json, minecraft_the_nether/waypoints.json, the_bumblezone_the_bumblezone/waypoints.json -> revision 78
+apply  waypoints anuvenn/xaero-minimap: drop dim%-1/waypoints.txt -> revision 42
+apply  waypoints MarkZamore/ftb-chunks: drop minecraft_the_end/waypoints.json, minecraft_the_nether/waypoints.json, the_bumblezone_the_bumblezone/waypoints.json -> revision 72
+
+applied: 2086 item(s) removed, 26166 remapped, 46 component(s) stripped, 20 path(s) deleted, 13 file(s) rewritten
+report: C:\Users\Oskar\Documents\LL8-migration\migration-report.md
