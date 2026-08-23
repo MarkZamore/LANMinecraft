@@ -52,6 +52,13 @@
         -->
         <Logger level="DEBUG" name="net.neoforged.fml"/>
         <Logger level="DEBUG" name="net.neoforged.neoforge.registries"/>
+        <!--
+          Blur+ logs three DEBUG lines on the render thread for every frame it
+          draws, screen open or not - three quarters of one player's debug.log
+          was this, and it crowded 45 MB of the useful log out of a bug report.
+          The mod has no switch of its own for it.
+        -->
+        <Logger level="INFO" name="blur"/>
         <Logger level="INFO" name="net.minecraft.server.MinecraftServer"/>
         <Root level="INFO">
             <AppenderRef ref="SysOut" level="INFO"/>
