@@ -275,7 +275,23 @@ public sealed class MinecraftProcessService
             // memory" screen does, so the dangerous button is the one a player
             // sees first. A JVM that exits on the spot never shows either, and
             // the launcher says what happened instead.
-            new("-XX:+ExitOnOutOfMemoryError")
+            new("-XX:+ExitOnOutOfMemoryError"),
+            // G1 tuned for a big modded heap. Left alone it grew the committed
+            // heap from 2 GB to 9.4 GB in one session in resize steps, each a
+            // pause a player feels as a stutter; Xms=Xmx below ends that. The
+            // 16 GB heap also defaults to 8 MB regions, which makes every
+            // block-palette or LOD array over 4 MB a "humongous" allocation
+            // with its own slow path - 32 MB regions put them back on the
+            // normal one. The pause goal keeps mixed collections under a
+            // frame and a half instead of the default 200 ms.
+            new("-XX:MaxGCPauseMillis=40"),
+            new("-XX:G1NewSizePercent=20"),
+            new("-XX:G1ReservePercent=15"),
+            new("-XX:G1HeapRegionSize=32M"),
+            // A mod calling System.gc() gets a concurrent cycle, not a
+            // stop-the-world full collection. None is caught doing it in the
+            // logs; this is insurance priced at one flag.
+            new("-XX:+ExplicitGCInvokesConcurrent")
         };
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
@@ -287,7 +303,12 @@ public sealed class MinecraftProcessService
             JavaPath = runtime.JavaPath,
             Session = session,
             MaximumRamMb = maximumRamMb,
-            MinimumRamMb = Math.Min(2048, maximumRamMb),
+            // Equal to the maximum on purpose: a heap that starts small grows
+            // toward Xmx in live resize steps, and a 16 GB heap was measured
+            // doing that from 2 GB to 9.4 GB across one session, each step a
+            // stutter. The memory was already promised to the game; committing
+            // it up front costs nothing the player had not agreed to.
+            MinimumRamMb = maximumRamMb,
             GameLauncherName = "LANMinecraft",
             GameLauncherVersion = "1",
             VersionType = $"{descriptor.Loader.Type} {descriptor.Loader.Version}".Trim(),
