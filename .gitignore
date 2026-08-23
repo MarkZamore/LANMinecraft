@@ -31,6 +31,8 @@
 *.log
 *.log.gz
 settings.json
+# ...but the world migration wrote its own log, and that one is a document.
+!LL8-migration/apply.log
 
 # Account/session/credential material
 *.token
