@@ -229,6 +229,8 @@ public sealed class PackInstanceService : IDisposable
         var currentFiles = new Dictionary<string, SourceFileState>(StringComparer.OrdinalIgnoreCase);
         string? conflictRoot = null;
         var conflictCount = 0;
+        var owned = PackOwnedFileService.Load(packDir, _logger);
+        var ownedWrites = 0;
 
         foreach (var directory in EnumerateSourceDirectories(packDir, clientJarName))
         {
@@ -263,6 +265,24 @@ public sealed class PackInstanceService : IDisposable
                 continue;
             }
             var destinationExists = File.Exists(destination);
+
+            // A file the pack owns is not negotiated. The local copy is kept
+            // beside the other conflicts so nothing is thrown away, and then
+            // the pack's version is written where the game will read it.
+            if (owned.Owns(relative))
+            {
+                if (!destinationExists)
+                {
+                    CopySourceFile(sourcePath, destination);
+                    continue;
+                }
+                if (HashesEqual(HashFile(destination), source.Sha256)) continue;
+                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                PreserveLocalFile(destination, conflictRoot, relative);
+                CopySourceFile(sourcePath, destination);
+                ownedWrites++;
+                continue;
+            }
 
             if (previous is null)
             {
@@ -315,6 +335,17 @@ public sealed class PackInstanceService : IDisposable
                 File.Delete(destination);
                 DeleteEmptyParents(Path.GetDirectoryName(destination), gameDir);
             }
+            else if (owned.Owns(removed.Key))
+            {
+                // The pack owned it and the pack dropped it; a local copy left
+                // behind would be a file the pack no longer knows about, still
+                // being read by the game.
+                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                PreserveLocalFile(destination, conflictRoot, removed.Key);
+                File.Delete(destination);
+                DeleteEmptyParents(Path.GetDirectoryName(destination), gameDir);
+                ownedWrites++;
+            }
             else
             {
                 _logger.Warn($"Pack removed {removed.Key}, but the locally modified instance file was preserved.");
@@ -322,6 +353,12 @@ public sealed class PackInstanceService : IDisposable
         }
 
         state.Files = currentFiles;
+        if (ownedWrites > 0)
+        {
+            _logger.Info(
+                $"{ownedWrites} file(s) the pack owns were rewritten from it; " +
+                $"what was there is in {conflictRoot}");
+        }
         if (conflictCount > 0)
         {
             _logger.Warn($"Pack instance synchronization preserved {conflictCount} local conflict(s). New pack files: {conflictRoot}");
@@ -671,6 +708,28 @@ public sealed class PackInstanceService : IDisposable
         if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
         File.Copy(source, destination, overwrite: true);
         File.SetLastWriteTimeUtc(destination, File.GetLastWriteTimeUtc(source));
+    }
+
+    /// <summary>
+    /// Puts the instance's copy of a file into the conflicts folder before the
+    /// pack's version replaces it, under the same name plus ".user-file" - the
+    /// same shape the directory conflicts use, so one folder holds everything
+    /// that was set aside and a player can put any of it back by hand.
+    /// </summary>
+    private static void PreserveLocalFile(string destination, string conflictRoot, string relative)
+    {
+        try
+        {
+            var preserved = Path.Combine(
+                conflictRoot, relative.Replace('/', Path.DirectorySeparatorChar) + ".user-file");
+            Directory.CreateDirectory(Path.GetDirectoryName(preserved)!);
+            File.Copy(destination, preserved, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Losing the copy is not a reason to leave the game reading a file
+            // the pack has replaced.
+        }
     }
 
     private static string HashFile(string path)
