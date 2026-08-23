@@ -2482,7 +2482,11 @@ public partial class MainWindow : Window
         // already running.
         TransferProgressArea.IsEnabled = _transferActive || canTransfer;
         MemoryTextBox.IsEnabled = settingsEnabled;
-        UpdateButton.IsEnabled = interactiveEnabled && !_updateBusy && _preparedUpdate is not null;
+        // Updating is the one thing in this window that does not need to know who
+        // the player is: it replaces this program and touches nothing a world or a
+        // friend list depends on. Steam being down is often the very reason a
+        // player reaches for a newer build, so the button follows the update alone.
+        UpdateButton.IsEnabled = !_busy && !_updateBusy && _preparedUpdate is not null;
 
         RefreshDiagnosticsPanel();
         RefreshTransferStatus();
