@@ -192,6 +192,50 @@ public sealed class LegacyPackMigrationServiceTests : IDisposable
                 .GetProperty("buildRelativePath").GetString());
     }
 
+    /// <summary>
+    /// A world may carry any of the pack's former names, not only the oldest.
+    /// The rebind used to compare against the first entry of the list whatever
+    /// the world actually said, so every later name silently failed the check
+    /// inside TryRebindBuild and the world kept pointing at a folder that no
+    /// longer existed - which is what stopped its waypoints being refreshed.
+    /// </summary>
+    [Fact]
+    public void AWorldNamingAnyFormerPack_IsRebound()
+    {
+        var fixture = CreateFixture();
+        foreach (var name in LegacyPackMigrationService.LegacyPackRelativePaths)
+        {
+            if (string.Equals(name, Target, StringComparison.OrdinalIgnoreCase)) continue;
+            WriteWorld(fixture.Paths, $"World-{name}", name);
+        }
+
+        Run(fixture);
+
+        foreach (var name in LegacyPackMigrationService.LegacyPackRelativePaths)
+        {
+            if (string.Equals(name, Target, StringComparison.OrdinalIgnoreCase)) continue;
+            Assert.Equal(
+                Target,
+                ReadJson(WorldMetadataPath(fixture.Paths, $"World-{name}"))
+                    .GetProperty("buildRelativePath").GetString());
+        }
+    }
+
+    [Fact]
+    public void AWorldOfAnotherBuild_KeepsItsName()
+    {
+        var fixture = CreateFixture();
+        Run(fixture);
+
+        Assert.Equal(
+            "Other",
+            ReadJson(WorldMetadataPath(fixture.Paths, "Vanilla"))
+                .GetProperty("buildRelativePath").GetString());
+        Assert.False(LegacyPackMigrationService.IsLegacyPack("Other"));
+        Assert.False(LegacyPackMigrationService.IsLegacyPack(Target));
+        Assert.True(LegacyPackMigrationService.IsLegacyPack(Legacy));
+    }
+
     [Fact]
     public void OpenWorld_IsReboundOnceItIsClosed()
     {
