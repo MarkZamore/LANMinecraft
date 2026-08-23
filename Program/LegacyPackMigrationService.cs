@@ -15,6 +15,14 @@ namespace Minecraft;
 /// </summary>
 public static class LegacyPackMigrationService
 {
+    /// <summary>
+    /// Every name the built-in pack has had, oldest first. A rename adds one
+    /// here rather than replacing it: a player who skipped a release still has
+    /// folders under the older name, and each start walks the whole list.
+    /// </summary>
+    public static readonly string[] LegacyPackRelativePaths = ["Infinity", "LL8"];
+
+    /// <summary>The first of those, kept for the callers that name one.</summary>
     public const string LegacyPackRelativePath = "Infinity";
 
     /// <summary>Instance files the retired teleport layer owned.</summary>
@@ -43,16 +51,28 @@ public static class LegacyPackMigrationService
         var changes = 0;
         try
         {
-            var instance = MigrateInstance(paths, logger, ref changes);
-            if (instance == MoveResult.Failed)
+            foreach (var legacy in LegacyPackRelativePaths)
             {
-                logger.Warn(
-                    $"The {LegacyPackRelativePath} instance is in use; migration is postponed to the next start.");
-                return;
+                if (string.Equals(
+                        legacy,
+                        PortablePackSyncService.DefaultPackRelativePath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var instance = MigrateInstance(paths, legacy, logger, ref changes);
+                if (instance == MoveResult.Failed)
+                {
+                    logger.Warn(
+                        $"The {legacy} instance is in use; migration is postponed to the next start.");
+                    return;
+                }
+
+                MigrateRuntime(paths, legacy, logger, ref changes);
+                MigratePack(paths, legacy, logger, ref changes);
             }
 
-            MigrateRuntime(paths, logger, ref changes);
-            MigratePack(paths, logger, ref changes);
             MigrateSelectedBuild(settings, settingsService, logger, ref changes);
             changes += RebindWorlds(paths, logger);
             changes += RemoveTemporaryDirectories(paths, logger);
@@ -69,14 +89,18 @@ public static class LegacyPackMigrationService
         if (changes > 0)
         {
             logger.Info(
-                $"Legacy {LegacyPackRelativePath} migration finished: " +
+                $"Legacy pack migration to {PortablePackSyncService.DefaultPackRelativePath} finished: " +
                 $"{changes} item(s) renamed or removed.");
         }
     }
 
-    private static MoveResult MigrateInstance(AppPaths paths, Logger logger, ref int changes)
+    private static MoveResult MigrateInstance(
+        AppPaths paths,
+        string legacyPackRelativePath,
+        Logger logger,
+        ref int changes)
     {
-        var source = Path.Combine(paths.Instances, LegacyPackRelativePath);
+        var source = Path.Combine(paths.Instances, legacyPackRelativePath);
         var destination = paths.CombineUnderInstances(PortablePackSyncService.DefaultPackRelativePath);
         var result = TryMove(source, destination, "instance", logger);
         if (result != MoveResult.Moved) return result;
@@ -90,18 +114,26 @@ public static class LegacyPackMigrationService
         return result;
     }
 
-    private static void MigrateRuntime(AppPaths paths, Logger logger, ref int changes)
+    private static void MigrateRuntime(
+        AppPaths paths,
+        string legacyPackRelativePath,
+        Logger logger,
+        ref int changes)
     {
-        var source = Path.Combine(paths.Runtimes, LegacyPackRelativePath);
+        var source = Path.Combine(paths.Runtimes, legacyPackRelativePath);
         var destination = paths.CombineUnderRuntimes(PortablePackSyncService.DefaultPackRelativePath);
         // The runtime state holds no absolute paths and the pack's descriptor
         // hash has not changed, so the moved runtime is ready without a download.
         if (TryMove(source, destination, "runtime", logger) == MoveResult.Moved) changes++;
     }
 
-    private static void MigratePack(AppPaths paths, Logger logger, ref int changes)
+    private static void MigratePack(
+        AppPaths paths,
+        string legacyPackRelativePath,
+        Logger logger,
+        ref int changes)
     {
-        var source = Path.Combine(paths.Packs, LegacyPackRelativePath);
+        var source = Path.Combine(paths.Packs, legacyPackRelativePath);
         var target = PortablePackSyncService.DefaultPackRelativePath;
         var destination = paths.CombineUnderPacks(target);
         if (TryMove(source, destination, "pack", logger) != MoveResult.Moved) return;
@@ -214,11 +246,19 @@ public static class LegacyPackMigrationService
         }
     }
 
-    private static bool IsLegacyPack(string? relativePath) =>
-        string.Equals(
-            relativePath?.Trim().Trim('\\', '/'),
-            LegacyPackRelativePath,
-            StringComparison.OrdinalIgnoreCase);
+    private static bool IsLegacyPack(string? relativePath)
+    {
+        var name = relativePath?.Trim().Trim('\\', '/');
+        if (string.IsNullOrEmpty(name)) return false;
+        if (string.Equals(
+                name,
+                PortablePackSyncService.DefaultPackRelativePath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        return LegacyPackRelativePaths.Contains(name, StringComparer.OrdinalIgnoreCase);
+    }
 
     private static void TryDeleteFile(string path, Logger logger)
     {
