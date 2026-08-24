@@ -12,13 +12,24 @@ namespace Minecraft;
 /// A pack ships its resource packs in <c>resourcepacks/</c> and names the ones
 /// it wants on in <c>launcher/resourcepacks-default.txt</c>. The game only reads
 /// its seed options once, when an instance has none, so a player who has already
-/// played would get the files and never see them switched on. This applies the
-/// list once per version of it: the pack's packs go on, in the pack's order,
-/// and what the pack has since dropped comes off - the file is gone from the
-/// instance by then, and a selection naming a pack that is not there is a
-/// warning at every start. After that the player owns the choice. Packs the
-/// player added themselves are never in the pack's list, so they are never
-/// touched: not reordered, not switched off.
+/// played would get the files and never see them switched on.
+///
+/// The list is held rather than applied once. Which pack sits above which is
+/// not decoration: it decides which of two packs redrawing the same mob is the
+/// one seen, and a build whose look depends on that order cannot leave the
+/// order to whatever each player last dragged in a screen. So every launch puts
+/// the pack's own entries back in the pack's order, and back on.
+///
+/// Two marks make room for choices the pack does mean to leave open.
+/// <c>?</c> before an entry hands its on and off to the player, keeping only
+/// its place in the order; <c>-</c> does the same and starts it off, which is
+/// how a pack ships an alternative switched off beside the one it prefers.
+///
+/// Packs the player added themselves are never in the pack's list, so they are
+/// never touched: not reordered, not switched off. What the pack listed last
+/// time and lists no longer comes off, because by then the file is gone from
+/// the instance and a selection naming a missing pack is a warning at every
+/// start.
 /// </summary>
 /// <param name="logger">Where the one-line summary goes.</param>
 public sealed class ResourcePackDefaultsService(Logger? logger = null)
@@ -35,7 +46,54 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// <param name="Sha256">Identity of the list, so a changed list applies again.</param>
     /// <param name="Entries">Options entries such as <c>file/Some Pack.zip</c>.</param>
     /// <param name="Incompatible">Those built for an older game, which the game lists apart.</param>
-    public readonly record struct ResourcePackDefaults(string Sha256, IReadOnlyList<string> Entries, IReadOnlyList<string> Incompatible);
+    /// <param name="Optional">Entries marked <c>?</c> or <c>-</c>: the player owns their on and off.</param>
+    /// <param name="OptionalOff">Of those, the ones marked <c>-</c>, which start off.</param>
+    public readonly record struct ResourcePackDefaults(
+        string Sha256,
+        IReadOnlyList<string> Entries,
+        IReadOnlyList<string> Incompatible,
+        IReadOnlyList<string> Optional,
+        IReadOnlyList<string> OptionalOff)
+    {
+        /// <summary>The entries the player may not switch off.</summary>
+        public IEnumerable<string> Forced
+        {
+            get
+            {
+                var optional = Optional;
+                return Entries.Where(entry => !optional.Contains(entry, StringComparer.Ordinal));
+            }
+        }
+
+        /// <summary>
+        /// Which of the pack's entries belong in the selection now: everything
+        /// forced, plus the optional ones the player has on. An optional entry
+        /// this instance has not been offered before starts on unless the pack
+        /// marked it off.
+        /// </summary>
+        /// <param name="selected">What the instance's options currently select.</param>
+        /// <param name="offeredBefore">Entries the marker says this instance was already given.</param>
+        public List<string> Resolve(IReadOnlyList<string> selected, IReadOnlyList<string> offeredBefore)
+        {
+            ArgumentNullException.ThrowIfNull(selected);
+            ArgumentNullException.ThrowIfNull(offeredBefore);
+            var wanted = new List<string>();
+            foreach (var entry in Entries)
+            {
+                if (!Optional.Contains(entry, StringComparer.Ordinal))
+                {
+                    wanted.Add(entry);
+                    continue;
+                }
+                var known = offeredBefore.Contains(entry, StringComparer.Ordinal);
+                var on = known
+                    ? selected.Contains(entry, StringComparer.Ordinal)
+                    : !OptionalOff.Contains(entry, StringComparer.Ordinal);
+                if (on) wanted.Add(entry);
+            }
+            return wanted;
+        }
+    }
 
     /// <summary>Reads the list a pack ships, or null when it ships none.</summary>
     public static ResourcePackDefaults? TryLoad(string packDirectory)
@@ -53,6 +111,8 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         ArgumentNullException.ThrowIfNull(text);
         var entries = new List<string>();
         var incompatible = new List<string>();
+        var optional = new List<string>();
+        var optionalOff = new List<string>();
         var marked = new List<string>();
         foreach (var raw in text.Split('\n'))
         {
@@ -62,21 +122,40 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             // the game keeps such packs in a list of their own. Use it only for
             // a pack the game truly refuses: told a pack is incompatible and
             // then finding it compatible, the game takes it off the selection.
-            var outdated = line.StartsWith('!');
-            if (outdated) line = line[1..].Trim();
+            //
+            // "?" and "-" mark the entries whose on and off belong to the
+            // player rather than to the pack; the pack still says where they
+            // sit. "-" is the same thing shipped off, which is how an
+            // alternative rides along beside the one the pack prefers.
+            var marks = "";
+            while (line.Length > 0 && line[0] is '!' or '?' or '-')
+            {
+                if (!marks.Contains(line[0], StringComparison.Ordinal)) marks += line[0];
+                line = line[1..].TrimStart();
+            }
             if (line.Length == 0) continue;
             entries.Add(line);
-            marked.Add(outdated ? "!" + line : line);
-            if (outdated) incompatible.Add(line);
+            marked.Add(marks + line);
+            if (marks.Contains('!', StringComparison.Ordinal)) incompatible.Add(line);
+            if (marks.Contains('?', StringComparison.Ordinal) || marks.Contains('-', StringComparison.Ordinal))
+            {
+                optional.Add(line);
+            }
+            if (marks.Contains('-', StringComparison.Ordinal)) optionalOff.Add(line);
         }
         // The marks are part of the list's identity: taking one off changes
         // nothing about which packs are named and everything about whether the
         // game keeps them selected, so it has to count as a new list.
         var digest = Convert.ToHexString(SHA256.HashData(Utf8NoBom.GetBytes(string.Join("\n", marked)))).ToLowerInvariant();
-        return new ResourcePackDefaults(digest, entries, incompatible);
+        return new ResourcePackDefaults(digest, entries, incompatible, optional, optionalOff);
     }
 
-    /// <summary>True while this instance has not yet been given this list.</summary>
+    /// <summary>
+    /// True while this instance has not yet been given this version of the
+    /// list. The selection is put back on every launch either way; this only
+    /// says whether the list itself has changed since last time, which is what
+    /// decides the starting state of an entry the player has never been offered.
+    /// </summary>
     public static bool NeedsApplying(string packDirectory, string instanceDirectory)
     {
         var defaults = TryLoad(packDirectory);
@@ -95,10 +174,10 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         var defaults = TryLoad(packDirectory);
         if (defaults is null) return 0;
         var marker = ReadMarker(instanceDirectory);
-        if (marker.Sha256 == defaults.Value.Sha256) return 0;
 
         var optionsPath = Path.Combine(instanceDirectory, OptionsFileName);
         var added = 0;
+        var restored = false;
         try
         {
             if (File.Exists(optionsPath))
@@ -109,19 +188,21 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
                 var dropped = marker.Entries
                     .Where(entry => !defaults.Value.Entries.Contains(entry, StringComparer.Ordinal))
                     .ToList();
-                var (text, count) = Select(options, defaults.Value, dropped);
+                var (text, count) = Select(options, defaults.Value, dropped, marker.Entries);
                 added = count;
-                // Written on any difference, not only on a new entry: giving the
-                // pack's own packs the order the pack declares changes nothing
-                // about which are selected and everything about which wins.
+                // Written on any difference, not only on a new entry: the order
+                // is the point. Two packs redrawing the same mob differ only in
+                // which sits higher, so a selection the player reordered is a
+                // different build until this puts it back.
                 if (!string.Equals(text, options, StringComparison.Ordinal))
                 {
                     AtomicFile.WriteAllText(optionsPath, text, Utf8NoBom);
+                    restored = true;
                 }
             }
             // An instance without options.txt has not run yet: the game will
             // take the pack's seed options, which already list these packs.
-            WriteMarker(instanceDirectory, defaults.Value);
+            if (marker.Sha256 != defaults.Value.Sha256) WriteMarker(instanceDirectory, defaults.Value);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -129,7 +210,15 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
             return 0;
         }
 
-        logger?.Info($"Applied the pack's resource packs in {optionsPath}: {added} newly selected.");
+        // Every launch runs this; only the launches that changed something are
+        // worth a line.
+        if (restored)
+        {
+            logger?.Info(
+                added > 0
+                    ? $"The pack's resource packs are back in the pack's order: {added} newly selected."
+                    : "The pack's resource packs are back in the pack's order.");
+        }
         return added;
     }
 
@@ -138,17 +227,32 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// player's own choices and their order alone, and takes out the entries in
     /// <paramref name="dropped"/> - what the pack used to list and no longer does.
     /// </summary>
-    public static (string Text, int Added) Select(string options, ResourcePackDefaults defaults, IReadOnlyList<string>? dropped = null)
+    public static (string Text, int Added) Select(
+        string options,
+        ResourcePackDefaults defaults,
+        IReadOnlyList<string>? dropped = null,
+        IReadOnlyList<string>? offeredBefore = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         dropped ??= [];
+        offeredBefore ??= defaults.Entries;
         var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var endsWithNewline = options.Length == 0 || options.EndsWith('\n');
         var lines = options.Length == 0
             ? []
             : options.TrimEnd('\r', '\n').Split('\n').Select(line => line.TrimEnd('\r')).ToList();
 
-        var (added, rearranged) = Arrange(lines, SelectedPrefix, defaults.Entries, dropped);
+        // The optional entries are resolved against what the instance selects
+        // right now, so a pack the player switched off stays off and one they
+        // switched on stays on - while everything else goes back where it was.
+        var index = lines.FindIndex(line => line.StartsWith(SelectedPrefix, StringComparison.Ordinal));
+        var selected = index >= 0 ? ReadList(lines[index][SelectedPrefix.Length..]) : [];
+        var wanted = defaults.Resolve(selected, offeredBefore);
+        // An optional entry the player turned off is the pack's to take out of
+        // the selection, exactly like one the pack stopped shipping.
+        var off = defaults.Entries.Where(entry => !wanted.Contains(entry, StringComparer.Ordinal));
+
+        var (added, rearranged) = Arrange(lines, SelectedPrefix, wanted, [.. dropped, .. off]);
         // The second list is bookkeeping the game keeps about packs built for an
         // older version, so it counts towards rewriting the file and not towards
         // the number of packs the player just gained.
@@ -174,8 +278,9 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// <summary>
     /// Lays the pack's own entries out in the order the pack declares, above
     /// everything else the player has selected. Anything that is not the pack's
-    /// keeps its place and its order, and the player's later changes are not
-    /// touched again: the list is applied once per version of itself.
+    /// keeps its place and its order; every entry that is the pack's is lifted
+    /// out of wherever it ended up and put back where the pack says, which is
+    /// what makes the order the pack's rather than the last screen's.
     /// </summary>
     private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, IReadOnlyList<string> wanted, IReadOnlyList<string> dropped)
     {
