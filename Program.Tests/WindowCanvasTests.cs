@@ -71,7 +71,7 @@ public sealed class WindowCanvasTests
             $"the canvas is {canvasAspect:0.###} wide for its height, the window {windowAspect:0.###}");
     }
 
-    private static Window LoadWindow()
+    internal static Window LoadWindow()
     {
         var program = Path.GetDirectoryName(FindRepositoryFile("Program", "MainWindow.xaml"))!;
         var app = File.ReadAllText(Path.Combine(program, "App.xaml"));
@@ -102,7 +102,7 @@ public sealed class WindowCanvasTests
     }
 
     /// <summary>WPF objects belong to a single-threaded apartment; xUnit's is not one.</summary>
-    private static T OnAStaThread<T>(Func<T> work)
+    internal static T OnAStaThread<T>(Func<T> work)
     {
         T result = default!;
         Exception? failure = null;

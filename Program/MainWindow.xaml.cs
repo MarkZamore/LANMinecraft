@@ -2004,23 +2004,11 @@ public partial class MainWindow : Window
         var percent = Math.Round(value * 100d / clampedTotal, 1);
         TransferProgressBar.IsIndeterminate = false;
         TransferProgressBar.Value = percent;
-        var progressText = $"{FormatBytes(value)} / {FormatBytes(clampedTotal)} ({FormatBytes((long)_lastTransferSpeedBytesPerSecond)}/с)";
-        TransferProgressText.Text = string.IsNullOrEmpty(_transferStage)
-            ? progressText
-            : $"{_transferStage}: {progressText}";
+        TransferProgressText.Text = TransferProgressLine.Compose(
+            _transferStage, value, clampedTotal, _lastTransferSpeedBytesPerSecond);
     }
 
-    private static string FormatBytes(long bytes)
-    {
-        const long kb = 1024;
-        const long mb = kb * 1024;
-        const long gb = mb * 1024;
-
-        if (bytes >= gb) return $"{bytes / (double)gb:0.##} ГБ";
-        if (bytes >= mb) return $"{bytes / (double)mb:0.##} МБ";
-        if (bytes >= kb) return $"{bytes / (double)kb:0.##} КБ";
-        return $"{bytes} Б";
-    }
+    private static string FormatBytes(long bytes) => TransferProgressLine.FormatBytes(bytes);
 
     // The number is the commit count, so it names the commit by itself - the
     // short hash it used to carry said the same thing twice.
