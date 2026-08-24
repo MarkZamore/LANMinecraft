@@ -222,7 +222,7 @@ public sealed class MinecraftProcessService
             .ConfigureAwait(false);
         var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
         var gameDir = instance.GameDirectory;
-        EnsureWorldsDirectoryAndSavesLink(gameDir);
+        EnsureWorldsDirectoryAndSavesLink(gameDir, settings.ClientRelativePath);
         ValidatePackCompatibility(packDir);
         EnsureModernFixShutdownWorkaround(gameDir);
         _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext);
@@ -721,31 +721,24 @@ public sealed class MinecraftProcessService
         }
     }
 
-    private void EnsureWorldsDirectoryAndSavesLink(string clientDir)
+    /// <summary>
+    /// Gives the game the worlds this build may open, and only those.
+    ///
+    /// The saves folder used to be one link to the shared Worlds folder, which
+    /// meant every build listed every world - and opening a world under the
+    /// wrong build is how the blocks of every mod that build does not have are
+    /// lost. It holds a junction per world now; see <see cref="SavesFolderService"/>.
+    /// </summary>
+    private void EnsureWorldsDirectoryAndSavesLink(string clientDir, string packRelativePath)
     {
-        Directory.CreateDirectory(_paths.Worlds);
-        var savesDir = Path.Combine(clientDir, "saves");
-        if (TryGetAttributes(savesDir, out var attributes))
+        try
         {
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
-            {
-                var target = new DirectoryInfo(savesDir).LinkTarget;
-                if (IsSamePath(target, _paths.Worlds, clientDir)) return;
-                Directory.Delete(savesDir);
-            }
-            else if (Directory.Exists(savesDir) && !Directory.EnumerateFileSystemEntries(savesDir).Any())
-            {
-                Directory.Delete(savesDir);
-            }
-            else
-            {
-                _logger.Warn("Minecraft saves folder already exists and is not a link; leaving it unchanged to avoid moving worlds.");
-                return;
-            }
+            new SavesFolderService(_logger).Prepare(_paths.Worlds, clientDir, packRelativePath);
         }
-
-        CreateJunction(savesDir, _paths.Worlds);
-        _logger.Info("Minecraft saves folder linked to portable Worlds folder.");
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _logger.Warn($"The worlds of this build could not be laid out for the game: {ex.Message}");
+        }
     }
 
     private static void ValidatePackCompatibility(string packDir)
@@ -816,52 +809,4 @@ public sealed class MinecraftProcessService
         }
     }
 
-    private static bool TryGetAttributes(string path, out FileAttributes attributes)
-    {
-        try
-        {
-            attributes = File.GetAttributes(path);
-            return true;
-        }
-        catch (IOException)
-        {
-            attributes = default;
-            return false;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            attributes = default;
-            return false;
-        }
-    }
-
-    private static bool IsSamePath(string? linkTarget, string expectedTarget, string linkParent)
-    {
-        if (string.IsNullOrWhiteSpace(linkTarget)) return false;
-        var resolvedTarget = Path.IsPathRooted(linkTarget)
-            ? Path.GetFullPath(linkTarget)
-            : Path.GetFullPath(Path.Combine(linkParent, linkTarget));
-        return string.Equals(
-            resolvedTarget.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            Path.GetFullPath(expectedTarget).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-            StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void CreateJunction(string linkPath, string targetPath)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            Arguments = $"/c mklink /J \"{linkPath}\" \"{targetPath}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start mklink.");
-        process.WaitForExit();
-        if (process.ExitCode == 0) return;
-        throw new InvalidOperationException(
-            $"Could not create directory link: {process.StandardError.ReadToEnd()}{process.StandardOutput.ReadToEnd()}".Trim());
-    }
 }
