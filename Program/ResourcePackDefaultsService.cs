@@ -48,13 +48,35 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// <param name="Incompatible">Those built for an older game, which the game lists apart.</param>
     /// <param name="Optional">Entries marked <c>?</c> or <c>-</c>: the player owns their on and off.</param>
     /// <param name="OptionalOff">Of those, the ones marked <c>-</c>, which start off.</param>
+    /// <param name="Marked">
+    /// Each entry with the marks it was written with, in the same order. This is
+    /// what the marker records, so that changing what the pack says about an
+    /// entry - shipping on what used to ship off, or handing over a choice it
+    /// used to make - counts as a thing the instance has not been offered, and
+    /// the new default applies once.
+    /// </param>
     public readonly record struct ResourcePackDefaults(
         string Sha256,
         IReadOnlyList<string> Entries,
         IReadOnlyList<string> Incompatible,
         IReadOnlyList<string> Optional,
-        IReadOnlyList<string> OptionalOff)
+        IReadOnlyList<string> OptionalOff,
+        IReadOnlyList<string> Marked)
     {
+        /// <summary>The entry as the list writes it, marks and all.</summary>
+        public string MarkedForm(string entry)
+        {
+            for (var index = 0; index < Entries.Count && index < Marked.Count; index++)
+            {
+                if (string.Equals(Entries[index], entry, StringComparison.Ordinal)) return Marked[index];
+            }
+            return entry;
+        }
+
+        /// <summary>An entry without whatever marks were written in front of it.</summary>
+        public static string Unmark(string entry) =>
+            entry is null ? "" : entry.TrimStart('!', '?', '-', ' ');
+
         /// <summary>The entries the player may not switch off.</summary>
         public IEnumerable<string> Forced
         {
@@ -72,7 +94,12 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         /// marked it off.
         /// </summary>
         /// <param name="selected">What the instance's options currently select.</param>
-        /// <param name="offeredBefore">Entries the marker says this instance was already given.</param>
+        /// <param name="offeredBefore">
+        /// What the marker says this instance was already given, as the list
+        /// wrote it. An entry counts as offered only when its marks match too:
+        /// a line that changes from <c>?</c> to <c>-</c> is the pack saying
+        /// something new about it, and the new default gets its one turn.
+        /// </param>
         public List<string> Resolve(IReadOnlyList<string> selected, IReadOnlyList<string> offeredBefore)
         {
             ArgumentNullException.ThrowIfNull(selected);
@@ -85,7 +112,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
                     wanted.Add(entry);
                     continue;
                 }
-                var known = offeredBefore.Contains(entry, StringComparer.Ordinal);
+                var known = offeredBefore.Contains(MarkedForm(entry), StringComparer.Ordinal);
                 var on = known
                     ? selected.Contains(entry, StringComparer.Ordinal)
                     : !OptionalOff.Contains(entry, StringComparer.Ordinal);
@@ -147,7 +174,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         // nothing about which packs are named and everything about whether the
         // game keeps them selected, so it has to count as a new list.
         var digest = Convert.ToHexString(SHA256.HashData(Utf8NoBom.GetBytes(string.Join("\n", marked)))).ToLowerInvariant();
-        return new ResourcePackDefaults(digest, entries, incompatible, optional, optionalOff);
+        return new ResourcePackDefaults(digest, entries, incompatible, optional, optionalOff, marked);
     }
 
     /// <summary>
@@ -185,7 +212,10 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
                 var options = File.ReadAllText(optionsPath, Utf8NoBom);
                 // What the pack listed last time and lists no longer is the
                 // pack's to take back; the player's own packs were never listed.
+                // The marker holds marked forms; what the pack dropped is a
+                // question about the entries themselves.
                 var dropped = marker.Entries
+                    .Select(ResourcePackDefaults.Unmark)
                     .Where(entry => !defaults.Value.Entries.Contains(entry, StringComparer.Ordinal))
                     .ToList();
                 var (text, count) = Select(options, defaults.Value, dropped, marker.Entries);
@@ -235,7 +265,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         dropped ??= [];
-        offeredBefore ??= defaults.Entries;
+        offeredBefore ??= defaults.Marked;
         var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var endsWithNewline = options.Length == 0 || options.EndsWith('\n');
         var lines = options.Length == 0
@@ -386,7 +416,9 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     {
         Directory.CreateDirectory(instanceDirectory);
         var text = new StringBuilder().Append(defaults.Sha256).Append('\n');
-        foreach (var entry in defaults.Entries) text.Append(MarkerListPrefix).Append(entry).Append('\n');
+        // The marks go into the marker too, so that a line whose marks changed
+        // reads as something this instance has not been offered yet.
+        foreach (var entry in defaults.Marked) text.Append(MarkerListPrefix).Append(entry).Append('\n');
         AtomicFile.WriteAllText(Path.Combine(instanceDirectory, MarkerFileName), text.ToString(), Utf8NoBom);
     }
 }
