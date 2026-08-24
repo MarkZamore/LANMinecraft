@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.Globalization;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Minecraft;
@@ -107,9 +108,12 @@ public sealed class TransferProgressLineTests
     [Fact]
     public void WhenTheLineWouldNotFit_TheSpeedComesOffIt()
     {
-        var line = TransferProgressLine.Compose(
+        // The sizes are written the way the machine writes numbers, so the
+        // separator is a comma here and a full stop on a build agent. Pinning
+        // the culture is what makes the expected string mean the same in both.
+        var line = InRussian(() => TransferProgressLine.Compose(
             "Копирование у отправителя", (long)(1022.98 * 1024 * 1024), 1024L * 1024 * 1024,
-            999.99 * 1024 * 1024, TimeSpan.FromMinutes(1435));
+            999.99 * 1024 * 1024, TimeSpan.FromMinutes(1435)));
 
         Assert.Equal("Копирование у отправителя: 1022,98 МБ / 1 ГБ (ещё ≈ 23 ч 55 мин)", line);
         // The same numbers under a short step name keep the speed.
@@ -118,6 +122,25 @@ public sealed class TransferProgressLineTests
             TransferProgressLine.Compose(
                 "Сжатие мира", (long)(1022.98 * 1024 * 1024), 1024L * 1024 * 1024,
                 999.99 * 1024 * 1024, TimeSpan.FromMinutes(27)));
+    }
+
+    /// <summary>
+    /// The line has to lose the speed wherever it is read, not only where a
+    /// comma is the decimal separator: the budget counts characters, and both
+    /// separators are one.
+    /// </summary>
+    [Theory]
+    [InlineData("ru-RU")]
+    [InlineData("en-US")]
+    [InlineData("")]
+    public void TheSpeedComesOffInAnyLocale(string culture)
+    {
+        var line = InCulture(culture, () => TransferProgressLine.Compose(
+            "Копирование у отправителя", (long)(1022.98 * 1024 * 1024), 1024L * 1024 * 1024,
+            999.99 * 1024 * 1024, TimeSpan.FromMinutes(1435)));
+
+        Assert.DoesNotContain("/с,", line);
+        Assert.EndsWith("(ещё ≈ 23 ч 55 мин)", line);
     }
 
     /// <summary>
@@ -225,6 +248,24 @@ public sealed class TransferProgressLineTests
         });
 
         Assert.Empty(missing);
+    }
+
+    private static string InRussian(Func<string> compose) => InCulture("ru-RU", compose);
+
+    private static string InCulture(string culture, Func<string> compose)
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = culture.Length == 0
+                ? CultureInfo.InvariantCulture
+                : CultureInfo.GetCultureInfo(culture);
+            return compose();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     private static double Width(TextBlock text, string content)
