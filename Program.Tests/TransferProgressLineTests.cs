@@ -11,21 +11,19 @@ namespace Minecraft.Tests;
 /// The bar is a fixed width inside a fixed canvas and the text is centred over
 /// it with nothing to trim or wrap it, so a line that grew too long would not
 /// shrink or clip - it would spill sideways over the Передать button. That is
-/// the risk in adding an estimate to it, and it is measured here with the
+/// the risk in writing an estimate on it, and it is measured here with the
 /// launcher's own control, style and typeface rather than guessed at.
 /// </summary>
 public sealed class TransferProgressLineTests
 {
-    /// <summary>The estimate only appears once the answer is worth something.</summary>
-    [Theory]
-    [InlineData(0, 1_000_000)]        // nothing left to wait for
-    [InlineData(-5, 1_000_000)]       // more delivered than promised
-    [InlineData(1_000_000, 0)]        // the rate window has not filled yet
-    [InlineData(1_000_000, -1)]
-    [InlineData(long.MaxValue, 1)]    // a wait nobody is going to sit through
-    public void WithoutAnHonestAnswer_ItSaysNothing(long remainingBytes, double bytesPerSecond)
+    /// <summary>The estimate only appears once there is an answer worth giving.</summary>
+    [Fact]
+    public void WithoutAnHonestAnswer_ItSaysNothing()
     {
-        Assert.Null(TransferProgressLine.Remaining(remainingBytes, bytesPerSecond));
+        Assert.Null(TransferProgressLine.Remaining(null));
+        Assert.Null(TransferProgressLine.Remaining(TimeSpan.FromSeconds(-1)));
+        // Past a day the arithmetic is describing a stall, not a wait.
+        Assert.Null(TransferProgressLine.Remaining(TimeSpan.FromDays(1.01)));
     }
 
     /// <summary>
@@ -43,7 +41,7 @@ public sealed class TransferProgressLineTests
     [InlineData(8_100, "ещё ≈ 2 ч 15 мин")]
     public void TheWaitIsRoundedToWhatSomebodyWouldRead(int seconds, string expected)
     {
-        Assert.Equal(expected, TransferProgressLine.Remaining(seconds, 1));
+        Assert.Equal(expected, TransferProgressLine.Remaining(TimeSpan.FromSeconds(seconds)));
     }
 
     /// <summary>
@@ -53,52 +51,127 @@ public sealed class TransferProgressLineTests
     [Fact]
     public void ItNeverRoundsDownToNothing()
     {
-        for (var remaining = 1; remaining <= 4; remaining++)
+        for (var seconds = 1; seconds <= 4; seconds++)
         {
-            Assert.Equal("ещё ≈ 5 с", TransferProgressLine.Remaining(remaining, 1));
+            Assert.Equal("ещё ≈ 5 с", TransferProgressLine.Remaining(TimeSpan.FromSeconds(seconds)));
         }
     }
 
     [Fact]
-    public void TheLine_CarriesTheStageTheBytesTheSpeedAndTheWait()
+    public void TheLine_CarriesTheStepTheBytesTheSpeedAndTheWait()
     {
         Assert.Equal(
-            "Отправка мира: 500 МБ / 1 ГБ (5 МБ/с, ещё ≈ 1 мин 40 с)",
-            TransferProgressLine.Compose("Отправка мира", 500 * 1024 * 1024L, 1024 * 1024 * 1024L, 5 * 1024 * 1024));
+            "Отправка мира: 500 МБ / 1 ГБ (5 МБ/с, ещё ≈ 4 мин)",
+            TransferProgressLine.Compose(
+                "Отправка мира", 500 * 1024 * 1024L, 1024 * 1024 * 1024L, 5 * 1024 * 1024,
+                TimeSpan.FromSeconds(240)));
     }
 
-    /// <summary>Without a stage there is no prefix, and no empty colon either.</summary>
+    /// <summary>Before the handover can be divided by, the line simply has no wait on it.</summary>
     [Fact]
-    public void WithoutAStage_TheLineStartsWithTheBytes()
+    public void WithoutAnEstimate_TheLineIsWhatItAlwaysWas()
     {
-        Assert.StartsWith("500 МБ", TransferProgressLine.Compose("", 500 * 1024 * 1024L, 1024 * 1024 * 1024L, 0));
+        Assert.Equal(
+            "Отправка мира: 500 МБ / 1 ГБ (5 МБ/с)",
+            TransferProgressLine.Compose(
+                "Отправка мира", 500 * 1024 * 1024L, 1024 * 1024 * 1024L, 5 * 1024 * 1024, null));
+    }
+
+    /// <summary>Without a step there is no prefix, and no empty colon either.</summary>
+    [Fact]
+    public void WithoutAStep_TheLineStartsWithTheBytes()
+    {
+        Assert.StartsWith(
+            "500 МБ",
+            TransferProgressLine.Compose("", 500 * 1024 * 1024L, 1024 * 1024 * 1024L, 0, null));
+    }
+
+    /// <summary>
+    /// The unit is written once when both numbers land on it. The bar is a
+    /// fixed width and "8,99 ГБ / 9,99 ГБ" spends eight characters saying ГБ
+    /// twice.
+    /// </summary>
+    [Theory]
+    [InlineData(500L * 1024 * 1024, 1024L * 1024 * 1024, "500 МБ / 1 ГБ")]
+    [InlineData(900L * 1024 * 1024, 1000L * 1024 * 1024, "900 / 1000 МБ")]
+    [InlineData(0L, 1024L * 1024 * 1024, "0 Б / 1 ГБ")]
+    public void TheUnitIsNotWrittenTwice(long current, long total, string expected)
+    {
+        Assert.Equal(expected, TransferProgressLine.FormatPair(current, total));
+    }
+
+    /// <summary>
+    /// When all four facts will not fit on the bar, the speed is the one that
+    /// goes - the estimate answers "is this stuck" better than it did.
+    /// </summary>
+    [Fact]
+    public void WhenTheLineWouldNotFit_TheSpeedComesOffIt()
+    {
+        var line = TransferProgressLine.Compose(
+            "Копирование у отправителя", (long)(1022.98 * 1024 * 1024), 1024L * 1024 * 1024,
+            999.99 * 1024 * 1024, TimeSpan.FromMinutes(1435));
+
+        Assert.Equal("Копирование у отправителя: 1022,98 МБ / 1 ГБ (ещё ≈ 23 ч 55 мин)", line);
+        // The same numbers under a short step name keep the speed.
+        Assert.Contains(
+            "МБ/с",
+            TransferProgressLine.Compose(
+                "Сжатие мира", (long)(1022.98 * 1024 * 1024), 1024L * 1024 * 1024,
+                999.99 * 1024 * 1024, TimeSpan.FromMinutes(27)));
+    }
+
+    /// <summary>
+    /// A step with no byte count of its own still carries the estimate: the
+    /// handover has not stopped being measured just because this part of it
+    /// cannot be counted in bytes.
+    /// </summary>
+    [Fact]
+    public void AStepWithoutBytes_StillSaysHowLongIsLeft()
+    {
+        Assert.Equal(
+            "Подготовка профилей... ещё ≈ 2 мин",
+            TransferProgressLine.ComposeWaiting("Подготовка профилей", TimeSpan.FromSeconds(120)));
+        Assert.Equal(
+            "Подготовка профилей...",
+            TransferProgressLine.ComposeWaiting("Подготовка профилей", null));
+        Assert.Equal("Передача...", TransferProgressLine.ComposeWaiting("", null));
     }
 
     /// <summary>
     /// The widest line the launcher can put on that bar, against the width the
-    /// bar actually has.
-    ///
-    /// The size and the wait pull against each other - the nearer the end, the
-    /// shorter the estimate, and a rate slow enough to make the estimate long
-    /// is short to write down - so the widest line is not one anybody can pick
-    /// by eye. Every combination worth worrying about is measured and the
-    /// widest of them has to fit.
+    /// bar actually has. Size, speed and wait vary independently now that the
+    /// estimate covers the whole handover rather than this step, so the widest
+    /// line is not one to pick by eye: every combination worth worrying about
+    /// is measured and the widest of them has to fit.
     /// </summary>
     [Fact]
     public void TheWidestLineItCanWrite_FitsTheBar()
     {
-        // The longest label the transfer publishes with a byte count behind it.
-        const string stage = "Копирование мира";
+        // Every label the transfer publishes, on either side of it, so the
+        // longest one is covered without anybody having to pick it out.
+        var stages = TransferPacing.Sending.Concat(TransferPacing.Receiving).Distinct().ToList();
         long[] totals = [1024L * 1024 * 1024, (long)(9.99 * 1024 * 1024 * 1024)];
         double[] shares = [0, 0.5, 0.9, 0.999];
-        // A dial-up trickle, the slowest rate that still reaches a day, the
-        // 5 MB/s a Steam relay gives, and two speeds only a local disk reaches.
-        double[] rates = [512, 124_500, 5 * 1024 * 1024, 999.99 * 1024 * 1024, 1.5 * 1024 * 1024 * 1024];
+        // A dial-up trickle, a Steam relay, and two speeds only a disk reaches.
+        double[] rates = [512, 124_500, 5 * 1024 * 1024, 999.99 * 1024 * 1024];
+        TimeSpan?[] waits =
+        [
+            null,
+            TimeSpan.FromSeconds(45),
+            TimeSpan.FromSeconds(200),
+            TimeSpan.FromMinutes(27),
+            TimeSpan.FromMinutes(1435)   // 23 h 55 min: the last one still shown
+        ];
 
-        var lines = (from total in totals
+        var lines = (from stage in stages
+                     from total in totals
                      from share in shares
                      from rate in rates
-                     select TransferProgressLine.Compose(stage, (long)(total * share), total, rate))
+                     from wait in waits
+                     select TransferProgressLine.Compose(stage, (long)(total * share), total, rate, wait))
+                    .Concat(from stage in stages
+                            from wait in waits
+                            select TransferProgressLine.ComposeWaiting(stage, wait))
                     .Distinct()
                     .ToList();
 
@@ -120,7 +193,6 @@ public sealed class TransferProgressLineTests
         });
 
         Assert.True(available > 0, "the transfer bar measured to nothing; the layout pass did not run");
-        // Measured at the time of writing: 412.6px of the 454px the bar has.
         Assert.True(
             needed <= available,
             $"\"{widest}\" needs {needed:0.#}px and the bar is {available:0.#}px wide; " +
@@ -135,7 +207,10 @@ public sealed class TransferProgressLineTests
     [Fact]
     public void EveryCharacterTheEstimateUses_HasAGlyphInTheShippedTypeface()
     {
-        var line = TransferProgressLine.Compose("Копирование мира", 1, 2, 1) + "чсминГБКМ0123456789";
+        var line = string.Concat(TransferPacing.Sending)
+            + string.Concat(TransferPacing.Receiving)
+            + TransferProgressLine.Compose("", 1, 2, 1, TimeSpan.FromSeconds(9000))
+            + "чсминГБКМ0123456789";
 
         var missing = WindowCanvasTests.OnAStaThread(() =>
         {
