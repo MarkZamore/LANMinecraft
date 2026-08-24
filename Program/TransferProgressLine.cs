@@ -4,53 +4,77 @@
 /// The line written across the bar while a world is handed over.
 ///
 /// Someone watching a world move wants two things from it: how far it has got,
-/// and when they can stop watching. The second is a division - what is left,
-/// over how fast it is going - and all of its honesty lives in the speed.
-/// <see cref="TransferRateTracker"/> averages the last six seconds rather than
-/// reporting an instant, and the quotient is then rounded coarsely on top of
-/// that: a number that changes every frame reads as noise, not as an answer.
+/// and when they can stop watching. The second one is not a division of this
+/// bar - the bar is one step of five, and the step in front of it runs at a
+/// different speed - so it comes from <see cref="TransferRun"/>, which knows
+/// the shape of the whole handover. "ещё" on this line means the whole of it
+/// is that far off, not the step whose name is written beside it.
 ///
-/// The estimate covers the stage the bar is measuring, not the whole handover.
-/// Copying, compressing, sending, unpacking and checking are five passes over
-/// the same gigabytes at five different speeds, and nothing here has seen the
-/// later ones yet. The stage's own name is written immediately to the left, so
-/// what the number belongs to is on screen next to it.
+/// The estimate is rounded coarsely before it is written down. A number that
+/// changes every frame reads as noise rather than as an answer, and the
+/// coarseness rises with the wait: under a minute the seconds are what somebody
+/// is sitting through, an hour in nobody is reading them.
 /// </summary>
 internal static class TransferProgressLine
 {
-    /// <summary>Past a day the arithmetic is describing a stall, not a wait.</summary>
-    private const double TooFarToSaySeconds = 24 * 60 * 60;
+    /// <summary>
+    /// How wide the line may get before something has to come off it. The bar
+    /// is 454px and the text is centred over it with nothing to trim or wrap
+    /// it, so a line past that spills sideways over the Передать button rather
+    /// than shrinking. Kept in characters because that is what this class can
+    /// count; the pixels are measured in TransferProgressLineTests.
+    /// </summary>
+    private const int Budget = 68;
 
     /// <summary>
-    /// Bytes done, bytes in total, current speed, and - once the speed means
-    /// anything - what is left of this stage.
+    /// Step, bytes, speed, and - once there is an honest one - how long until
+    /// the whole handover is over.
+    ///
+    /// All four rarely collide, but they can: a step named after the other
+    /// player, a world in gigabytes and a wait in hours together outgrow the
+    /// bar. The speed is then what goes. It was there to answer "is this
+    /// stuck", and an estimate that keeps changing answers that better.
     /// </summary>
-    public static string Compose(string stage, long current, long total, double bytesPerSecond)
+    public static string Compose(
+        string stage, long current, long total, double bytesPerSecond, TimeSpan? remaining)
     {
         var speed = $"{FormatBytes((long)bytesPerSecond)}/с";
-        var remaining = Remaining(total - current, bytesPerSecond);
-        var line = remaining is null
-            ? $"{FormatBytes(current)} / {FormatBytes(total)} ({speed})"
-            : $"{FormatBytes(current)} / {FormatBytes(total)} ({speed}, {remaining})";
+        var left = Remaining(remaining);
+        if (left is null) return Line(stage, current, total, speed);
+
+        var full = Line(stage, current, total, $"{speed}, {left}");
+        return full.Length <= Budget ? full : Line(stage, current, total, left);
+    }
+
+    private static string Line(string stage, long current, long total, string inside)
+    {
+        var line = $"{FormatPair(current, total)} ({inside})";
         return string.IsNullOrEmpty(stage) ? line : $"{stage}: {line}";
     }
 
     /// <summary>
-    /// "ещё ≈ 3 мин 20 с", or nothing at all while an answer would be a guess:
-    /// before the rate window has filled, after the last byte, and when the
-    /// division comes back with a wait no one is going to sit through.
-    ///
-    /// The coarseness rises with the wait. Under a minute the seconds matter,
-    /// so they are kept to the nearest five; a quarter of an hour in, nobody is
-    /// reading the seconds, and showing them only makes the line flicker.
+    /// What a step with no byte count of its own says: its name, and the same
+    /// estimate, because the handover behind it has not stopped being measured.
     /// </summary>
-    public static string? Remaining(long remainingBytes, double bytesPerSecond)
+    public static string ComposeWaiting(string stage, TimeSpan? remaining)
     {
-        if (remainingBytes <= 0 || bytesPerSecond <= 0) return null;
+        var name = string.IsNullOrEmpty(stage) ? "Передача" : stage;
+        return Remaining(remaining) is { } left ? $"{name}... {left}" : $"{name}...";
+    }
 
-        var seconds = remainingBytes / bytesPerSecond;
-        if (double.IsNaN(seconds) || seconds > TooFarToSaySeconds) return null;
+    /// <summary>
+    /// "ещё ≈ 3 мин 20 с", or nothing at all when there is no answer worth
+    /// giving: before the handover has gone far enough to divide by, and past
+    /// the point where the arithmetic is describing a stall rather than a wait.
+    /// </summary>
+    public static string? Remaining(TimeSpan? remaining)
+    {
+        if (remaining is not { } wait || wait < TimeSpan.Zero || wait > TimeSpan.FromDays(1))
+        {
+            return null;
+        }
 
+        var seconds = wait.TotalSeconds;
         var step = seconds < 60 ? 5 : seconds < 600 ? 10 : seconds < 3600 ? 60 : 300;
         var rounded = (long)Math.Round(seconds / step, MidpointRounding.AwayFromZero) * step;
         // Rounding down to nothing would promise an arrival that has not
@@ -60,12 +84,31 @@ internal static class TransferProgressLine
         if (span.TotalHours >= 1)
         {
             var hours = (int)span.TotalHours;
-            return span.Minutes == 0 ? $"ещё ≈ {hours} ч" : $"ещё ≈ {hours} ч {span.Minutes} мин";
+            return span.Minutes == 0
+                ? $"ещё ≈ {hours} ч"
+                : $"ещё ≈ {hours} ч {span.Minutes} мин";
         }
 
         if (span.TotalSeconds < 60) return $"ещё ≈ {span.Seconds} с";
-        if (span.TotalSeconds >= 600 || span.Seconds == 0) return $"ещё ≈ {(int)span.TotalMinutes} мин";
+        if (span.TotalSeconds >= 600 || span.Seconds == 0)
+        {
+            return $"ещё ≈ {(int)span.TotalMinutes} мин";
+        }
         return $"ещё ≈ {span.Minutes} мин {span.Seconds} с";
+    }
+
+    /// <summary>
+    /// "500 МБ / 1 ГБ", but "8,99 / 9,99 ГБ" when both land on the same unit:
+    /// the bar is a fixed width and the unit written twice buys nothing.
+    /// </summary>
+    public static string FormatPair(long current, long total)
+    {
+        var done = FormatBytes(current);
+        var whole = FormatBytes(total);
+        var unit = whole[(whole.LastIndexOf(' ') + 1)..];
+        return done.EndsWith(" " + unit, StringComparison.Ordinal)
+            ? $"{done[..^(unit.Length + 1)]} / {whole}"
+            : $"{done} / {whole}";
     }
 
     public static string FormatBytes(long bytes)

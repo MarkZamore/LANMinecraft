@@ -73,6 +73,10 @@ public partial class MainWindow : Window
     private double _lastTransferSpeedBytesPerSecond;
     private string _transferStage = "";
     private bool _transferActive;
+    private TransferPacingStore? _transferPacingStore;
+    private TransferPacing _transferPacing = new();
+    private TransferRun? _transferRun;
+    private TimeSpan? _transferRemaining;
     private bool _updateBusy;
     private bool _isEditingPlayerName;
     private NameMarquee? _playerNameMarquee;
@@ -150,6 +154,8 @@ public partial class MainWindow : Window
             LegacyPackMigrationService.Run(_paths, _settings, _settingsService, _logger);
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
+            _transferPacingStore = new TransferPacingStore(_paths);
+            _transferPacing = _transferPacingStore.Load();
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
@@ -1960,11 +1966,13 @@ public partial class MainWindow : Window
         SetProgressActivity(TransferProgressBar, progress.IsActive);
         if (!progress.IsActive)
         {
+            RememberHowLongThisTransferTook();
             _transferRate.Reset();
             _transferBytesCurrent = 0;
             _transferBytesTotal = 0;
             _lastTransferSpeedBytesPerSecond = 0;
             _transferStage = "";
+            _transferRemaining = null;
             SetTransferProgressVisible(0, 0);
             if (activeChanged) RefreshUi();
             return;
@@ -1976,6 +1984,8 @@ public partial class MainWindow : Window
         _lastTransferSpeedBytesPerSecond = _transferRate.Update(
             current,
             string.IsNullOrEmpty(progress.Stage) ? "world" : progress.Stage);
+        _transferRun ??= new TransferRun(_transferPacing);
+        _transferRemaining = _transferRun.Advance(progress.Stage, current, total);
         _transferBytesCurrent = Math.Max(0, current);
         _transferBytesTotal = total;
         SetTransferProgressVisible(_transferBytesCurrent, _transferBytesTotal);
@@ -1991,7 +2001,7 @@ public partial class MainWindow : Window
             TransferProgressBar.IsIndeterminate = _transferActive;
             TransferProgressText.Text = !_transferActive
                 ? "В ожидании мира"
-                : string.IsNullOrEmpty(_transferStage) ? "Передача..." : $"{_transferStage}...";
+                : TransferProgressLine.ComposeWaiting(_transferStage, _transferRemaining);
             if (!_transferActive)
             {
                 _lastTransferSpeedBytesPerSecond = 0;
@@ -2005,7 +2015,22 @@ public partial class MainWindow : Window
         TransferProgressBar.IsIndeterminate = false;
         TransferProgressBar.Value = percent;
         TransferProgressText.Text = TransferProgressLine.Compose(
-            _transferStage, value, clampedTotal, _lastTransferSpeedBytesPerSecond);
+            _transferStage, value, clampedTotal, _lastTransferSpeedBytesPerSecond, _transferRemaining);
+    }
+
+    /// <summary>
+    /// A handover that reached its last step is what the next estimate is built
+    /// from. One that was cancelled or broke off says nothing about how long
+    /// the whole thing takes, so it is dropped rather than averaged in.
+    /// </summary>
+    private void RememberHowLongThisTransferTook()
+    {
+        var run = _transferRun;
+        _transferRun = null;
+        if (run is null || !run.Completed || _transferPacingStore is null) return;
+
+        _transferPacing = _transferPacing.Blend(run.Timings());
+        _transferPacingStore.Save(_transferPacing);
     }
 
     private static string FormatBytes(long bytes) => TransferProgressLine.FormatBytes(bytes);
