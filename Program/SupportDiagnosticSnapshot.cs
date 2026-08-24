@@ -171,7 +171,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
             ? value ?? string.Empty
             : value[..maximumLength];
 
-    private static SupportModSnapshot[] ReadMods(
+    internal static SupportModSnapshot[] ReadMods(
         AppPaths paths,
         string packRelativePath)
     {
@@ -185,11 +185,23 @@ public static partial class SupportDiagnosticSnapshotBuilder
             Path.Combine(paths.CombineUnderPacks(packRelativePath), "mods"),
             Path.Combine(paths.CombineUnderInstances(packRelativePath), "mods")
         };
-        return roots
-            .Where(Directory.Exists)
-            .SelectMany(root => Directory.EnumerateFiles(root, "*.jar", SearchOption.TopDirectoryOnly))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+        // Almost every jar sits in both the pack and the instance, and the two
+        // copies have different paths - so dropping duplicates by path dropped
+        // none of them, and a report listed 1763 mods for 882 jars. The
+        // instance copy is the one the game loads, and it comes second here,
+        // so it is the one that stays.
+        var jars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots.Where(Directory.Exists))
+        {
+            foreach (var path in Directory.EnumerateFiles(root, "*.jar", SearchOption.TopDirectoryOnly))
+            {
+                jars[Path.GetFileName(path)] = path;
+            }
+        }
+
+        return jars
+            .OrderBy(jar => jar.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(jar => jar.Value)
             .Select(path =>
             {
                 try
