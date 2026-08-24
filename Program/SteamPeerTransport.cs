@@ -305,7 +305,12 @@ public sealed class SteamPeerTransport : IPeerTransport
         }
 
         if (!channel.IsIncoming) return;
-        _logger?.Info($"Accepted a launcher connection from {channel.Peer} ({DescribeRoute(handle)}).");
+        // No route and no ping on this line. Steam has not measured either yet
+        // when a connection is accepted: four of these read 147 to 150 ms with
+        // the next line of the same channel showing 3 to 4, and one said "relay
+        // sto" two seconds before the same connection turned out to be direct.
+        // The line below, written once the link is up, has the measured ones.
+        _logger?.Info($"Accepted a launcher connection from {channel.Peer}.");
         ConnectionAccepted?.Invoke(this, new PeerConnection(context, channel.Stream));
     }
 

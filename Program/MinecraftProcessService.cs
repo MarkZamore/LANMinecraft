@@ -323,6 +323,15 @@ public sealed class MinecraftProcessService
         if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
         extraJvmArguments.AddRange(JavaCompatibilityArguments.Select(argument => new MArgument(argument)));
         extraJvmArguments.AddRange(identityJvmArguments.Select(argument => new MArgument(argument)));
+        // What the game is actually started with. A release once went out with
+        // an option the JVM refuses, and the reports that came back could not
+        // say which options had been applied at all - none of the five logs a
+        // report carries holds the command line. There are no secrets in this
+        // list, and it is the first thing worth reading when a game will not
+        // start.
+        _logger.Info(
+            $"Java: -Xms{maximumRamMb}M -Xmx{maximumRamMb}M " +
+            string.Join(' ', extraJvmArguments.Select(argument => argument.ToString())));
         var launchOption = new MLaunchOption
         {
             Path = launchPath,
