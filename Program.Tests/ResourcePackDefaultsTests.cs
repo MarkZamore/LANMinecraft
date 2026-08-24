@@ -292,4 +292,37 @@ public sealed class ResourcePackDefaultsTests
             kept,
             StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void APackNameTheGameEscaped_IsStillTheBuildsOwn()
+    {
+        // The game writes this file with Gson, which turns an ampersand into a
+        // & escape. Read literally, that name matches nothing the build
+        // declares, so the pack was taken for one of the player's and left
+        // wherever it lay - which is how "Sun & Moon Fusion" kept coming back at
+        // the bottom of the stack, under everything it is meant to draw over.
+        var defaults = ResourcePackDefaultsService.Parse(
+            "file/Ground.zip\nfile/Sun & Moon Fusion 2.1.zip\n");
+        var options =
+            "resourcePacks:[\"vanilla\",\"file/Sun \\u0026 Moon Fusion 2.1.zip\",\"file/Ground.zip\"]\n";
+
+        var (text, _) = ResourcePackDefaultsService.Select(options, defaults);
+
+        Assert.Contains(
+            "resourcePacks:[\"vanilla\",\"file/Ground.zip\",\"file/Sun & Moon Fusion 2.1.zip\"]",
+            text,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheEscapesTheGameWrites_SurviveOneTripThrough()
+    {
+        var read = ResourcePackDefaultsService.ReadList(
+            "[\"a\\u0026b\",\"quote\\\"inside\",\"back\\\\slash\",\"plain\"]");
+
+        Assert.Equal(["a&b", "quote\"inside", "back\\slash", "plain"], read);
+        Assert.Equal(
+            read,
+            ResourcePackDefaultsService.ReadList(ResourcePackDefaultsService.WriteList(read)));
+    }
 }

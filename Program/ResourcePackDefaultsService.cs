@@ -359,6 +359,16 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     }
 
     /// <summary>The game writes these as a JSON array of quoted strings on one line.</summary>
+    /// <summary>
+    /// Reads one of the game's option lists back into plain strings.
+    ///
+    /// The escapes have to be undone, not carried through. The game writes this
+    /// file with Gson, which escapes more than JSON requires: an ampersand in a
+    /// pack name comes back as a backslash-u-0026. Read literally, such a name
+    /// matches nothing in the pack's own list, so the pack is taken for one of
+    /// the player's and left wherever it happened to lie - which is how "Sun and
+    /// Moon Fusion" ended up at the bottom of the stack instead of near the top.
+    /// </summary>
     internal static List<string> ReadList(string value)
     {
         var items = new List<string>();
@@ -370,20 +380,56 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
         for (var index = 0; index < body.Length; index++)
         {
             var symbol = body[index];
-            if (symbol == '"' && (index == 0 || body[index - 1] != '\\'))
+            if (!quoted)
             {
-                if (quoted) items.Add(current.ToString());
+                if (symbol != '"') continue;
+                quoted = true;
                 current.Clear();
-                quoted = !quoted;
                 continue;
             }
-            if (quoted) current.Append(symbol);
+
+            if (symbol == '"')
+            {
+                items.Add(current.ToString());
+                quoted = false;
+                continue;
+            }
+
+            if (symbol != '\\')
+            {
+                current.Append(symbol);
+                continue;
+            }
+
+            if (++index >= body.Length) break;
+            var escape = body[index];
+            switch (escape)
+            {
+                case 'u' when index + 4 < body.Length && ushort.TryParse(
+                    body.AsSpan(index + 1, 4),
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out var code):
+                    current.Append((char)code);
+                    index += 4;
+                    break;
+                case 'b': current.Append('\b'); break;
+                case 'f': current.Append('\f'); break;
+                case 'n': current.Append('\n'); break;
+                case 'r': current.Append('\r'); break;
+                case 't': current.Append('\t'); break;
+                // Everything else stands for itself: \" \\ \/ and whatever a
+                // future writer invents.
+                default: current.Append(escape); break;
+            }
         }
         return items;
     }
 
     internal static string WriteList(IReadOnlyList<string> items) =>
-        "[" + string.Join(",", items.Select(item => "\"" + item.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"")) + "]";
+        "[" + string.Join(",", items.Select(item => "\"" + item
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"")) + "]";
 
     /// <summary>
     /// What was applied last time: the list's identity on the first line, then
