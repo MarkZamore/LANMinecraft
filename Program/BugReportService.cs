@@ -439,6 +439,24 @@ public sealed class BugReportService : IPortableProtocolHandler
         return written;
     }
 
+    /// <summary>
+    /// The worlds on this machine and the build each is recorded under, as
+    /// lines for the report. Which build a world belongs to decides which
+    /// pack's list offers it, and one recorded under none is offered by every
+    /// pack - so a report that does not say this cannot answer "why is my
+    /// world in both builds", and no log on the machine carries the answer.
+    /// </summary>
+    private string BuildWorldLines()
+    {
+        var worlds = SupportDiagnosticSnapshotBuilder.ReadWorlds(_paths);
+        if (worlds.Length == 0) return "(нет)";
+        return string.Join(
+            Environment.NewLine,
+            worlds.Select(world =>
+                $"  {world.Name} - сборка: {world.BuildName} ({world.BuildRelativePath}), " +
+                $"создал: {world.OwnerName}, сейчас у: {world.HolderName}"));
+    }
+
     private string BuildReportText(BugReportContext context, string message) =>
         new StringBuilder()
             .AppendLine("LANMinecraft bug report")
@@ -449,6 +467,9 @@ public sealed class BugReportService : IPortableProtocolHandler
             .AppendLine(CultureInfo.InvariantCulture, $"launcher: {context.LauncherVersion}")
             .AppendLine(CultureInfo.InvariantCulture, $"pack: {context.PackName} ({context.PackHash})")
             .AppendLine(CultureInfo.InvariantCulture, $"game running: {context.IsMinecraftRunning}")
+            .AppendLine()
+            .AppendLine("--- worlds on this machine ---")
+            .AppendLine(BuildWorldLines())
             .AppendLine()
             .AppendLine("--- what the player wrote ---")
             .AppendLine(NormalizeMessage(message))
@@ -668,7 +689,9 @@ public sealed class BugReportService : IPortableProtocolHandler
             .AppendLine()
             .AppendLine("## Files")
             .AppendLine()
-            .AppendLine("- `report.txt` - the same message plus the sender's environment")
+            .AppendLine(
+                "- `report.txt` - the same message, the sender's environment, and every world " +
+                "on their machine with the build it is recorded under")
             .AppendLine("- `launcher/logs.log` - the launcher's own log, sanitised")
             .AppendLine("- `game/latest.log` - the game session, sanitised; a long one keeps its start and its end")
             .AppendLine("- `game/launcher-console.log` - what the game printed before its own logging existed")

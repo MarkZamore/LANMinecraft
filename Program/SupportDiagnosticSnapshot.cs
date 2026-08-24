@@ -44,6 +44,7 @@ public sealed record SupportEnvironmentSnapshot(
     string PackName,
     string PackHash,
     IReadOnlyList<SupportModSnapshot> Mods,
+    IReadOnlyList<SupportWorldSnapshot> Worlds,
     SteamDiagnosticContext Steam,
     IReadOnlyDictionary<string, string> RuntimeState,
     string SocketTable);
@@ -52,6 +53,22 @@ public sealed record SupportModSnapshot(
     string FileName,
     long Size,
     string Version);
+
+/// <summary>
+/// One world in the sender's Worlds folder, and the build it is recorded under.
+///
+/// The folder is shared by every build, and which build a world belongs to is
+/// the one thing that decides whether it is offered in a given pack's list. A
+/// world with no build recorded is offered in all of them on purpose - so
+/// "why does this world show up under both packs" cannot be answered without
+/// seeing that label, and no log carries it.
+/// </summary>
+public sealed record SupportWorldSnapshot(
+    string Name,
+    string BuildName,
+    string BuildRelativePath,
+    string OwnerName,
+    string HolderName);
 
 internal sealed record SupportVersionFallback(
     string MinecraftVersion,
@@ -133,9 +150,45 @@ public static partial class SupportDiagnosticSnapshotBuilder
                 Path.AltDirectorySeparatorChar)) ?? string.Empty,
             request.PackHash ?? string.Empty,
             ReadMods(request.Paths, packRelativePath),
+            ReadWorlds(request.Paths),
             request.Steam,
             runtimeState,
             commands[0]);
+    }
+
+    /// <summary>
+    /// Every world on this machine with the build it is recorded under. A world
+    /// whose build was never recorded says so in words rather than in an empty
+    /// string, because that state is the answer to a real question and not a
+    /// gap in the report.
+    /// </summary>
+    internal static SupportWorldSnapshot[] ReadWorlds(AppPaths paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (!Directory.Exists(paths.Worlds)) return [];
+        const string unrecorded = "не записана";
+        var metadata = new WorldMetadataService();
+        var worlds = new List<SupportWorldSnapshot>();
+        try
+        {
+            foreach (var path in Directory.EnumerateDirectories(paths.Worlds)
+                         .Where(WorldTransferService.IsMinecraftWorldDirectory)
+                         .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+            {
+                var world = metadata.Read(path);
+                worlds.Add(new SupportWorldSnapshot(
+                    Path.GetFileName(path),
+                    string.IsNullOrWhiteSpace(world?.BuildName) ? unrecorded : world.BuildName,
+                    string.IsNullOrWhiteSpace(world?.BuildRelativePath) ? unrecorded : world.BuildRelativePath,
+                    world?.OwnerIdentityName ?? string.Empty,
+                    world?.CurrentHolderIdentityName ?? string.Empty));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A report that lists no worlds is still worth sending.
+        }
+        return [.. worlds];
     }
 
     public static SupportNetworkMetrics CaptureMetrics(

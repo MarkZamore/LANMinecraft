@@ -207,7 +207,7 @@ public sealed class BugReportServiceTests : IDisposable
                 "release 38", "Infinity", new string('a', 64), IsMinecraftRunning: false),
             _ => Task.FromResult(new SupportEnvironmentSnapshot(
                 DateTimeOffset.UtcNow, "release 38", "38", ".NET 10", "Windows", "X64",
-                "Java 25", "Infinity", new string('a', 64), [],
+                "Java 25", "Infinity", new string('a', 64), [], [],
                 SteamDiagnosticContext.Unavailable, new Dictionary<string, string>(), string.Empty)));
     }
 

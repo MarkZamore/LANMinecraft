@@ -101,9 +101,22 @@ public sealed class WindowCanvasTests
         return (Window)XamlReader.Parse(xaml);
     }
 
+    /// <summary>
+    /// One apartment at a time.
+    ///
+    /// Loading the window loads CenteredDropDown, whose InitializeComponent
+    /// goes through Application.LoadComponent to the same packaged resource
+    /// every time. WPF tracks that part's open streams in a plain List and
+    /// prunes it without a lock, so two of these threads running at once could
+    /// have one of them fail inside List.RemoveAt - about one run in five, in a
+    /// test that has nothing to do with either window.
+    /// </summary>
+    private static readonly Lock StaGate = new();
+
     /// <summary>WPF objects belong to a single-threaded apartment; xUnit's is not one.</summary>
     internal static T OnAStaThread<T>(Func<T> work)
     {
+        using var _ = StaGate.EnterScope();
         T result = default!;
         Exception? failure = null;
         var thread = new Thread(() =>
