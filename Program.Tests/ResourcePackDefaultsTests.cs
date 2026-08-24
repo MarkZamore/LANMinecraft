@@ -201,7 +201,8 @@ public sealed class ResourcePackDefaultsTests
         Assert.Equal(["file/Choice.zip"], defaults.Optional);
         Assert.Equal(["file/Base.zip", "file/Top.zip"], defaults.Forced);
 
-        var offered = defaults.Entries;
+        // The marker holds the marks too, so an unchanged line reads as offered.
+        var offered = defaults.Marked;
         var off = "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Top.zip\"]\n";
         var (text, _) = ResourcePackDefaultsService.Select(off, defaults, null, offered);
         Assert.Contains("resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Top.zip\"]", text, StringComparison.Ordinal);
@@ -232,7 +233,7 @@ public sealed class ResourcePackDefaultsTests
 
         // The player swaps them, and the swap survives the next launch.
         var swapped = "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Other.zip\"]\n";
-        var (kept, _) = ResourcePackDefaultsService.Select(swapped, defaults, null, defaults.Entries);
+        var (kept, _) = ResourcePackDefaultsService.Select(swapped, defaults, null, defaults.Marked);
         Assert.Contains("resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Other.zip\"]", kept, StringComparison.Ordinal);
     }
 
@@ -247,5 +248,48 @@ public sealed class ResourcePackDefaultsTests
         Assert.Equal(forced.Entries, optional.Entries);
         Assert.NotEqual(forced.Sha256, optional.Sha256);
         Assert.NotEqual(optional.Sha256, off.Sha256);
+    }
+
+    /// <summary>
+    /// The build changing its mind about an entry gets one turn to be obeyed.
+    ///
+    /// An entry the player owns keeps whatever they left it at, which is right
+    /// until the build says something new about it. Thicc Villagers was an
+    /// ordinary listed pack, so every instance had it on; when it became "-" -
+    /// shipped, but off - keeping the player's state would have meant the new
+    /// default never arrived anywhere it mattered. The marker records the marks
+    /// beside the entry, so a line whose marks changed reads as one this
+    /// instance has not been offered, and the default applies once.
+    /// </summary>
+    [Fact]
+    public void AnEntryWhoseMarksChanged_GetsTheNewDefaultOnce()
+    {
+        var before = ResourcePackDefaultsService.Parse(
+            string.Join('\n', ["file/Base.zip", "file/Luigi.zip", "file/Thicc.zip"]));
+        var after = ResourcePackDefaultsService.Parse(
+            string.Join('\n', ["file/Base.zip", "?file/Luigi.zip", "-file/Thicc.zip"]));
+
+        Assert.Equal(["file/Base.zip", "file/Luigi.zip", "file/Thicc.zip"], before.Marked);
+        Assert.Equal(["file/Base.zip", "?file/Luigi.zip", "-file/Thicc.zip"], after.Marked);
+
+        // The instance ran on the old list, so it has all three on.
+        var options = "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Luigi.zip\",\"file/Thicc.zip\"]\n";
+        var (text, _) = ResourcePackDefaultsService.Select(options, after, null, before.Marked);
+
+        // Luigi stays on: "?" only hands the choice over. Thicc goes off,
+        // because "-" is the build saying it ships switched off.
+        Assert.Contains(
+            "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Luigi.zip\"]",
+            text,
+            StringComparison.Ordinal);
+
+        // Once offered, the answer is the player's again: switching Thicc on
+        // survives the launch after that.
+        var swapped = "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Thicc.zip\"]\n";
+        var (kept, _) = ResourcePackDefaultsService.Select(swapped, after, null, after.Marked);
+        Assert.Contains(
+            "resourcePacks:[\"vanilla\",\"file/Base.zip\",\"file/Thicc.zip\"]",
+            kept,
+            StringComparison.Ordinal);
     }
 }
