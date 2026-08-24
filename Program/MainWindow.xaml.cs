@@ -513,11 +513,17 @@ public partial class MainWindow : Window
             .Where(path => !Path.GetFileName(path).Contains(".backup-", StringComparison.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => CreateWorldViewModel(path, metadataContext))
-            // A world made on another pack is not offered here: its blocks belong
-            // to mods this one may not have, and opening it is how content is lost.
-            .Where(world => WorldMetadataService.BelongsToBuild(
-                world.BuildRelativePath,
-                _settings.ClientRelativePath))
+            // Every world, whatever build it belongs to. This list is what a
+            // world is handed over from, and a world can only be handed over by
+            // whoever is holding it - which used to mean switching builds first,
+            // to a build that then had to be prepared and launched for no other
+            // reason. Each row says which build it belongs to.
+            //
+            // Opening a world under the wrong build is still how the blocks of
+            // every mod that build does not have are lost, and that is still
+            // prevented - in the one place it can be. The game is given a saves
+            // folder holding only the worlds this build may open, so a world
+            // named here that belongs elsewhere is not in the game's list at all.
             .ToList();
 
         var worldsMatch = _worlds.Count == worlds.Count &&
@@ -1147,6 +1153,15 @@ public partial class MainWindow : Window
 
         try
         {
+            // A world the player just made is a real folder inside the
+            // instance, because the game made it there; it has to be moved
+            // beside the others before it can be stamped, or it is not among
+            // the worlds this looks at.
+            var instance = ResolveCurrentInstanceDirectory();
+            if (instance is not null)
+            {
+                new SavesFolderService(_logger).Adopt(_paths.Worlds, instance);
+            }
             var stamped = RequireWorldMetadata().StampPlayedWorlds(_paths.Worlds, context, startedUtc);
             foreach (var world in stamped)
             {
