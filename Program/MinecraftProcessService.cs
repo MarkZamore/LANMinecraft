@@ -271,13 +271,16 @@ public sealed class MinecraftProcessService
                 $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory)} GB outside its heap, " +
                 $"so {settings.MaxMemoryGb} GB is under the {smallestUsefulBudgetGb} GB it takes to stay inside that number.");
         }
-        var extraJvmArguments = new List<MArgument>
+        // Held as text, not as MArgument, so the line logged below is the line
+        // handed to the JVM. MArgument does not override ToString, so logging
+        // the arguments themselves printed the type name sixty times over.
+        var extraJvmArguments = new List<string>
         {
-            new("-Dfile.encoding=UTF-8"),
-            new("-Djava.net.preferIPv4Stack=true"),
-            new("-Djava.net.preferIPv6Addresses=false"),
-            new($"-Djava.io.tmpdir={javaTempDir}"),
-            new($"-Dminecraft.portable.skin.registry={skinRegistryPath}"),
+            "-Dfile.encoding=UTF-8",
+            "-Djava.net.preferIPv4Stack=true",
+            "-Djava.net.preferIPv6Addresses=false",
+            $"-Djava.io.tmpdir={javaTempDir}",
+            $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
             // ModernFix's lazy model loading, as a JVM property. Without it a
             // player on 8 GB of heap ran out of memory before the world had
             // finished loading its data packs - the vanilla path holds every
@@ -288,7 +291,7 @@ public sealed class MinecraftProcessService
             // A property rather than the config file because ModernFix rewrites
             // that file on every launch, so a pack copy can never reach an
             // instance without the sync flagging it as a local edit.
-            new("-Dmodernfix.config.mixin.perf.dynamic_resources=true"),
+            "-Dmodernfix.config.mixin.perf.dynamic_resources=true",
             // Die at the first OutOfMemoryError instead of carrying on.
             //
             // The game's own answer to running out of memory while a world's
@@ -299,7 +302,7 @@ public sealed class MinecraftProcessService
             // memory" screen does, so the dangerous button is the one a player
             // sees first. A JVM that exits on the spot never shows either, and
             // the launcher says what happened instead.
-            new("-XX:+ExitOnOutOfMemoryError")
+            "-XX:+ExitOnOutOfMemoryError"
             // G1 tuned for a big modded heap. Left alone it grew the committed
             // heap from 2 GB to 9.4 GB in one session in resize steps, each a
             // pause a player feels as a stutter; Xms=Xmx below ends that. The
@@ -318,11 +321,11 @@ public sealed class MinecraftProcessService
             // generation on its own. Anything added here must survive
             // `java <flag> -version` on the pinned runtime first.
         };
-        extraJvmArguments.AddRange(HeapTuningArguments.Select(argument => new MArgument(argument)));
+        extraJvmArguments.AddRange(HeapTuningArguments);
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
-        if (gameLogArgument is not null) extraJvmArguments.Add(new MArgument(gameLogArgument));
-        extraJvmArguments.AddRange(JavaCompatibilityArguments.Select(argument => new MArgument(argument)));
-        extraJvmArguments.AddRange(identityJvmArguments.Select(argument => new MArgument(argument)));
+        if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
+        extraJvmArguments.AddRange(JavaCompatibilityArguments);
+        extraJvmArguments.AddRange(identityJvmArguments);
         // What the game is actually started with. A release once went out with
         // an option the JVM refuses, and the reports that came back could not
         // say which options had been applied at all - none of the five logs a
@@ -331,7 +334,7 @@ public sealed class MinecraftProcessService
         // start.
         _logger.Info(
             $"Java: -Xms{maximumRamMb}M -Xmx{maximumRamMb}M " +
-            string.Join(' ', extraJvmArguments.Select(argument => argument.ToString())));
+            string.Join(' ', extraJvmArguments));
         var launchOption = new MLaunchOption
         {
             Path = launchPath,
@@ -348,7 +351,7 @@ public sealed class MinecraftProcessService
             GameLauncherVersion = "1",
             VersionType = $"{descriptor.Loader.Type} {descriptor.Loader.Version}".Trim(),
             FullScreen = false,
-            ExtraJvmArguments = extraJvmArguments
+            ExtraJvmArguments = extraJvmArguments.Select(argument => new MArgument(argument)).ToList()
         };
         var minecraftProcess = launcher.BuildProcess(profile, launchOption);
         minecraftProcess.StartInfo.WorkingDirectory = gameDir;
