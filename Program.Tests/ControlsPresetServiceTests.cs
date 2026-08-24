@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -26,7 +26,7 @@ public sealed class ControlsPresetServiceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
+        try { TempTree.Delete(_root); } catch (IOException) { }
     }
 
     [Fact]

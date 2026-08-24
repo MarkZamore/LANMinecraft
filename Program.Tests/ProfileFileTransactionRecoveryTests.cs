@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace Minecraft.Tests;
 
@@ -26,7 +26,7 @@ public sealed class ProfileFileTransactionRecoveryTests : IDisposable
     {
         try
         {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
         catch
         {

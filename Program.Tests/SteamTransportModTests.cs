@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -218,7 +218,7 @@ public sealed class SteamTransportModTests
         {
             try
             {
-                if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+                TempTree.Delete(Root);
             }
             catch (IOException)
             {

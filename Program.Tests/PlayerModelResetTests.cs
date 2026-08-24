@@ -48,7 +48,7 @@ public sealed class PlayerModelResetTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 

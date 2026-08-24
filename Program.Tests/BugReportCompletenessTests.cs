@@ -1,4 +1,4 @@
-
+﻿
 
 namespace Minecraft.Tests;
 
@@ -25,7 +25,7 @@ public sealed class BugReportCompletenessTests : IDisposable
     {
         try
         {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
         catch
         {

@@ -281,7 +281,7 @@ public sealed class WorldTransferHandshakeTests
         }
         finally
         {
-            if (Directory.Exists(senderRoot)) Directory.Delete(senderRoot, recursive: true);
+            TempTree.Delete(senderRoot);
         }
     }
 
@@ -443,7 +443,7 @@ public sealed class WorldTransferHandshakeTests
             await _waypoints.DisposeAsync();
             await _skins.DisposeAsync();
             _packRuntimes.Dispose();
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
     }
 }

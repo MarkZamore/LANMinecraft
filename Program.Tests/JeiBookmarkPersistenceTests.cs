@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using Minecraft;
 
@@ -16,7 +16,7 @@ public sealed class JeiBookmarkPersistenceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        TempTree.Delete(_root);
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -40,7 +40,7 @@ public sealed class MinimapResetTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 
@@ -62,7 +62,7 @@ public sealed class MinimapResetTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 
@@ -83,7 +83,7 @@ public sealed class MinimapResetTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 

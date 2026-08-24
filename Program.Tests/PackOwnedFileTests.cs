@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -22,7 +22,7 @@ public sealed class PackOwnedFileTests : IDisposable
     {
         try
         {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
         catch
         {

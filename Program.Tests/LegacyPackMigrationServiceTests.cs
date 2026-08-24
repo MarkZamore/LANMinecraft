@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -22,7 +22,7 @@ public sealed class LegacyPackMigrationServiceTests : IDisposable
     {
         try
         {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
         catch (IOException)
         {
