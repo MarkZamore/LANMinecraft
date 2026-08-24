@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -181,7 +181,7 @@ public sealed class SupportDiagnosticSnapshotTests
             {
                 if (Directory.Exists(Root))
                 {
-                    Directory.Delete(Root, recursive: true);
+                    TempTree.Delete(Root);
                 }
             }
             catch

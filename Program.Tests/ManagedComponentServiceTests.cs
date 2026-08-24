@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Minecraft;
@@ -485,7 +485,7 @@ public sealed class ManagedComponentServiceTests
         {
             try
             {
-                if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+                TempTree.Delete(Root);
             }
             catch
             {

@@ -232,7 +232,7 @@ public sealed class WorldTransferLifecycleTests
             await _waypoints.DisposeAsync();
             await _skins.DisposeAsync();
             _packRuntimes.Dispose();
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
     }
 }

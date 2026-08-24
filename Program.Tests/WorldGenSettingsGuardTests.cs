@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -34,7 +34,7 @@ public sealed class WorldGenSettingsGuardTests
         }
         finally
         {
-            Directory.Delete(world, recursive: true);
+            TempTree.Delete(world);
         }
     }
 
@@ -59,7 +59,7 @@ public sealed class WorldGenSettingsGuardTests
         }
         finally
         {
-            Directory.Delete(world, recursive: true);
+            TempTree.Delete(world);
         }
     }
 
@@ -81,7 +81,7 @@ public sealed class WorldGenSettingsGuardTests
         }
         finally
         {
-            Directory.Delete(world, recursive: true);
+            TempTree.Delete(world);
         }
     }
 

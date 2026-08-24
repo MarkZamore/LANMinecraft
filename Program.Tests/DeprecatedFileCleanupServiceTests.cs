@@ -18,7 +18,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     {
         try
         {
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            TempTree.Delete(_root);
         }
         catch
         {

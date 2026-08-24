@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -11,7 +11,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        TempTree.Delete(_root);
     }
 
     // Verbatim excerpt of neoform-1.21.1-20240808.144430-mappings-merged.txt:

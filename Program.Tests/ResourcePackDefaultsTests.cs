@@ -80,7 +80,7 @@ public sealed class ResourcePackDefaultsTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 
@@ -163,7 +163,7 @@ public sealed class ResourcePackDefaultsTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempTree.Delete(root);
         }
     }
 
