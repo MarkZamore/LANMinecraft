@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -23,13 +23,34 @@ public sealed class MemorySizingTests
     private static PackMemoryProfile HeavierThanLimitless => new(1500, Mb(4000), Mb(500), "1.22");
 
     [Theory]
-    [InlineData(8, 4)]
+    [InlineData(8, 5)]
     [InlineData(16, 12)]
     [InlineData(32, 24)]
     [InlineData(64, 48)]
     public void TheLargestBudgetOffered_LeavesTheMachineItsQuarter(int installedGb, int expected)
     {
         Assert.Equal(expected, MemorySizingService.GetAllowedMaxMemoryGb(Gb(installedGb)));
+    }
+
+    /// <summary>
+    /// Under a quarter there is a floor, and it is three gigabytes rather than
+    /// four. Windows reports what the hardware has left it, so a laptop sold
+    /// with eight gigabytes says seven and a half; the old floor took four of
+    /// those seven and offered three, which is under what a pack of fifty mods
+    /// needs to keep the promise the number makes. Machines large enough for
+    /// the quarter to be the larger of the two are not affected at all.
+    /// </summary>
+    [Theory]
+    [InlineData(7.5, 4)]   // "8 GB" as Windows counts it
+    [InlineData(15.6, 12)] // "16 GB", the same rounding
+    [InlineData(11.9, 8)]
+    [InlineData(31.6, 24)] // the quarter rules from twelve gigabytes up
+    [InlineData(63.5, 48)]
+    public void ASmallMachine_KeepsThreeGigabytesBack_NotFour(double installedGb, int expected)
+    {
+        var installed = (ulong)(installedGb * 1024 * 1024 * 1024);
+
+        Assert.Equal(expected, MemorySizingService.GetAllowedMaxMemoryGb(installed));
     }
 
     /// <summary>A very small machine still gets the floor, not a negative.</summary>

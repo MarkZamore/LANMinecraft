@@ -953,13 +953,69 @@ internal sealed class NbtReader
         return value;
     }
 
+    /// <summary>
+    /// NBT strings are Java's modified UTF-8, which is not UTF-8: U+0000 is
+    /// written as C0 80, and everything above the basic plane - an emoji in a
+    /// world's name, in an item renamed at an anvil, on a page of a book - as
+    /// the two halves of its surrogate pair, three bytes each. Standard UTF-8
+    /// has no such sequences, so reading these with <see cref="Encoding.UTF8"/>
+    /// turned every one of them into replacement diamonds, and the launcher
+    /// wrote the diamonds back on the next launch. Nothing threw and nothing
+    /// was logged; the text was simply gone.
+    /// </summary>
+    /// <remarks>
+    /// Four-byte sequences cannot come from the game - Java would refuse to
+    /// read its own file - but they can come from a third-party editor, so they
+    /// are decoded rather than rejected. Read that way and written back the
+    /// modified way, this repairs such a file instead of passing the fault on.
+    /// </remarks>
     public string ReadString()
     {
         var length = (ushort)ReadInt16();
         EnsureAvailable(length);
-        var value = Encoding.UTF8.GetString(_bytes, _position, length);
+        var value = DecodeModifiedUtf8(_bytes.AsSpan(_position, length));
         _position += length;
         return value;
+    }
+
+    internal static string DecodeModifiedUtf8(ReadOnlySpan<byte> bytes)
+    {
+        var text = new System.Text.StringBuilder(bytes.Length);
+        for (var i = 0; i < bytes.Length;)
+        {
+            var first = bytes[i];
+            if (first < 0x80)
+            {
+                text.Append((char)first);
+                i++;
+            }
+            else if ((first & 0xE0) == 0xC0 && i + 1 < bytes.Length)
+            {
+                text.Append((char)(((first & 0x1F) << 6) | (bytes[i + 1] & 0x3F)));
+                i += 2;
+            }
+            else if ((first & 0xF0) == 0xE0 && i + 2 < bytes.Length)
+            {
+                // Kept as the code unit it is, surrogate halves included: two of
+                // them side by side are the emoji, and a lone one survives the
+                // trip rather than being flattened.
+                text.Append((char)(((first & 0x0F) << 12) | ((bytes[i + 1] & 0x3F) << 6) | (bytes[i + 2] & 0x3F)));
+                i += 3;
+            }
+            else if ((first & 0xF8) == 0xF0 && i + 3 < bytes.Length)
+            {
+                // Not something the game writes; some other editor's UTF-8.
+                var code = ((first & 0x07) << 18) | ((bytes[i + 1] & 0x3F) << 12) |
+                    ((bytes[i + 2] & 0x3F) << 6) | (bytes[i + 3] & 0x3F);
+                text.Append(char.ConvertFromUtf32(Math.Clamp(code, 0, 0x10FFFF)));
+                i += 4;
+            }
+            else
+            {
+                throw new InvalidDataException($"NBT string holds a byte no encoding of it allows: 0x{first:X2}.");
+            }
+        }
+        return text.ToString();
     }
 
     public byte[] ReadByteArray()
@@ -1070,9 +1126,15 @@ internal sealed class NbtWriter
         WriteInt64(BitConverter.DoubleToInt64Bits(value));
     }
 
+    /// <summary>
+    /// The same modified UTF-8 the game reads: a nul as C0 80, and anything
+    /// above the basic plane as the two halves of its surrogate pair, three
+    /// bytes each. Walking the string by UTF-16 code unit rather than by code
+    /// point is what makes that fall out on its own.
+    /// </summary>
     public void WriteString(string value)
     {
-        var bytes = Encoding.UTF8.GetBytes(value);
+        var bytes = EncodeModifiedUtf8(value);
         if (bytes.Length > ushort.MaxValue)
         {
             throw new InvalidDataException("NBT string is too long.");
@@ -1080,6 +1142,30 @@ internal sealed class NbtWriter
 
         WriteInt16(unchecked((short)bytes.Length));
         _stream.Write(bytes);
+    }
+
+    internal static byte[] EncodeModifiedUtf8(string value)
+    {
+        var bytes = new List<byte>(value.Length + 8);
+        foreach (var unit in value)
+        {
+            if (unit >= 0x0001 && unit <= 0x007F)
+            {
+                bytes.Add((byte)unit);
+            }
+            else if (unit == 0x0000 || unit <= 0x07FF)
+            {
+                bytes.Add((byte)(0xC0 | ((unit >> 6) & 0x1F)));
+                bytes.Add((byte)(0x80 | (unit & 0x3F)));
+            }
+            else
+            {
+                bytes.Add((byte)(0xE0 | ((unit >> 12) & 0x0F)));
+                bytes.Add((byte)(0x80 | ((unit >> 6) & 0x3F)));
+                bytes.Add((byte)(0x80 | (unit & 0x3F)));
+            }
+        }
+        return bytes.ToArray();
     }
 
     public void WriteByteArray(byte[] value)
