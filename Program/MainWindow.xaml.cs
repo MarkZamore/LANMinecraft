@@ -2559,10 +2559,15 @@ public partial class MainWindow : Window
         // or a game that has the options file open.
         var preset = _controlsPresetStatus;
         ControlsPresetButton.IsEnabled = preset.HasPreset && !preset.IsApplied && !_minecraftRunning;
-        ControlsPresetButton.ToolTip = _minecraftRunning
-            ? "Игра запущена - настройки управления сейчас у неё"
-            : !preset.HasPreset
-                ? "Для выбранной сборки нет пресета управления"
+        // A build with no layout of its own says nothing at all: the button is
+        // simply dead, the way a control is for a feature a build does not
+        // have. The other two quiet states are worth explaining - the game is
+        // holding the file, or the layout is already in place - because there
+        // the button would otherwise look broken.
+        ControlsPresetButton.ToolTip = !preset.HasPreset
+            ? null
+            : _minecraftRunning
+                ? "Игра запущена - настройки управления сейчас у неё"
                 : preset.IsApplied
                     ? "Пресет применён - настройки управления совпадают со сборкой"
                     // A lit button says what it found: the first line of the
