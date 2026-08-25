@@ -103,6 +103,81 @@ public sealed class MemorySizingTests
     }
 
     /// <summary>
+    /// The card is the machine's half of the same sum. What a pack hands it and
+    /// it cannot hold, the driver keeps in system memory, and that copy is the
+    /// game's: on identical laptops with identical settings, the one with eight
+    /// gigabytes of video memory was at 28.5 GB of its 31.6 with full
+    /// collections of 2.2 seconds, and the one with sixteen was not. So the same
+    /// budget leaves the smaller card the smaller heap - by itself, without
+    /// anyone being told to type a different number.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 8, 16)]   // a card nobody could read costs nothing
+    [InlineData(16, 8, 16)]  // and one that holds the pack costs nothing either
+    [InlineData(12, 8, 16)]
+    [InlineData(10, 10, 14)]
+    [InlineData(8, 12, 12)]
+    [InlineData(6, 12, 12)]  // past the cap the shortfall stops being charged
+    public void ASmallCard_IsChargedToTheRoomBesideTheHeap(int videoGb, int reserveGb, int heapGb)
+    {
+        var video = new VideoMemoryProfile(videoGb);
+
+        Assert.Equal(reserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, video));
+        Assert.Equal(heapGb, MemorySizingService.GetHeapGb(BigModpack, 24, video));
+    }
+
+    /// <summary>
+    /// And the suggestion moves with it: the pack still gets the heap it wants,
+    /// and the number offered grows by what the driver takes - so a player who
+    /// never touches the field is not quietly given a heap the machine cannot
+    /// hold in memory.
+    /// </summary>
+    [Fact]
+    public void TheSuggestion_MakesRoomForWhatTheDriverKeeps()
+    {
+        var smallCard = new VideoMemoryProfile(8);
+        var largeCard = new VideoMemoryProfile(16);
+
+        var onASmallCard = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(32), smallCard);
+        var onALargeCard = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(32), largeCard);
+
+        Assert.Equal(24, onASmallCard);
+        Assert.Equal(20, onALargeCard);
+        Assert.Equal(
+            MemorySizingService.GetRecommendedHeapGb(BigModpack),
+            MemorySizingService.GetHeapGb(BigModpack, onASmallCard, smallCard));
+        Assert.Equal(
+            MemorySizingService.GetHeapGb(BigModpack, onALargeCard, largeCard),
+            MemorySizingService.GetHeapGb(BigModpack, onASmallCard, smallCard));
+    }
+
+    /// <summary>
+    /// Only what the pack itself draws is charged. Vanilla on a small card asks
+    /// for nothing extra - it fits - and a pack nobody has weighed is charged
+    /// nothing whatever the card, because there is nothing to compare it with.
+    /// </summary>
+    [Fact]
+    public void OnlyAPackThatOutgrowsTheCard_IsChargedForIt()
+    {
+        var smallCard = new VideoMemoryProfile(8);
+
+        Assert.Equal(0, MemorySizingService.GetVideoSpillGb(Vanilla, smallCard));
+        Assert.Equal(0, MemorySizingService.GetVideoSpillGb(OldVanilla, smallCard));
+        Assert.Equal(0, MemorySizingService.GetVideoSpillGb(SmallModpack, smallCard));
+        Assert.True(MemorySizingService.GetVideoSpillGb(BigModpack, smallCard) > 0);
+        Assert.True(
+            MemorySizingService.GetVideoSpillGb(HeavierThanLimitless, smallCard) >=
+            MemorySizingService.GetVideoSpillGb(BigModpack, smallCard),
+            "a heavier pack must not ask the card for less");
+
+        Assert.Equal(0, MemorySizingService.GetVideoSpillGb(PackMemoryProfile.Unknown, smallCard));
+        Assert.Equal(
+            MemorySizingService.GetHeapGb(PackMemoryProfile.Unknown, 24),
+            MemorySizingService.GetHeapGb(PackMemoryProfile.Unknown, 24, smallCard));
+        Assert.Equal(0, MemorySizingService.GetVideoSpillGb(BigModpack, VideoMemoryProfile.Unknown));
+    }
+
+    /// <summary>
     /// A pack the launcher has not been able to look at keeps the rule it used
     /// when it could not tell packs apart at all - so nothing regresses on the
     /// first run, before anything is installed.
@@ -200,13 +275,25 @@ public sealed class MemorySizingTests
         var launch = ReadRepositoryFile("Program", "MinecraftProcessService.cs");
         Assert.Contains("PackMemoryProfile.Measure(packDir)", launch, StringComparison.Ordinal);
         Assert.Contains(
-            "MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb)",
+            "MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video)",
             launch,
             StringComparison.Ordinal);
 
         var window = ReadRepositoryFile("Program", "MainWindow.xaml.cs");
         Assert.Contains("MemoryTextBox.ToolTip =", window, StringComparison.Ordinal);
         Assert.Contains("игра может занять всего", window, StringComparison.Ordinal);
+
+        // The card belongs to the same sum, and to all three places that do it:
+        // the number the launcher suggests, the number the field explains and
+        // the number the game is started with have to agree, or the field
+        // describes a launch that does not happen.
+        foreach (var source in new[]
+                 {
+                     launch, window, ReadRepositoryFile("Program", "SettingsService.cs")
+                 })
+        {
+            Assert.Contains("VideoMemoryProfile.Measure()", source, StringComparison.Ordinal);
+        }
         // The pack is weighed again when another build is chosen and when one
         // finishes downloading; without that the field describes the pack that
         // was here before.

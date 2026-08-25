@@ -2448,12 +2448,19 @@ public partial class MainWindow : Window
             return;
         }
         var pack = _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
-        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb);
-        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(pack);
+        var video = VideoMemoryProfile.Measure();
+        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb, video);
+        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(pack, video);
         var tooltip =
             $"Столько памяти игра может занять всего - до {budgetGb} ГБ. " +
             $"Из них {heapGb} ГБ достаётся куче Java, остальное держат классы модов, " +
             "скомпилированный код и буферы Sodium.";
+        var videoSpillGb = MemorySizingService.GetVideoSpillGb(pack, video);
+        if (videoSpillGb > 0)
+        {
+            tooltip += $" У видеокарты {video.DedicatedGb} ГБ, сборке этого мало, и около " +
+                $"{videoSpillGb} ГБ текстур драйвер держит в оперативной - куче достаётся меньше.";
+        }
         if (budgetGb < smallestUsefulBudgetGb)
         {
             tooltip += $" Этой сборке нужно хотя бы {smallestUsefulBudgetGb} ГБ - с меньшим числом " +

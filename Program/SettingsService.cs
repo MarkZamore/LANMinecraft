@@ -61,12 +61,14 @@ public sealed class SettingsService
     {
         if (settings.MemoryChosenByPlayer) return false;
 
-        var recommended = MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory);
+        var recommended =
+            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, VideoMemoryProfile.Measure());
         if (settings.MaxMemoryGb == recommended) return false;
 
         _logger?.Info(
             $"Memory for this pack ({DescribePack()}): {recommended} GB for the game, " +
-            $"of which {MemorySizingService.GetHeapGb(PackMemory, recommended)} GB is the Java heap.");
+            $"of which {MemorySizingService.GetHeapGb(PackMemory, recommended, VideoMemoryProfile.Measure())} GB " +
+            "is the Java heap.");
         settings.MaxMemoryGb = recommended;
         Save(settings);
         return true;
@@ -100,7 +102,8 @@ public sealed class SettingsService
             // on the launch that changed the meaning.
             if (hasConfiguredMemory && !HasJsonProperty(json, "memorySettingIsWholeGame"))
             {
-                var budget = MemorySizingService.GetBudgetForHeapGb(pack, settings.MaxMemoryGb);
+                var budget = MemorySizingService.GetBudgetForHeapGb(
+                    pack, settings.MaxMemoryGb, VideoMemoryProfile.Measure());
                 _logger?.Info(
                     $"Memory setting carried across: {settings.MaxMemoryGb} GB of heap becomes {budget} GB for the whole game.");
                 settings.MaxMemoryGb = budget;
@@ -151,7 +154,8 @@ public sealed class SettingsService
             settings.MaxMemoryGb < MemorySizingService.MinMemoryGb ||
             settings.MaxMemoryGb > MemorySizingService.MaxMemoryGb)
         {
-            settings.MaxMemoryGb = MemorySizingService.GetRecommendedDefaultMemoryGb(pack);
+            settings.MaxMemoryGb =
+                MemorySizingService.GetRecommendedDefaultMemoryGb(pack, VideoMemoryProfile.Measure());
         }
         else
         {
