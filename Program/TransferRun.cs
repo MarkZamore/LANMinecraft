@@ -15,6 +15,14 @@ namespace Minecraft;
 /// enough that dividing by it turns a moment's hesitation into an hour, and an
 /// estimate that opens at "3 ч" and settles at "4 мин" is worse than no
 /// estimate at all.
+///
+/// The clock that matters starts at the first step of the handover proper. What
+/// comes before it - finding the peer, connecting, and above all waiting for
+/// somebody to answer a dialog - is not work in proportion to anything, and
+/// counting it made the first answer as large as the wait had been: half a
+/// minute of somebody deciding, read as half a minute of copying, put the whole
+/// handover at twenty. Then the next step arrived, the fraction jumped, and the
+/// estimate fell off a cliff.
 /// </summary>
 internal sealed class TransferRun
 {
@@ -30,6 +38,8 @@ internal sealed class TransferRun
     private string _stage = "";
     private double _stageStartedAt;
     private double _fraction;
+    /// <summary>When the handover proper began; negative until it has.</summary>
+    private double _pipelineStartedAt = -1;
 
     public TransferRun(TransferPacing pacing, Func<TimeSpan>? elapsed = null)
     {
@@ -76,15 +86,26 @@ internal sealed class TransferRun
             _stageStartedAt = now.TotalSeconds;
         }
 
+        if (_pipelineStartedAt < 0 && TransferPacing.PipelineFor(stage) is not null)
+        {
+            _pipelineStartedAt = now.TotalSeconds;
+        }
+
         var progress = total > 0 ? Math.Clamp(current / (double)total, 0, 1) : 0;
         // Never walk backwards: a step whose byte total arrives late would
         // otherwise undo the step before it.
         _fraction = Math.Max(_fraction, _pacing.FractionDone(_finished, stage, progress));
 
-        if (_fraction < SpeakAboveFraction || now < SpeakAfter) return null;
+        // Everything is measured against the handover, not against however long
+        // the launcher spent getting to it.
+        var working = _pipelineStartedAt < 0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(Math.Max(0, now.TotalSeconds - _pipelineStartedAt));
+
+        if (_fraction < SpeakAboveFraction || working < SpeakAfter) return null;
         if (_fraction >= 1) return TimeSpan.Zero;
 
-        var remaining = TimeSpan.FromSeconds(now.TotalSeconds * (1 - _fraction) / _fraction);
+        var remaining = TimeSpan.FromSeconds(working.TotalSeconds * (1 - _fraction) / _fraction);
         return remaining > TooFarToSay ? null : remaining;
     }
 
