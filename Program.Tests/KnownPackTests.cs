@@ -55,6 +55,16 @@ public sealed class KnownPackTests
     }
 
     [Fact]
+    public void TheBrokenScriptEnhancedIsOffered()
+    {
+        var source = PortablePackSyncService.KnownSourceFor("The Broken Script Enhanced");
+        Assert.NotNull(source);
+        Assert.Equal("MarkZamore", source!.Owner);
+        Assert.Equal("The-Broken-Script-Enhanced", source.Repo);
+        Assert.Equal("pack-latest", source.Tag);
+    }
+
+    [Fact]
     public void ACustomPackHasNoSource()
     {
         Assert.Null(PortablePackSyncService.KnownSourceFor("SomebodysOwnPack"));
