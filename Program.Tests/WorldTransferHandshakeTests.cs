@@ -105,6 +105,51 @@ public sealed class WorldTransferHandshakeTests
                      Directory.EnumerateFileSystemEntries(fixture.TransfersRoot).Any());
     }
 
+    /// <summary>
+    /// A refusal has to take the bar down with it. The dialog raises progress of
+    /// its own - "Ожидание подтверждения" - and a declined transfer returns from
+    /// the middle of the receive, so if that return goes past the cleanup the
+    /// receiver is left waiting on screen for an answer it has already given.
+    /// </summary>
+    [Fact]
+    public async Task ADeclinedWorld_TakesItsProgressOffTheScreen()
+    {
+        var confirmation = new ScriptedConfirmation(accept: false);
+        await using var fixture = ServiceFixture.Create(confirmation: confirmation);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var seen = new List<WorldTransferProgress>();
+        fixture.Service.ProgressChanged += progress =>
+        {
+            lock (seen) seen.Add(progress);
+        };
+
+        await fixture.StartAcceptingAsync(timeout.Token);
+        await using var connection = await fixture.ConnectAsSenderAsync(timeout.Token);
+        await PortableProtocol.WriteJsonAsync(
+            connection.Stream, NewPrepareHeader(), JsonOptions, timeout.Token);
+
+        var ack = PortableProtocol.Deserialize<WorldTransferAck>(
+            await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token), JsonOptions);
+        Assert.NotNull(ack);
+        Assert.False(ack.Ok);
+
+        await WaitUntilAsync(() => !fixture.Service.IsOperationActive, timeout.Token);
+        await WaitUntilAsync(
+            () =>
+            {
+                lock (seen) return seen.Count > 0 && !seen[^1].IsActive;
+            },
+            timeout.Token);
+
+        lock (seen)
+        {
+            // The waiting label really was shown, so the case is the live one.
+            Assert.Contains(seen, progress =>
+                progress.Stage.Contains("Ожидание подтверждения", StringComparison.Ordinal));
+            Assert.False(seen[^1].IsActive);
+        }
+    }
+
     private sealed class ScriptedConfirmation(bool accept) : IWorldTransferConfirmation
     {
         public WorldTransferOffer? LastOffer { get; private set; }

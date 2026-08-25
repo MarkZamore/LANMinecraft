@@ -148,6 +148,11 @@ public sealed class TransferPacingTests
         var run = new TransferRun(new TransferPacing(), () => clock);
         double previous = 0;
 
+        // The estimate counts from the first step of the handover, so the
+        // handover is started at zero: that puts its clock and this one on the
+        // same origin, and elapsed + remaining is the whole again.
+        run.Advance(TransferPacing.Sending[0], 0, 0);
+
         foreach (var stage in TransferPacing.Sending)
         {
             foreach (var current in new long[] { 0, 250, 500, 1000 })
@@ -178,6 +183,57 @@ public sealed class TransferPacingTests
 
         run.Advance(TransferPacing.Sending[^1], 1, 1);
         Assert.True(run.Completed);
+    }
+
+    /// <summary>
+    /// Waiting for a friend to answer a dialog is not work, and it must not be
+    /// read as any. The estimate counts from the first step of the handover, so
+    /// the same copying gives the same answer whether the wait before it was a
+    /// second or a minute.
+    /// </summary>
+    [Fact]
+    public void TheWaitBeforeTheHandoverIsNotCountedAsWork()
+    {
+        var clock = TimeSpan.Zero;
+        var patient = new TransferRun(new TransferPacing(), () => clock);
+        // Two minutes of somebody deciding, then a minute of copying.
+        patient.Advance("Проверка получателя", 0, 0);
+        patient.Advance("Ожидание ответа получателя", 0, 0);
+        clock = TimeSpan.FromSeconds(120);
+        patient.Advance("Копирование мира", 0, 1_000_000);
+        clock = TimeSpan.FromSeconds(180);
+        var afterWaiting = patient.Advance("Копирование мира", 1_000_000, 1_000_000);
+
+        var prompt = new TransferRun(new TransferPacing(), () => clock);
+        clock = TimeSpan.Zero;
+        prompt.Advance("Копирование мира", 0, 1_000_000);
+        clock = TimeSpan.FromSeconds(60);
+        var withoutWaiting = prompt.Advance("Копирование мира", 1_000_000, 1_000_000);
+
+        Assert.NotNull(afterWaiting);
+        Assert.NotNull(withoutWaiting);
+        Assert.Equal(
+            withoutWaiting!.Value.TotalSeconds,
+            afterWaiting!.Value.TotalSeconds,
+            1);
+    }
+
+    /// <summary>
+    /// The four seconds of silence are four seconds of the handover, not four
+    /// of waiting: a run that has just started copying says nothing yet, however
+    /// long the launcher spent getting there.
+    /// </summary>
+    [Fact]
+    public void TheSilenceAtTheStartIsMeasuredFromTheHandoverToo()
+    {
+        var clock = TimeSpan.Zero;
+        var run = new TransferRun(new TransferPacing(), () => clock);
+        run.Advance("Ожидание ответа получателя", 0, 0);
+        clock = TimeSpan.FromMinutes(5);
+        run.Advance("Копирование мира", 0, 1_000_000);
+        clock = TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1);
+
+        Assert.Null(run.Advance("Копирование мира", 900_000, 1_000_000));
     }
 
     /// <summary>What each step cost, including the one still on screen.</summary>

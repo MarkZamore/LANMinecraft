@@ -569,6 +569,15 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             }
             EnsureMinecraftAvailableForTransfer("receiver");
 
+            // The bar starts before the question, not after it: the dialog puts
+            // "Ожидание подтверждения" on screen itself, and a refusal returns
+            // straight out of here. With the flag set later, that return went
+            // past the only thing that clears the bar, and the receiver kept
+            // waiting on a transfer that had already been answered - for the
+            // rest of the session, or until the launcher was restarted.
+            BeginProgress();
+            progressStarted = true;
+
             if (!await ConfirmIncomingWorldAsync(stream, header, context, token).ConfigureAwait(false))
             {
                 return;
@@ -582,8 +591,6 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 State = "Receiving"
             };
             WriteJournal(transactionRoot, journal);
-            BeginProgress();
-            progressStarted = true;
 
             if (isPrepare)
             {
