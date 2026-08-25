@@ -285,15 +285,25 @@ public static class MemorySizingService
 
     /// <summary>
     /// The largest budget a machine may be asked for - all of the game, heap
-    /// and everything beside it. A quarter of the machine is kept back, and
-    /// never less than four gigabytes: a game that fits the installed memory
-    /// exactly is a machine that pages, and a paging machine spends whole
-    /// seconds inside one tick.
+    /// and everything beside it. A quarter of the machine is kept back: a game
+    /// that fits the installed memory exactly is a machine that pages, and a
+    /// paging machine spends whole seconds inside one tick.
     /// </summary>
+    /// <remarks>
+    /// The floor under that quarter is three gigabytes, not four. Four was too
+    /// much of a small machine to hold back: Windows counts what the hardware
+    /// has taken for itself, so a laptop sold with eight gigabytes reports
+    /// seven and a half, which rounds down to seven and left four - half the
+    /// machine - unofferable. A pack of fifty mods needs a four gigabyte budget
+    /// to keep the promise its number makes, and that machine could not be
+    /// offered one. Three still leaves an idle Windows its room; below eight
+    /// gigabytes installed there is no arrangement that leaves everybody happy,
+    /// and the one that lets the game start is the better of them.
+    /// </remarks>
     public static int GetAllowedMaxMemoryGb(ulong totalPhysicalMemoryBytes)
     {
         var installedGb = (int)Math.Floor(totalPhysicalMemoryBytes / BytesPerGb);
-        var reserved = Math.Max(4, installedGb / 4);
+        var reserved = Math.Max(3, installedGb / 4);
         return Math.Clamp(installedGb - reserved, MinMemoryGb, MaxMemoryGb);
     }
 }
