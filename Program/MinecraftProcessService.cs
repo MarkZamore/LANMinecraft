@@ -259,16 +259,28 @@ public sealed class MinecraftProcessService
         // vanilla on an old version and a pack of nine hundred mods each get
         // the split they deserve out of the same number.
         var packMemory = PackMemoryProfile.Measure(packDir);
-        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb);
+        // And the card, because what does not fit in it the driver keeps in
+        // system memory, and that copy is the game's too.
+        var video = VideoMemoryProfile.Measure();
+        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video);
         var maximumRamMb = checked(heapGb * 1024);
         _logger.Info(
             $"Memory: {settings.MaxMemoryGb} GB for the game ({packMemory.ModCount} mods, " +
             $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap.");
-        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory);
+        // Said every launch, not only when it costs something: a card that has
+        // stopped being readable looks exactly like a card with room to spare
+        // from the outside, and this line is the only place the difference
+        // shows.
+        var videoSpillGb = MemorySizingService.GetVideoSpillGb(packMemory, video);
+        _logger.Info(video.IsKnown
+            ? $"Video memory: {video.DedicatedGb} GB on the card, of which this pack outgrows {videoSpillGb} GB - " +
+              "that much of what it draws is kept in system memory instead, and out of the heap."
+            : "Video memory: the card could not be read, so nothing is kept out of the heap for it.");
+        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video);
         if (settings.MaxMemoryGb < smallestUsefulBudgetGb)
         {
             _logger.Warn(
-                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory)} GB outside its heap, " +
+                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video)} GB outside its heap, " +
                 $"so {settings.MaxMemoryGb} GB is under the {smallestUsefulBudgetGb} GB it takes to stay inside that number.");
         }
         // Held as text, not as MArgument, so the line logged below is the line

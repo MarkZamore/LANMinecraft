@@ -15,6 +15,12 @@ namespace Minecraft;
 /// constant, because the same launcher runs vanilla on an old version and packs
 /// heavier than Limitless 8 on new ones, and those do not need the same room to
 /// a factor of eight.
+///
+/// The machine has a say in one thing beside its installed memory: the card.
+/// What does not fit in video memory the driver keeps in system memory instead,
+/// and that copy is the game's, so a pack on an eight gigabyte card holds room
+/// beside its heap that the same pack on a sixteen does not. A
+/// <see cref="VideoMemoryProfile"/> nobody could read is charged nothing.
 /// </summary>
 public static class MemorySizingService
 {
@@ -52,6 +58,26 @@ public static class MemorySizingService
     private const int OlderMinecraftHeapBaseMb = 1024;
     private const int HeapPerModMb = 12;
 
+    // And what the pack hands the card. A modern client keeps a couple of
+    // gigabytes of atlases and buffers there before a single mod is added;
+    // every mod brings its own textures, models and entity skins; and a
+    // resource or shader pack is texture almost entirely, which the card holds
+    // uncompressed and mipmapped - several times the bytes it takes on disk.
+    // Limitless 8 comes to eleven and a half gigabytes: a 16 GB card holds it,
+    // an 8 GB card holds two thirds of it and the driver keeps the rest in
+    // system memory.
+    private const int VideoBaseMb = 2048;
+    private const int OlderMinecraftVideoBaseMb = 512;
+    private const int VideoPerModMb = 10;
+    private const double VideoPerAssetMegabyte = 12;
+    /// <summary>
+    /// The most a small card is charged. Past this it is not short of room, it
+    /// is the wrong card for the pack: the driver starts evicting rather than
+    /// mirroring, and charging the whole shortfall would leave a two gigabyte
+    /// heap on a machine that could still play something lighter.
+    /// </summary>
+    private const int MaxVideoSpillGb = 4;
+
     public static int GetAllowedMaxMemoryGb()
     {
         try
@@ -64,11 +90,11 @@ public static class MemorySizingService
         }
     }
 
-    public static int GetRecommendedDefaultMemoryGb(PackMemoryProfile pack)
+    public static int GetRecommendedDefaultMemoryGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
     {
         try
         {
-            return GetRecommendedDefaultMemoryGb(pack, GetTotalPhysicalMemoryBytes());
+            return GetRecommendedDefaultMemoryGb(pack, GetTotalPhysicalMemoryBytes(), video);
         }
         catch
         {
@@ -122,13 +148,13 @@ public static class MemorySizingService
     /// not tell packs apart at all - half the budget, never more than eight -
     /// rather than guessing at a weight.
     /// </remarks>
-    public static int GetNativeReserveGb(PackMemoryProfile pack, int budgetGb) =>
-        pack.IsKnown ? GetNativeReserveGb(pack) : Math.Clamp(budgetGb / 2, 2, 8);
+    public static int GetNativeReserveGb(PackMemoryProfile pack, int budgetGb, VideoMemoryProfile video = default) =>
+        pack.IsKnown ? GetNativeReserveGb(pack, video) : Math.Clamp(budgetGb / 2, 2, 8);
 
     /// <summary>The same room, for a pack that has been measured.</summary>
-    public static int GetNativeReserveGb(PackMemoryProfile pack)
+    public static int GetNativeReserveGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
     {
-        if (!pack.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb);
+        if (!pack.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb, video);
 
         var megabytes =
             (pack.IsModernMinecraft ? NativeBaseMb : OlderMinecraftNativeBaseMb) +
@@ -137,22 +163,52 @@ public static class MemorySizingService
             pack.AssetBytes / BytesPerMb * NativePerAssetMegabyte;
         // Rounded up: a reserve set too low is spent by the game anyway - over
         // the budget, and into the memory the machine kept for itself.
-        return Math.Clamp((int)Math.Ceiling(megabytes / 1024d), 1, MaxMemoryGb - MinHeapGb);
+        return Math.Clamp(
+            (int)Math.Ceiling(megabytes / 1024d) + GetVideoSpillGb(pack, video),
+            1,
+            MaxMemoryGb - MinHeapGb);
+    }
+
+    /// <summary>
+    /// What this pack hands the card and the card cannot hold, which the driver
+    /// keeps in system memory instead. It is charged to the game like the rest
+    /// of the room beside the heap, because that is where it is spent: two
+    /// laptops with the same processor, the same installed memory and the same
+    /// pack were not the same machine to a heap, and the one with the smaller
+    /// card was the one whose full collections ran for two seconds.
+    /// </summary>
+    /// <remarks>
+    /// A card that could not be read costs nothing, and so does a pack that has
+    /// not been weighed: there is nothing to compare it with, and a guess here
+    /// would take heap away from someone the launcher knows nothing about.
+    /// </remarks>
+    public static int GetVideoSpillGb(PackMemoryProfile pack, VideoMemoryProfile video)
+    {
+        if (!pack.IsKnown || !video.IsKnown) return 0;
+
+        var wantedMb =
+            (pack.IsModernMinecraft ? VideoBaseMb : OlderMinecraftVideoBaseMb) +
+            (double)pack.ModCount * VideoPerModMb +
+            pack.AssetBytes / BytesPerMb * VideoPerAssetMegabyte;
+        var shortfallMb = wantedMb - (double)video.DedicatedGb * 1024;
+        if (shortfallMb <= 0) return 0;
+
+        return Math.Min(MaxVideoSpillGb, (int)Math.Ceiling(shortfallMb / 1024d));
     }
 
     /// <summary>The heap a budget leaves this pack: what goes to <c>-Xmx</c>.</summary>
-    public static int GetHeapGb(PackMemoryProfile pack, int budgetGb) =>
-        Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb));
+    public static int GetHeapGb(PackMemoryProfile pack, int budgetGb, VideoMemoryProfile video = default) =>
+        Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video));
 
     /// <summary>
     /// The smallest budget that leaves this pack a heap at all. Below it the
     /// heap stops shrinking - it has a floor - and the game simply takes more
     /// than the number says, which is worth telling a player.
     /// </summary>
-    public static int GetSmallestUsefulBudgetGb(PackMemoryProfile pack)
+    public static int GetSmallestUsefulBudgetGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
     {
         var budget = MinMemoryGb;
-        while (budget < MaxMemoryGb && budget - GetNativeReserveGb(pack, budget) < MinHeapGb) budget++;
+        while (budget < MaxMemoryGb && budget - GetNativeReserveGb(pack, budget, video) < MinHeapGb) budget++;
         return budget;
     }
 
@@ -181,10 +237,10 @@ public static class MemorySizingService
     /// the game are carried across with this, so nobody has their game quietly
     /// shrink.
     /// </summary>
-    public static int GetBudgetForHeapGb(PackMemoryProfile pack, int heapGb)
+    public static int GetBudgetForHeapGb(PackMemoryProfile pack, int heapGb, VideoMemoryProfile video = default)
     {
         var budget = Math.Max(MinMemoryGb, heapGb);
-        while (budget < MaxMemoryGb && GetHeapGb(pack, budget) < heapGb) budget++;
+        while (budget < MaxMemoryGb && GetHeapGb(pack, budget, video) < heapGb) budget++;
         return budget;
     }
 
@@ -193,10 +249,13 @@ public static class MemorySizingService
     /// wants plus the room it holds beside it - and never more than the machine
     /// can lend, whatever the pack would like.
     /// </summary>
-    public static int GetRecommendedDefaultMemoryGb(PackMemoryProfile pack, ulong totalPhysicalMemoryBytes)
+    public static int GetRecommendedDefaultMemoryGb(
+        PackMemoryProfile pack,
+        ulong totalPhysicalMemoryBytes,
+        VideoMemoryProfile video = default)
     {
         var wanted = pack.IsKnown
-            ? GetRecommendedHeapGb(pack) + GetNativeReserveGb(pack)
+            ? GetRecommendedHeapGb(pack) + GetNativeReserveGb(pack, video)
             : GetRecommendedDefaultForAnUnseenPack(totalPhysicalMemoryBytes);
         return Math.Clamp(wanted, MinMemoryGb, GetAllowedMaxMemoryGb(totalPhysicalMemoryBytes));
     }

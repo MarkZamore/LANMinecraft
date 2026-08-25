@@ -95,7 +95,9 @@ public sealed class SettingsSchemaTests : IDisposable
 
         var vanilla = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
         Assert.True(vanilla.IsKnown);
-        Assert.Equal(MemorySizingService.GetRecommendedDefaultMemoryGb(vanilla), settings.MaxMemoryGb);
+        Assert.Equal(
+            MemorySizingService.GetRecommendedDefaultMemoryGb(vanilla, VideoMemoryProfile.Measure()),
+            settings.MaxMemoryGb);
         Assert.True(settings.MaxMemoryGb < 20, "vanilla must not keep a modpack's number");
     }
 
