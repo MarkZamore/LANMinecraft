@@ -472,7 +472,7 @@ public sealed class MinecraftProcessService
             using var placementCancellation = new CancellationTokenSource();
             var placementTask = _gameWindowPlacement.TrackAsync(processId, placementCancellation.Token);
             using var watchingMemory = new CancellationTokenSource();
-            var heldMemory = WatchWorkingSetAsync(process, watchingMemory.Token);
+            var heldMemory = WatchMemoryAsync(process, watchingMemory.Token);
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
@@ -480,7 +480,8 @@ public sealed class MinecraftProcessService
             finally
             {
                 watchingMemory.Cancel();
-                ReportMemoryHeld(await heldMemory.ConfigureAwait(false), heapGb);
+                var held = await heldMemory.ConfigureAwait(false);
+                ReportMemoryHeld(held.Resident, held.Committed, heapGb);
                 // A game that dies after the two second startup window used to
                 // leave no trace at all: the window had closed, so nobody
                 // reported the exit code and nobody kept what the process said
@@ -551,29 +552,33 @@ public sealed class MinecraftProcessService
     }
 
     /// <summary>How often the running game is asked how much it is holding.</summary>
-    private static readonly TimeSpan WorkingSetSampleInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MemorySampleInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// The largest the game's process was ever seen to hold, in bytes, or zero
-    /// if it could not be watched.
+    /// The largest the game's process was ever seen at, in bytes: what it had
+    /// resident, and what it had asked the system to commit. Zero for either if
+    /// it could not be watched.
     /// </summary>
     /// <remarks>
     /// Sampled while it runs rather than read at the end, because Windows will
-    /// not answer for a process that has exited and PeakWorkingSet64 goes with
+    /// not answer for a process that has exited and the peak counters go with
     /// it. Half a minute apart: this is not a profiler, it is one number per
     /// session, and the thing it measures - a modded client's footprint - moves
     /// over minutes.
     /// </remarks>
-    private static async Task<long> WatchWorkingSetAsync(Process process, CancellationToken token)
+    private static async Task<(long Resident, long Committed)> WatchMemoryAsync(
+        Process process, CancellationToken token)
     {
-        long peak = 0;
+        long resident = 0;
+        long committed = 0;
         try
         {
             while (!token.IsCancellationRequested)
             {
                 process.Refresh();
-                peak = Math.Max(peak, process.WorkingSet64);
-                await Task.Delay(WorkingSetSampleInterval, token).ConfigureAwait(false);
+                resident = Math.Max(resident, process.WorkingSet64);
+                committed = Math.Max(committed, process.PrivateMemorySize64);
+                await Task.Delay(MemorySampleInterval, token).ConfigureAwait(false);
             }
         }
         catch (Exception ex) when (
@@ -582,7 +587,7 @@ public sealed class MinecraftProcessService
             // The game ended between the refresh and the read, or Windows would
             // not answer for it. Whatever was seen before that is the answer.
         }
-        return peak;
+        return (resident, committed);
     }
 
     /// <summary>
@@ -598,25 +603,38 @@ public sealed class MinecraftProcessService
     /// it ran, and the guess gets to be checked.
     ///
     /// The subtraction is honest because -Xms is set equal to -Xmx: the heap is
-    /// committed from the start, so what the working set holds above it is the
-    /// room beside it and not an unfilled heap.
+    /// committed from the start, so what stands above it is room beside it and
+    /// not an unfilled heap.
+    ///
+    /// Two numbers, and the commit is the one that answers the question. The
+    /// working set is only what was resident when it was looked at, and a
+    /// machine short of memory pages the rest out - so on exactly the small
+    /// machines this measurement exists for, the working set understates what
+    /// the pack wanted, and understates it worst where it matters most. The
+    /// commit does not move under that pressure. The resident figure is kept
+    /// beside it because the gap between them is itself the reading: far apart
+    /// means the machine was paging.
     /// </remarks>
-    private void ReportMemoryHeld(long peakBytes, int heapGb)
+    private void ReportMemoryHeld(long residentBytes, long committedBytes, int heapGb)
     {
-        var line = DescribeMemoryHeld(peakBytes, heapGb);
+        var line = DescribeMemoryHeld(residentBytes, committedBytes, heapGb);
         if (line.Length > 0) _logger.Info(line);
     }
 
     /// <summary>That measurement as a line of log, or nothing to say.</summary>
-    internal static string DescribeMemoryHeld(long peakBytes, int heapGb)
+    internal static string DescribeMemoryHeld(long residentBytes, long committedBytes, int heapGb)
     {
-        if (peakBytes <= 0) return "";
-        var peakMb = peakBytes / (1024 * 1024);
-        if (heapGb <= 0) return $"Memory: the game held {peakMb} MB at its largest.";
+        var residentMb = residentBytes / (1024 * 1024);
+        var committedMb = committedBytes / (1024 * 1024);
+        var askedMb = committedMb > 0 ? committedMb : residentMb;
+        if (askedMb <= 0) return "";
+
+        var resident = residentMb > 0 && committedMb > 0 ? $", {residentMb} MB of it resident" : "";
+        if (heapGb <= 0) return $"Memory: the game asked for {askedMb} MB at its largest{resident}.";
 
         var heapMb = heapGb * 1024;
-        return $"Memory: the game held {peakMb} MB at its largest - a heap of {heapMb} MB " +
-               $"and about {Math.Max(0, peakMb - heapMb)} MB beside it.";
+        return $"Memory: the game asked for {askedMb} MB at its largest - a heap of {heapMb} MB " +
+               $"and about {Math.Max(0, askedMb - heapMb)} MB beside it{resident}.";
     }
 
     /// <summary>
