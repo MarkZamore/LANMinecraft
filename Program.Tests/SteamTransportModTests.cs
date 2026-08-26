@@ -85,7 +85,15 @@ public sealed class SteamTransportModTests
     [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
     [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.0.jar")]
     [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.16.5", null)]
+    [InlineData(PackLoaderKind.Fabric, "1.16.5", "e4steam-fabric-mc1.16.x-v0.3.0.jar")]
+    // The oldest of all of it, and the reason there is no shortlist any
+    // more: a pack of somebody's own on 1.7 gets Steam play too.
+    [InlineData(PackLoaderKind.Forge, "1.7.10", "e4steam-forge-mc1.7.x-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.12.2", "e4steam-forge-mc1.12.x-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.14.4", "e4steam-fabric-mc1.14.x-v0.3.0.jar")]
+    // Fabric began at 1.14, so 1.12 has no Fabric build and never will.
+    [InlineData(PackLoaderKind.Fabric, "1.12.2", null)]
+    [InlineData(PackLoaderKind.Forge, "1.6.4", null)]
     [InlineData(PackLoaderKind.Vanilla, "1.21.1", null)]
     public void EveryPackGetsTheBuildItsAuthorPublishedForIt(
         PackLoaderKind loader,
