@@ -418,6 +418,20 @@ public static partial class SupportDiagnosticSnapshotBuilder
                     string.Empty);
             }
 
+            // What the runtime called itself was written down when the pack was
+            // prepared. It used to be hunted for instead - walk up from the java
+            // executable, read <javaHome>/release - which worked only while the
+            // JDK lived inside this pack's own folder, and it no longer does:
+            // one Java is shared by every pack now. The hunt is kept for states
+            // written before the field existed.
+            if (!string.IsNullOrWhiteSpace(state.JavaVersion))
+            {
+                return new SupportVersionFallback(
+                    minecraftVersion,
+                    state.JavaVersion.Trim(),
+                    NormalizeProfileId(state.ProfileId));
+            }
+
             var javaExecutable = ResolveRuntimeStatePath(
                 runtimeRoot,
                 state.JavaPathRelativePath);
@@ -657,6 +671,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
         public string DescriptorHash { get; set; } = string.Empty;
         public string ProfileId { get; set; } = string.Empty;
         public string JavaPathRelativePath { get; set; } = string.Empty;
+        public string JavaVersion { get; set; } = string.Empty;
     }
 
     private static async Task<string> RunSystemCommandAsync(

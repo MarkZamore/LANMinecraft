@@ -102,6 +102,50 @@ internal static class JavaRuntimeCatalog
     public static JavaRuntimePin? ForMajorVersion(int majorVersion) =>
         Releases.FirstOrDefault(release => release.MajorVersion == majorVersion);
 
+    /// <summary>
+    /// The Java a pack has to run on.
+    /// </summary>
+    /// <remarks>
+    /// Taken from the Minecraft version, because that is what decides it and
+    /// because a pack is not asked: Mojang's own version manifest names the
+    /// feature release for every Minecraft they ship - 17 for 1.18.2 and
+    /// 1.20.1, 21 from 1.20.5 - and a pack built for that Minecraft was built
+    /// against it.
+    ///
+    /// Newer is not safer, which is the whole reason this is a mapping rather
+    /// than "install the latest". A mod may declare a Java bound - Cobblemon
+    /// declares [21,21.999999) - and NeoForge answers a bound it cannot satisfy
+    /// by refusing to load that one mod, which surfaces as an unrelated crash
+    /// deep inside another mod's static initialiser. And older is worse still:
+    /// 1.18.2 on 21 is the pairing this launcher shipped for months without a
+    /// choice in the matter.
+    ///
+    /// A Minecraft nobody recognises gets <see cref="DefaultMajorVersion"/>,
+    /// which is what every pack got before this existed.
+    /// </remarks>
+    public static JavaRuntimePin RequiredFor(PackRuntimeDescriptor? descriptor) =>
+        ForMajorVersion(MajorVersionFor(descriptor?.MinecraftVersion))
+        ?? ForMajorVersion(DefaultMajorVersion)!;
+
+    /// <summary>The feature release one Minecraft is built for.</summary>
+    internal static int MajorVersionFor(string? minecraftVersion)
+    {
+        if (!SteamTransportCatalog.TryParseVersion(minecraftVersion, out var parts))
+        {
+            return DefaultMajorVersion;
+        }
+
+        // Anything that is not 1.x is newer than every 1.x, and the newest
+        // Minecraft asks for the newest Java.
+        if (parts[0] != 1) return 25;
+
+        var minor = parts.Length > 1 ? parts[1] : 0;
+        var patch = parts.Length > 2 ? parts[2] : 0;
+        if (minor > 20 || (minor == 20 && patch >= 5)) return 21;
+        if (minor >= 17) return 17;
+        return 8;
+    }
+
     /// <summary>Every install folder a pinned runtime uses.</summary>
     public static IReadOnlyCollection<string> InstallDirectoryNames { get; } =
         Releases.Select(release => release.InstallDirectoryName).ToArray();

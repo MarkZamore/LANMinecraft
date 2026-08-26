@@ -39,9 +39,11 @@ public sealed class SteamTransportModTests
             "3d2b56b50f6646733a3e41e67aedb3cb7baf96e48707284083c473908bbf4adb",
             neoforge.Sha256);
 
+        // Two Forge builds now, one per range; this is the one that carries
+        // 1.19.2 and 1.20.1, which is most of the Forge packs worth playing.
         var forge = Assert.Single(
-            SteamTransportCatalog.Builds.Where(build => build.Loaders.Contains(PackLoaderKind.Forge)));
-        Assert.Equal("e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar", forge.FileName);
+            SteamTransportCatalog.Builds.Where(
+                build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar"));
         Assert.Equal(3_633_909, forge.SizeBytes);
         Assert.Equal(
             "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",
@@ -75,12 +77,15 @@ public sealed class SteamTransportModTests
     [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
     // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
     [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.1", null)]
+    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.17", null)]
     [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
     // Fabric and Quilt share the one build its author tested them both with.
     [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
     [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.18.2", null)]
+    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.16.5", null)]
     [InlineData(PackLoaderKind.Vanilla, "1.21.1", null)]
     public void EveryPackGetsTheBuildItsAuthorPublishedForIt(
         PackLoaderKind loader,

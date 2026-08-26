@@ -112,7 +112,43 @@ public sealed partial class PortableJavaRuntimeService
     /// Returns the pinned runtime, installing it under <paramref name="runtimeRoot"/> when
     /// it is missing or damaged. Failures propagate so the launch fails closed.
     /// </summary>
-    public async Task<PreparedJavaRuntime> EnsureAsync(
+    public Task<PreparedJavaRuntime> EnsureAsync(
+        string runtimeRoot,
+        IProgress<RuntimePreparationProgress>? progress,
+        CancellationToken token) =>
+        EnsureCoreAsync(runtimeRoot, progress, token);
+
+    /// <summary>
+    /// The same, for one named runtime rather than this service's own pin: a
+    /// pack runs on the Java its Minecraft was built for, and two packs on one
+    /// machine need not agree about which that is.
+    /// </summary>
+    /// <remarks>
+    /// A different runtime is a different service rather than a parameter
+    /// threaded through every step. Everything below - where the archive is
+    /// cached, what counts as a valid one, which folder is swept as superseded,
+    /// what the marker must say - reads the pin, and forty-odd places quietly
+    /// taking one from an argument instead of a field is how one of them ends
+    /// up still reading the other.
+    /// </remarks>
+    internal Task<PreparedJavaRuntime> EnsureAsync(
+        string runtimeRoot,
+        JavaRuntimePin pin,
+        IProgress<RuntimePreparationProgress>? progress,
+        CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(pin);
+        if (string.Equals(pin.RuntimeId, _pin.RuntimeId, StringComparison.Ordinal))
+        {
+            return EnsureCoreAsync(runtimeRoot, progress, token);
+        }
+
+        var forThatRuntime = new PortableJavaRuntimeService(
+            _paths, _logger, _httpClient, pin, _freeSpaceProbe);
+        return forThatRuntime.EnsureCoreAsync(runtimeRoot, progress, token);
+    }
+
+    private async Task<PreparedJavaRuntime> EnsureCoreAsync(
         string runtimeRoot,
         IProgress<RuntimePreparationProgress>? progress,
         CancellationToken token)

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace Minecraft;
 
@@ -60,13 +60,17 @@ public static class SteamTransportCatalog
     /// <summary>
     /// What is served, and what is deliberately not.
     ///
-    /// 0.3.0 also publishes Forge back to 1.7, Fabric back to 1.14, and a
-    /// Fabric build for Minecraft 26.x. None of those are here, and the reason
-    /// is the same for all of them: this launcher installs one Java for every
-    /// pack it runs, and that Java is 21. The 26.x build asks for Java 25 and
-    /// would not load under it; the pre-1.17 builds are for a Minecraft that
-    /// does not itself run on 21. A row is one entry, so any of them can join
-    /// the day the runtime stops being a single pinned version.
+    /// Three of these joined the day the launcher stopped installing one Java
+    /// for every pack. They were absent for exactly that reason and no other:
+    /// the 26.x build asks for Java 25 and the 1.17-1.18.2 builds are for a
+    /// Minecraft that does not run well on 21, so while there was one runtime
+    /// they could not be offered. Now a pack gets the Java its Minecraft was
+    /// built against, and they can.
+    ///
+    /// 0.3.0 also publishes Forge back to 1.7 and Fabric back to 1.14. Those
+    /// stay out: a row here is a promise that the launcher can run such a pack,
+    /// and Minecraft 1.16 and older want a Java 8 that the loaders of that era
+    /// need more care with than one line in a table.
     /// </summary>
     public static IReadOnlyList<SteamTransportBuild> Builds { get; } =
         Array.AsReadOnly<SteamTransportBuild>(
@@ -89,9 +93,38 @@ public static class SteamTransportCatalog
                 [PackLoaderKind.Forge],
                 [1, 18, 2],
                 [1, 20, 3]),
-            // Quilt loads Fabric mods, and this is the build its author tested
-            // it with, so the two loaders share one row rather than one being
-            // refused for want of an artifact of its own.
+            new(
+                Version,
+                "e4steam-forge-mc1.17.1-1.18.1-v0.3.0.jar",
+                3_636_879,
+                "2c6155665bfd5aacf2663f170d6874db1f3a6ada42b13af819242dd46002d0ed",
+                30_004,
+                [PackLoaderKind.Forge],
+                [1, 17, 1],
+                [1, 18, 2]),
+            // Quilt loads Fabric mods, and these are the builds its author
+            // tested it with, so the two loaders share a row rather than one
+            // being refused for want of an artifact of its own.
+            new(
+                Version,
+                "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.0.jar",
+                3_634_508,
+                "f1fb415f6e7d019381a14d1c9b39fe1b84cb585d7f3f673f85c5ef23bc939db7",
+                30_005,
+                [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
+                [1, 17],
+                [1, 19]),
+            // Minecraft 26 wants Java 25 and this build says so itself; the
+            // runtime catalogue answers 25 for a 26.x pack, so it can be kept.
+            new(
+                Version,
+                "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar",
+                3_632_179,
+                "6578e4d71a5e1499d35aeff699ac84ade6047e104a0439efca9d13cdea0ad443",
+                30_006,
+                [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
+                [26, 1],
+                [26, 3]),
             new(
                 Version,
                 "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar",
