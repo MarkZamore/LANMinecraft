@@ -93,18 +93,23 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "fqx$c",
         "net/minecraft/client/gui/screens/ShareToLanScreen",
         "foe",
-        "com/mojang/authlib/yggdrasil/TextureUrlChecker"
+        "com/mojang/authlib/yggdrasil/TextureUrlChecker",
+        "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService"
     ];
 
     private (IdentityAdapterMappingService Service, PreparedRuntime Runtime, string GameDirectory) CreateFixture(
         string mappings,
-        IReadOnlyList<string> jarClasses)
+        IReadOnlyList<string> jarClasses,
+        bool withMappingFile = true)
     {
         var paths = new AppPaths(_root);
         var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Test");
         var mappingDirectory = Path.Combine(runtimeRoot, "libraries", "neoform");
         Directory.CreateDirectory(mappingDirectory);
-        File.WriteAllText(Path.Combine(mappingDirectory, "neoform-test-mappings-merged.txt"), mappings);
+        if (withMappingFile)
+        {
+            File.WriteAllText(Path.Combine(mappingDirectory, "neoform-test-mappings-merged.txt"), mappings);
+        }
 
         var clientJar = Path.Combine(runtimeRoot, "client.jar");
         using (var archive = ZipFile.Open(clientJar, ZipArchiveMode.Create))
@@ -129,6 +134,105 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                 "client.jar",
                 "descriptor-hash"));
         return (new IdentityAdapterMappingService(paths), runtime, gameDirectory);
+    }
+
+    /// <summary>
+    /// A runtime with no mappings at all still gets its skins. This is every
+    /// Fabric pack: Fabric ships intermediary, not TSRG2, so there is nothing
+    /// for the launcher to read and the UUID hooks cannot be placed. The skin
+    /// hooks never needed them - they are all in com.mojang.authlib, which no
+    /// loader obfuscates - and refusing them along with the rest is what left
+    /// All The Fabric 3 without a skin.
+    /// </summary>
+    [Fact]
+    public void ARuntimeWithoutMappings_StillGetsItsSkins()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateFixture(GoldenMappings, DefaultJarClasses, withMappingFile: false);
+
+        var configuration = service.Build(runtime, gameDirectory);
+
+        // The skin hooks are configured...
+        Assert.Equal("getTextures,getPackedTextures", configuration.Properties["skinReaderMethods"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService");
+
+        // ...and the UUID hooks are switched off by a flag rather than by an
+        // empty alias list, which would fall back to the built-in defaults and
+        // have the transformer patch classes it knows nothing about.
+        Assert.Equal("false", configuration.Properties["identityHooksEnabled"]);
+        Assert.DoesNotContain(
+            configuration.Targets,
+            target => target.ClassName.Contains("ServerLoginPacketListenerImpl", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And so does a runtime whose mappings are there but do not describe the
+    /// classes the UUID hooks need. This is RPG Ars Nouveau: 1.20.1 has no
+    /// net/minecraft/client/resources/PlayerSkin, which arrived in 1.20.2, so
+    /// the whole adapter used to be refused over a class the skin never touches.
+    /// </summary>
+    [Fact]
+    public void AMinecraftTooOldForTheUuidHooks_StillGetsItsSkins()
+    {
+        var withoutPlayerSkin = string.Join(
+            '\n',
+            GoldenMappings.Split('\n').Where(line => !line.Contains("PlayerSkin", StringComparison.Ordinal)));
+        var (service, runtime, gameDirectory) = CreateFixture(withoutPlayerSkin, DefaultJarClasses);
+
+        var configuration = service.Build(runtime, gameDirectory);
+
+        Assert.Equal("false", configuration.Properties["identityHooksEnabled"]);
+        Assert.Equal("getTextures,getPackedTextures", configuration.Properties["skinReaderMethods"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService");
+    }
+
+    /// <summary>
+    /// The preflight refuses to run on a missing alias list, so every list it
+    /// asks about is named even when the hooks behind it are switched off.
+    /// </summary>
+    [Fact]
+    public void ASkinOnlyConfiguration_StillNamesEveryListThePreflightAsksFor()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateFixture(GoldenMappings, DefaultJarClasses, withMappingFile: false);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        foreach (var required in new[]
+                 {
+                     "loginClasses", "playerInfoClasses", "textureUrlCheckerClasses",
+                     "ftbTeleportClasses", "solarFluxPackClasses", "xaeroWaypointTeleportClasses"
+                 })
+        {
+            Assert.False(string.IsNullOrWhiteSpace(properties.GetValueOrDefault(required)), required);
+        }
+    }
+
+    /// <summary>
+    /// An authlib old enough to have no TextureUrlChecker is not a runtime to
+    /// refuse: it keeps the same rule on the session service instead, and that
+    /// class has been there throughout.
+    /// </summary>
+    [Fact]
+    public void AnAuthlibWithoutTextureUrlChecker_IsStillPatched()
+    {
+        var older = DefaultJarClasses
+            .Where(name => !name.EndsWith("TextureUrlChecker", StringComparison.Ordinal))
+            .ToList();
+        var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, older);
+
+        var configuration = service.Build(runtime, gameDirectory);
+
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService");
+        Assert.DoesNotContain(
+            configuration.Targets,
+            target => target.ClassName.EndsWith("TextureUrlChecker", StringComparison.Ordinal));
     }
 
     [Fact]

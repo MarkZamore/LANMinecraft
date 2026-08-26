@@ -43,14 +43,106 @@ internal sealed class IdentityAdapterMappingService
         _paths = paths;
     }
 
+    /// <summary>
+    /// What to patch in this runtime: the UUID hooks and the skin hooks where
+    /// both can be had, and the skin hooks alone where they cannot.
+    /// </summary>
+    /// <remarks>
+    /// The two were one thing until the packs made it plain they are not. The
+    /// UUID hooks patch Minecraft's own classes, so they need the runtime's
+    /// mappings and a Minecraft new enough to have the classes they name. The
+    /// skin hooks patch com.mojang.authlib, which no loader obfuscates and no
+    /// mappings describe. Refusing both because the first cannot be had was
+    /// costing the second for no reason: All The Fabric 3 has no mappings at
+    /// all, because Fabric ships intermediary rather than TSRG2, and RPG Ars
+    /// Nouveau has mappings but is 1.20.1, where PlayerSkin does not exist yet.
+    /// Neither could show a skin, and the skin never needed either.
+    /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
         var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
         if (mappingPath is null)
         {
-            throw Unsupported(runtime.Descriptor, "runtime mappings were not found");
+            return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no TSRG2 mappings");
         }
 
+        try
+        {
+            return BuildEverything(runtime, gameDirectory, mappingPath);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            // A Minecraft the UUID hooks do not fit is still a Minecraft whose
+            // skins work, so the reason is carried forward rather than thrown.
+            return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The skin hooks, which need nothing from the runtime but its authlib.
+    /// </summary>
+    private IdentityAdapterConfiguration BuildSkinsOnly(
+        PreparedRuntime runtime,
+        string gameDirectory,
+        string whyNotEverything)
+    {
+        var targets = FindRuntimeTargets(
+            runtime,
+            gameDirectory,
+            new HashSet<string>(StringComparer.Ordinal) { YggdrasilSessionService, TextureUrlChecker });
+        // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
+        // absence is ordinary; the session service has been there throughout
+        // and without it there is nothing to patch at all.
+        var sessionService = targets.FirstOrDefault(target => target.ClassName == YggdrasilSessionService)
+            ?? throw Unsupported(
+                runtime.Descriptor,
+                $"{whyNotEverything}, and authlib itself was not found either");
+
+        var properties = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["identityHooksEnabled"] = "false",
+            ["xaeroWaypointEnabled"] = "false",
+            ["ftbTeleportEnabled"] = "false",
+            ["solarFluxSyncEnabled"] = "false",
+            // The preflight asks every alias list by name and refuses to run on
+            // a missing one, so the switched-off hooks are still named. Their
+            // names are what they always were - nothing matches them here
+            // anyway, because identityHooksEnabled and the three Enabled flags
+            // above are what decide whether anything is patched.
+            ["loginClasses"] = LoginListener,
+            ["playerInfoClasses"] = PlayerInfo,
+            ["ftbTeleportClasses"] = JoinAliases(
+                FtbWaypointRowPanel,
+                FtbWaypointMapIcon,
+                FtbTeleportFromMapPacket),
+            ["solarFluxPackClasses"] = SolarFluxResourcePack,
+            ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
+        };
+        AddSkinProperties(properties);
+        // There is no mapping file behind this configuration, and the cache
+        // above still wants a file to notice changing. authlib is the file it
+        // was actually derived from, so authlib is what it watches.
+        return new IdentityAdapterConfiguration(sessionService.JarPath, properties, targets);
+    }
+
+    /// <summary>The part that is the same however the rest turns out.</summary>
+    private static void AddSkinProperties(Dictionary<string, string> properties)
+    {
+        properties["textureUrlCheckerClasses"] = JoinAliases(TextureUrlChecker, YggdrasilSessionService);
+        properties["textureUrlCheckerMethods"] = JoinAliases("isAllowedTextureDomain", "isWhitelistedDomain");
+        properties["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z";
+        // Where the game asks authlib for a skin. getTextures took a profile up
+        // to authlib 5.0.47, getPackedTextures takes one from 6.0.52 on, and
+        // there has never been a third; the profile is given its skin there,
+        // one step before authlib reads it.
+        properties["skinReaderMethods"] = JoinAliases("getTextures", "getPackedTextures");
+    }
+
+    private IdentityAdapterConfiguration BuildEverything(
+        PreparedRuntime runtime,
+        string gameDirectory,
+        string mappingPath)
+    {
         var mappings = Tsrg2Mappings.Read(mappingPath);
         var listener = mappings.RequireClass(LoginListener);
         var packet = mappings.RequireClass(HelloPacket);
@@ -117,9 +209,6 @@ internal sealed class IdentityAdapterMappingService
             ["skinSecureMethods"] = JoinAliases(
                 "secure",
                 playerSkin.RequireMethod("secure", descriptor => descriptor == "()Z").LeftName),
-            ["textureUrlCheckerClasses"] = JoinAliases(TextureUrlChecker, YggdrasilSessionService),
-            ["textureUrlCheckerMethods"] = JoinAliases("isAllowedTextureDomain", "isWhitelistedDomain"),
-            ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z",
             // The agent reads one fixed property set, so the transformers the
             // launcher no longer drives keep their keys and stay switched off.
             ["xaeroWaypointEnabled"] = "false",
@@ -148,18 +237,24 @@ internal sealed class IdentityAdapterMappingService
             ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName)
         };
 
+        AddSkinProperties(properties);
+
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
         {
             LoginListener,
             listener.LeftName,
             PlayerInfo,
             playerInfo.LeftName,
-            TextureUrlChecker
+            YggdrasilSessionService
         };
-        var targets = FindRuntimeTargets(runtime, gameDirectory, requiredTargets);
-        if (targets.Count != requiredTargets.Count)
+        // Wanted where it exists, not required: authlib only grew
+        // TextureUrlChecker at 3.18.38, and every version before that keeps the
+        // same rule on the session service instead.
+        var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal) { TextureUrlChecker };
+        var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
+        var found = targets.Select(target => target.ClassName).ToHashSet(StringComparer.Ordinal);
+        if (!requiredTargets.IsSubsetOf(found))
         {
-            var found = targets.Select(target => target.ClassName).ToHashSet(StringComparer.Ordinal);
             var missing = string.Join(", ", requiredTargets.Where(target => !found.Contains(target)));
             throw Unsupported(runtime.Descriptor, $"required runtime classes are absent: {missing}");
         }

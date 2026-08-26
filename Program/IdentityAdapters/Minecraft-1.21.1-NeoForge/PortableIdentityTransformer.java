@@ -42,6 +42,7 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
             + "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
     private static final String TEXTURE_URL_CHECKER_METHODS =
         "isAllowedTextureDomain,isWhitelistedDomain";
+    private static final String SKIN_READER_METHODS = "getTextures,getPackedTextures";
     private static final String SKIN_LOOKUP_DESCRIPTOR =
         "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;";
     private static final String SKIN_SELECTION_DESCRIPTOR =
@@ -95,8 +96,22 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         String textureUrlCheckerClasses = property(
             "textureUrlCheckerClasses",
             TEXTURE_URL_CHECKER);
-        boolean loginClass = contains(listeners, className);
-        boolean playerInfoClass = contains(playerInfoClasses, className);
+        // The UUID hooks and the skin hooks are no longer one thing. The UUID
+        // ones patch Minecraft's own classes and so need the runtime's
+        // mappings; the skin ones are all in com.mojang.authlib and need none.
+        // Where the mappings are absent - every Fabric runtime, since Fabric
+        // ships intermediary rather than TSRG2 - the launcher switches these
+        // off and the skin hooks still run.
+        //
+        // Switched off by a flag rather than by emptying the alias lists,
+        // because an empty property falls back to the built-in defaults, and
+        // those name real 1.21.1 classes. On a 1.20.1 runtime, which carries
+        // the same unobfuscated class name, the defaults would match and then
+        // fail to find the method they expect - killing the game instead of
+        // quietly doing nothing.
+        boolean identityHooks = !"false".equals(property("identityHooksEnabled", "true"));
+        boolean loginClass = identityHooks && contains(listeners, className);
+        boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
         if (!loginClass && !playerInfoClass && !textureUrlCheckerClass) {
             return null;
@@ -147,6 +162,31 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
     private static byte[] transformTextureUrlChecker(ClassNode node, String className) {
         boolean checkerPatched = false;
         for (MethodNode method : node.methods) {
+            if (isSkinReader(method)) {
+                // Where the game asks authlib for a player's skin, whatever
+                // version it is. Everything the launcher needs for a skin now
+                // happens on this one class: the profile is given its textures
+                // property here, a moment before authlib reads it, and the rule
+                // about allowed hosts is relaxed a few lines down. Both are
+                // com.mojang.authlib, which no loader obfuscates, so this needs
+                // no mappings from the runtime and is the same on Fabric,
+                // Quilt, Forge and NeoForge.
+                //
+                // Argument 1 is the GameProfile in both forms: getTextures took
+                // it up to authlib 5.0.47 and getPackedTextures takes it from
+                // 6.0.52 on, and there has never been a third.
+                InsnList inject = new InsnList();
+                inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                inject.add(new MethodInsnNode(
+                    Opcodes.INVOKESTATIC,
+                    SKIN_PROFILES,
+                    "apply",
+                    "(Ljava/lang/Object;)V",
+                    false));
+                method.instructions.insert(inject);
+                checkerPatched = true;
+                continue;
+            }
             if (!matchesMethod(
                 method,
                 "textureUrlCheckerMethods",
@@ -183,8 +223,16 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
-        System.out.println("[PortableIdentity] Patched texture URL checker " + className + ".");
+        System.out.println("[PortableIdentity] Patched authlib skin class " + className + ".");
         return writer.toByteArray();
+    }
+
+    // The method the game calls to read a profile's skin. Matched by name and
+    // by taking a GameProfile first, so an unrelated overload cannot be caught
+    // by accident.
+    private static boolean isSkinReader(MethodNode method) {
+        return contains(property("skinReaderMethods", SKIN_READER_METHODS), method.name)
+            && method.desc.startsWith("(Lcom/mojang/authlib/GameProfile;");
     }
 
     private static byte[] transformPlayerInfo(ClassNode node, String className) {
