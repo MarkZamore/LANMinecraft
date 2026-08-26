@@ -163,13 +163,10 @@ public sealed class WorldMetadataService
         var selected = selectedBuildRelativePath?.Trim().Trim('\\', '/');
         if (string.IsNullOrEmpty(selected)) return true;
 
-        if (string.Equals(recorded, selected, StringComparison.OrdinalIgnoreCase)) return true;
-
-        return string.Equals(
-                   selected,
-                   PortablePackSyncService.DefaultPackRelativePath,
-                   StringComparison.OrdinalIgnoreCase) &&
-               LegacyPackMigrationService.IsLegacyPack(recorded);
+        // A name is a name. A pack that is renamed leaves the worlds of its
+        // former name behind, which is the price of not carrying a table of
+        // every name anything has ever had.
+        return string.Equals(recorded, selected, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

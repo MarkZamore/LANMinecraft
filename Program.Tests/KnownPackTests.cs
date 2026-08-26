@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -47,11 +47,13 @@ public sealed class KnownPackTests
     }
 
     [Fact]
-    public void ATM10IsOffered()
+    public void AllTheMods10IsOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("ATM10");
+        var source = PortablePackSyncService.KnownSourceFor("All The Mods 10");
         Assert.NotNull(source);
-        Assert.Equal("pack-latest", source!.Tag);
+        Assert.Equal("MarkZamore", source!.Owner);
+        Assert.Equal("All-The-Mods-10", source.Repo);
+        Assert.Equal("pack-latest", source.Tag);
     }
 
     [Fact]
@@ -65,13 +67,26 @@ public sealed class KnownPackTests
     }
 
     [Fact]
-    public void E10IsOffered()
+    public void AllTheFabric3IsOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("E10");
+        var source = PortablePackSyncService.KnownSourceFor("All The Fabric 3");
         Assert.NotNull(source);
         Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("E10", source.Repo);
+        Assert.Equal("All-The-Fabric-3", source.Repo);
         Assert.Equal("pack-latest", source.Tag);
+    }
+
+    /// <summary>
+    /// The names that were dropped are dropped: nothing answers for them, and a
+    /// folder still called one of them is a pack of somebody's own as far as
+    /// the launcher is concerned.
+    /// </summary>
+    [Theory]
+    [InlineData("ATM10")]
+    [InlineData("E10")]
+    public void ARetiredNameIsNotOffered(string retired)
+    {
+        Assert.Null(PortablePackSyncService.KnownSourceFor(retired));
     }
 
     [Fact]
@@ -90,9 +105,9 @@ public sealed class KnownPackTests
     }
 
     [Theory]
-    [InlineData("atm10")]
-    [InlineData("ATM10\\")]
-    [InlineData(" ATM10 ")]
+    [InlineData("all the mods 10")]
+    [InlineData("All The Mods 10\\")]
+    [InlineData(" All The Mods 10 ")]
     public void SlashesAndCaseDoNotHideAKnownPack(string name)
     {
         Assert.NotNull(PortablePackSyncService.KnownSourceFor(name));

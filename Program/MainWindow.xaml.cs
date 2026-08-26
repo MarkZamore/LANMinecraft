@@ -151,7 +151,6 @@ public partial class MainWindow : Window
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
-            LegacyPackMigrationService.Run(_paths, _settings, _settingsService, _logger);
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
             _transferPacingStore = new TransferPacingStore(_paths);
