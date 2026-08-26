@@ -65,6 +65,16 @@ public sealed class KnownPackTests
     }
 
     [Fact]
+    public void E10IsOffered()
+    {
+        var source = PortablePackSyncService.KnownSourceFor("E10");
+        Assert.NotNull(source);
+        Assert.Equal("MarkZamore", source!.Owner);
+        Assert.Equal("E10", source.Repo);
+        Assert.Equal("pack-latest", source.Tag);
+    }
+
+    [Fact]
     public void ACustomPackHasNoSource()
     {
         Assert.Null(PortablePackSyncService.KnownSourceFor("SomebodysOwnPack"));
