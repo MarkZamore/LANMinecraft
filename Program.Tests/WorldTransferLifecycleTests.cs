@@ -191,7 +191,8 @@ public sealed class WorldTransferLifecycleTests
             var packInstances = new PackInstanceService(paths, logger);
             var packRuntimes = new PackRuntimeService(paths, logger);
             var minecraft = new MinecraftProcessService(
-                paths, logger, identity, identityAdapter, profiles, packInstances, packRuntimes, waypoints, skins);
+                paths, logger, identity, identityAdapter, profiles, packInstances, packRuntimes, waypoints, skins,
+                new PortableIdentityRegistryService(paths, logger));
             var service = new WorldTransferService(
                 paths,
                 logger,

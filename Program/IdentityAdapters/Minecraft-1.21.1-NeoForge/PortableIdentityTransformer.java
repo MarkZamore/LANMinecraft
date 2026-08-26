@@ -43,6 +43,12 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
     private static final String TEXTURE_URL_CHECKER_METHODS =
         "isAllowedTextureDomain,isWhitelistedDomain";
     private static final String SKIN_READER_METHODS = "getTextures,getPackedTextures";
+    // Where every version agrees. Whatever builds an offline profile ends at
+    // new GameProfile(offlineUuid, name), and this class is com.mojang.authlib,
+    // which no loader obfuscates and no mappings describe.
+    private static final String GAME_PROFILE = "com/mojang/authlib/GameProfile";
+    private static final String IDENTITY_PROFILES =
+        "minecraft/portable/identity/PortableIdentityProfiles";
     private static final String SKIN_LOOKUP_DESCRIPTOR =
         "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;";
     private static final String SKIN_SELECTION_DESCRIPTOR =
@@ -113,12 +119,16 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         boolean loginClass = identityHooks && contains(listeners, className);
         boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
-        if (!loginClass && !playerInfoClass && !textureUrlCheckerClass) {
+        boolean gameProfileClass = contains(property("gameProfileClasses", GAME_PROFILE), className);
+        if (!loginClass && !playerInfoClass && !textureUrlCheckerClass && !gameProfileClass) {
             return null;
         }
 
         ClassNode node = new ClassNode(Opcodes.ASM9);
         new ClassReader(classfileBuffer).accept(node, 0);
+        if (gameProfileClass) {
+            return transformGameProfile(node, className);
+        }
         if (textureUrlCheckerClass) {
             return transformTextureUrlChecker(node, className);
         }
@@ -224,6 +234,45 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         System.out.println("[PortableIdentity] Patched authlib skin class " + className + ".");
+        return writer.toByteArray();
+    }
+
+    /**
+     * Rewrites the UUID a profile is about to be built with, before the
+     * constructor stores it. The field is final and the class is a record from
+     * authlib 7.0.61 on, so afterwards is too late; the argument, on the other
+     * hand, is an ordinary local in every version.
+     */
+    private static byte[] transformGameProfile(ClassNode node, String className) {
+        boolean patched = false;
+        for (MethodNode method : node.methods) {
+            if (!method.name.equals("<init>") ||
+                !method.desc.startsWith("(Ljava/util/UUID;Ljava/lang/String;")) {
+                continue;
+            }
+
+            InsnList inject = new InsnList();
+            inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            inject.add(new VarInsnNode(Opcodes.ALOAD, 2));
+            inject.add(new MethodInsnNode(
+                Opcodes.INVOKESTATIC,
+                IDENTITY_PROFILES,
+                "remap",
+                "(Ljava/util/UUID;Ljava/lang/String;)Ljava/util/UUID;",
+                false));
+            inject.add(new VarInsnNode(Opcodes.ASTORE, 1));
+            method.instructions.insert(inject);
+            patched = true;
+        }
+
+        if (!patched) {
+            throw new IllegalStateException(
+                "Unsupported authlib GameProfile: no constructor takes a UUID and a name.");
+        }
+
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        System.out.println("[PortableIdentity] Patched profile class " + className + ".");
         return writer.toByteArray();
     }
 

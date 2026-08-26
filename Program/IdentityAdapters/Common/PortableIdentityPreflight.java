@@ -57,7 +57,8 @@ public final class PortableIdentityPreflight {
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
-                !isAlias("textureUrlCheckerClasses", className)) {
+                !isAlias("textureUrlCheckerClasses", className) &&
+                !isAlias("gameProfileClasses", className)) {
                 throw new IllegalStateException("Unexpected portable identity target: " + className);
             }
         }

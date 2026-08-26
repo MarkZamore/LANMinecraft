@@ -71,6 +71,8 @@ public sealed class AppPaths
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");
     public string MinecraftWindowPlacementFile => Path.Combine(Personal, "minecraft-window-placement.json");
     public string SkinRegistryFile => Path.Combine(Personal, "skin-profiles.properties");
+    /// <summary>Which player each in-game name belongs to, for the adapter.</summary>
+    public string IdentityRegistryFile => Path.Combine(Personal, "identity-profiles.properties");
     public string WaypointSyncStateFile => Path.Combine(Personal, "waypoint-sync.json");
     public string WaypointConflicts => Path.Combine(Personal, "WaypointConflicts");
     /// <summary>

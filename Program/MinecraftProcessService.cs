@@ -178,6 +178,7 @@ public sealed class MinecraftProcessService
     private readonly ManagedComponentService _managedComponents;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
+    private readonly PortableIdentityRegistryService _identityRegistry;
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
     private readonly ConcurrentDictionary<int, byte> _activeClientProcesses = new();
     private int _clientPreparing;
@@ -220,6 +221,7 @@ public sealed class MinecraftProcessService
         PackRuntimeService packRuntimes,
         WaypointSyncService waypointSync,
         SkinService skinService,
+        PortableIdentityRegistryService identityRegistry,
         ManagedComponentService? managedComponents = null)
     {
         _paths = paths;
@@ -235,6 +237,7 @@ public sealed class MinecraftProcessService
         _managedComponents = managedComponents ?? new ManagedComponentService(paths, logger);
         _waypointSync = waypointSync;
         _skinService = skinService;
+        _identityRegistry = identityRegistry;
         _gameWindowPlacement = new MinecraftWindowPlacementService(paths, logger);
     }
 
@@ -304,6 +307,9 @@ public sealed class MinecraftProcessService
             .PrepareJvmArgumentsAsync(runtime, instance.GameDirectory, token)
             .ConfigureAwait(false);
         var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
+        // Who each name is. The adapter reads it when a profile is built, which
+        // is the one moment every Minecraft version has in common.
+        var identityRegistryPath = _identityRegistry.Prepare(identityContext);
         var gameDir = instance.GameDirectory;
         EnsureWorldsDirectoryAndSavesLink(gameDir, settings.ClientRelativePath);
         ValidatePackCompatibility(packDir);
@@ -438,6 +444,7 @@ public sealed class MinecraftProcessService
             // which is the point: the folder is the whole installation.
             $"-Duser.home={javaHome}",
             $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
+            $"-Dminecraft.portable.identity.registry={identityRegistryPath}",
             // Die at the first OutOfMemoryError instead of carrying on.
             //
             // The game's own answer to running out of memory while a world's

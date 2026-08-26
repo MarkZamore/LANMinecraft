@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     private PackRuntimeService? _packRuntimes;
     private WaypointSyncService? _waypointSync;
     private SkinService? _skinService;
+    private PortableIdentityRegistryService? _identityRegistry;
 
     [SuppressMessage(
         "Performance",
@@ -180,8 +181,9 @@ public partial class MainWindow : Window
             _packRuntimes = new PackRuntimeService(_paths, _logger);
             _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _peerTransport);
             _skinService = new SkinService(_paths, _logger, _peerTransport);
+            _identityRegistry = new PortableIdentityRegistryService(_paths, _logger);
             await _skinService.StartAsync(_lifetimeCts.Token);
-            _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
+            _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;
@@ -1077,6 +1079,7 @@ public partial class MainWindow : Window
             }
             peer.Apply(presence, _localPackHash);
             RequireSkinService().ObservePeer(peer);
+            _identityRegistry?.ObservePeer(peer);
         }
 
         var current = peers.Select(presence => presence.SteamId).ToHashSet();
