@@ -76,9 +76,14 @@ public sealed class SettingsSchemaTests : IDisposable
         // the smallest budget that still leaves that heap, so the game keeps
         // exactly the memory it had. There is no pack under this root, so the
         // split is the one the launcher uses for a pack it cannot see.
+        // ...and then held to what this machine may be asked for, which is why
+        // the carried-across budget is clamped rather than taken as it comes:
+        // a sixteen gigabyte runner cannot offer what a thirty-two gigabyte
+        // desktop can, and the number has to be right on both.
         var unseen = PackMemoryProfile.Unknown;
-        Assert.Equal(MemorySizingService.GetBudgetForHeapGb(unseen, 12), settings.MaxMemoryGb);
-        Assert.Equal(12, MemorySizingService.GetHeapGb(unseen, settings.MaxMemoryGb));
+        var carried = MemorySizingService.ClampMemoryGb(
+            MemorySizingService.GetBudgetForHeapGb(unseen, 12));
+        Assert.Equal(carried, settings.MaxMemoryGb);
         Assert.True(settings.MemorySettingIsWholeGame);
         Assert.Equal("Infinity", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
@@ -131,9 +136,20 @@ public sealed class SettingsSchemaTests : IDisposable
         Assert.True(settings.MaxMemoryGb < 20, "vanilla must not keep a modpack's number");
     }
 
-    /// <summary>And a number the player typed is left where they put it.</summary>
+    /// <summary>
+    /// And a number the player typed is left where they put it - as far as the
+    /// machine reading it can go.
+    /// </summary>
+    /// <remarks>
+    /// The ceiling is why this is not simply "left alone": the file is held to
+    /// the same limit as the box in the window, so a number larger than the
+    /// machine's share of itself comes back smaller. Twenty survives on a
+    /// thirty-two gigabyte machine and becomes twelve on a sixteen gigabyte
+    /// one, and this test used to assert the first of those - which passed
+    /// where it was written and failed on every build runner.
+    /// </remarks>
     [Fact]
-    public void ANumberThePlayerChose_IsLeftAlone()
+    public void ANumberThePlayerChose_IsLeftAloneWithinWhatTheMachineAllows()
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
@@ -142,7 +158,7 @@ public sealed class SettingsSchemaTests : IDisposable
 
         var settings = new SettingsService(paths).Load();
 
-        Assert.Equal(20, settings.MaxMemoryGb);
+        Assert.Equal(MemorySizingService.ClampMemoryGb(20), settings.MaxMemoryGb);
         Assert.True(settings.MemoryChosenByPlayer);
     }
 
