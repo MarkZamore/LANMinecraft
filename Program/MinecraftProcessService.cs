@@ -425,17 +425,6 @@ public sealed class MinecraftProcessService
             // which is the point: the folder is the whole installation.
             $"-Duser.home={javaHome}",
             $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
-            // ModernFix's lazy model loading, as a JVM property. Without it a
-            // player on 8 GB of heap ran out of memory before the world had
-            // finished loading its data packs - the vanilla path holds every
-            // model of 849 mods live at once. It was taken out once on the
-            // suspicion that it live-locked resource loading; a thread dump
-            // later put that on Lightspeed's parallel lookup alone.
-            //
-            // A property rather than the config file because ModernFix rewrites
-            // that file on every launch, so a pack copy can never reach an
-            // instance without the sync flagging it as a local edit.
-            "-Dmodernfix.config.mixin.perf.dynamic_resources=true",
             // Die at the first OutOfMemoryError instead of carrying on.
             //
             // The game's own answer to running out of memory while a world's
@@ -465,6 +454,27 @@ public sealed class MinecraftProcessService
             // generation on its own. Anything added here must survive
             // `java <flag> -version` on the pinned runtime first.
         };
+        // ModernFix's lazy model loading, as a JVM property. Without it a player
+        // on 8 GB of heap ran out of memory before the world had finished
+        // loading its data packs - the vanilla path holds every model of 849
+        // mods live at once. It was taken out once on the suspicion that it
+        // live-locked resource loading; a thread dump later put that on
+        // Lightspeed's parallel lookup alone.
+        //
+        // A property rather than the config file because ModernFix rewrites that
+        // file on every launch, so a pack copy can never reach an instance
+        // without the sync flagging it as a local edit.
+        //
+        // Not given to every pack, though, which is what it used to be. This was
+        // written when every pack the launcher ran was NeoForge 1.21.1, and a
+        // setting forced on somebody else's mods is a promise about versions the
+        // launcher had not met yet: on Minecraft before 1.19.4 this option and
+        // Continuity cannot both be on, and All The Fabric 3 stopped at a
+        // compatibility screen instead of starting. The rule is ModernFix's own.
+        if (!DynamicResourcesWouldClash(packDir, descriptor.MinecraftVersion))
+        {
+            extraJvmArguments.Add("-Dmodernfix.config.mixin.perf.dynamic_resources=true");
+        }
         extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
@@ -974,6 +984,27 @@ public sealed class MinecraftProcessService
     /// written down before the pack is started, so the folder ends up with a
     /// manifest either way; it simply does not have to arrive with one.
     /// </remarks>
+    /// <summary>
+    /// Whether turning ModernFix's lazy model loading on would stop this pack
+    /// before it started: its own compatibility check refuses to run beside
+    /// Continuity on anything older than 1.19.4.
+    /// </summary>
+    internal static bool DynamicResourcesWouldClash(string packDirectory, string minecraftVersion)
+    {
+        if (VersionOrder.CompareVersions(minecraftVersion, "1.19.4") >= 0) return false;
+        try
+        {
+            var mods = Path.Combine(packDirectory, "mods");
+            return Directory.Exists(mods) &&
+                   Directory.EnumerateFiles(mods, "continuity*.jar", SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable is not a reason to force a setting on somebody.
+            return true;
+        }
+    }
+
     public static bool HasPackData(string packDirectory) =>
         PackManifestService.HasManifest(packDirectory) ||
         (Directory.Exists(packDirectory) && Directory.Exists(Path.Combine(packDirectory, "mods")));
