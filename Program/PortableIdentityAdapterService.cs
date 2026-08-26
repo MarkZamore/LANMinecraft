@@ -80,6 +80,21 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 return [];
             }
 
+            if (configuration.Properties.GetValueOrDefault("identityHooksEnabled") == "false")
+            {
+                // Half the hooks, and the half a player actually looks at. The
+                // UUID hooks patch Minecraft's own classes and need the
+                // runtime's mappings; the skin hooks are all in
+                // com.mojang.authlib, which no loader obfuscates, so they go in
+                // regardless. Worth a line of its own: the warning above says
+                // skins are lost with the UUIDs, and here they are not.
+                _logger.Info(
+                    $"Skins only for Minecraft {runtime.Descriptor.MinecraftVersion} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: " +
+                    "the skin chosen in the launcher is shown, and everyone keeps the UUID Minecraft " +
+                    "gives them offline rather than the one the launcher derives.");
+            }
+
             foreach (var target in configuration.Targets)
             {
                 await RunPreflightAsync(runtime.JavaPath, adapterPath, configuration.Properties, target, token)
