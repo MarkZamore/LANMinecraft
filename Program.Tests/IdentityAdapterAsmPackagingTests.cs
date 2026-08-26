@@ -136,6 +136,16 @@ public sealed class IdentityAdapterAsmPackagingTests
             Assert.Contains($"\"{hook}\"", script, StringComparison.Ordinal);
         }
 
+        // The hooks LEAVE the agent jar rather than being copied out of it. A
+        // second copy inside the agent jar is one Fabric finds through
+        // parentClassLoader.getResource, and a class found there that it was
+        // not told to expose is refused outright - "as it hasn't been exposed
+        // to the game" - instead of being delegated. With the only copy on the
+        // bootstrap path getResource answers null, which is the branch where
+        // Fabric asks the platform loader and gets the class.
+        Assert.Contains("Move-Item -LiteralPath $file.FullName", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Copy-Item -LiteralPath $file.FullName", script, StringComparison.Ordinal);
+
         // And the agent puts that jar there, not the one it is running from.
         Assert.Contains("/portable-identity-hooks.jar", agent, StringComparison.Ordinal);
         Assert.Contains("appendToBootstrapClassLoaderSearch", agent, StringComparison.Ordinal);
