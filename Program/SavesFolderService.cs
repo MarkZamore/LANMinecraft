@@ -152,20 +152,35 @@ public sealed class SavesFolderService(Logger? logger = null)
             {
                 TryDeleteEmptyDirectory(destination);
             }
-            if (Directory.Exists(destination))
+
+            // A world of that name really is there. Two packs both offered
+            // "New World" and the player took it both times, which is not a
+            // corner case - it is the name Minecraft suggests. The world moves
+            // over under a free folder name rather than staying behind, and
+            // nobody has to rename anything: what the player sees in the game
+            // is the name inside level.dat, which is untouched. The folder is
+            // only how the launcher tells two of them apart.
+            var storedName = FreeName(worldsRoot, name);
+            if (storedName.Length == 0)
             {
                 logger?.Warn(
-                    $"World {name} was made inside this build and a world of that name already " +
-                    $"exists beside the others, so it stays where it is: {entry}. " +
-                    "Rename one of the two and it will move over by itself.");
+                    $"World {name} was made inside this build and every name near it is taken " +
+                    $"beside the others, so it stays where it is: {entry}.");
                 continue;
             }
+            destination = Path.Combine(worldsRoot, storedName);
             try
             {
                 Directory.Move(entry, destination);
-                CreateJunction(entry, destination);
+                // Under the name it was stored as, so the pass below does not
+                // then link the same world in a second time under that name and
+                // list it twice.
+                CreateJunction(Path.Combine(saves, storedName), destination);
                 moved++;
-                logger?.Info($"World {name} was made here and now lives beside the others.");
+                logger?.Info(storedName == name
+                    ? $"World {name} was made here and now lives beside the others."
+                    : $"World {name} was made here and now lives beside the others as {storedName}, " +
+                      "because that name was already taken. In the game it is still called what it was.");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -173,6 +188,22 @@ public sealed class SavesFolderService(Logger? logger = null)
             }
         }
         return moved;
+    }
+
+    /// <summary>
+    /// The wanted folder name, or the first free one beside it, in the shape
+    /// Minecraft itself uses when a world name is taken: "New World (1)".
+    /// Empty where even that runs out.
+    /// </summary>
+    private static string FreeName(string worldsRoot, string name)
+    {
+        if (!Directory.Exists(Path.Combine(worldsRoot, name))) return name;
+        for (var counter = 1; counter <= 999; counter++)
+        {
+            var candidate = $"{name} ({counter})";
+            if (!Directory.Exists(Path.Combine(worldsRoot, candidate))) return candidate;
+        }
+        return "";
     }
 
     /// <summary>

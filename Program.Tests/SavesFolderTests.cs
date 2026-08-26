@@ -125,9 +125,13 @@ public sealed class SavesFolderTests : IDisposable
         Assert.NotNull(new DirectoryInfo(Path.Combine(Saves, "New World")).LinkTarget);
     }
 
-    /// <summary>Two different worlds under one name is not resolved by guessing.</summary>
+    /// <summary>
+    /// Two different worlds under one name are kept apart rather than one of
+    /// them being left behind. Neither is touched, neither is renamed in the
+    /// game, and the world the other build made is not disturbed at all.
+    /// </summary>
     [Fact]
-    public void AMadeWorldWhoseNameIsTaken_IsLeftWhereItIs()
+    public void AMadeWorldWhoseNameIsTaken_MovesOverBeside()
     {
         MakeWorld("New World", "ATM10");
         var service = new SavesFolderService();
@@ -137,9 +141,10 @@ public sealed class SavesFolderTests : IDisposable
         Directory.CreateDirectory(made);
         File.WriteAllText(Path.Combine(made, "level.dat"), "mine");
 
-        Assert.Equal(0, service.Adopt(Worlds, Instance));
+        Assert.Equal(1, service.Adopt(Worlds, Instance));
 
-        Assert.Equal("mine", File.ReadAllText(Path.Combine(made, "level.dat")));
+        // Mine went over under a name of its own; theirs is exactly as it was.
+        Assert.Equal("mine", File.ReadAllText(Path.Combine(Worlds, "New World (1)", "level.dat")));
         Assert.NotEqual("mine", File.ReadAllText(Path.Combine(Worlds, "New World", "level.dat")));
     }
 
@@ -204,19 +209,45 @@ public sealed class SavesFolderTests : IDisposable
     }
 
     /// <summary>
-    /// And a real world of the same name still is not touched: two worlds under
-    /// one name is not something to resolve by guessing.
+    /// A real world of the same name does not stop it either - it moves over
+    /// under a free folder name, the way Minecraft itself names around a clash.
     /// </summary>
+    /// <remarks>
+    /// Two packs both offered "New World" and the player took it both times,
+    /// which is not a corner case: it is the name the game suggests. Leaving
+    /// the second one behind hid 88 MB of played world from the transfer list
+    /// with no way to get it out. Nothing is renamed for the player - the name
+    /// they see is inside level.dat and is not touched. The folder is only how
+    /// the launcher tells two worlds apart.
+    /// </remarks>
     [Fact]
-    public void ARealWorldOfTheSameName_StillStopsAdoption()
+    public void ARealWorldOfTheSameName_MovesOverUnderAFreeName()
     {
         MakeWorld("New World", build: null);
-        var theirs = MakeInstanceWorld("New World");
+        MakeInstanceWorld("New World");
 
         var adopted = new SavesFolderService().Adopt(Worlds, Instance);
 
-        Assert.Equal(0, adopted);
-        Assert.True(File.Exists(Path.Combine(theirs, "level.dat")));
+        Assert.Equal(1, adopted);
+        // Both are in the store, and the first one was not disturbed.
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World (1)", "level.dat")));
+        // And the instance links it under the name it was stored as, so the
+        // linking pass does not add a second junction to the same world.
+        Assert.True(Directory.Exists(Path.Combine(Saves, "New World (1)")));
+    }
+
+    /// <summary>A third of the same name keeps counting.</summary>
+    [Fact]
+    public void AThirdWorldOfTheSameName_CountsOn()
+    {
+        MakeWorld("New World", build: null);
+        Directory.CreateDirectory(Path.Combine(Worlds, "New World (1)"));
+        File.WriteAllBytes(Path.Combine(Worlds, "New World (1)", "level.dat"), new byte[16]);
+        MakeInstanceWorld("New World");
+
+        Assert.Equal(1, new SavesFolderService().Adopt(Worlds, Instance));
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World (2)", "level.dat")));
     }
 
     /// <summary>
@@ -235,7 +266,10 @@ public sealed class SavesFolderTests : IDisposable
         Assert.True(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
     }
 
-    /// <summary>A folder with anything in it is somebody's, empty of worlds or not.</summary>
+    /// <summary>
+    /// A folder with anything in it is somebody's, empty of worlds or not: the
+    /// world goes in beside it rather than through it.
+    /// </summary>
     [Fact]
     public void AFolderWithFilesInIt_IsNeverTakenBack()
     {
@@ -244,8 +278,11 @@ public sealed class SavesFolderTests : IDisposable
         File.WriteAllText(Path.Combine(stray, "notes.txt"), "mine");
         MakeInstanceWorld("New World");
 
-        Assert.Equal(0, new SavesFolderService().Adopt(Worlds, Instance));
-        Assert.True(File.Exists(Path.Combine(stray, "notes.txt")));
+        Assert.Equal(1, new SavesFolderService().Adopt(Worlds, Instance));
+
+        Assert.Equal("mine", File.ReadAllText(Path.Combine(stray, "notes.txt")));
+        Assert.False(File.Exists(Path.Combine(stray, "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World (1)", "level.dat")));
     }
 
     private string MakeInstanceWorld(string name)
