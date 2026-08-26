@@ -92,6 +92,79 @@ public sealed class MinecraftProcessService
         "-XX:+ExplicitGCInvokesConcurrent"
     ];
 
+    /// <summary>
+    /// At or below this heap the machine is short of memory rather than short
+    /// of frames, and the tuning above stops being the right answer.
+    /// </summary>
+    public const int SmallHeapCeilingMb = 4 * 1024;
+
+    /// <summary>
+    /// How the collector is asked to behave when there is barely a heap.
+    ///
+    /// The list above is written for twelve and sixteen gigabytes, where the
+    /// enemy is a pause somebody sees. Down here the enemy is the machine: a
+    /// laptop of eight gigabytes running a heap of three has no room for a
+    /// collector that keeps a large young generation and reserves a sixth of
+    /// the heap on top, and every choice that buys smoothness there buys
+    /// paging here - which is not a stutter but a game that stops for seconds.
+    ///
+    /// So the pause goal is relaxed from four frames to about nine, which lets
+    /// G1 collect less often and less desperately; the young generation is
+    /// pinned to a fifth of the heap rather than left to grow to three fifths;
+    /// regions go back to eight megabytes, because thirty-two of them is a
+    /// tenth of a small heap in a single region; and the concurrent cycle is
+    /// started at a fifth rather than the default's much later, since a small
+    /// heap fills between one cycle and the next.
+    ///
+    /// System.gc() is refused outright rather than made concurrent. A mod that
+    /// calls it on a machine this tight buys a full collection nobody asked
+    /// for, and there is no version of that which ends well.
+    ///
+    /// Two of these are experimental options, which is exactly the mistake this
+    /// file has made before - so the unlock is written first, in this list, and
+    /// the order is pinned by a test. The whole set was run through
+    /// `java <flag> -version` on the pinned runtime before it was written down.
+    /// </summary>
+    public static IReadOnlyList<string> SmallHeapTuningArguments { get; } =
+    [
+        "-XX:+UseG1GC",
+        "-XX:+ParallelRefProcEnabled",
+        "-XX:MaxGCPauseMillis=150",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:G1NewSizePercent=20",
+        "-XX:G1MaxNewSizePercent=40",
+        "-XX:G1HeapRegionSize=8M",
+        "-XX:G1ReservePercent=20",
+        "-XX:InitiatingHeapOccupancyPercent=20",
+        "-XX:+DisableExplicitGC"
+    ];
+
+    /// <summary>The tuning a heap of this size is started with.</summary>
+    public static IReadOnlyList<string> HeapTuningArgumentsFor(int maximumRamMb) =>
+        maximumRamMb <= SmallHeapCeilingMb ? SmallHeapTuningArguments : HeapTuningArguments;
+
+    /// <summary>
+    /// What the heap starts at, which is not always what it may reach.
+    /// </summary>
+    /// <remarks>
+    /// A large heap starts at its maximum on purpose: one that starts small
+    /// grows toward Xmx in live resize steps, and a 16 GB heap was measured
+    /// doing that from 2 GB to 9.4 GB across one session, each step a stutter.
+    /// The memory was already promised to the game.
+    ///
+    /// A small heap must not. On a machine with eight gigabytes, committing
+    /// three and a half of them in the first instant - before a single chunk is
+    /// drawn - is what takes the machine down, and the promise that made it
+    /// harmless on a large machine is the opposite of harmless here: there was
+    /// nothing spare to promise. It starts at a gigabyte and grows into what it
+    /// is allowed, paying the resize stutters, because a stutter is a thing you
+    /// play through and paging is not.
+    /// </remarks>
+    internal static int InitialHeapMbFor(int maximumRamMb) =>
+        maximumRamMb <= SmallHeapCeilingMb
+            ? Math.Min(1024, maximumRamMb)
+            : maximumRamMb;
+
     private readonly GameLogConfigurationService _gameLogConfiguration;
     private readonly AppPaths _paths;
     private readonly ClientPresenceService _presence;
@@ -362,7 +435,7 @@ public sealed class MinecraftProcessService
             // generation on its own. Anything added here must survive
             // `java <flag> -version` on the pinned runtime first.
         };
-        extraJvmArguments.AddRange(HeapTuningArguments);
+        extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
         var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
         if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
         extraJvmArguments.AddRange(JavaCompatibilityArguments);
@@ -374,7 +447,7 @@ public sealed class MinecraftProcessService
         // list, and it is the first thing worth reading when a game will not
         // start.
         _logger.Info(
-            $"Java: -Xms{maximumRamMb}M -Xmx{maximumRamMb}M " +
+            $"Java: -Xms{InitialHeapMbFor(maximumRamMb)}M -Xmx{maximumRamMb}M " +
             string.Join(' ', extraJvmArguments));
         var launchOption = new MLaunchOption
         {
@@ -382,12 +455,9 @@ public sealed class MinecraftProcessService
             JavaPath = runtime.JavaPath,
             Session = session,
             MaximumRamMb = maximumRamMb,
-            // Equal to the maximum on purpose: a heap that starts small grows
-            // toward Xmx in live resize steps, and a 16 GB heap was measured
-            // doing that from 2 GB to 9.4 GB across one session, each step a
-            // stutter. The memory was already promised to the game; committing
-            // it up front costs nothing the player had not agreed to.
-            MinimumRamMb = maximumRamMb,
+            // Equal to the maximum on a machine with room, lower on one
+            // without; see InitialHeapMbFor.
+            MinimumRamMb = InitialHeapMbFor(maximumRamMb),
             GameLauncherName = "LANMinecraft",
             GameLauncherVersion = "1",
             VersionType = $"{descriptor.Loader.Type} {descriptor.Loader.Version}".Trim(),
@@ -602,9 +672,12 @@ public sealed class MinecraftProcessService
     /// every session that ends leaves the same measurement behind for the pack
     /// it ran, and the guess gets to be checked.
     ///
-    /// The subtraction is honest because -Xms is set equal to -Xmx: the heap is
-    /// committed from the start, so what stands above it is room beside it and
-    /// not an unfilled heap.
+    /// The subtraction reads differently at the two ends, and is worth having
+    /// at both. A large heap is started at its maximum, so it is committed from
+    /// the first instant and everything above it is room beside it. A small one
+    /// starts at a gigabyte and grows, so what is committed is the heap the
+    /// session actually needed plus that room - which is the more useful of the
+    /// two readings, and the one this measurement was added to get.
     ///
     /// Two numbers, and the commit is the one that answers the question. The
     /// working set is only what was resident when it was looked at, and a
