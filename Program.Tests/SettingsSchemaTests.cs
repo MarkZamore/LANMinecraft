@@ -159,7 +159,80 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal(MemorySizingService.ClampMemoryGb(20), settings.MaxMemoryGb);
-        Assert.True(settings.MemoryChosenByPlayer);
+        // And it is kept under the name of the pack it was chosen on. A file
+        // from before the number was per-pack cannot say which pack that was,
+        // so it is taken to have been the one that was selected.
+        Assert.Equal(MemorySizingService.ClampMemoryGb(20), settings.MemoryByPack["Vanilla"]);
+    }
+
+    /// <summary>
+    /// Two packs, two numbers, and switching between them brings each one back.
+    /// </summary>
+    /// <remarks>
+    /// One number for every pack was wrong in both directions at once: it sent
+    /// a heavy pack's twelve gigabytes to a pack built for a laptop, and the
+    /// laptop pack's five to Limitless 8, and whichever the player fixed last
+    /// was the only one that was right.
+    /// </remarks>
+    [Fact]
+    public void EachPackKeepsTheNumberItWasSetTo()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        WriteVanillaPack(paths, "Vanilla");
+        WriteVanillaPack(paths, "Heavy");
+        WriteSettings(paths, memoryGb: 20, chosenByPlayer: false, pack: "Vanilla");
+
+        var service = new SettingsService(paths);
+        var settings = service.Load();
+
+        // Set on one pack.
+        settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(3);
+        service.RememberMemoryForPack(settings, settings.MaxMemoryGb);
+        service.Save(settings);
+        var laptopNumber = settings.MaxMemoryGb;
+
+        // Switch to the other, which was never set: it gets the suggestion.
+        settings.ClientRelativePath = "Heavy";
+        service.MeasurePack(settings.ClientRelativePath);
+        service.ApplyPackMemory(settings);
+        Assert.Null(SettingsService.RememberedMemoryGb(settings));
+        settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(12);
+        service.RememberMemoryForPack(settings, settings.MaxMemoryGb);
+        service.Save(settings);
+        var heavyNumber = settings.MaxMemoryGb;
+
+        // Back to the first, in a launcher that has just started.
+        var reloaded = new SettingsService(paths).Load();
+        reloaded.ClientRelativePath = "Vanilla";
+        var second = new SettingsService(paths);
+        second.MeasurePack(reloaded.ClientRelativePath);
+        second.ApplyPackMemory(reloaded);
+
+        Assert.Equal(laptopNumber, reloaded.MaxMemoryGb);
+        Assert.Equal(heavyNumber, reloaded.MemoryByPack["Heavy"]);
+    }
+
+    /// <summary>
+    /// The number is written down on the edit, not on the launch: a pack chosen
+    /// for, thought better of, and never started still answers with it.
+    /// </summary>
+    [Fact]
+    public void ANumberChosenWithoutEverPlaying_IsStillThereNextTime()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        WriteVanillaPack(paths, "Vanilla");
+        WriteSettings(paths, memoryGb: 20, chosenByPlayer: false, pack: "Vanilla");
+
+        var service = new SettingsService(paths);
+        var settings = service.Load();
+        var chosen = MemorySizingService.ClampMemoryGb(3);
+        settings.MaxMemoryGb = chosen;
+        service.RememberMemoryForPack(settings, chosen);
+        service.Save(settings);
+
+        Assert.Equal(chosen, new SettingsService(paths).Load().MaxMemoryGb);
     }
 
     private static void WriteSettings(AppPaths paths, int memoryGb, bool chosenByPlayer, string pack)

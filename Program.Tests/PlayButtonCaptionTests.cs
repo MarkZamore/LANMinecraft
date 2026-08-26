@@ -67,18 +67,24 @@ public sealed class PlayButtonCaptionTests
             RuntimePreparationStage.Downloading,
             RuntimePreparationStage.InstallingJava,
         };
+        // Every word the preparation can put in front of a pair of sizes: the
+        // Java it is fetching, and the name of whatever set of files is coming
+        // down - the base game, or the loader the pack asks for.
+        var subjects = new[]
+        {
+            $"Java {PortableJavaRuntimeService.PinnedJavaVersion}",
+            "Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"
+        };
         foreach (var stage in byteStages)
         {
-            foreach (var phase in new[] { (0, 0), (1, 2), (2, 2) })
+            foreach (var subject in subjects)
             {
                 var progress = new RuntimePreparationProgress(
                     stage,
-                    $"Java {PortableJavaRuntimeService.PinnedJavaVersion}",
+                    subject,
                     Fraction: 1,
                     DownloadedBytes: JustUnderAGigabyte,
-                    TotalBytes: JustUnderAGigabyte,
-                    PhaseIndex: phase.Item1,
-                    PhaseCount: phase.Item2);
+                    TotalBytes: JustUnderAGigabyte);
                 yield return PlayButtonCaption.For(progress, FastDownload);
                 yield return PlayButtonCaption.For(progress with { DownloadedBytes = 0, TotalBytes = 0 }, 0);
             }
@@ -87,7 +93,7 @@ public sealed class PlayButtonCaptionTests
         foreach (var loader in new[] { "NeoForge", "Fabric", "Quilt", "Forge", "Minecraft" })
         {
             yield return PlayButtonCaption.For(
-                new RuntimePreparationProgress(RuntimePreparationStage.InstallingLoader, loader, PhaseIndex: 2, PhaseCount: 2),
+                new RuntimePreparationProgress(RuntimePreparationStage.InstallingLoader, loader),
                 0);
         }
 

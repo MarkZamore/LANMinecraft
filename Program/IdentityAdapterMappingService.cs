@@ -231,9 +231,14 @@ internal sealed class IdentityAdapterMappingService
         .Where(alias => !string.IsNullOrWhiteSpace(alias))
         .Distinct(StringComparer.Ordinal));
 
+    /// <summary>
+    /// Said of a runtime the hooks do not fit, rather than of a fault: the
+    /// caller starts the pack without them. Forge and NeoForge ship the TSRG2
+    /// mappings this reads and Fabric and Quilt ship none, and no version of
+    /// Minecraft is obliged to keep the classes the hooks reach for.
+    /// </summary>
     private static NotSupportedException Unsupported(PackRuntimeDescriptor descriptor, string reason) => new(
-        $"Portable UUID adapter could not be verified for Minecraft {descriptor.MinecraftVersion} " +
-        $"{descriptor.Loader.Type} {descriptor.Loader.Version}: {reason}. Update LANMinecraft.exe before launching this pack.");
+        $"Minecraft {descriptor.MinecraftVersion} {descriptor.Loader.Type} {descriptor.Loader.Version}: {reason}.");
 
     private sealed class Tsrg2Mappings
     {

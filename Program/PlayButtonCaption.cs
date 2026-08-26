@@ -9,10 +9,19 @@ namespace Minecraft;
 /// The button is a fixed 550 px on a canvas that never changes, its caption is
 /// drawn at the display size without wrapping or trimming, and anything wider
 /// is cut mid-letter with nothing to say it was. So a caption names the thing
-/// being worked on and, while bytes move, the numbers - "Сборка", "Файлы 2/2",
-/// "Java 21.0.12" - and never a sentence about them. The pair of sizes carries
-/// one unit, taken from the total, because both halves are the same measure.
+/// being worked on and, while bytes move, the numbers - "Сборка",
+/// "Java 21.0.12", "NeoForge" - and never a sentence about them. The pair of
+/// sizes carries one unit, taken from the total, because both halves are the
+/// same measure.
 /// </summary>
+/// <remarks>
+/// The name is the whole of what a caption says, and it is why the bar may go
+/// back to nothing without alarming anybody: preparing a pack fetches the base
+/// game, then the loader's installer, then the libraries that installer asks
+/// for, and each of those is a set of files of its own. The caption used to
+/// number those sets - "Файлы 1/2", "Файлы 2/2" - which was wrong twice over:
+/// they are not files, and there are more than two of them. It names them now.
+/// </remarks>
 internal static class PlayButtonCaption
 {
     /// <summary>
@@ -25,11 +34,6 @@ internal static class PlayButtonCaption
     public static string For(RuntimePreparationProgress progress, double bytesPerSecond)
     {
         ArgumentNullException.ThrowIfNull(progress);
-        var phase = progress.PhaseCount > 1 &&
-                    progress.PhaseIndex > 0 &&
-                    progress.PhaseIndex <= progress.PhaseCount
-            ? $" {progress.PhaseIndex}/{progress.PhaseCount}"
-            : string.Empty;
         var moving = progress.TotalBytes > 0;
         return progress.Stage switch
         {
@@ -37,11 +41,9 @@ internal static class PlayButtonCaption
                 WithBytes("Сборка", progress, bytesPerSecond),
             RuntimePreparationStage.SyncingPack => "Проверка",
             RuntimePreparationStage.Downloading when moving =>
-                WithBytes("Файлы" + phase, progress, bytesPerSecond),
-            RuntimePreparationStage.Downloading => "Файлы" + phase,
+                WithBytes(progress.Message, progress, bytesPerSecond),
             RuntimePreparationStage.InstallingJava when moving =>
                 WithBytes(progress.Message, progress, bytesPerSecond),
-            RuntimePreparationStage.InstallingLoader => progress.Message + phase,
             _ => progress.Message
         };
     }

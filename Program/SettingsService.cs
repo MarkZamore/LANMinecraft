@@ -53,26 +53,55 @@ public sealed class SettingsService
     }
 
     /// <summary>
-    /// Puts the launcher's own suggestion back in step with the pack it is for.
-    /// A number the player typed is left exactly as it is - for ever, and on
-    /// every pack. Returns true when the number moved.
+    /// Puts the field in step with the pack that is now selected: back to the
+    /// number the player last set on this pack, or to what the launcher makes
+    /// of its weight if they never set one. Returns true when the number moved.
     /// </summary>
-    public bool ApplyPackRecommendation(AppSettings settings)
+    public bool ApplyPackMemory(AppSettings settings)
     {
-        if (settings.MemoryChosenByPlayer) return false;
-
-        var recommended =
-            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, VideoMemoryProfile.Measure());
-        if (settings.MaxMemoryGb == recommended) return false;
+        var video = VideoMemoryProfile.Measure();
+        var remembered = RememberedMemoryGb(settings);
+        var wanted = remembered
+            ?? MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, video);
+        if (settings.MaxMemoryGb == wanted) return false;
 
         _logger?.Info(
-            $"Memory for this pack ({DescribePack()}): {recommended} GB for the game, " +
-            $"of which {MemorySizingService.GetHeapGb(PackMemory, recommended, VideoMemoryProfile.Measure())} GB " +
-            "is the Java heap.");
-        settings.MaxMemoryGb = recommended;
+            $"Memory for this pack ({DescribePack()}): {wanted} GB for the game, " +
+            $"of which {MemorySizingService.GetHeapGb(PackMemory, wanted, video)} GB is the Java heap" +
+            (remembered is null ? "." : ", which is what was set here last."));
+        settings.MaxMemoryGb = wanted;
         Save(settings);
         return true;
     }
+
+    /// <summary>
+    /// The number this pack was last set to by hand, held to what the machine
+    /// allows, or null where it never was. A remembered number outlives the
+    /// machine it was chosen on, so a file carried to a smaller one still comes
+    /// back to a number that fits.
+    /// </summary>
+    public static int? RememberedMemoryGb(AppSettings settings)
+    {
+        var pack = PackKey(settings);
+        return pack.Length != 0 && settings.MemoryByPack.TryGetValue(pack, out var stored)
+            ? MemorySizingService.ClampMemoryGb(stored)
+            : null;
+    }
+
+    /// <summary>
+    /// Writes down what the player set the field to for the pack in front of
+    /// them. This happens on the edit rather than on the launch: a number
+    /// chosen for a pack they then thought better of playing is still theirs
+    /// the next time they come back to it.
+    /// </summary>
+    public void RememberMemoryForPack(AppSettings settings, int memoryGb)
+    {
+        var pack = PackKey(settings);
+        if (pack.Length == 0) return;
+        settings.MemoryByPack[pack] = MemorySizingService.ClampMemoryGb(memoryGb);
+    }
+
+    private static string PackKey(AppSettings settings) => settings.ClientRelativePath?.Trim() ?? "";
 
     private string DescribePack() =>
         PackMemory.IsKnown
@@ -109,17 +138,24 @@ public sealed class SettingsService
                 settings.MaxMemoryGb = budget;
             }
             settings.MemorySettingIsWholeGame = true;
-            // Whose number is it? A file written before the launcher asked is
-            // asked once, and answers by arithmetic: a number the launcher would
-            // have suggested on this machine is the launcher's, and from now on
-            // it follows the pack; anything else was typed by hand and stays.
-            if (hasConfiguredMemory && !HasJsonProperty(json, "memoryChosenByPlayer"))
-            {
-                settings.MemoryChosenByPlayer = settings.MaxMemoryGb !=
-                    MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown);
-            }
             settings = ApplyFallbacks(settings, pack, useRecommendedMemory: !hasConfiguredMemory);
-            ApplyPackRecommendation(settings);
+            // Whose number is it, and which pack was it for? Up to schema 12
+            // there was one answer for every pack, kept under a flag; a file
+            // written then is read once and its number becomes the answer for
+            // the pack that was selected when it was written, which is the only
+            // pack it can honestly have been about. Where even the flag is
+            // missing the file is older still and answers by arithmetic: a
+            // number the launcher would have suggested is the launcher's, and
+            // anything else was typed by hand.
+            if (hasConfiguredMemory && !HasJsonProperty(json, "memoryByPack"))
+            {
+                var typedByHand = HasJsonProperty(json, "memoryChosenByPlayer")
+                    ? ReadBoolean(json, "memoryChosenByPlayer")
+                    : settings.MaxMemoryGb !=
+                      MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown);
+                if (typedByHand) RememberMemoryForPack(settings, settings.MaxMemoryGb);
+            }
+            ApplyPackMemory(settings);
             TryPersistSafeDefaults(settings);
             return settings;
         }
@@ -168,6 +204,20 @@ public sealed class SettingsService
         }
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
+
+        // Held to the same limit as the box in the window, one pack at a time,
+        // and case-insensitively keyed however the file spelled it: these are
+        // folder names, and Windows does not think two spellings of one folder
+        // are two folders.
+        var byPack = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, memoryGb) in settings.MemoryByPack ?? [])
+        {
+            var key = name?.Trim() ?? "";
+            if (key.Length == 0) continue;
+            byPack[key] = MemorySizingService.ClampMemoryGb(memoryGb);
+        }
+        settings.MemoryByPack = byPack;
+
         settings.SkinPath = settings.SkinPath?.Trim() ?? "";
         settings.SelectedWorldRelativePath = settings.SelectedWorldRelativePath?.Trim() ?? "";
 
@@ -195,6 +245,15 @@ public sealed class SettingsService
         {
             return 1;
         }
+    }
+
+    private static bool ReadBoolean(string json, string propertyName)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.ValueKind == JsonValueKind.Object &&
+               document.RootElement.EnumerateObject().Any(property =>
+                   string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+                   property.Value.ValueKind == JsonValueKind.True);
     }
 
     private static bool HasJsonProperty(string json, string propertyName)

@@ -26,7 +26,21 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
     /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
     public const int ProtocolVersion = PortableFormat.ProtocolVersion;
     public const int HttpPort = 35658;
-    private const int MaxSkinBytes = 128 * 1024 * 1024;
+    /// <summary>
+    /// The widest a skin may be, and the most it may weigh.
+    /// </summary>
+    /// <remarks>
+    /// A skin is not kept to itself: it goes over Steam to everybody in the
+    /// session, and it is fetched again whenever somebody joins. The old
+    /// ceiling was a hundred and twenty-eight megabytes, which is not a skin -
+    /// it is a way to send seven friends a hundred and twenty-eight megabytes.
+    /// Four thousand and ninety-six pixels is sixty-four times the detail the
+    /// game's own model carries, and a PNG of that size that really is a skin
+    /// comes to a few megabytes; eight is room to spare, and the number that
+    /// stops the rest.
+    /// </remarks>
+    internal const int MaxSkinBytes = 8 * 1024 * 1024;
+    internal const int MaxSkinWidth = 4096;
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly IPeerTransport _transport;
@@ -457,16 +471,30 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 
     private static SkinAsset ReadSkin(string path, FileInfo info)
     {
-        if (info.Length is <= 0 or > MaxSkinBytes) throw new InvalidDataException("Skin PNG has an unsupported size.");
+        if (info.Length <= 0) throw new InvalidDataException("Skin PNG is empty.");
+        if (info.Length > MaxSkinBytes)
+        {
+            throw new InvalidDataException(
+                $"Skin PNG is {info.Length / (1024 * 1024)} MB; a skin may weigh {MaxSkinBytes / (1024 * 1024)} MB, " +
+                "because everyone in the session downloads it.");
+        }
         var bytes = File.ReadAllBytes(path);
         if (!TryReadPngDimensions(bytes, out var width, out var height) || width < 64 || width % 64 != 0 ||
             (height != width && height * 2 != width))
         {
-            throw new InvalidDataException("Skin must be a standard or HD Minecraft PNG.");
+            throw new InvalidDataException(
+                "Skin must be a Minecraft PNG: 64 pixels wide or a multiple of it, and either square " +
+                "(the modern layout) or half as tall (the old 64x32 one).");
+        }
+        if (width > MaxSkinWidth)
+        {
+            throw new InvalidDataException(
+                $"Skin is {width} pixels wide; {MaxSkinWidth} is the most, and already sixty-four times " +
+                "the detail the game's own model carries.");
         }
 
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
-        var model = height == width && width <= 4096 && DetectSlim(bytes, width) ? "slim" : "classic";
+        var model = height == width && DetectSlim(bytes, width) ? "slim" : "classic";
         return new SkinAsset(bytes, hash, model, path, info.Length, info.LastWriteTimeUtc.Ticks);
     }
 
@@ -523,7 +551,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         return false;
     }
 
-    private static bool TryReadPngDimensions(ReadOnlySpan<byte> bytes, out int width, out int height)
+    internal static bool TryReadPngDimensions(ReadOnlySpan<byte> bytes, out int width, out int height)
     {
         width = 0;
         height = 0;
