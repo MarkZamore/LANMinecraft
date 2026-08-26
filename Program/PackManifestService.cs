@@ -98,6 +98,10 @@ public static class PackManifestService
 
     public static string ResolveClientJarPath(string packDirectory, PackRuntimeDescriptor descriptor)
     {
+        if (descriptor.ClientJar.Length == 0)
+        {
+            throw new InvalidOperationException("This pack brings no client jar of its own.");
+        }
         var packRoot = Path.GetFullPath(packDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var path = Path.GetFullPath(Path.Combine(packRoot, descriptor.ClientJar));
         var parent = Path.GetDirectoryName(path)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -109,11 +113,15 @@ public static class PackManifestService
         return path;
     }
 
+    /// <summary>
+    /// The jar the pack brings, or an empty name where it brings none and the
+    /// official client is to be fetched for it instead.
+    /// </summary>
     private static string ValidateClientJarName(string? value)
     {
         var name = value?.Trim() ?? "";
-        if (name.Length == 0 ||
-            !string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal) ||
+        if (name.Length == 0) return "";
+        if (!string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal) ||
             name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
             !name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
         {

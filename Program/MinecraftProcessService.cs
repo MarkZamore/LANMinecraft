@@ -962,7 +962,21 @@ public sealed class MinecraftProcessService
         }
     }
 
-    public static bool HasPackData(string packDirectory) => PackManifestService.HasManifest(packDirectory);
+    /// <summary>
+    /// Whether this folder is a pack the launcher will offer.
+    /// </summary>
+    /// <remarks>
+    /// A folder with a manifest is one because it says so. A folder with mods
+    /// in it is one because that is what somebody making a build of their own
+    /// does: they make a folder, they put jars in it, and they expect to see it
+    /// in the list. What the manifest would have said - which loader, which
+    /// Minecraft, which build of that loader - is read out of those jars and
+    /// written down before the pack is started, so the folder ends up with a
+    /// manifest either way; it simply does not have to arrive with one.
+    /// </remarks>
+    public static bool HasPackData(string packDirectory) =>
+        PackManifestService.HasManifest(packDirectory) ||
+        (Directory.Exists(packDirectory) && Directory.Exists(Path.Combine(packDirectory, "mods")));
 
     /// <summary>
     /// The pack can ask, once, that every player of every world go back to the
