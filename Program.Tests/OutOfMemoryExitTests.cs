@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 
 namespace Minecraft.Tests;
@@ -159,10 +159,35 @@ public sealed class OutOfMemoryExitTests
     {
         Assert.Contains("-Xms{maximumRamMb}M -Xmx{maximumRamMb}M", Read("Program", "MinecraftProcessService.cs"), StringComparison.Ordinal);
 
-        var held = MinecraftProcessService.DescribeMemoryHeld(6L * 1024 * 1024 * 1024, heapGb: 4);
+        var held = MinecraftProcessService.DescribeMemoryHeld(
+            residentBytes: 6L * 1024 * 1024 * 1024,
+            committedBytes: 6L * 1024 * 1024 * 1024,
+            heapGb: 4);
         Assert.Contains("6144 MB", held, StringComparison.Ordinal);
         Assert.Contains("4096 MB", held, StringComparison.Ordinal);
         Assert.Contains("2048 MB", held, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And it is the commit that answers, not the resident set. A machine short
+    /// of memory pages the rest out, so the working set understates what the
+    /// pack wanted - and understates it worst on the small machines this
+    /// measurement exists for. Here the game asked for six gigabytes and only
+    /// three were resident: the room beside the heap is two gigabytes, not
+    /// none.
+    /// </summary>
+    [Fact]
+    public void APagingMachine_DoesNotMakeThePackLookSmaller()
+    {
+        var paging = MinecraftProcessService.DescribeMemoryHeld(
+            residentBytes: 3L * 1024 * 1024 * 1024,
+            committedBytes: 6L * 1024 * 1024 * 1024,
+            heapGb: 4);
+
+        Assert.Contains("asked for 6144 MB", paging, StringComparison.Ordinal);
+        Assert.Contains("2048 MB beside it", paging, StringComparison.Ordinal);
+        // The gap between the two is itself the reading, so both are kept.
+        Assert.Contains("3072 MB of it resident", paging, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -173,10 +198,11 @@ public sealed class OutOfMemoryExitTests
     [Fact]
     public void WhatWasNotMeasured_IsNotInvented()
     {
-        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(0, heapGb: 4));
-        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(-1, heapGb: 4));
+        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(0, 0, heapGb: 4));
+        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(-1, -1, heapGb: 4));
 
-        var adopted = MinecraftProcessService.DescribeMemoryHeld(3L * 1024 * 1024 * 1024, heapGb: 0);
+        var adopted = MinecraftProcessService.DescribeMemoryHeld(
+            3L * 1024 * 1024 * 1024, 3L * 1024 * 1024 * 1024, heapGb: 0);
         Assert.Contains("3072 MB", adopted, StringComparison.Ordinal);
         Assert.DoesNotContain("beside it", adopted, StringComparison.Ordinal);
     }
