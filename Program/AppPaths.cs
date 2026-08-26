@@ -33,6 +33,7 @@ public sealed class AppPaths
         Packs = CombineUnderService("Packs");
         Launcher = CombineUnderService("Launcher");
         Runtimes = Path.Combine(Launcher, "Runtimes");
+        JavaRuntimes = Path.Combine(Launcher, "JavaRuntimes");
         SteamNative = Path.Combine(Launcher, "Steam");
         Personal = CombineUnderService("Personal");
         Instances = Path.Combine(Personal, "Instances");
@@ -46,6 +47,18 @@ public sealed class AppPaths
     public string Packs { get; }
     public string Launcher { get; }
     public string Runtimes { get; }
+
+    /// <summary>
+    /// Where Java lives, once, for every pack.
+    ///
+    /// It used to live under each pack's own runtime folder, which meant a
+    /// machine with four packs held four copies of the same three hundred
+    /// megabyte JDK and downloaded a fifth for the next pack. Nothing about
+    /// a Java install belongs to a pack: two packs on the same feature
+    /// release want the same bytes, and the folder is named for the release
+    /// rather than for whoever asked first.
+    /// </summary>
+    public string JavaRuntimes { get; }
     public string SteamNative { get; }
     public string Personal { get; }
     public string Instances { get; }
@@ -77,6 +90,7 @@ public sealed class AppPaths
         Directory.CreateDirectory(Packs);
         Directory.CreateDirectory(Launcher);
         Directory.CreateDirectory(Runtimes);
+        Directory.CreateDirectory(JavaRuntimes);
         Directory.CreateDirectory(Personal);
         Directory.CreateDirectory(Instances);
         Directory.CreateDirectory(Worlds);

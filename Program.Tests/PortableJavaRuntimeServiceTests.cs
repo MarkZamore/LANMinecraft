@@ -22,26 +22,56 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     [Fact]
-    public void PinnedTemurinArtifact_MatchesAdoptium21_0_12_8()
+    public void PinnedTemurinArtifact_MatchesAdoptium21_0_12_1_1()
     {
-        Assert.Equal("temurin-21.0.12+8", PortableJavaRuntimeService.PinnedRuntimeId);
-        Assert.Equal("21.0.12", PortableJavaRuntimeService.PinnedJavaVersion);
+        Assert.Equal("temurin-21.0.12.1+1", PortableJavaRuntimeService.PinnedRuntimeId);
         Assert.Equal(21, PortableJavaRuntimeService.PinnedMajorVersion);
         Assert.Equal("java-21", PortableJavaRuntimeService.InstallDirectoryName);
         Assert.Equal(
-            "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
+            "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
             PortableJavaRuntimeService.ArchiveFileName);
-        Assert.Equal(205_069_442, PortableJavaRuntimeService.ArchiveSizeBytes);
+        Assert.Equal(205_073_461, PortableJavaRuntimeService.ArchiveSizeBytes);
         Assert.Equal(
-            "9ba963ee2371874a74185d18bc7bb2ab9407df7683300855ed7606e0662321d0",
+            "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e",
             PortableJavaRuntimeService.ArchiveSha256);
         Assert.Equal(
             [
-                "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12%2B8/" +
-                "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
-                "https://api.adoptium.net/v3/binary/version/jdk-21.0.12%2B8/windows/x64/jdk/hotspot/normal/eclipse"
+                "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/" +
+                "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+                "https://api.adoptium.net/v3/binary/version/jdk-21.0.12.1%2B1/windows/x64/jdk/hotspot/normal/eclipse"
             ],
             PortableJavaRuntimeService.DownloadUris.Select(uri => uri.AbsoluteUri));
+    }
+
+    /// <summary>
+    /// And the version it is recognised by is what the runtime says about
+    /// itself, not what its release is called. Every one of these was read out
+    /// of the archive's own release file: a build named jdk-21.0.12.1+1 answers
+    /// "21.0.12.1", one named jdk8u504-b01 answers "1.8.0_504". Guess it and
+    /// the install is never recognised, so it is downloaded, extracted and
+    /// thrown away again on every single launch.
+    /// </summary>
+    [Fact]
+    public void EveryRuntimeIsRecognisedByWhatItCallsItself()
+    {
+        Assert.Equal("21.0.12.1", PortableJavaRuntimeService.PinnedJavaVersion);
+
+        Assert.Equal("1.8.0_504", JavaRuntimeCatalog.ForMajorVersion(8)!.JavaVersion);
+        Assert.Equal("17.0.20.1", JavaRuntimeCatalog.ForMajorVersion(17)!.JavaVersion);
+        Assert.Equal("21.0.12.1", JavaRuntimeCatalog.ForMajorVersion(21)!.JavaVersion);
+        Assert.Equal("25.0.4.1", JavaRuntimeCatalog.ForMajorVersion(25)!.JavaVersion);
+
+        // The catalogue's 21 and the pin the service defaults to are one
+        // runtime, so they may not drift apart.
+        var pinned = JavaRuntimeCatalog.ForMajorVersion(21)!;
+        Assert.Equal(PortableJavaRuntimeService.PinnedRuntimeId, pinned.RuntimeId);
+        Assert.Equal(PortableJavaRuntimeService.PinnedJavaVersion, pinned.JavaVersion);
+        Assert.Equal(PortableJavaRuntimeService.ArchiveFileName, pinned.ArchiveFileName);
+        Assert.Equal(PortableJavaRuntimeService.ArchiveSizeBytes, pinned.ArchiveSizeBytes);
+        Assert.Equal(PortableJavaRuntimeService.ArchiveSha256, pinned.ArchiveSha256);
+        Assert.Equal(
+            PortableJavaRuntimeService.DownloadUris.Select(uri => uri.AbsoluteUri),
+            pinned.DownloadUris.Select(uri => uri.AbsoluteUri));
     }
 
     [Fact]
@@ -107,6 +137,37 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         Assert.Empty(Directory.EnumerateDirectories(
             Path.Combine(runtimeRoot, "runtime", "windows-x64"),
             ".java-25.install.*"));
+    }
+
+    /// <summary>
+    /// The runtimes share one folder, so a sweep has to know the difference
+    /// between a Java nothing pins any more and a Java another pack is about to
+    /// want. A machine that plays a 1.20.1 pack beside a 1.21.1 one keeps both;
+    /// a sweep that recognised only the runtime it was called about would
+    /// delete the other on every launch and fetch it again on the next.
+    /// </summary>
+    [Fact]
+    public async Task ARuntimeAnotherPackNeeds_SurvivesTheSweepAndAStrayOneDoesNot()
+    {
+        var archive = BuildArchive();
+        var runtimeRoot = CreateRuntimeRoot();
+        var siblings = Path.Combine(runtimeRoot, "runtime", "windows-x64");
+        Directory.CreateDirectory(Path.Combine(siblings, "java-21"));
+        Directory.CreateDirectory(Path.Combine(siblings, "java-11"));
+        File.WriteAllText(Path.Combine(siblings, "java-21", "keep.txt"), "another pack's Java");
+        File.WriteAllText(Path.Combine(siblings, "java-11", "stale.txt"), "nothing pins this");
+
+        using var httpClient = new HttpClient(new RecordingHandler(_ => Success(archive)));
+        // Twice: the sweep runs on the pass that finds the runtime already there.
+        await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
+        await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
+
+        Assert.True(
+            Directory.Exists(Path.Combine(siblings, "java-21")),
+            "a catalogued runtime belongs to whichever pack needs it, not to this one");
+        Assert.False(
+            Directory.Exists(Path.Combine(siblings, "java-11")),
+            "a runtime nothing pins any more is still swept");
     }
 
     [Fact]
@@ -340,6 +401,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var pin = new JavaRuntimePin(
+            MajorVersion: 25,
             TestRuntimeId,
             TestJavaVersion,
             "java-25",
