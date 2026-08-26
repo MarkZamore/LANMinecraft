@@ -47,7 +47,13 @@ public final class PortableIdentityHooks {
     public static boolean rejectDuplicateUuid(Object listener, Object profile) {
         try {
             PortableSkinProfiles.apply(profile);
-            UUID profileId = (UUID) PortableIdentityReflection.invoke(profile, "getId");
+            // The field, not getId. GameProfile became a record at authlib
+            // 7.0.61 and its getters went with the change; the three private
+            // fields did not move in any of the eighteen releases. The skin side
+            // was taught this and this one was left behind, which would have
+            // made the duplicate check throw on Minecraft 1.21.9 while the skin
+            // beside it carried on working.
+            UUID profileId = (UUID) PortableIdentityReflection.getField(profile, "id");
             Object server = PortableIdentityReflection.getField(listener, aliases("serverFields", "server", "f"));
             Object playerList = PortableIdentityReflection.invoke(
                 server,
