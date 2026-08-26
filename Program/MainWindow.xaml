@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Minecraft"
-        Title="LANMinecraft" Width="720" Height="515" MinWidth="600" MinHeight="300"
+        Title="LANMinecraft" Width="720" Height="528" MinWidth="600" MinHeight="300"
         WindowStartupLocation="CenterScreen"
         Style="{DynamicResource WindowStyle}"
         Icon="Minecraft.ico" Loaded="Window_Loaded" Closing="Window_Closing">
@@ -30,7 +30,7 @@
     </Window.Resources>
 
     <Viewbox Stretch="Uniform" StretchDirection="Both">
-        <Grid x:Name="RootGrid" Width="820" Height="544" Margin="{StaticResource Gap.Canvas}">
+        <Grid x:Name="RootGrid" Width="820" Height="560" Margin="{StaticResource Gap.Canvas}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="1*"/>
                 <ColumnDefinition Width="1*"/>
@@ -253,8 +253,15 @@
                         </TextBlock>
                     </Grid>
                 </Grid>
+                <!-- Two lines, always. It used to be one line that grew: the
+                     canvas is a fixed height measured with this box empty, so
+                     the first message long enough to wrap pushed the footer off
+                     the bottom of the window. Longer than two lines is trimmed
+                     rather than grown, and the whole of it is on hover. -->
                 <TextBlock x:Name="DiagnosticLogStatusText" Style="{StaticResource CaptionTextStyle}"
-                           TextWrapping="Wrap" MinHeight="{StaticResource Font.LineHeightCaption}"/>
+                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                           Height="{StaticResource Size.StatusLine}"
+                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
             </StackPanel>
 
             <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below2}">

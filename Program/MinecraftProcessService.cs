@@ -366,11 +366,25 @@ public sealed class MinecraftProcessService
               "that much of what it draws is kept in system memory instead, and out of the heap."
             : "Video memory: the card could not be read, so nothing is kept out of the heap for it.");
         var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video);
-        if (settings.MaxMemoryGb < smallestUsefulBudgetGb)
+        var wantedHeapGb = MemorySizingService.GetRecommendedHeapGb(packMemory);
+        // There are two ways a budget can be too small and only one of them was
+        // caught. Below the threshold the arithmetic itself fails: the room
+        // beside the heap is more than the whole number, the heap is held at its
+        // floor, and the game takes more than the number promised. AT the
+        // threshold the arithmetic works perfectly and the heap IS the floor -
+        // two gigabytes - which for a pack of ninety-four mods is not a heap,
+        // it is a crash with the sums adding up. All The Fabric 3 was given
+        // exactly the threshold, four gigabytes against a suggestion of five,
+        // and ran out of them while generating a world; the note below already
+        // said in as many words that this is what the threshold buys.
+        //
+        // So the test is the heap rather than the budget: does this number
+        // leave the pack the heap the pack asked for.
+        if (packMemory.IsKnown && heapGb < wantedHeapGb)
         {
             _logger.Warn(
-                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video)} GB outside its heap, " +
-                $"so {settings.MaxMemoryGb} GB is under the {smallestUsefulBudgetGb} GB it takes to stay inside that number.");
+                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video)} GB outside its heap " +
+                $"and wants {wantedHeapGb} GB in it, so {settings.MaxMemoryGb} GB leaves it {heapGb} GB of heap.");
             // And said to the player, not only to the log. A number somebody
             // typed is theirs and is never moved for them - but it was typed
             // for whatever pack was selected that day, and it follows them onto

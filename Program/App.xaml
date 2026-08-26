@@ -121,6 +121,10 @@
         <sys:Double x:Key="Size.ButtonMin">88</sys:Double>
         <sys:Double x:Key="Size.TextArea">96</sys:Double>
         <sys:Double x:Key="Size.PopupMax">260</sys:Double>
+        <!-- Two caption lines, always: the status line under the report box
+             holds its height whatever it says, because the canvas is measured
+             once and a message that grows it cuts the footer off the bottom. -->
+        <sys:Double x:Key="Size.StatusLine">32</sys:Double>
         <sys:Double x:Key="Size.Scrollbar">8</sys:Double>
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
         <!-- Grid columns: the label column every block shares, the memory box, the history -->
