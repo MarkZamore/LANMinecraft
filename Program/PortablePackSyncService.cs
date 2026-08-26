@@ -77,6 +77,7 @@ public sealed partial class PortablePackSyncService
         new("The Broken Script Enhanced",
             new PackSyncSource("MarkZamore", "The-Broken-Script-Enhanced", "pack-latest")),
         new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
+        new("RPG Ars Nouveau", new PackSyncSource("MarkZamore", "RPG-Ars-Nouveau", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
