@@ -181,6 +181,7 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService);
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
+            _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
             // A launcher closed while the game plays leaves the game behind.
             // This one picks it up, so the button says "Игра запущена" instead
@@ -1181,6 +1182,18 @@ public partial class MainWindow : Window
     /// under the report panel: that is where the launcher already speaks, and
     /// the button that sends the logs is right beside it.
     /// </summary>
+    /// <summary>
+    /// Said as the game starts, while it can still be acted on: the number in
+    /// the settings is smaller than this pack can run in, and the game is about
+    /// to prove it.
+    /// </summary>
+    private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
+    {
+        PostToUi(() => SetBugReportStatus(
+            $"Этой сборке мало {chosenGb} ГБ: почти всё уходит мимо кучи Java, и ей достаётся самый минимум. " +
+            $"Поставьте в настройках памяти {neededGb} ГБ или больше, иначе игра закроется без памяти."));
+    }
+
     private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
     {
         PostToUi(() => SetBugReportStatus(
