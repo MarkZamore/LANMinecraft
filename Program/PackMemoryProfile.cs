@@ -1,11 +1,11 @@
-using System.IO;
+﻿using System.IO;
+using System.IO.Compression;
 
 namespace Minecraft;
 
 /// <summary>
-/// A pack as memory sizing sees it: how many mod jars it carries, how many
-/// bytes those jars are, how much texture it ships, and which Minecraft it is
-/// for.
+/// A pack as memory sizing sees it: how many mods it loads, how many bytes
+/// their jars are, how much texture it ships, and which Minecraft it is for.
 ///
 /// The launcher runs whatever pack is put under Minecraft\Packs - vanilla
 /// 1.7.10 as readily as something twice the size of Limitless 8 - and what the
@@ -14,11 +14,25 @@ namespace Minecraft;
 /// whatever the heap is set to; a bare vanilla client keeps almost none of it.
 /// So the sizing rules take one of these rather than a number of gigabytes.
 /// </summary>
+/// <remarks>
+/// <see cref="ModCount"/> counts the mods the loader will load, which is not
+/// the number of files in the folder. Mods carry other mods inside themselves -
+/// Fabric API alone is dozens of them - and the loader loads every one. All The
+/// Fabric 3 is ninety-five jars and 287 mods; Limitless 8 is eight hundred and
+/// eighty-two jars and 1128. There is no ratio between the two: one pack has
+/// nearly twice as many mods as files, the other a quarter more.
+///
+/// Counting files instead was measured getting it wrong by 1373 MB on a pack
+/// whose whole budget was 4096: the launcher promised four gigabytes, the game
+/// took 5225, and the missing 1129 of those were per-mod costs for mods it had
+/// not counted.
+/// </remarks>
 public readonly record struct PackMemoryProfile(
     int ModCount,
     long ModBytes,
     long AssetBytes,
-    string? MinecraftVersion)
+    string? MinecraftVersion,
+    int JarCount = 0)
 {
     /// <summary>
     /// A pack nobody has looked at: not installed yet, or unreadable. The
@@ -53,11 +67,14 @@ public readonly record struct PackMemoryProfile(
                 return Unknown;
             }
 
-            var mods = MeasureFiles(Path.Combine(packDirectory, "mods"), ".jar");
+            var modsRoot = Path.Combine(packDirectory, "mods");
+            var mods = MeasureFiles(modsRoot, ".jar");
             var assets =
                 MeasureFiles(Path.Combine(packDirectory, "resourcepacks"), extension: null).Bytes +
                 MeasureFiles(Path.Combine(packDirectory, "shaderpacks"), extension: null).Bytes;
-            return new PackMemoryProfile(mods.Count, mods.Bytes, assets, ReadMinecraftVersion(packDirectory));
+            var loaded = mods.Count + CountNestedMods(modsRoot, mods.Count, mods.Bytes);
+            return new PackMemoryProfile(
+                loaded, mods.Bytes, assets, ReadMinecraftVersion(packDirectory), mods.Count);
         }
         catch (IOException)
         {
@@ -85,6 +102,65 @@ public readonly record struct PackMemoryProfile(
             return null;
         }
     }
+
+    /// <summary>
+    /// The mods that live inside other mods. Read out of each jar's own
+    /// listing, because nothing outside the jar says how many it carries.
+    /// </summary>
+    /// <remarks>
+    /// This opens every jar in the pack, which for the largest one on record -
+    /// eight hundred and eighty-two of them - takes about a second. So the
+    /// answer is kept for as long as the launcher is open, under a key that
+    /// changes whenever the folder does: a pack switched to and back is free,
+    /// and a pack whose mods were edited is counted again.
+    ///
+    /// Only the top level of each jar is read. A jar inside a jar inside a jar
+    /// exists, and counting it would mean opening every nested one as well -
+    /// several hundred more archives for a handful of mods.
+    /// </remarks>
+    private static int CountNestedMods(string modsRoot, int jarCount, long jarBytes)
+    {
+        if (!Directory.Exists(modsRoot)) return 0;
+
+        var key = $"{modsRoot}|{jarCount}|{jarBytes}";
+        if (NestedCounts.TryGetValue(key, out var cached)) return cached;
+
+        var nested = 0;
+        try
+        {
+            foreach (var jar in Directory.EnumerateFiles(modsRoot, "*.jar", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    using var archive = ZipFile.OpenRead(jar);
+                    foreach (var entry in archive.Entries)
+                    {
+                        var name = entry.FullName;
+                        if (name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) &&
+                            (name.StartsWith("META-INF/jars/", StringComparison.OrdinalIgnoreCase) ||
+                             name.StartsWith("META-INF/jarjar/", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            nested++;
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+                {
+                    // A jar that will not open carries nothing anyone can count.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+
+        NestedCounts[key] = nested;
+        return nested;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> NestedCounts =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static (int Count, long Bytes) MeasureFiles(string directory, string? extension)
     {

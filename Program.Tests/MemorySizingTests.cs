@@ -16,7 +16,13 @@ public sealed class MemorySizingTests
     private static long Mb(int value) => (long)value * 1024 * 1024;
 
     /// <summary>Limitless 8 as it stands: 874 jars, 1.9 GB of them, and the texture beside them.</summary>
-    private static PackMemoryProfile BigModpack => new(874, Mb(1959), Mb(115), "1.21.1");
+    // Limitless 8, the one pack these rules were measured against: 882 jars in
+    // its mods folder and 1128 mods once the ones nested inside those jars are
+    // counted, which is what the loader loads and what the sizing charges for.
+    // This number used to be the file count, and the constants were fitted to
+    // it; both moved together, so every expectation below is the same
+    // measurement it always was.
+    private static PackMemoryProfile BigModpack => new(1128, Mb(1959), Mb(115), "1.21.1");
     private static PackMemoryProfile Vanilla => new(0, 0, 0, "1.21.1");
     private static PackMemoryProfile OldVanilla => new(0, 0, 0, "1.7.10");
     private static PackMemoryProfile SmallModpack => new(60, Mb(180), Mb(40), "1.20.1");

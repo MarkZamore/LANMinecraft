@@ -113,7 +113,10 @@ public sealed class OutOfMemoryExitTests
     [InlineData(8)]
     public void AnEightGigabyteLaptop_CannotBeAdvisedIntoAKitchenSinkPack(int reportedGb)
     {
-        var pack = new PackMemoryProfile(327, 562_500_644, 0, "1.20.1");
+        // All The Mods 10, measured: 476 jars in its mods folder, 621 mods once
+        // the ones nested inside them are counted, 1323 MiB of jars. A real
+        // kitchen-sink pack rather than a shape invented for the test.
+        var pack = new PackMemoryProfile(621, 1_386_772_253, 0, "1.21.1");
         var installed = (ulong)reportedGb * 1024 * 1024 * 1024;
         var offerable = MemorySizingService.GetAllowedMaxMemoryGb(installed);
         var needed = MemorySizingService.GetSmallestUsefulBudgetGb(pack, VideoMemoryProfile.Unknown);
@@ -135,6 +138,9 @@ public sealed class OutOfMemoryExitTests
     [Fact]
     public void TheNumberOffered_LeavesAHeapWorthHaving()
     {
+        // 312 as recorded, which was that pack's file count; see the note in
+        // VideoMemoryProfileTests. The two numbers this test compares move
+        // together, so what it asserts is unchanged.
         var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
         var noCard = VideoMemoryProfile.Unknown;
         var threshold = MemorySizingService.GetSmallestUsefulBudgetGb(pack, noCard);
@@ -142,7 +148,7 @@ public sealed class OutOfMemoryExitTests
 
         Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetHeapGb(pack, threshold, noCard));
         Assert.True(offered > threshold, $"{offered} GB should be more than the {threshold} GB that merely stops the fall");
-        Assert.Equal(6, MemorySizingService.GetHeapGb(pack, offered, noCard));
+        Assert.Equal(5, MemorySizingService.GetHeapGb(pack, offered, noCard));
     }
 
     /// <summary>
