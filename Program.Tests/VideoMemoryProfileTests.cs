@@ -68,4 +68,50 @@ public sealed class VideoMemoryProfileTests
         Assert.InRange(measured.DedicatedGb, 0, 1024);
         Assert.Equal(measured, VideoMemoryProfile.Measure());
     }
+
+    private static Func<string, object?> Adapter(params (string Name, object? Value)[] values) =>
+        name => values.FirstOrDefault(entry => entry.Name == name).Value;
+
+    /// <summary>
+    /// The value this was got wrong on. A processor's own graphics have no
+    /// memory of their own to report, and the Intel driver fills the old 32-bit
+    /// field with 0x7FFFF000 regardless - two gigabytes less a page. Believed,
+    /// it was a two gigabyte card; it is not a card at all.
+    /// </summary>
+    [Fact]
+    public void SharedGraphics_AreNotACardWithTwoGigabytes()
+    {
+        var integrated = Adapter(
+            ("DriverDesc", "Intel(R) Arc(TM) B390 GPU"),
+            ("HardwareInformation.MemorySize", new byte[] { 0, 240, 255, 127 }));
+
+        Assert.Equal(0, VideoMemoryProfile.DedicatedBytes(integrated));
+    }
+
+    /// <summary>A card that does have memory of its own still reports it.</summary>
+    [Fact]
+    public void ACardWithMemoryOfItsOwn_IsStillRead()
+    {
+        var discrete = Adapter(
+            ("HardwareInformation.qwMemorySize", 8_585_740_288L),
+            ("HardwareInformation.MemorySize", new byte[] { 0, 240, 255, 127 }));
+
+        Assert.Equal(8_585_740_288L, VideoMemoryProfile.DedicatedBytes(discrete));
+    }
+
+    /// <summary>
+    /// And what believing it cost, on the pack and the machine it cost it on:
+    /// three hundred and twelve mods on a ten gigabyte budget. Read as a two
+    /// gigabyte card, the pack "outgrew" it by four, and the heap was pushed
+    /// down onto its floor - which is how a modern kitchen-sink pack came to
+    /// run in two gigabytes and die of it twice.
+    /// </summary>
+    [Fact]
+    public void ThePackThatDiedOfIt_KeepsItsHeapNow()
+    {
+        var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
+
+        Assert.Equal(6, MemorySizingService.GetHeapGb(pack, 10, VideoMemoryProfile.Unknown));
+        Assert.Equal(2, MemorySizingService.GetHeapGb(pack, 10, new VideoMemoryProfile(2)));
+    }
 }

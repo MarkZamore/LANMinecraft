@@ -124,6 +124,14 @@ public sealed class MinecraftProcessService
     /// </summary>
     public event Action<int>? ClientRanOutOfMemory;
 
+    /// <summary>
+    /// The memory setting cannot work for the pack about to start, carrying
+    /// what it is and the smallest number that can. Raised before the game
+    /// starts, because once it has started the only thing left to say is that
+    /// it died.
+    /// </summary>
+    public event Action<int, int>? ClientMemoryIsTooSmall;
+
     /// <summary>What the log says when the heap is spent.</summary>
     private const string OutOfMemoryMarker = "OutOfMemoryError";
     public event Action<bool>? ClientPreparingChanged;
@@ -282,6 +290,15 @@ public sealed class MinecraftProcessService
             _logger.Warn(
                 $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video)} GB outside its heap, " +
                 $"so {settings.MaxMemoryGb} GB is under the {smallestUsefulBudgetGb} GB it takes to stay inside that number.");
+            // And said to the player, not only to the log. A number somebody
+            // typed is theirs and is never moved for them - but it was typed
+            // for whatever pack was selected that day, and it follows them onto
+            // every pack after it. This is the one moment the launcher knows,
+            // before the game starts, that the number cannot work for the pack
+            // about to use it: it knew it twice for a three hundred mod pack on
+            // four gigabytes, wrote this very line into its own log both times,
+            // and let the game start and die of it anyway.
+            ClientMemoryIsTooSmall?.Invoke(settings.MaxMemoryGb, smallestUsefulBudgetGb);
         }
         // Held as text, not as MArgument, so the line logged below is the line
         // handed to the JVM. MArgument does not override ToString, so logging
@@ -493,15 +510,16 @@ public sealed class MinecraftProcessService
         try
         {
             if (process.ExitCode == 0) return;
+            var console = startupOutput.Describe();
             var tail = ReadLatestLogTail(gameDir);
             _logger.Warn(
                 $"Minecraft exited with code {process.ExitCode}." +
-                startupOutput.Describe() +
+                console +
                 tail);
             // Out of memory is the one ending a player can act on, and the one
             // the game itself would have answered with a dangerous offer, so it
             // is said in the window rather than left in the log.
-            if (tail.Contains(OutOfMemoryMarker, StringComparison.Ordinal))
+            if (NamesOutOfMemory(console, tail))
             {
                 _logger.Warn($"The game ran out of the {maxMemoryGb} GB it was given.");
                 ClientRanOutOfMemory?.Invoke(maxMemoryGb);
@@ -513,6 +531,27 @@ public sealed class MinecraftProcessService
             // failing the cleanup over.
         }
     }
+
+    /// <summary>
+    /// Whether what the game left behind names an out-of-memory ending.
+    /// </summary>
+    /// <remarks>
+    /// Both of the things the game left are read, and the console is the one
+    /// that carries it. <c>-XX:+ExitOnOutOfMemoryError</c> is the whole point
+    /// of this path and also the reason it was looking in the wrong place: the
+    /// JVM dies on the spot, so its single parting line - "Terminating due to
+    /// java.lang.OutOfMemoryError: Java heap space" - is written straight to
+    /// stdout and log4j never sees it. latest.log ends mid-sentence instead,
+    /// and Windows blames whatever native library a thread happened to be
+    /// inside, which for a client is usually OpenAL.
+    ///
+    /// Read only from the tail, this said nothing for a pack that ran out of
+    /// memory twice in a row - while the launcher wrote that very line into its
+    /// own log, one statement earlier, in the same message.
+    /// </remarks>
+    internal static bool NamesOutOfMemory(string consoleOutput, string logTail) =>
+        consoleOutput.Contains(OutOfMemoryMarker, StringComparison.Ordinal) ||
+        logTail.Contains(OutOfMemoryMarker, StringComparison.Ordinal);
 
     private static void TryPublishExitCode(Process process, TaskCompletionSource<int> exitCode)
     {

@@ -75,6 +75,10 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
     /// Windows keeps the true size: the number WMI offers is a 32-bit field and
     /// answers 4 GB for every card above it.
     /// </summary>
+    /// <remarks>
+    /// One value is read and one is not, and the difference matters more than
+    /// its width. See <see cref="DedicatedBytes"/>.
+    /// </remarks>
     private static List<long> ReadAdapterMemory(HashSet<string> present)
     {
         using var adapters = Registry.LocalMachine.OpenSubKey(DisplayAdapterClass);
@@ -96,11 +100,7 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
                 using var adapter = adapters.OpenSubKey(name);
                 if (adapter is null) continue;
 
-                var bytes = ReadSize(adapter, "HardwareInformation.qwMemorySize");
-                // The older value is a 32-bit one and stops at four gigabytes,
-                // so it is a floor rather than a size - taken only when the card
-                // does not offer the wide one at all.
-                if (bytes <= 0) bytes = ReadSize(adapter, "HardwareInformation.MemorySize");
+                var bytes = DedicatedBytes(adapter.GetValue);
                 if (bytes <= 0) continue;
 
                 found.Add((adapter.GetValue("DriverDesc") as string ?? "", bytes));
@@ -119,7 +119,33 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
         return (driven.Count > 0 ? driven : found).Select(entry => entry.Bytes).ToList();
     }
 
-    private static long ReadSize(RegistryKey adapter, string value) => adapter.GetValue(value) switch
+    /// <summary>
+    /// How much memory of its own one adapter's key claims, in bytes, or zero
+    /// for an adapter that does not claim any.
+    /// </summary>
+    /// <remarks>
+    /// Only the wide value counts. The 32-bit one beside it is not the same
+    /// number in a smaller box - it is a different thing, and reading it as a
+    /// size is how this went wrong: a processor's own graphics have no memory
+    /// of their own to report, and the Intel driver fills that field with
+    /// 0x7FFFF000 all the same. Believed, it became a two gigabyte card, and a
+    /// three hundred mod pack "outgrew" it by four gigabytes that were then
+    /// charged against the heap - four gigabytes of system memory the pack was
+    /// already being charged for once, because shared graphics take theirs from
+    /// the same place. A budget of four gigabytes was left a two gigabyte heap,
+    /// and the game died of it twice.
+    ///
+    /// So an adapter that does not offer the wide value is an adapter that has
+    /// not been read, which is a state this already has an answer for: it costs
+    /// nobody any heap. That loses nothing real. A card with memory of its own
+    /// reports it there, and one old enough not to is one small enough that the
+    /// sizing it used before this existed was written for it.
+    /// </remarks>
+    /// <param name="value">The adapter key's reader, by value name.</param>
+    internal static long DedicatedBytes(Func<string, object?> value) =>
+        ReadSize(value("HardwareInformation.qwMemorySize"));
+
+    private static long ReadSize(object? stored) => stored switch
     {
         long qword => qword,
         int dword => dword & 0xFFFFFFFFL,
