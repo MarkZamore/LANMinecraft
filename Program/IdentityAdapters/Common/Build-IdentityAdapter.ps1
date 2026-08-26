@@ -192,7 +192,14 @@ try {
         $found = Get-ChildItem -LiteralPath $hookDirectory -Filter "$hookName*.class" -File
         if ($found.Count -eq 0) { throw "Identity adapter hook class was not compiled: $hookName" }
         foreach ($file in $found) {
-            Copy-Item -LiteralPath $file.FullName -Destination $hookTarget -Force
+            # Moved, not copied. A hook that stays in the agent jar as well is a
+            # hook Fabric can see on the class path, and Fabric refuses to hand
+            # the game a class it finds there without being told to expose it -
+            # "as it hasn't been exposed to the game". With the only copy on the
+            # bootstrap path there is nothing on the class path to refuse, so
+            # the request goes up to the parent and finds it. The agent itself
+            # never loads these: it writes their names into bytecode as strings.
+            Move-Item -LiteralPath $file.FullName -Destination $hookTarget -Force
         }
     }
     $hooksJar = Join-Path $stageRoot "portable-identity-hooks.jar"
