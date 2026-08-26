@@ -95,6 +95,33 @@ public sealed class OutOfMemoryExitTests
         Assert.Contains("SetBugReportStatus(", handler, StringComparison.Ordinal);
         Assert.Contains("{chosenGb} ГБ", handler, StringComparison.Ordinal);
         Assert.Contains("{neededGb} ГБ", handler, StringComparison.Ordinal);
+
+        // And it does not ask for a number the machine will not take: a laptop
+        // keeps a quarter of itself back, so the box refuses what a three
+        // hundred mod pack needs long before the pack is satisfied.
+        Assert.Contains("neededGb > MemorySizingService.GetAllowedMaxMemoryGb()", handler, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The machine that cannot be advised is a real one, not a corner: eight
+    /// gigabytes installed leaves four or five to offer, and a three hundred
+    /// mod pack wants six before its heap is off the floor. Whichever of the
+    /// two the machine reports, the heap it gets is the floor.
+    /// </summary>
+    [Theory]
+    [InlineData(7)]
+    [InlineData(8)]
+    public void AnEightGigabyteLaptop_CannotBeAdvisedIntoAKitchenSinkPack(int reportedGb)
+    {
+        var pack = new PackMemoryProfile(327, 562_500_644, 0, "1.20.1");
+        var installed = (ulong)reportedGb * 1024 * 1024 * 1024;
+        var offerable = MemorySizingService.GetAllowedMaxMemoryGb(installed);
+        var needed = MemorySizingService.GetSmallestUsefulBudgetGb(pack, VideoMemoryProfile.Unknown);
+
+        Assert.True(needed > offerable, $"{needed} GB needed should be past the {offerable} GB this machine offers");
+        Assert.Equal(
+            MemorySizingService.MinHeapGb,
+            MemorySizingService.GetHeapGb(pack, offerable, VideoMemoryProfile.Unknown));
     }
 
     /// <summary>

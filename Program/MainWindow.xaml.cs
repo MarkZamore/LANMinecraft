@@ -1194,11 +1194,21 @@ public partial class MainWindow : Window
     /// to know where to type and what. "RAM" is the label beside that box in
     /// this very window, so it is the word used here rather than a description
     /// of it.
+    ///
+    /// Unless the number cannot be typed. A machine keeps a quarter of itself
+    /// back, so a laptop of eight gigabytes will not accept more than four or
+    /// five - and a pack of three hundred mods wants more than that before its
+    /// heap is off the floor. Telling that player to set ten is telling them to
+    /// do something the box refuses; the honest version of the sentence is that
+    /// the pack does not fit the machine, and this launcher says that the way
+    /// its owner wants it said.
     /// </remarks>
     private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
     {
         PostToUi(() => SetBugReportStatus(
-            $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM от {neededGb} ГБ."));
+            neededGb > MemorySizingService.GetAllowedMaxMemoryGb()
+                ? "Обнаружен компьютер со слабой аурой"
+                : $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM от {neededGb} ГБ."));
     }
 
     private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
