@@ -94,7 +94,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "net/minecraft/client/gui/screens/ShareToLanScreen",
         "foe",
         "com/mojang/authlib/yggdrasil/TextureUrlChecker",
-        "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService"
+        "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
+        "com/mojang/authlib/GameProfile"
     ];
 
     private (IdentityAdapterMappingService Service, PreparedRuntime Runtime, string GameDirectory) CreateFixture(
@@ -165,6 +166,31 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.DoesNotContain(
             configuration.Targets,
             target => target.ClassName.Contains("ServerLoginPacketListenerImpl", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And it keeps everyone's identity too, which is the half that decides
+    /// whether a player's inventory is still there after they change machines.
+    /// </summary>
+    /// <remarks>
+    /// Offline Minecraft has one answer to who a player is: their name, hashed.
+    /// The launcher knows whose Steam account each name belongs to, and the one
+    /// place every version can be told is where the profile is built -
+    /// com/mojang/authlib/GameProfile, which no loader obfuscates. So this
+    /// survives having no mappings, where the login patches do not.
+    /// </remarks>
+    [Fact]
+    public void ARuntimeWithoutMappings_StillKeepsEveryonesIdentity()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateFixture(GoldenMappings, DefaultJarClasses, withMappingFile: false);
+
+        var configuration = service.Build(runtime, gameDirectory);
+
+        Assert.Equal("com/mojang/authlib/GameProfile", configuration.Properties["gameProfileClasses"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "com/mojang/authlib/GameProfile");
     }
 
     /// <summary>

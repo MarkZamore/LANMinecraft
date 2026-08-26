@@ -36,6 +36,11 @@ internal sealed class IdentityAdapterMappingService
     private const string TextureUrlChecker = "com/mojang/authlib/yggdrasil/TextureUrlChecker";
     private const string YggdrasilSessionService =
         "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
+    // Where every Minecraft agrees who a player is. Whatever builds an offline
+    // profile - the login listener on the old versions, UUIDUtil on the new -
+    // ends at new GameProfile(offlineUuid, name), so this is the one seam that
+    // needs no mappings and works on every loader.
+    private const string GameProfile = "com/mojang/authlib/GameProfile";
     private readonly AppPaths _paths;
 
     public IdentityAdapterMappingService(AppPaths paths)
@@ -89,7 +94,7 @@ internal sealed class IdentityAdapterMappingService
         var targets = FindRuntimeTargets(
             runtime,
             gameDirectory,
-            new HashSet<string>(StringComparer.Ordinal) { YggdrasilSessionService, TextureUrlChecker });
+            new HashSet<string>(StringComparer.Ordinal) { YggdrasilSessionService, TextureUrlChecker, GameProfile });
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
         // and without it there is nothing to patch at all.
@@ -97,6 +102,12 @@ internal sealed class IdentityAdapterMappingService
             ?? throw Unsupported(
                 runtime.Descriptor,
                 $"{whyNotEverything}, and authlib itself was not found either");
+        if (targets.All(target => target.ClassName != GameProfile))
+        {
+            throw Unsupported(
+                runtime.Descriptor,
+                $"{whyNotEverything}, and authlib carries no GameProfile to key a player by");
+        }
 
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -136,6 +147,7 @@ internal sealed class IdentityAdapterMappingService
         // there has never been a third; the profile is given its skin there,
         // one step before authlib reads it.
         properties["skinReaderMethods"] = JoinAliases("getTextures", "getPackedTextures");
+        properties["gameProfileClasses"] = GameProfile;
     }
 
     private IdentityAdapterConfiguration BuildEverything(
@@ -245,7 +257,8 @@ internal sealed class IdentityAdapterMappingService
             listener.LeftName,
             PlayerInfo,
             playerInfo.LeftName,
-            YggdrasilSessionService
+            YggdrasilSessionService,
+            GameProfile
         };
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
