@@ -132,6 +132,103 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         Assert.Null(result.Warning);
     }
 
+    /// <summary>
+    /// Raising a mod's version renames its jar, and a rename is not a removal.
+    /// This is the ordinary shape of an update - most revisions bump several
+    /// mods and remove none - so getting it wrong would put the warning on
+    /// screen every time and teach the player to look past it.
+    /// </summary>
+    [Fact]
+    public async Task AVersionBump_IsNotAModRemoval()
+    {
+        var before = new PackFile("mods/jei-1.21.1-19.21.0.jar", Encoding.UTF8.GetBytes("jei old"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease("rev-1", [before, packManifest], [JarAsset(before), JarAsset(packManifest)]),
+            DefaultPack);
+
+        var after = new PackFile("mods/jei-1.21.1-19.22.0.jar", Encoding.UTF8.GetBytes("jei new"));
+        var next = BuildRelease("rev-2", [after, packManifest], [JarAsset(after), JarAsset(packManifest)]);
+        using var httpClient = new HttpClient(CreateReleaseHandler(next));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        // The old jar is gone from the disk and the new one is there. Nobody is
+        // told a mod left the pack, because the mod did not.
+        var packDir = PackDir(DefaultPack);
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.False(File.Exists(Path.Combine(packDir, "mods", "jei-1.21.1-19.21.0.jar")));
+        Assert.True(File.Exists(Path.Combine(packDir, "mods", "jei-1.21.1-19.22.0.jar")));
+        Assert.Null(result.Warning);
+    }
+
+    /// <summary>
+    /// The case that carries both at once, which is what a real update looks
+    /// like: several mods raised a version, one taken out. Only the one that
+    /// left is named.
+    /// </summary>
+    [Fact]
+    public async Task AModTakenOutAmongBumpedOnes_IsTheOnlyOneNamed()
+    {
+        var oldJei = new PackFile("mods/jei-1.21.1-19.21.0.jar", Encoding.UTF8.GetBytes("jei old"));
+        var oldSodium = new PackFile("mods/sodium-fabric-mc1.20.1-0.5.3.jar", Encoding.UTF8.GetBytes("sodium old"));
+        var doomed = new PackFile("mods/twilightforest-4.1.268.jar", Encoding.UTF8.GetBytes("twilight"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease(
+                "rev-1",
+                [oldJei, oldSodium, doomed, packManifest],
+                [JarAsset(oldJei), JarAsset(oldSodium), JarAsset(doomed), JarAsset(packManifest)]),
+            DefaultPack);
+
+        var newJei = new PackFile("mods/jei-1.21.1-19.22.0.jar", Encoding.UTF8.GetBytes("jei new"));
+        var newSodium = new PackFile("mods/sodium-fabric-mc1.20.1-0.5.8.jar", Encoding.UTF8.GetBytes("sodium new"));
+        var next = BuildRelease(
+            "rev-2",
+            [newJei, newSodium, packManifest],
+            [JarAsset(newJei), JarAsset(newSodium), JarAsset(packManifest)]);
+        using var httpClient = new HttpClient(CreateReleaseHandler(next));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.NotNull(result.Warning);
+        Assert.Contains("twilightforest", result.Warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("jei", result.Warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("sodium", result.Warning, StringComparison.Ordinal);
+        Assert.Contains("(1)", result.Warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A KubeJS startup script registers real blocks and items - Limitless 8
+    /// creates tnp:limitless_sword in one - so losing it costs a world exactly
+    /// what losing a mod does. A resource pack does not, and saying so about
+    /// one would spend the warning on a change of texture.
+    /// </summary>
+    [Fact]
+    public async Task AStartupScriptTakenAway_IsWarnedAbout_AResourcePackIsNot()
+    {
+        var script = new PackFile(
+            "kubejs/startup_scripts/items.js", Encoding.UTF8.GetBytes("StartupEvents.registry(...)"));
+        var texture = new PackFile("resourcepacks/pretty.zip", Encoding.UTF8.GetBytes("textures"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease(
+                "rev-1",
+                [script, texture, packManifest],
+                [JarAsset(script), JarAsset(texture), JarAsset(packManifest)]),
+            DefaultPack);
+
+        var next = BuildRelease("rev-2", [packManifest], [JarAsset(packManifest)]);
+        using var httpClient = new HttpClient(CreateReleaseHandler(next));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        // Both are gone from the disk; only the one that took content out of the
+        // save is spoken about, and it is not called a mod.
+        Assert.NotNull(result.Warning);
+        Assert.Contains("items", result.Warning, StringComparison.Ordinal);
+        Assert.Contains("скрипты", result.Warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("pretty", result.Warning, StringComparison.Ordinal);
+        Assert.Contains("(1)", result.Warning, StringComparison.Ordinal);
+    }
+
     /// <summary>A first install removes nothing: there was no world before it.</summary>
     [Fact]
     public async Task AFirstInstall_WarnsAboutNothing()

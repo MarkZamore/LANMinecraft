@@ -422,6 +422,14 @@ public sealed partial class PortablePackSyncService
                     {
                         ApplyChanges(
                             packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
+                        // Inside the same try as the files they describe. Once
+                        // ApplyChanges returns, the pack on disk is the new
+                        // revision; a state file still naming the old one would
+                        // make the next sync diff against a pack that is not
+                        // there, and would lose the one chance to say which mods
+                        // this update took away.
+                        WriteSyncState(statePath, packDir, manifest);
+                        WriteSourceMarker(packDir, source);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                                    or NotSupportedException)
@@ -431,8 +439,6 @@ public sealed partial class PortablePackSyncService
                         // here would start the game on that mix.
                         throw new PackApplyFailedException(ex);
                     }
-                    WriteSyncState(statePath, packDir, manifest);
-                    WriteSourceMarker(packDir, source);
                 },
                 token).ConfigureAwait(false);
         }
@@ -477,10 +483,17 @@ public sealed partial class PortablePackSyncService
     {
         if (removed.Count == 0) return null;
 
+        var mods = removed.Count(IsModJar);
+        var subject = mods == removed.Count
+            ? "моды"
+            : mods == 0
+                ? "скрипты, добавлявшие блоки и предметы"
+                : "моды и скрипты";
+
         const int named = 3;
         var names = string.Join(", ", removed.Take(named).Select(Path.GetFileNameWithoutExtension));
         var rest = removed.Count - named;
-        return $"Обновление убрало из сборки моды ({removed.Count}): {names}" +
+        return $"Обновление убрало из сборки {subject} ({removed.Count}): {names}" +
                (rest > 0 ? $" и ещё {rest}" : "") +
                ". Всё, что они поставили в ваших мирах, пропадёт при следующем открытии.";
     }
@@ -770,21 +783,93 @@ public sealed partial class PortablePackSyncService
     /// in it that the new manifest does not name is one the author took out,
     /// and nothing else is.
     ///
-    /// Only mods. A datapack or a resource pack going away changes how a world
-    /// looks or what can be made in it; a mod going away takes every block and
-    /// item it ever placed out of the save itself, and that is the one worth
-    /// stopping a player over. A first install has an empty state and so reports
+    /// Only what registers blocks and items, which is mods and one other thing:
+    /// a KubeJS startup script. Limitless 8 creates tnp:limitless_sword and
+    /// tnp:gunpowder_block in kubejs/startup_scripts, and to a save those are
+    /// not different from a mod's - the script going away turns placed blocks
+    /// to air and empties them out of chests just the same. A datapack or a
+    /// resource pack going away only changes how a world looks or what can be
+    /// made in it, and a warning that fires for those stops being believed
+    /// before it is needed. A first install has an empty state and so reports
     /// nothing, which is right: there was no world before it.
+    ///
+    /// And it asks about mods rather than about paths, because the two are not
+    /// the same question and the difference is the whole update. Raising a
+    /// mod's version renames its jar - jei-1.21.1-19.21.0.jar becomes
+    /// jei-1.21.1-19.22.0.jar - so by path the old one is gone from every
+    /// revision that bumps it, which is most of them. Answering by path would
+    /// name thirty mods that are still installed on an ordinary update, and a
+    /// warning that cries wolf on every update is not read on the one that
+    /// matters.
     /// </remarks>
-    private static List<string> FindRemovedMods(SyncStateDto state, ValidatedManifest manifest) =>
-        state.Files.Keys
-            .Where(path =>
-                path.StartsWith("mods/", StringComparison.OrdinalIgnoreCase) &&
-                path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) &&
-                !manifest.FilesByPath.ContainsKey(path))
-            .Select(path => path["mods/".Length..])
-            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+    private static List<string> FindRemovedMods(SyncStateDto state, ValidatedManifest manifest)
+    {
+        var kept = manifest.FilesByPath.Keys
+            .Where(IsModJar)
+            .Select(ModStem)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return state.Files.Keys
+            .Where(path => IsModJar(path)
+                ? !kept.Contains(ModStem(path))
+                : IsStartupScript(path) && !manifest.FilesByPath.ContainsKey(path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static bool IsModJar(string path) =>
+        path.StartsWith("mods/", StringComparison.OrdinalIgnoreCase) &&
+        path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A script that runs before the registries close, and so can add to them.
+    /// Its name carries no version, so unlike a jar it is the same path from one
+    /// revision to the next and can be compared as one.
+    /// </summary>
+    private static bool IsStartupScript(string path) =>
+        path.StartsWith("kubejs/startup_scripts/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The part of a jar's name that its author does not change when they raise
+    /// its version: everything before the first hyphenated piece that starts
+    /// with a digit.
+    /// </summary>
+    /// <remarks>
+    /// Measured against the 882 jars of Limitless 8 and the 95 of All The
+    /// Fabric 3, which between them carry every shape their authors use:
+    /// AE2-Things-1.4.2-beta, AdvancedAE-1.6.11-1.21.1,
+    /// AdChimneys-1.21.1-11.1.8.0-NeoForge-build.1029,
+    /// connector-2.0.0-beta.17+1.21.1-full. All four keep their name and lose
+    /// the rest.
+    ///
+    /// The first piece is never cut, because a name may open with a digit -
+    /// 0Pack2Reload-NeoForge-1.21.1-1.0.1.jar, 1.21.1-identity2-neoforge-2.2.1
+    /// - and cutting there would leave nothing to compare. A piece that is a
+    /// Minecraft version rather than a mod version survives into the stem
+    /// (sodium-fabric-mc1.20.1), which costs nothing: a pack has one Minecraft
+    /// version, so it is the same on both sides of every update.
+    ///
+    /// Where it errs, it errs quietly. Two mods sharing a stem hide one
+    /// removal; an author who renames a mod outright reports one that did not
+    /// happen. Both are rare, and the first - saying too little about a rare
+    /// event - is the side to be wrong on for a sentence whose whole purpose is
+    /// to be believed.
+    /// </remarks>
+    private static string ModStem(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path["mods/".Length..]);
+        var pieces = name.Split('-');
+        var length = pieces.Length;
+        for (var index = 1; index < pieces.Length; index++)
+        {
+            if (pieces[index].Length > 0 && char.IsAsciiDigit(pieces[index][0]))
+            {
+                length = index;
+                break;
+            }
+        }
+        return string.Join('-', pieces, 0, length);
+    }
 
     /// <summary>
     /// Everything a synced pack ships is listed in its manifest, so anything
