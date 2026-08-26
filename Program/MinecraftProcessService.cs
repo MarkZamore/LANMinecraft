@@ -298,7 +298,19 @@ public sealed class MinecraftProcessService
             // about to use it: it knew it twice for a three hundred mod pack on
             // four gigabytes, wrote this very line into its own log both times,
             // and let the game start and die of it anyway.
-            ClientMemoryIsTooSmall?.Invoke(settings.MaxMemoryGb, smallestUsefulBudgetGb);
+            //
+            // What is offered is the recommendation, not the threshold above.
+            // They are different numbers and only one of them is advice: the
+            // threshold is where the heap stops being crushed below its floor,
+            // and a player who sets exactly that gets the floor - two
+            // gigabytes, which is the heap this pack has already died on twice.
+            // Never advise less than the threshold either, since a small
+            // machine can have its recommendation clamped below it.
+            ClientMemoryIsTooSmall?.Invoke(
+                settings.MaxMemoryGb,
+                Math.Max(
+                    MemorySizingService.GetRecommendedDefaultMemoryGb(packMemory, video),
+                    smallestUsefulBudgetGb));
         }
         // Held as text, not as MArgument, so the line logged below is the line
         // handed to the JVM. MArgument does not override ToString, so logging
