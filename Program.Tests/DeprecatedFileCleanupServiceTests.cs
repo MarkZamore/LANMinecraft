@@ -90,8 +90,10 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     {
         var paths = CreatePaths();
         var components = Path.Combine(paths.Launcher, "ManagedComponents");
-        var pinned = ManagedComponentService.PinnedCacheFileId("e4steam")!;
-        var runtime = ManagedComponentService.PinnedCacheFileId("java-runtime")!;
+        // Every loader's build is pinned at once now, so the sweep keeps them all.
+        var pinnedBuilds = ManagedComponentService.PinnedCacheFileIds("e4steam")!;
+        var pinned = pinnedBuilds.First();
+        var runtime = ManagedComponentService.PinnedCacheFileIds("java-runtime")!.Single();
         WriteFile(Path.Combine(components, "e4steam", pinned, "e4steam.jar"), "current");
         WriteFile(Path.Combine(components, "e4steam", "19999", "e4steam-old.jar"), "superseded");
         WriteFile(Path.Combine(components, "java-runtime", runtime, "runtime.zip"), "current");

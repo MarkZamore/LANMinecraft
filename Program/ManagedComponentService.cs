@@ -23,52 +23,41 @@ public sealed class ManagedComponentService
         DownloadSourceTimeout + TimeSpan.FromSeconds(component.SizeBytes / (128d * 1024d));
 
     // e4steam carries the multiplayer session over Steam's peer-to-peer
-    // network; without it a pack cannot host or join at all, so it is required
-    // for every NeoForge pack the launcher supports (see SteamPlayPolicy).
-    // Upstream releases live on GitHub; CurseForge mirrors the identical file
-    // (same SHA-256) on its own CDN.
-    // Synthetic cache key: the cache layout is keyed by number and the upstream
-    // has no numeric file id, so the pinned version 0.2.4 is encoded as one.
-    public const long E4steamCacheFileId = 20400;
-    public const string E4steamVersion = "0.2.4";
-    public const string E4steamFileName = "e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar";
-    public const long E4steamSizeBytes = 2_673_601;
-    public const string E4steamSha256 =
-        "47f0c8671bb8889e226df2bef41779b1e3cdb9271a8cfe3b216cfe6eaf910420";
+    // network; without it a pack cannot host or join at all. Which of its
+    // builds a pack needs is SteamTransportCatalog's question - there is a
+    // build per loader, and pinning one of them was what shut every Forge pack
+    // out of playing together.
+    public const string E4steamComponentId = "e4steam";
 
     /// <summary>Mod ids whose presence in the instance conflicts with the pinned build.</summary>
     private static readonly string[] E4steamConflictPrefixes = ["e4steam", "e4mc"];
 
-    public static Uri E4steamDownloadUri { get; } = new(
-        "https://mediafilez.forgecdn.net/files/8611/556/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
-        UriKind.Absolute);
-
-    public static Uri E4steamUpstreamDownloadUri { get; } = new(
-        "https://github.com/Kamilhik/e4steam/releases/download/v0.2.4/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
-        UriKind.Absolute);
-
-    public static IReadOnlyList<Uri> E4steamDownloadUris { get; } =
-        Array.AsReadOnly([E4steamDownloadUri, E4steamUpstreamDownloadUri]);
-
-    private static readonly ManagedComponentDescriptor E4steam = new(
-        "e4steam",
-        E4steamCacheFileId,
-        E4steamFileName,
-        E4steamDownloadUris,
-        E4steamSizeBytes,
-        E4steamSha256);
     private static readonly SemaphoreSlim E4steamGate = new(1, 1);
+
+    /// <summary>One catalogued build as this service installs things.</summary>
+    internal static ManagedComponentDescriptor DescriptorFor(SteamTransportBuild build) =>
+        new(
+            E4steamComponentId,
+            build.CacheFileId,
+            build.FileName,
+            build.DownloadUris,
+            build.SizeBytes,
+            build.Sha256);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
-    private readonly ManagedComponentDescriptor _e4steam;
+    /// <summary>
+    /// The one build to install whatever the pack is, for tests. Null in the
+    /// launcher, where the pack decides which build it needs.
+    /// </summary>
+    private readonly ManagedComponentDescriptor? _pinnedOverride;
 
     public ManagedComponentService(
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null)
-        : this(paths, logger, httpClient, E4steam)
+        : this(paths, logger, httpClient, null)
     {
     }
 
@@ -76,31 +65,45 @@ public sealed class ManagedComponentService
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient,
-        ManagedComponentDescriptor e4steam)
+        ManagedComponentDescriptor? e4steam)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
-        _e4steam = ValidateDescriptor(e4steam);
+        _pinnedOverride = e4steam is null ? null : ValidateDescriptor(e4steam);
     }
 
     /// <summary>
-    /// Ensures the pinned e4steam artifact is installed in
+    /// Ensures the e4steam build this pack needs is installed in
     /// <paramref name="preparedInstance"/>. Steam play is impossible without
     /// it, so a failure here fails the launch closed.
     /// </summary>
+    /// <param name="preparedInstance">The instance the game is about to run from.</param>
+    /// <param name="pack">
+    /// What the pack runs on, which is what chooses the build. Null uses the
+    /// pinned override, which only tests have.
+    /// </param>
+    /// <param name="token">Cancellation.</param>
     public async Task<ManagedComponentInstallResult> EnsureSteamTransportModAsync(
         PackInstanceContext preparedInstance,
+        PackRuntimeDescriptor? pack = null,
         CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(preparedInstance);
+        var build = SteamTransportCatalog.Find(pack);
+        var component = _pinnedOverride ?? (build is null
+            ? throw new InvalidOperationException(
+                "No published e4steam build serves this pack, so Steam play must not be prepared for it. " +
+                "SteamPlayPolicy decides that before this is called.")
+            : ValidateDescriptor(DescriptorFor(build)));
+
         await E4steamGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
             return await EnsureRequiredComponentCoreAsync(
-                    _e4steam,
+                    component,
                     E4steamConflictPrefixes,
-                    $"e4steam {E4steamVersion}",
+                    $"e4steam {build?.Version ?? SteamTransportCatalog.Version}",
                     preparedInstance,
                     token)
                 .ConfigureAwait(false);
@@ -112,7 +115,7 @@ public sealed class ManagedComponentService
         catch (Exception ex)
         {
             _logger.Warn(
-                $"Required managed component {_e4steam.Id} could not be prepared; " +
+                $"Required managed component {component.Id} could not be prepared; " +
                 $"Minecraft launch must remain blocked: {ex.Message}");
             throw;
         }
@@ -122,7 +125,8 @@ public sealed class ManagedComponentService
         }
     }
 
-    internal string E4steamCachePath => GetCachePath(_e4steam);
+    internal string E4steamCachePath =>
+        GetCachePath(_pinnedOverride ?? DescriptorFor(SteamTransportCatalog.Builds[0]));
 
     /// <summary>
     /// Converges one launch-critical JAR in the instance: keep a verified copy,
@@ -212,13 +216,19 @@ public sealed class ManagedComponentService
     }
 
     /// <summary>
-    /// The cache directory name a pinned component currently uses, or null when
+    /// The cache directories a pinned component currently uses, or null when
     /// nothing pins that id any more. Used to sweep superseded downloads.
     /// </summary>
-    public static string? PinnedCacheFileId(string componentId) => componentId switch
+    /// <remarks>
+    /// More than one for e4steam, which is the whole point: a machine that
+    /// plays a Forge pack and a NeoForge pack holds a build for each, and a
+    /// sweep that kept only one would throw the other away on every launch and
+    /// download it again on the next.
+    /// </remarks>
+    public static IReadOnlyCollection<string>? PinnedCacheFileIds(string componentId) => componentId switch
     {
-        "e4steam" => E4steamCacheFileId.ToString(CultureInfo.InvariantCulture),
-        "java-runtime" => PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_'),
+        E4steamComponentId => SteamTransportCatalog.CacheFileIds,
+        "java-runtime" => [PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_')],
         _ => null
     };
 
