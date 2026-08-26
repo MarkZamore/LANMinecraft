@@ -177,7 +177,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.NotNull(title);
         Assert.Equal("2", (string?)title.Parent?.Attribute("Grid.Column"));
         // The launcher opens on the assistant, so that is the heading it wears.
-        Assert.Equal("Чат", (string?)title.Attribute("Text"));
+        Assert.Equal("AI-помощник", (string?)title.Attribute("Text"));
 
         var list = document
             .Descendants(presentation + "ItemsControl")
