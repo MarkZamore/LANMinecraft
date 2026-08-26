@@ -90,6 +90,44 @@ public sealed class MemorySizingTests
         Assert.InRange(suggested, MemorySizingService.MinMemoryGb, 6);
     }
 
+    /// <summary>
+    /// A pack nobody has weighed is sized by arithmetic, not by a table of
+    /// sizes. The steps this replaced answered every machine from twelve to
+    /// fifteen gigabytes with the same number and then jumped four at sixteen,
+    /// so two laptops one gigabyte apart were offered four gigabytes apart, and
+    /// a machine just under a step was offered less of itself than a smaller
+    /// one. What is asked of the shape here is only that: it never falls as the
+    /// machine grows, and it never moves further than the machine did.
+    /// </summary>
+    [Fact]
+    public void AnUnseenPack_MovesWithTheMachineRatherThanInSteps()
+    {
+        var offered = Enumerable.Range(4, 61)
+            .Select(installedGb => (
+                Installed: installedGb,
+                Offered: MemorySizingService.GetRecommendedDefaultMemoryGb(
+                    PackMemoryProfile.Unknown, Gb(installedGb))))
+            .ToList();
+
+        foreach (var (smaller, larger) in offered.Zip(offered.Skip(1)))
+        {
+            Assert.True(
+                larger.Offered >= smaller.Offered,
+                $"{larger.Installed} GB installed is offered {larger.Offered}, " +
+                $"less than the {smaller.Offered} of a {smaller.Installed} GB machine");
+            Assert.True(
+                larger.Offered - smaller.Offered <= 1,
+                $"{smaller.Installed} GB installed is offered {smaller.Offered} and " +
+                $"{larger.Installed} GB is offered {larger.Offered}: one gigabyte of machine, " +
+                $"{larger.Offered - smaller.Offered} of answer");
+        }
+
+        // And it is an answer about this machine, not about the band it fell in.
+        Assert.NotEqual(
+            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown, Gb(12)),
+            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown, Gb(15)));
+    }
+
     /// <summary>An older Minecraft asks for less than a new one, never more.</summary>
     [Fact]
     public void AnOlderMinecraft_AsksForNoMoreThanANewOne()
