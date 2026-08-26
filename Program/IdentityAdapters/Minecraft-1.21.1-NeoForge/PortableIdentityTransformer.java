@@ -28,8 +28,20 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
     private static final String PLAYER_INFO =
         "net/minecraft/client/multiplayer/PlayerInfo";
     private static final String OBFUSCATED_PLAYER_INFO = "fzq";
+    // Where authlib keeps the rule about which hosts a skin may come from.
+    // It moved once and was renamed once, and those are the only three forms
+    // there have ever been: isWhitelistedDomain on the session service up to
+    // authlib 2.1.28, isAllowedTextureDomain on the session service from 2.3.31
+    // to 3.16.29, and isAllowedTextureDomain on TextureUrlChecker from 3.18.38
+    // onwards. Read out of all 18 published authlib jars, 1.5.21 to 9.0.75.
+    // Both classes are looked at and whichever carries the method is patched:
+    // com.mojang.authlib is never obfuscated, so this is the same on Fabric,
+    // Quilt, Forge and NeoForge alike, and needs no mappings from the runtime.
     private static final String TEXTURE_URL_CHECKER =
-        "com/mojang/authlib/yggdrasil/TextureUrlChecker";
+        "com/mojang/authlib/yggdrasil/TextureUrlChecker,"
+            + "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
+    private static final String TEXTURE_URL_CHECKER_METHODS =
+        "isAllowedTextureDomain,isWhitelistedDomain";
     private static final String SKIN_LOOKUP_DESCRIPTOR =
         "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;";
     private static final String SKIN_SELECTION_DESCRIPTOR =
@@ -138,7 +150,7 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
             if (!matchesMethod(
                 method,
                 "textureUrlCheckerMethods",
-                "isAllowedTextureDomain",
+                TEXTURE_URL_CHECKER_METHODS,
                 "textureUrlCheckerDescriptors",
                 "(Ljava/lang/String;)Z")) {
                 continue;
@@ -163,8 +175,10 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         }
 
         if (!checkerPatched) {
-            throw new IllegalStateException(
-                "Unsupported authlib texture URL checker: required method was not found.");
+            // Not a failure. Both candidate classes are offered to this method,
+            // and on any given authlib exactly one of them carries the rule -
+            // the other is an ordinary class that must be handed back untouched.
+            return null;
         }
 
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);

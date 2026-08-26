@@ -38,7 +38,9 @@ public sealed class SavesFolderService(Logger? logger = null)
 
     /// <summary>
     /// Lays out the instance's saves folder for one build: a junction for every
-    /// world that build may open, and nothing for the rest.
+    /// world that build may open, and an empty folder holding the name of every
+    /// world it may not, so the game never offers a name that is already a
+    /// world somewhere else.
     /// </summary>
     /// <param name="worldsRoot">The portable Worlds folder, where worlds live.</param>
     /// <param name="instanceDirectory">The instance the game will run in.</param>
@@ -94,22 +96,50 @@ public sealed class SavesFolderService(Logger? logger = null)
                 CreateJunction(link, world);
                 shown++;
             }
-            else if (IsLink(link))
+            else
             {
-                Directory.Delete(link);
-                hidden++;
+                if (IsLink(link))
+                {
+                    Directory.Delete(link);
+                    hidden++;
+                }
+
+                // And an empty folder is left standing in the withdrawn world's
+                // name. The game asks whether a name is free by trying to make
+                // the folder and catching FileAlreadyExistsException - not by
+                // reading its own world list - so an empty folder is answer
+                // enough, and it is the same answer on 1.18.2, 1.20.1 and
+                // 1.21.1, whose bytecode for this is instruction for
+                // instruction the same. Without it a build that cannot see the
+                // "New World" of another build is offered that name again, and
+                // the player ends up with two worlds nothing can tell apart.
+                // With it the game offers "New World (1)" of its own accord.
+                if (!Directory.Exists(link) && !File.Exists(link))
+                {
+                    Directory.CreateDirectory(link);
+                }
             }
         }
 
-        // A junction whose world has gone - transferred away, or renamed - is a
-        // world the game would list and fail to open.
-        foreach (var entry in Directory.EnumerateDirectories(saves))
+        foreach (var entry in Directory.EnumerateDirectories(saves).ToList())
         {
-            if (!IsLink(entry)) continue;
-            var target = new DirectoryInfo(entry).LinkTarget;
-            if (target is not null && Directory.Exists(target)) continue;
-            Directory.Delete(entry);
-            hidden++;
+            var name = Path.GetFileName(entry);
+            if (IsLink(entry))
+            {
+                // A junction whose world has gone - transferred away, or
+                // renamed - is a world the game would list and fail to open.
+                var target = new DirectoryInfo(entry).LinkTarget;
+                if (target is not null && Directory.Exists(target)) continue;
+                Directory.Delete(entry);
+                hidden++;
+            }
+            else if (IsEmptyDirectory(entry) && !Directory.Exists(Path.Combine(worldsRoot, name)))
+            {
+                // A placeholder outlives the world it stood in for, and would
+                // then hold that name against every world made here afterwards
+                // for no reason at all.
+                TryDeleteEmptyDirectory(entry);
+            }
         }
 
         if (shown > 0 || hidden > 0 || adopted > 0)
