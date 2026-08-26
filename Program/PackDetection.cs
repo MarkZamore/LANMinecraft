@@ -278,9 +278,19 @@ public static class PackDetector
         try
         {
             // Real jars contain control characters inside their JSON strings
-            // and Fabric's own loader accepts them, so this one does too.
+            // and Fabric's own loader accepts them, so this one does too. Every
+            // one of them, including the newlines and tabs: a raw newline is
+            // precisely what better-end-1.1.1.jar has inside a string, and
+            // sparing them because they look like whitespace is how this was
+            // wrong the first time -
+            //
+            //   Could not inspect mod metadata in better-end-1.1.1.jar:
+            //   '0x0A' is invalid within a JSON string.
+            //
+            // A space stands in for all of them, which is valid between tokens
+            // and harmless inside one.
             var cleaned = new StringBuilder(json.Length);
-            foreach (var ch in json) cleaned.Append(char.IsControl(ch) && ch is not ('\n' or '\r' or '\t') ? ' ' : ch);
+            foreach (var ch in json) cleaned.Append(char.IsControl(ch) ? ' ' : ch);
             using var document = JsonDocument.Parse(
                 cleaned.ToString(),
                 new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
