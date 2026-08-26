@@ -1909,9 +1909,25 @@ public partial class MainWindow : Window
         return (resolved.SteamId64.ToString(), resolved.IdentityName ?? "");
     }
 
+    /// <summary>
+    /// Tidies the field when it is left: the text is read back, held to what
+    /// the machine allows, and written out again.
+    /// </summary>
+    /// <remarks>
+    /// Leaving a field is not choosing a number. This used to say
+    /// <c>chosenByPlayer: true</c>, which was survivable while there was one
+    /// number for every pack and merely froze the launcher's suggestion; with a
+    /// number per pack it meant that clicking near the box - or the window
+    /// losing focus at all - stamped whatever was showing as this pack's answer
+    /// for ever. All The Fabric 3 was pinned at four gigabytes that way, on a
+    /// machine where the launcher would have offered five, and it ran out of
+    /// them while generating a world. A number the player types is written down
+    /// by <see cref="MemoryTextBox_TextChanged"/> on the keystroke that types
+    /// it, and Enter says so again; neither needs this to say it a third time.
+    /// </remarks>
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
-        ApplyMemoryText(chosenByPlayer: true);
+        ApplyMemoryText(chosenByPlayer: false);
     }
 
     private void MemoryTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
