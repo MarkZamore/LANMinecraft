@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using CmlLib.Core;
 using CmlLib.Core.FileExtractors;
@@ -101,6 +102,13 @@ public sealed class PackRuntimeService : IDisposable
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Checking, "Проверка"));
         var statePath = Path.Combine(runtimeRoot, RuntimeStateFileName);
         var state = ReadState(statePath);
+        // A runtime prepared before the launcher knew to say which jar is the
+        // game is mended where it stands: one field in one file, rather than
+        // half a gigabyte downloaded again to write it.
+        if (state is not null && RepairLoaderProfile(runtimeRoot, descriptor, state))
+        {
+            AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
+        }
         if (state is not null &&
             string.Equals(state.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(state.JavaRuntimeId, PortableJavaRuntimeService.PinnedRuntimeId, StringComparison.Ordinal) &&
@@ -522,6 +530,30 @@ public sealed class PackRuntimeService : IDisposable
         return string.Concat(packRelativePath.Select(ch => invalid.Contains(ch) || ch is '\\' or '/' ? '_' : ch));
     }
 
+    /// <summary>
+    /// Writes the missing <c>jar</c> field into a Fabric or Quilt profile that
+    /// was prepared without it, and brings the runtime's own record of that
+    /// file back in step. Returns true when something was written.
+    /// </summary>
+    private bool RepairLoaderProfile(string runtimeRoot, PackRuntimeDescriptor descriptor, RuntimeState state)
+    {
+        if (descriptor.Loader.Type is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt)) return false;
+        if (string.IsNullOrWhiteSpace(state.ProfileId)) return false;
+
+        var path = Path.Combine(runtimeRoot, "versions", state.ProfileId, state.ProfileId + ".json");
+        if (!KnotGameJar.NameIt(path, descriptor.MinecraftVersion, _logger)) return false;
+
+        var relative = ToRelativePath(runtimeRoot, path);
+        var info = new FileInfo(path);
+        state.Files[relative] = new RuntimeFileState
+        {
+            SizeBytes = info.Length,
+            LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
+            Sha256 = ComputeSha256(path)
+        };
+        return true;
+    }
+
     private static string ToRelativePath(string runtimeRoot, string path)
     {
         var relative = Path.GetRelativePath(runtimeRoot, Path.GetFullPath(path));
@@ -625,12 +657,17 @@ internal sealed class FabricLoaderProvider : IPackLoaderProvider
     {
         token.ThrowIfCancellationRequested();
         var installer = new FabricInstaller(context.HttpClient);
-        return await RuntimeRetry.RunAsync(
+        var profileId = await RuntimeRetry.RunAsync(
             retryToken => installer.Install(
                 context.Descriptor.MinecraftVersion,
                 context.Descriptor.Loader.Version!,
                 new MinecraftPath(context.RuntimeRoot)).WaitAsync(retryToken),
             token);
+        KnotGameJar.NameIt(
+            Path.Combine(context.RuntimeRoot, "versions", profileId, profileId + ".json"),
+            context.Descriptor.MinecraftVersion,
+            context.Logger);
+        return profileId;
     }
 }
 
@@ -641,12 +678,73 @@ internal sealed class QuiltLoaderProvider : IPackLoaderProvider
     {
         token.ThrowIfCancellationRequested();
         var installer = new QuiltInstaller(context.HttpClient);
-        return await RuntimeRetry.RunAsync(
+        var profileId = await RuntimeRetry.RunAsync(
             retryToken => installer.Install(
                 context.Descriptor.MinecraftVersion,
                 context.Descriptor.Loader.Version!,
                 new MinecraftPath(context.RuntimeRoot)).WaitAsync(retryToken),
             token);
+        KnotGameJar.NameIt(
+            Path.Combine(context.RuntimeRoot, "versions", profileId, profileId + ".json"),
+            context.Descriptor.MinecraftVersion,
+            context.Logger);
+        return profileId;
+    }
+}
+
+/// <summary>
+/// Tells the profile which jar is the game, which Fabric and Quilt do not.
+/// </summary>
+/// <remarks>
+/// A loader profile has no jar of its own: it inherits the base version and
+/// runs out of the jar that version brought. The launcher format has a field
+/// for saying so - <c>jar</c> - and Forge and NeoForge write it while the
+/// Fabric and Quilt installers leave it out, because their own launcher works
+/// it out from <c>inheritsFrom</c> instead.
+///
+/// CmlLib does not. With no <c>jar</c> it takes the profile's own id, puts
+/// <c>versions/fabric-loader-0.14.10-1.18.2/fabric-loader-0.14.10-1.18.2.jar</c>
+/// on the class path, and that file has never existed. Forge and NeoForge
+/// survive the same omission because BootstrapLauncher never wanted the game
+/// on the class path anyway; Fabric's Knot finds the game by looking there and
+/// nowhere else, so it found nothing:
+///
+///   Minecraft game provider couldn't locate the game!
+///
+/// One field, written where the installer did not write it. Nothing else in
+/// the profile is touched, and a profile that already names a jar is left
+/// exactly as it is.
+/// </remarks>
+internal static class KnotGameJar
+{
+    /// <summary>
+    /// Writes <c>jar</c> into the profile at <paramref name="profilePath"/>
+    /// unless it already names one. True when the file was changed.
+    /// </summary>
+    public static bool NameIt(string profilePath, string minecraftVersion, Logger logger)
+    {
+        try
+        {
+            if (!File.Exists(profilePath)) return false;
+            if (JsonNode.Parse(File.ReadAllText(profilePath)) is not JsonObject profile) return false;
+            if (profile.TryGetPropertyValue("jar", out var existing) &&
+                !string.IsNullOrWhiteSpace(existing?.GetValue<string>()))
+            {
+                return false;
+            }
+
+            profile["jar"] = minecraftVersion;
+            AtomicFile.WriteAllText(profilePath, profile.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            logger.Info(
+                $"The {Path.GetFileNameWithoutExtension(profilePath)} profile now names Minecraft " +
+                $"{minecraftVersion} as its jar, so the loader can find the game on the class path.");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            logger.Warn($"The loader profile could not be told which jar is the game: {ex.Message}");
+            return false;
+        }
     }
 }
 
