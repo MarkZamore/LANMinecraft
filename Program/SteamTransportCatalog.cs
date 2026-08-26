@@ -58,82 +58,194 @@ public static class SteamTransportCatalog
     public const string Version = "0.3.0";
 
     /// <summary>
-    /// What is served, and what is deliberately not.
+    /// Every build its author publishes, and therefore every pack this
+    /// launcher can carry into a Steam session.
     ///
-    /// Three of these joined the day the launcher stopped installing one Java
-    /// for every pack. They were absent for exactly that reason and no other:
-    /// the 26.x build asks for Java 25 and the 1.17-1.18.2 builds are for a
-    /// Minecraft that does not run well on 21, so while there was one runtime
-    /// they could not be offered. Now a pack gets the Java its Minecraft was
-    /// built against, and they can.
+    /// All nineteen. There is no shortlist any more and no version of
+    /// Minecraft between 1.7 and 26.2 that is left out for want of a row: a
+    /// player who assembles a pack of their own gets Steam play if e4steam has
+    /// a build for it, and it has one for almost everything.
     ///
-    /// 0.3.0 also publishes Forge back to 1.7 and Fabric back to 1.14. Those
-    /// stay out: a row here is a promise that the launcher can run such a pack,
-    /// and Minecraft 1.16 and older want a Java 8 that the loaders of that era
-    /// need more care with than one line in a table.
+    /// Every range is read from the build's own metadata rather than from its
+    /// file name. The names understate them - the file called
+    /// forge-mc1.18.2-1.20.2 declares Minecraft up to 1.20.3 - and the six
+    /// oldest Forge builds predate mods.toml entirely and declare "1.12.x" and
+    /// the like in mcmod.info, which is where those ranges come from.
     /// </summary>
     public static IReadOnlyList<SteamTransportBuild> Builds { get; } =
         Array.AsReadOnly<SteamTransportBuild>(
         [
             new(
                 Version,
-                "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar",
-                3_634_360,
-                "3d2b56b50f6646733a3e41e67aedb3cb7baf96e48707284083c473908bbf4adb",
+                "e4steam-forge-mc1.7.x-v0.3.0.jar",
+                7_209_088,
+                "438385f680998080974fdae19f8eab937e2ae4833c28cee38fbe4a753ecbdac6",
                 30_001,
-                [PackLoaderKind.NeoForge],
-                [1, 20, 2],
-                [26, 3]),
+                [PackLoaderKind.Forge],
+                [1, 7],
+                [1, 8]),
             new(
                 Version,
-                "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar",
-                3_633_909,
-                "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",
+                "e4steam-forge-mc1.8.x-v0.3.0.jar",
+                2_925_015,
+                "0b1b9cb197d00f7966e026c225776168b39a2bb9e460b34915705871551f554d",
                 30_002,
                 [PackLoaderKind.Forge],
-                [1, 18, 2],
-                [1, 20, 3]),
+                [1, 8],
+                [1, 9]),
+            new(
+                Version,
+                "e4steam-forge-mc1.9.x-v0.3.0.jar",
+                2_924_633,
+                "bd37c8e67c4a54700ef60f2fae448e08a5daf089374cefbb1c5a34779361c81f",
+                30_003,
+                [PackLoaderKind.Forge],
+                [1, 9],
+                [1, 10]),
+            new(
+                Version,
+                "e4steam-forge-mc1.10.x-v0.3.0.jar",
+                2_924_637,
+                "f6e1b2505e2b13a22c6e7b5abd9d9bd5da89b664807376cc40951b882c0b5182",
+                30_004,
+                [PackLoaderKind.Forge],
+                [1, 10],
+                [1, 11]),
+            new(
+                Version,
+                "e4steam-forge-mc1.11.x-v0.3.0.jar",
+                2_924_637,
+                "ad991789c1998a1f37a7c75ccdcd9ceb454a4153aee1ad6c978acf0238ed31f3",
+                30_005,
+                [PackLoaderKind.Forge],
+                [1, 11],
+                [1, 12]),
+            new(
+                Version,
+                "e4steam-forge-mc1.12.x-v0.3.0.jar",
+                2_924_661,
+                "a3f1b5e6ca37894f7025b51724c32fd813f3bcc6b596eff75d8ef48587b293f7",
+                30_006,
+                [PackLoaderKind.Forge],
+                [1, 12],
+                [1, 13]),
+            new(
+                Version,
+                "e4steam-forge-mc1.13.x-v0.3.0.jar",
+                2_797_406,
+                "9fa6e50a5dd1921cf2ebaca062162a6350a67ced210181843eaea8d14e8b540d",
+                30_007,
+                [PackLoaderKind.Forge],
+                [1, 13],
+                [1, 14]),
+            new(
+                Version,
+                "e4steam-forge-mc1.14.x-v0.3.0.jar",
+                2_800_207,
+                "2dc36dd3bb96e743ee503a185b20c3b5090fdf98f759a01321f3366c05e7ff9b",
+                30_008,
+                [PackLoaderKind.Forge],
+                [1, 14],
+                [1, 15]),
+            new(
+                Version,
+                "e4steam-forge-mc1.15.x-v0.3.0.jar",
+                2_795_343,
+                "0526b6957390548653bd7fcb11c12929317e59b09c1971c8fd3b8200bd2c57c5",
+                30_009,
+                [PackLoaderKind.Forge],
+                [1, 15],
+                [1, 16]),
+            new(
+                Version,
+                "e4steam-forge-mc1.16.x-v0.3.0.jar",
+                2_795_660,
+                "6998cb00175e6d506ed1f79d75f70f3d417f402ca7bbc6243757bf98c6de303a",
+                30_010,
+                [PackLoaderKind.Forge],
+                [1, 16],
+                [1, 17]),
             new(
                 Version,
                 "e4steam-forge-mc1.17.1-1.18.1-v0.3.0.jar",
                 3_636_879,
                 "2c6155665bfd5aacf2663f170d6874db1f3a6ada42b13af819242dd46002d0ed",
-                30_004,
+                30_011,
                 [PackLoaderKind.Forge],
                 [1, 17, 1],
                 [1, 18, 2]),
-            // Quilt loads Fabric mods, and these are the builds its author
-            // tested it with, so the two loaders share a row rather than one
-            // being refused for want of an artifact of its own.
+            new(
+                Version,
+                "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar",
+                3_633_909,
+                "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",
+                30_012,
+                [PackLoaderKind.Forge],
+                [1, 18, 2],
+                [1, 20, 3]),
+            new(
+                Version,
+                "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar",
+                3_634_360,
+                "3d2b56b50f6646733a3e41e67aedb3cb7baf96e48707284083c473908bbf4adb",
+                30_013,
+                [PackLoaderKind.NeoForge],
+                [1, 20, 2],
+                [26, 3]),
+            new(
+                Version,
+                "e4steam-fabric-mc1.14.x-v0.3.0.jar",
+                3_486_907,
+                "408edb8b3f44817038f60b88eaef8abdccaf96c12e2f7905477ba63d3d274b49",
+                30_014,
+                [PackLoaderKind.Fabric],
+                [1, 14],
+                [1, 15]),
+            new(
+                Version,
+                "e4steam-fabric-mc1.15.x-v0.3.0.jar",
+                3_485_464,
+                "28fcc5871a1d8cd3a73d1da3fcc0c738da660988a224b381f0b51ba6f53fda11",
+                30_015,
+                [PackLoaderKind.Fabric],
+                [1, 15],
+                [1, 16]),
+            new(
+                Version,
+                "e4steam-fabric-mc1.16.x-v0.3.0.jar",
+                3_485_768,
+                "66719c182a2c2c0d9c0bbc988099974427ed569e6a1b053fc3e3c793ad622d68",
+                30_016,
+                [PackLoaderKind.Fabric],
+                [1, 16],
+                [1, 17]),
             new(
                 Version,
                 "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.0.jar",
                 3_634_508,
                 "f1fb415f6e7d019381a14d1c9b39fe1b84cb585d7f3f673f85c5ef23bc939db7",
-                30_005,
+                30_017,
                 [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
                 [1, 17],
                 [1, 19]),
-            // Minecraft 26 wants Java 25 and this build says so itself; the
-            // runtime catalogue answers 25 for a 26.x pack, so it can be kept.
-            new(
-                Version,
-                "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar",
-                3_632_179,
-                "6578e4d71a5e1499d35aeff699ac84ade6047e104a0439efca9d13cdea0ad443",
-                30_006,
-                [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
-                [26, 1],
-                [26, 3]),
             new(
                 Version,
                 "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar",
                 3_631_710,
                 "d22b994d94a48143640879fff7a52071a32a3f3fcea3ce686052a001b26e8a1f",
-                30_003,
+                30_018,
                 [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
                 [1, 19],
-                [26, 1])
+                [26, 1]),
+            new(
+                Version,
+                "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar",
+                3_632_179,
+                "6578e4d71a5e1499d35aeff699ac84ade6047e104a0439efca9d13cdea0ad443",
+                30_019,
+                [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
+                [26, 1],
+                [26, 3])
         ]);
 
     /// <summary>
