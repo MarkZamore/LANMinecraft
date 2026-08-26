@@ -27,20 +27,20 @@ public sealed class WorldBuildOwnershipTests
     }
 
     /// <summary>
-    /// The rename must not hide anybody's world: a world stamped with a name the
-    /// built-in pack used to have is still that pack's, and is offered under the
-    /// new name until the migration rewrites the stamp.
+    /// A name is a name, and nothing forgives a former one. There used to be a
+    /// table of every name the built-in pack had been called, so that a world
+    /// stamped with an old one was still offered under the new; it is gone, and
+    /// with it the idea that the launcher should remember renames at all. A
+    /// pack that is renamed leaves the worlds of its old name behind.
     /// </summary>
-    [Fact]
-    public void AWorldOfAFormerNameOfThisPack_IsStillOffered()
+    [Theory]
+    [InlineData("Infinity")]
+    [InlineData("LL8")]
+    [InlineData("ATM10")]
+    public void AWorldOfAFormerName_BelongsToNobodyButThatName(string former)
     {
-        foreach (var legacy in LegacyPackMigrationService.LegacyPackRelativePaths)
-        {
-            if (string.Equals(legacy, Current, StringComparison.OrdinalIgnoreCase)) continue;
-            Assert.True(WorldMetadataService.BelongsToBuild(legacy, Current));
-            // ...but only for the pack that was renamed, never for a custom one.
-            Assert.False(WorldMetadataService.BelongsToBuild(legacy, "ATM10"));
-        }
+        Assert.False(WorldMetadataService.BelongsToBuild(former, Current));
+        Assert.True(WorldMetadataService.BelongsToBuild(former, former));
     }
 
     /// <summary>

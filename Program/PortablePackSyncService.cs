@@ -73,10 +73,10 @@ public sealed partial class PortablePackSyncService
     /// </summary>
     public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
         new(DefaultPackRelativePath, DefaultPackSource),
-        new("ATM10", new PackSyncSource("MarkZamore", "ATM10", "pack-latest")),
+        new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
         new("The Broken Script Enhanced",
             new PackSyncSource("MarkZamore", "The-Broken-Script-Enhanced", "pack-latest")),
-        new("E10", new PackSyncSource("MarkZamore", "E10", "pack-latest")),
+        new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>

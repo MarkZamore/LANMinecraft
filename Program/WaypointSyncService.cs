@@ -957,24 +957,6 @@ public sealed class WaypointSyncService : IAsyncDisposable, IPortableProtocolHan
         try
         {
             var packDirectory = _paths.CombineUnderPacks(packRelativePath);
-            if (!Directory.Exists(packDirectory) &&
-                LegacyPackMigrationService.IsLegacyPack(packRelativePath))
-            {
-                // A world that arrives from a friend carries the name their
-                // launcher knows the pack by, and that can be a name this one
-                // has already renamed away from. The start-of-launch migration
-                // has long since run, so the rename is applied here instead.
-                var renamed = PortablePackSyncService.DefaultPackRelativePath;
-                var renamedDirectory = _paths.CombineUnderPacks(renamed);
-                if (Directory.Exists(renamedDirectory))
-                {
-                    _logger.Info(
-                        $"World names the pack '{packRelativePath}', which is now '{renamed}'; " +
-                        "its waypoints are refreshed against the renamed pack.");
-                    packRelativePath = renamed;
-                    packDirectory = renamedDirectory;
-                }
-            }
             if (!Directory.Exists(packDirectory))
             {
                 _logger.Warn($"Waypoints were not refreshed before transfer because pack '{packRelativePath}' is missing.");
