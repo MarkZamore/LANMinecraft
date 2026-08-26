@@ -24,13 +24,20 @@ namespace Minecraft;
 /// </summary>
 public sealed partial class PortableJavaRuntimeService
 {
-    public const string PinnedRuntimeId = "temurin-21.0.12+8";
-    public const string PinnedJavaVersion = "21.0.12";
+    public const string PinnedRuntimeId = "temurin-21.0.12.1+1";
+    /// <summary>
+    /// What this runtime answers for JAVA_VERSION in its own <c>release</c>
+    /// file, which is how an installed copy is recognised - not the release
+    /// name and not the file name. jdk-21.0.12.1+1 reports "21.0.12.1" where
+    /// jdk-21.0.12+8 reported "21.0.12", and a wrong guess here is not a wrong
+    /// label but a runtime that reinstalls itself on every launch for ever.
+    /// </summary>
+    public const string PinnedJavaVersion = "21.0.12.1";
     public const string InstallDirectoryName = "java-21";
-    public const string ArchiveFileName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip";
-    public const long ArchiveSizeBytes = 205_069_442;
+    public const string ArchiveFileName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip";
+    public const long ArchiveSizeBytes = 205_073_461;
     public const string ArchiveSha256 =
-        "9ba963ee2371874a74185d18bc7bb2ab9407df7683300855ed7606e0662321d0";
+        "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e";
 
     /// <summary>The feature release, which decides which JVM options the game gets.</summary>
     public static int PinnedMajorVersion { get; } =
@@ -38,7 +45,7 @@ public sealed partial class PortableJavaRuntimeService
 
     // Temurin packs everything under one versioned directory; it is stripped so
     // the install looks like Mojang's components and carries no '+' in its path.
-    private const string ArchiveRootPrefix = "jdk-21.0.12+8/";
+    private const string ArchiveRootPrefix = "jdk-21.0.12.1+1/";
     private const string MarkerFileName = ".portable-java.json";
     // A cache generation, not a data format: it is bumped to throw the cached
     // work away and redo it, so it is deliberately independent of
@@ -52,12 +59,12 @@ public sealed partial class PortableJavaRuntimeService
     private static readonly TimeSpan FlagProbeTimeout = TimeSpan.FromSeconds(30);
 
     public static Uri ReleaseDownloadUri { get; } = new(
-        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12%2B8/" +
-        "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12_8.zip",
+        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/" +
+        "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
         UriKind.Absolute);
 
     public static Uri ApiDownloadUri { get; } = new(
-        "https://api.adoptium.net/v3/binary/version/jdk-21.0.12%2B8/windows/x64/jdk/hotspot/normal/eclipse",
+        "https://api.adoptium.net/v3/binary/version/jdk-21.0.12.1%2B1/windows/x64/jdk/hotspot/normal/eclipse",
         UriKind.Absolute);
 
     public static IReadOnlyList<Uri> DownloadUris { get; } =
@@ -89,6 +96,7 @@ public sealed partial class PortableJavaRuntimeService
     }
 
     internal static JavaRuntimePin DefaultPin { get; } = new(
+        PinnedMajorVersion,
         PinnedRuntimeId,
         PinnedJavaVersion,
         InstallDirectoryName,
@@ -170,16 +178,36 @@ public sealed partial class PortableJavaRuntimeService
     /// service writes itself - Mojang's components are named otherwise and keep
     /// driving the loader installer.
     /// </summary>
+    /// <summary>
+    /// Throws away Java installs and archives nothing pins any more.
+    /// </summary>
+    /// <remarks>
+    /// What counts as superseded is every runtime in the catalogue, not just
+    /// the one being asked for. They share a folder now: a machine that plays a
+    /// 1.20.1 pack and a 1.21.1 pack keeps a Java 17 beside its Java 21, and a
+    /// sweep that recognised only the runtime it was called about would delete
+    /// the other one on every launch and download it again on the next.
+    /// </remarks>
     private void RemoveSupersededRuntimes(string installRoot)
     {
+        var keptInstalls = new HashSet<string>(
+            JavaRuntimeCatalog.InstallDirectoryNames, StringComparer.OrdinalIgnoreCase)
+        {
+            _pin.InstallDirectoryName
+        };
+        var keptArchives = new HashSet<string>(
+            JavaRuntimeCatalog.CacheDirectoryNames, StringComparer.OrdinalIgnoreCase)
+        {
+            _pin.RuntimeId.Replace('+', '_')
+        };
+
         Sweep(
             Path.GetDirectoryName(installRoot),
-            name => PortableInstallDirectoryRegex().IsMatch(name) &&
-                    !string.Equals(name, _pin.InstallDirectoryName, StringComparison.OrdinalIgnoreCase),
+            name => PortableInstallDirectoryRegex().IsMatch(name) && !keptInstalls.Contains(name),
             "Java install");
         Sweep(
             Path.GetDirectoryName(Path.GetDirectoryName(GetCachePath())),
-            name => !string.Equals(name, _pin.RuntimeId.Replace('+', '_'), StringComparison.OrdinalIgnoreCase),
+            name => !keptArchives.Contains(name),
             "cached Java archive");
     }
 
@@ -699,6 +727,7 @@ public sealed record PreparedJavaRuntime(
     string JavaVersion);
 
 internal sealed record JavaRuntimePin(
+    int MajorVersion,
     string RuntimeId,
     string JavaVersion,
     string InstallDirectoryName,
