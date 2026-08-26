@@ -128,11 +128,11 @@ public static class DeprecatedFileCleanupService
                 continue;
             }
 
-            var keptFileId = ManagedComponentService.PinnedCacheFileId(id);
-            if (keptFileId is null) continue;
+            var keptFileIds = ManagedComponentService.PinnedCacheFileIds(id);
+            if (keptFileIds is null) continue;
             foreach (var version in EnumerateDirectories(directory))
             {
-                if (!string.Equals(Path.GetFileName(version), keptFileId, StringComparison.OrdinalIgnoreCase))
+                if (!keptFileIds.Contains(Path.GetFileName(version), StringComparer.OrdinalIgnoreCase))
                 {
                     removed += TryDeleteDirectory(version, logger);
                 }

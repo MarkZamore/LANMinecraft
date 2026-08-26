@@ -222,7 +222,7 @@ public sealed class MinecraftProcessService
         if (SteamPlayPolicy.IsSupported(descriptor))
         {
             await _managedComponents
-                .EnsureSteamTransportModAsync(instance, token)
+                .EnsureSteamTransportModAsync(instance, descriptor, token)
                 .ConfigureAwait(false);
         }
         var identityJvmArguments = await _identityAdapter

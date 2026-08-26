@@ -12,48 +12,90 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class SteamTransportModTests
 {
+    /// <summary>
+    /// Every build the launcher will install is the file its author published,
+    /// to the byte. Sizes and hashes were taken from the release itself.
+    /// </summary>
     [Fact]
-    public void PinnedE4steamArtifact_MatchesTheUpstreamRelease()
+    public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
     {
-        Assert.Equal("0.2.4", ManagedComponentService.E4steamVersion);
+        Assert.Equal("0.3.0", SteamTransportCatalog.Version);
+        Assert.All(SteamTransportCatalog.Builds, build =>
+        {
+            Assert.Equal(SteamTransportCatalog.Version, build.Version);
+            Assert.Equal(64, build.Sha256.Length);
+            Assert.True(build.SizeBytes > 0);
+            Assert.NotEmpty(build.Loaders);
+            Assert.Equal(
+                $"https://github.com/Kamilhik/e4steam/releases/download/v0.3.0/{build.FileName}",
+                Assert.Single(build.DownloadUris).AbsoluteUri);
+        });
+
+        var neoforge = Assert.Single(
+            SteamTransportCatalog.Builds.Where(build => build.Loaders.Contains(PackLoaderKind.NeoForge)));
+        Assert.Equal("e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar", neoforge.FileName);
+        Assert.Equal(3_634_360, neoforge.SizeBytes);
         Assert.Equal(
-            "e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
-            ManagedComponentService.E4steamFileName);
-        Assert.Equal(2_673_601, ManagedComponentService.E4steamSizeBytes);
+            "3d2b56b50f6646733a3e41e67aedb3cb7baf96e48707284083c473908bbf4adb",
+            neoforge.Sha256);
+
+        var forge = Assert.Single(
+            SteamTransportCatalog.Builds.Where(build => build.Loaders.Contains(PackLoaderKind.Forge)));
+        Assert.Equal("e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar", forge.FileName);
+        Assert.Equal(3_633_909, forge.SizeBytes);
         Assert.Equal(
-            "47f0c8671bb8889e226df2bef41779b1e3cdb9271a8cfe3b216cfe6eaf910420",
-            ManagedComponentService.E4steamSha256);
-        Assert.Equal(
-            [
-                "https://mediafilez.forgecdn.net/files/8611/556/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar",
-                "https://github.com/Kamilhik/e4steam/releases/download/v0.2.4/e4steam-neoforge-mc1.20.2-26.2-v0.2.4.jar"
-            ],
-            ManagedComponentService.E4steamDownloadUris.Select(uri => uri.AbsoluteUri));
+            "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",
+            forge.Sha256);
+
+        // No two builds may share a cache folder, or one would overwrite another.
+        var folders = SteamTransportCatalog.Builds.Select(build => build.CacheFileId).ToList();
+        Assert.Equal(folders.Count, folders.Distinct().Count());
+        Assert.Equal(folders.Count, SteamTransportCatalog.CacheFileIds.Count);
     }
 
+    /// <summary>
+    /// The mod is not one artifact, and reading one of them as the whole was
+    /// the bug: the NeoForge build declares [1.20.2, 26.3) and that range was
+    /// taken to be e4steam's, which refused Steam play to every Forge pack -
+    /// which on 1.19.2 and 1.20.1 is most of the ones worth playing. Each range
+    /// below is what that build's own metadata declares, not what its file name
+    /// suggests.
+    /// </summary>
     [Theory]
-    [InlineData(PackLoaderKind.NeoForge, "1.21.1", true)]
-    [InlineData(PackLoaderKind.NeoForge, "1.20.2", true)]
-    [InlineData(PackLoaderKind.NeoForge, "1.21.8", true)]
-    [InlineData(PackLoaderKind.NeoForge, "26.2", true)]
-    [InlineData(PackLoaderKind.NeoForge, "1.20.1", false)]
-    [InlineData(PackLoaderKind.NeoForge, "26.3", false)]
-    [InlineData(PackLoaderKind.Forge, "1.21.1", false)]
-    [InlineData(PackLoaderKind.Fabric, "1.21.1", false)]
-    [InlineData(PackLoaderKind.Vanilla, "1.21.1", false)]
-    public void SteamPlayPolicy_ServesEveryNeoForgePackTheModDeclares(
+    // NeoForge, as before.
+    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.3", null)]
+    [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
+    // Forge, which used to be refused outright. 1.20.1 is All the Mods 9,
+    // 1.19.2 is Enigmatica 9 and StoneBlock 3.
+    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
+    // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
+    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.1", null)]
+    [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
+    // Fabric and Quilt share the one build its author tested them both with.
+    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.18.2", null)]
+    [InlineData(PackLoaderKind.Vanilla, "1.21.1", null)]
+    public void EveryPackGetsTheBuildItsAuthorPublishedForIt(
         PackLoaderKind loader,
         string minecraftVersion,
-        bool expected)
+        string? expectedFile)
     {
         var descriptor = new PackRuntimeDescriptor(
             1,
             minecraftVersion,
-            new PackLoaderDescriptor(loader, "21.1.244"),
+            new PackLoaderDescriptor(loader, "any"),
             "client.jar",
             "hash");
 
-        Assert.Equal(expected, SteamPlayPolicy.IsSupported(descriptor));
+        Assert.Equal(expectedFile, SteamTransportCatalog.Find(descriptor)?.FileName);
+        Assert.Equal(expectedFile is not null, SteamPlayPolicy.IsSupported(descriptor));
     }
 
     [Fact]
@@ -76,7 +118,7 @@ public sealed class SteamTransportModTests
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
 
-        var result = await service.EnsureSteamTransportModAsync(instance, CancellationToken.None);
+        var result = await service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None);
 
         Assert.True(result.Downloaded);
         Assert.True(result.Installed);
@@ -96,12 +138,12 @@ public sealed class SteamTransportModTests
         var service = fixture.CreateService(httpClient, component);
         var instance = fixture.CreatePreparedInstance();
 
-        var first = await service.EnsureSteamTransportModAsync(instance, CancellationToken.None);
+        var first = await service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None);
         // PackInstanceService.MirrorMods deletes every instance JAR the pack
         // does not carry, which is exactly what happens on the next launch.
         File.Delete(first.InstalledPath);
 
-        var second = await service.EnsureSteamTransportModAsync(instance, CancellationToken.None);
+        var second = await service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None);
 
         Assert.False(second.Downloaded);
         Assert.True(second.Installed);
@@ -124,7 +166,7 @@ public sealed class SteamTransportModTests
             payload,
             CancellationToken.None);
 
-        var result = await service.EnsureSteamTransportModAsync(instance, CancellationToken.None);
+        var result = await service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None);
 
         Assert.False(result.Downloaded);
         Assert.False(result.Installed);
@@ -149,7 +191,7 @@ public sealed class SteamTransportModTests
             CancellationToken.None);
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.EnsureSteamTransportModAsync(instance, CancellationToken.None));
+            () => service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None));
         Assert.Contains(conflictingName, failure.Message, StringComparison.Ordinal);
     }
 
