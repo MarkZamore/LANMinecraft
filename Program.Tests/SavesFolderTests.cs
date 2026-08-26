@@ -139,6 +139,51 @@ public sealed class SavesFolderTests : IDisposable
         Assert.True(File.Exists(Path.Combine(Worlds, "New World (1)", "level.dat")));
     }
 
+    /// <summary>
+    /// A world the game still has open is left where it is.
+    /// </summary>
+    /// <remarks>
+    /// This is what lets the launcher move a world the moment the player leaves
+    /// it instead of waiting for the game to close. Windows renames a folder out
+    /// from under a held session.lock without complaint - measured - but not one
+    /// whose region files are open, and a world being played has both. So the
+    /// question asked is the one that answers both: does anybody hold the lock.
+    /// </remarks>
+    [Fact]
+    public void AWorldTheGameStillHasOpen_IsNotMovedYet()
+    {
+        // Adoption moves into the shared folder; laying it out is Prepare's job.
+        Directory.CreateDirectory(Worlds);
+        var world = MakeInstanceWorld("New World");
+        var lockPath = Path.Combine(world, "session.lock");
+        File.WriteAllText(lockPath, "held");
+
+        using (File.Open(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.True(SavesFolderService.IsWorldOpen(world));
+            Assert.Equal(0, new SavesFolderService().Adopt(Worlds, Instance));
+            Assert.True(File.Exists(Path.Combine(world, "level.dat")));
+            Assert.Empty(Directory.EnumerateDirectories(Worlds));
+        }
+
+        // The player leaves the world. The file stays behind - Minecraft lets go
+        // of it rather than deleting it - so what changed is only who holds it.
+        Assert.False(SavesFolderService.IsWorldOpen(world));
+        Assert.Equal(1, new SavesFolderService().Adopt(Worlds, Instance));
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World", "level.dat")));
+    }
+
+    /// <summary>A world that was never opened has no lock, and is not open.</summary>
+    [Fact]
+    public void AWorldWithNoLockFile_CountsAsClosed()
+    {
+        Directory.CreateDirectory(Worlds);
+        var world = MakeInstanceWorld("New World");
+
+        Assert.False(SavesFolderService.IsWorldOpen(world));
+        Assert.Equal(1, new SavesFolderService().Adopt(Worlds, Instance));
+    }
+
     /// <summary>A junction is a way in, not a copy: writing through it lands in the world.</summary>
     [Fact]
     public void WhatTheGameWritesThroughTheLink_LandsInTheWorld()

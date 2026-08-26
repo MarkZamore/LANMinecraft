@@ -589,12 +589,16 @@ public sealed class MinecraftProcessService
             var placementTask = _gameWindowPlacement.TrackAsync(processId, placementCancellation.Token);
             using var watchingMemory = new CancellationTokenSource();
             var heldMemory = WatchMemoryAsync(process, watchingMemory.Token);
+            using var adoptingWorlds = new CancellationTokenSource();
+            var adopted = AdoptClosedWorldsAsync(gameDir, adoptingWorlds.Token);
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
             }
             finally
             {
+                adoptingWorlds.Cancel();
+                await adopted.ConfigureAwait(false);
                 watchingMemory.Cancel();
                 var held = await heldMemory.ConfigureAwait(false);
                 ReportMemoryHeld(held.Resident, held.Committed, heapGb);
@@ -669,6 +673,13 @@ public sealed class MinecraftProcessService
 
     /// <summary>How often the running game is asked how much it is holding.</summary>
     private static readonly TimeSpan MemorySampleInterval = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// How often the launcher looks for a world the player has finished with.
+    /// Leaving a world is rare and costs a directory listing and one file open,
+    /// so this is set by how soon the world should be in its place rather than
+    /// by what the sweep costs.
+    /// </summary>
+    private static readonly TimeSpan ClosedWorldSweepInterval = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// The largest the game's process was ever seen at, in bytes: what it had
@@ -682,6 +693,45 @@ public sealed class MinecraftProcessService
     /// session, and the thing it measures - a modded client's footprint - moves
     /// over minutes.
     /// </remarks>
+    /// <summary>
+    /// Moves a world the player just made beside the others the moment they
+    /// leave it, rather than when they close the game.
+    /// </summary>
+    /// <remarks>
+    /// The game makes a new world as a real folder inside the instance, because
+    /// that is where it is told to make it, and until it is moved the launcher
+    /// cannot list it, hand it over or stamp it with the build that made it. It
+    /// used to be moved at the end of the session, so a player who made a world
+    /// and kept playing had it sitting in the wrong place for hours.
+    ///
+    /// It cannot be moved any earlier than this. Windows renames a folder out
+    /// from under a held session.lock without complaint, but not one whose
+    /// region files are open - and a world being played has both. Leaving the
+    /// world closes those and drops the lock, which is exactly the moment this
+    /// waits for.
+    /// </remarks>
+    private async Task AdoptClosedWorldsAsync(string gameDir, CancellationToken token)
+    {
+        try
+        {
+            var saves = new SavesFolderService(_logger);
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(ClosedWorldSweepInterval, token).ConfigureAwait(false);
+                // Adopt already asks for a level.dat and skips a world the game
+                // still holds, so the sweep is the same one that runs before a
+                // launch and after it - only now it also runs between worlds.
+                saves.Adopt(_paths.Worlds, gameDir);
+            }
+        }
+        catch (Exception ex) when (
+            ex is OperationCanceledException or IOException or UnauthorizedAccessException)
+        {
+            // The game ended, or the folder was busy this time round. The sweep
+            // before the next launch catches whatever this one did not.
+        }
+    }
+
     private static async Task<(long Resident, long Committed)> WatchMemoryAsync(
         Process process, CancellationToken token)
     {

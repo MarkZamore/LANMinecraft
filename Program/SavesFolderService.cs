@@ -170,6 +170,12 @@ public sealed class SavesFolderService(Logger? logger = null)
         {
             if (IsLink(entry)) continue;
             if (!File.Exists(Path.Combine(entry, "level.dat"))) continue;
+            // Not while the game has it open. Windows will rename a folder out
+            // from under a held session.lock without complaint - measured - but
+            // not one whose region files are open, and a world being played has
+            // both. Waiting for the lock to go is waiting for the player to
+            // leave the world, which is the moment this can be done at all.
+            if (IsWorldOpen(entry)) continue;
             var name = Path.GetFileName(entry);
             var destination = Path.Combine(worldsRoot, name);
             // A directory is not a world. The line above already says what one
@@ -234,6 +240,41 @@ public sealed class SavesFolderService(Logger? logger = null)
             if (!Directory.Exists(Path.Combine(worldsRoot, candidate))) return candidate;
         }
         return "";
+    }
+
+    /// <summary>
+    /// Whether the game currently has this world open.
+    /// </summary>
+    /// <remarks>
+    /// Minecraft keeps a session.lock in every world and holds it open for as
+    /// long as the world is open - not as long as the game runs. It is not
+    /// deleted on the way out, only let go, so the question is whether anybody
+    /// holds it rather than whether it is there. Asking for it with no sharing
+    /// answers that in one call and costs nothing: it either opens or it does
+    /// not.
+    ///
+    /// A world with no session.lock at all has never been opened, and is not
+    /// open now.
+    /// </remarks>
+    internal static bool IsWorldOpen(string worldPath)
+    {
+        var lockPath = Path.Combine(worldPath, "session.lock");
+        if (!File.Exists(lockPath)) return false;
+        try
+        {
+            using var held = File.Open(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException)
+        {
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Unreadable for some other reason. Treated as open, because the
+            // cost of being wrong the other way is moving a world mid-write.
+            return true;
+        }
     }
 
     /// <summary>
