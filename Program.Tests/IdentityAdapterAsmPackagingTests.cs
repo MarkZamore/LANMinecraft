@@ -102,6 +102,62 @@ public sealed class IdentityAdapterAsmPackagingTests
     }
 
     /// <summary>
+    /// Only the hooks go on the bootstrap class path, never the whole agent.
+    /// </summary>
+    /// <remarks>
+    /// The agent has to make its hook classes visible to transformed Minecraft
+    /// classes, and it did that by putting its own jar on the bootstrap search
+    /// path. That jar carries a copy of ASM, and on the bootstrap path that
+    /// copy shadows whatever the loader brought - with no code source, because
+    /// bootstrap classes have none. Fabric finds its own libraries by asking
+    /// where their classes came from, so it got no answer and refused to start:
+    /// "missing loader library ASM", before a single line of the game ran. It
+    /// was invisible while the adapter only ever attached to NeoForge. A second
+    /// jar holding the hooks alone costs nothing, because not one of them
+    /// touches ASM.
+    /// </remarks>
+    [Fact]
+    public void TheBootstrapPath_GetsTheHooksAlone_AndNeverAsm()
+    {
+        var common = FindRepositoryDirectory("Program", "IdentityAdapters", "Common");
+        var script = File.ReadAllText(Path.Combine(common, "Build-IdentityAdapter.ps1"));
+        var agent = File.ReadAllText(Path.Combine(common, "PortableIdentityAgent.java"));
+
+        // The build makes the second jar, and it names every class the patched
+        // game calls. A hook added without a line here is one the game cannot
+        // see, which shows up as a NoClassDefFoundError inside Minecraft.
+        Assert.Contains("portable-identity-hooks.jar", script, StringComparison.Ordinal);
+        foreach (var hook in new[]
+                 {
+                     "PortableIdentityHooks", "PortableIdentityProfiles", "PortableIdentityReflection",
+                     "PortableSkinProfiles", "PortableXaeroWaypointHooks"
+                 })
+        {
+            Assert.Contains($"\"{hook}\"", script, StringComparison.Ordinal);
+        }
+
+        // And the agent puts that jar there, not the one it is running from.
+        Assert.Contains("/portable-identity-hooks.jar", agent, StringComparison.Ordinal);
+        Assert.Contains("appendToBootstrapClassLoaderSearch", agent, StringComparison.Ordinal);
+        Assert.DoesNotContain("getCodeSource().getLocation().toURI()", agent, StringComparison.Ordinal);
+
+        // None of the hooks may reach for ASM, or the split stops working.
+        foreach (var hook in Directory.EnumerateFiles(
+                     FindRepositoryDirectory("Program", "IdentityAdapters"),
+                     "*Hooks.java",
+                     SearchOption.AllDirectories)
+                     .Concat(new[]
+                     {
+                         Path.Combine(common, "PortableSkinProfiles.java"),
+                         Path.Combine(common, "PortableIdentityProfiles.java"),
+                         Path.Combine(common, "PortableIdentityReflection.java"),
+                     }))
+        {
+            Assert.DoesNotContain("org.objectweb.asm", File.ReadAllText(hook), StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// The adapter is built for the oldest Java a pack it reaches is started
     /// on, not for the newest.
     /// </summary>

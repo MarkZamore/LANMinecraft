@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9._-]*$")]
     [string]$AdapterName,
@@ -167,6 +167,38 @@ try {
     $licenseTarget = Join-Path $asmClasses "META-INF\LICENSE.asm.txt"
     New-Item -ItemType Directory -Path (Split-Path -Parent $licenseTarget) -Force | Out-Null
     Copy-Item -LiteralPath $asmLicense -Destination $licenseTarget -Force
+
+    # A second jar holding only the classes the patched game calls, and nothing
+    # else. The agent puts this one on the bootstrap search path so transformed
+    # Minecraft classes can see the hooks - and only this one, because putting
+    # the whole agent there puts its copy of ASM on the bootstrap path too.
+    # A bootstrap class has no code source, so Fabric, which finds its own
+    # libraries by asking where their classes came from, then dies with
+    # "missing loader library ASM" before the game starts. None of these
+    # classes touch ASM, so the split costs nothing.
+    $hooksClasses = Join-Path $stageRoot "hooks"
+    New-Item -ItemType Directory -Path $hooksClasses -Force | Out-Null
+    $hookNames = @(
+        "PortableIdentityHooks",
+        "PortableIdentityProfiles",
+        "PortableIdentityReflection",
+        "PortableSkinProfiles",
+        "PortableXaeroWaypointHooks")
+    $hookDirectory = Join-Path $classes "minecraft\portable\identity"
+    $hookTarget = Join-Path $hooksClasses "minecraft\portable\identity"
+    New-Item -ItemType Directory -Path $hookTarget -Force | Out-Null
+    foreach ($hookName in $hookNames) {
+        # The class and any nested classes it compiled into.
+        $found = Get-ChildItem -LiteralPath $hookDirectory -Filter "$hookName*.class" -File
+        if ($found.Count -eq 0) { throw "Identity adapter hook class was not compiled: $hookName" }
+        foreach ($file in $found) {
+            Copy-Item -LiteralPath $file.FullName -Destination $hookTarget -Force
+        }
+    }
+    $hooksJar = Join-Path $stageRoot "portable-identity-hooks.jar"
+    & $jar cf $hooksJar -C $hooksClasses .
+    if ($LASTEXITCODE -ne 0) { throw "Identity adapter hooks jar failed with exit code $LASTEXITCODE." }
+    Copy-Item -LiteralPath $hooksJar -Destination (Join-Path $classes "portable-identity-hooks.jar") -Force
 
     & $jar cfm $temporaryJar $manifest -C $classes . -C $asmClasses .
     if ($LASTEXITCODE -ne 0) { throw "Identity adapter jar failed with exit code $LASTEXITCODE." }
