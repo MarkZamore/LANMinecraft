@@ -450,6 +450,13 @@ public sealed partial class PortablePackSyncService
         _logger.Info(
             $"Pack sync finished: {outcome}, revision {manifest.Revision}, " +
             $"{diff.ChangedPaths.Count} file(s) written, {diff.Extras.Count} extra(s) removed.");
+        // The one consequence of an update that a player cannot see coming and
+        // cannot undo afterwards. Said on the update that does it, rather than
+        // discovered on the launch that opens the world.
+        var removedModsWarning = outcome == PackSyncOutcome.Updated
+            ? DescribeRemovedMods(diff.RemovedMods)
+            : null;
+        if (removedModsWarning is not null) _logger.Warn(removedModsWarning);
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.SyncingPack,
             outcome == PackSyncOutcome.UpToDate ? "Сборка актуальна" : "Сборка обновлена",
@@ -459,7 +466,23 @@ public sealed partial class PortablePackSyncService
             manifest.Revision,
             diff.ChangedPaths.Count + diff.Extras.Count,
             bytesDownloaded,
-            null);
+            removedModsWarning);
+    }
+
+    /// <summary>
+    /// What to tell the player about mods this update took away, or null when
+    /// it took none.
+    /// </summary>
+    private static string? DescribeRemovedMods(IReadOnlyList<string> removed)
+    {
+        if (removed.Count == 0) return null;
+
+        const int named = 3;
+        var names = string.Join(", ", removed.Take(named).Select(Path.GetFileNameWithoutExtension));
+        var rest = removed.Count - named;
+        return $"Обновление убрало из сборки моды ({removed.Count}): {names}" +
+               (rest > 0 ? $" и ещё {rest}" : "") +
+               ". Всё, что они поставили в ваших мирах, пропадёт при следующем открытии.";
     }
 
     private async Task<RemoteManifestDto> FetchManifestAsync(PackSyncSource source, CancellationToken token)
@@ -728,8 +751,40 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return new PackSyncDiff(state.Revision, changedPaths, FindExtras(packDir, manifest));
+        return new PackSyncDiff(
+            state.Revision,
+            changedPaths,
+            FindExtras(packDir, manifest),
+            FindRemovedMods(state, manifest));
     }
+
+    /// <summary>
+    /// The mods this revision drops, as against the one already installed.
+    /// </summary>
+    /// <remarks>
+    /// Not the same question as "what is about to be deleted", which is what
+    /// <see cref="FindExtras"/> answers and which mixes two unrelated things:
+    /// files the author removed, and files the player put there themselves. The
+    /// sync state holds every path of the revision on disk - written after the
+    /// last update finished, read before this one touches anything - so a path
+    /// in it that the new manifest does not name is one the author took out,
+    /// and nothing else is.
+    ///
+    /// Only mods. A datapack or a resource pack going away changes how a world
+    /// looks or what can be made in it; a mod going away takes every block and
+    /// item it ever placed out of the save itself, and that is the one worth
+    /// stopping a player over. A first install has an empty state and so reports
+    /// nothing, which is right: there was no world before it.
+    /// </remarks>
+    private static List<string> FindRemovedMods(SyncStateDto state, ValidatedManifest manifest) =>
+        state.Files.Keys
+            .Where(path =>
+                path.StartsWith("mods/", StringComparison.OrdinalIgnoreCase) &&
+                path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) &&
+                !manifest.FilesByPath.ContainsKey(path))
+            .Select(path => path["mods/".Length..])
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>
     /// Everything a synced pack ships is listed in its manifest, so anything
@@ -1306,7 +1361,8 @@ public sealed partial class PortablePackSyncService
     private sealed record PackSyncDiff(
         string StateRevision,
         List<string> ChangedPaths,
-        List<string> Extras);
+        List<string> Extras,
+        List<string> RemovedMods);
 
     private sealed record ValidatedFile(string Path, long SizeBytes, string Sha256);
 

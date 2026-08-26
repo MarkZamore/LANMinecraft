@@ -72,6 +72,81 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         Assert.Empty(Directory.EnumerateFileSystemEntries(packDir, ".pack-sync-stage*"));
     }
 
+    /// <summary>
+    /// An update that takes a mod away says so, because nothing else will.
+    /// </summary>
+    /// <remarks>
+    /// Everything that mod ever placed in a world disappears the next time the
+    /// world is opened, and by then the update is done and there is nothing to
+    /// undo. The launcher already knew - it deleted the jar itself - and wrote
+    /// "1 extra(s) removed" into a log, which is not a sentence about anybody's
+    /// world.
+    /// </remarks>
+    [Fact]
+    public async Task AnUpdateThatTakesAModAway_SaysSo()
+    {
+        var kept = new PackFile("mods/kept-1.0.jar", Encoding.UTF8.GetBytes("kept"));
+        var dropped = new PackFile("mods/dropped-2.3.jar", Encoding.UTF8.GetBytes("dropped"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(
+            BuildRelease("rev-1", [kept, dropped, packManifest],
+                [JarAsset(kept), JarAsset(dropped), JarAsset(packManifest)]),
+            DefaultPack);
+
+        var next = BuildRelease("rev-2", [kept, packManifest], [JarAsset(kept), JarAsset(packManifest)]);
+        using var httpClient = new HttpClient(CreateReleaseHandler(next));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.NotNull(result.Warning);
+        Assert.Contains("dropped-2.3", result.Warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("kept-1.0", result.Warning, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And a file the player put there themselves is not a mod the author
+    /// removed. The launcher deletes both - everything the manifest does not
+    /// name - so "what is about to be deleted" is the wrong question; the right
+    /// one is what the previous revision had and this one does not.
+    /// </summary>
+    [Fact]
+    public async Task AFileThePlayerAdded_IsNotReportedAsRemoved()
+    {
+        var kept = new PackFile("mods/kept-1.0.jar", Encoding.UTF8.GetBytes("kept"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("rev-1", [kept, packManifest], [JarAsset(kept), JarAsset(packManifest)]);
+        await InstallAsync(release, DefaultPack);
+
+        // Somebody drops a mod of their own into the pack.
+        var packDir = PackDir(DefaultPack);
+        File.WriteAllText(Path.Combine(packDir, "mods", "mine-9.9.jar"), "mine");
+
+        var next = BuildRelease("rev-2", [kept, packManifest], [JarAsset(kept), JarAsset(packManifest)]);
+        using var httpClient = new HttpClient(CreateReleaseHandler(next));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        // It is still deleted - the pack is what the manifest says it is - but
+        // nobody is told a mod was taken out of the pack, because none was.
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.False(File.Exists(Path.Combine(packDir, "mods", "mine-9.9.jar")));
+        Assert.Null(result.Warning);
+    }
+
+    /// <summary>A first install removes nothing: there was no world before it.</summary>
+    [Fact]
+    public async Task AFirstInstall_WarnsAboutNothing()
+    {
+        var mod = new PackFile("mods/foo-1.0.jar", Encoding.UTF8.GetBytes("mod"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("rev-1", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]);
+
+        using var httpClient = new HttpClient(CreateReleaseHandler(release));
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
+        Assert.Null(result.Warning);
+    }
+
     [Fact]
     public async Task UpToDate_OnlyManifestRequested_NoFileRewritten()
     {

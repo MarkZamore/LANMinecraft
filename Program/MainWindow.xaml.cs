@@ -1273,6 +1273,12 @@ public partial class MainWindow : Window
             {
                 RequireLogger().Warn(syncResult.Warning);
                 SetState(syncResult.Warning);
+                // And where somebody can read it. SetState only fills a field
+                // the support snapshot carries, so everything the sync has ever
+                // had to say - that it could not reach the internet and is
+                // playing the copy on disk, that an update has taken mods away -
+                // went into a diagnostic nobody opens.
+                SetBugReportStatus(syncResult.Warning);
             }
 
             // A folder somebody filled with mods becomes a pack here: what
