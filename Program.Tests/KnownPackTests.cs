@@ -77,6 +77,22 @@ public sealed class KnownPackTests
     }
 
     /// <summary>
+    /// The one built for a machine that has nothing to spare: 73 mods on
+    /// 1.20.1, which is the only pack here whose room beside the heap leaves a
+    /// three gigabyte heap inside what an eight gigabyte laptop can be asked
+    /// for.
+    /// </summary>
+    [Fact]
+    public void RpgArsNouveauIsOffered()
+    {
+        var source = PortablePackSyncService.KnownSourceFor("RPG Ars Nouveau");
+        Assert.NotNull(source);
+        Assert.Equal("MarkZamore", source!.Owner);
+        Assert.Equal("RPG-Ars-Nouveau", source.Repo);
+        Assert.Equal("pack-latest", source.Tag);
+    }
+
+    /// <summary>
     /// The names that were dropped are dropped: nothing answers for them, and a
     /// folder still called one of them is a pack of somebody's own as far as
     /// the launcher is concerned.
