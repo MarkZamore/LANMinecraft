@@ -145,6 +145,42 @@ public sealed class OutOfMemoryExitTests
         Assert.Equal(6, MemorySizingService.GetHeapGb(pack, offered, noCard));
     }
 
+    /// <summary>
+    /// And every session leaves behind the one measurement the whole memory
+    /// model has been short of. It rests on a single pack - Limitless 8, 874
+    /// jars, about eight gigabytes outside a twelve gigabyte heap - and every
+    /// other pack is an extrapolation from it, including the arithmetic that
+    /// decides whether a machine is offered a pack at all. The subtraction is
+    /// honest because -Xms is set equal to -Xmx, so the heap is committed and
+    /// what stands above it is the room beside it.
+    /// </summary>
+    [Fact]
+    public void EverySessionLeavesWhatItActuallyHeld()
+    {
+        Assert.Contains("-Xms{maximumRamMb}M -Xmx{maximumRamMb}M", Read("Program", "MinecraftProcessService.cs"), StringComparison.Ordinal);
+
+        var held = MinecraftProcessService.DescribeMemoryHeld(6L * 1024 * 1024 * 1024, heapGb: 4);
+        Assert.Contains("6144 MB", held, StringComparison.Ordinal);
+        Assert.Contains("4096 MB", held, StringComparison.Ordinal);
+        Assert.Contains("2048 MB", held, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A session nobody could measure, and one whose heap is not known - an
+    /// already-running game the launcher adopted - say less rather than
+    /// something made up.
+    /// </summary>
+    [Fact]
+    public void WhatWasNotMeasured_IsNotInvented()
+    {
+        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(0, heapGb: 4));
+        Assert.Equal("", MinecraftProcessService.DescribeMemoryHeld(-1, heapGb: 4));
+
+        var adopted = MinecraftProcessService.DescribeMemoryHeld(3L * 1024 * 1024 * 1024, heapGb: 0);
+        Assert.Contains("3072 MB", adopted, StringComparison.Ordinal);
+        Assert.DoesNotContain("beside it", adopted, StringComparison.Ordinal);
+    }
+
     private static string Between(string source, string start, string end)
     {
         var from = source.IndexOf(start, StringComparison.Ordinal);

@@ -440,7 +440,8 @@ public sealed class MinecraftProcessService
         // the completion source instead of the Process.
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MonitorClientExitAsync(
-            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir, settings.MaxMemoryGb);
+            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir,
+            settings.MaxMemoryGb, heapGb);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -461,7 +462,8 @@ public sealed class MinecraftProcessService
         TaskCompletionSource<int> exitCode,
         StartupOutputBuffer startupOutput,
         string gameDir,
-        int maxMemoryGb)
+        int maxMemoryGb,
+        int heapGb = 0)
     {
         var processId = process.Id;
         try
@@ -469,12 +471,16 @@ public sealed class MinecraftProcessService
             using var owned = process;
             using var placementCancellation = new CancellationTokenSource();
             var placementTask = _gameWindowPlacement.TrackAsync(processId, placementCancellation.Token);
+            using var watchingMemory = new CancellationTokenSource();
+            var heldMemory = WatchWorkingSetAsync(process, watchingMemory.Token);
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
             }
             finally
             {
+                watchingMemory.Cancel();
+                ReportMemoryHeld(await heldMemory.ConfigureAwait(false), heapGb);
                 // A game that dies after the two second startup window used to
                 // leave no trace at all: the window had closed, so nobody
                 // reported the exit code and nobody kept what the process said
@@ -542,6 +548,75 @@ public sealed class MinecraftProcessService
             // A process whose exit code cannot be read tells us nothing worth
             // failing the cleanup over.
         }
+    }
+
+    /// <summary>How often the running game is asked how much it is holding.</summary>
+    private static readonly TimeSpan WorkingSetSampleInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// The largest the game's process was ever seen to hold, in bytes, or zero
+    /// if it could not be watched.
+    /// </summary>
+    /// <remarks>
+    /// Sampled while it runs rather than read at the end, because Windows will
+    /// not answer for a process that has exited and PeakWorkingSet64 goes with
+    /// it. Half a minute apart: this is not a profiler, it is one number per
+    /// session, and the thing it measures - a modded client's footprint - moves
+    /// over minutes.
+    /// </remarks>
+    private static async Task<long> WatchWorkingSetAsync(Process process, CancellationToken token)
+    {
+        long peak = 0;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                process.Refresh();
+                peak = Math.Max(peak, process.WorkingSet64);
+                await Task.Delay(WorkingSetSampleInterval, token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (
+            ex is OperationCanceledException or InvalidOperationException or SystemException)
+        {
+            // The game ended between the refresh and the read, or Windows would
+            // not answer for it. Whatever was seen before that is the answer.
+        }
+        return peak;
+    }
+
+    /// <summary>
+    /// Writes down what the game actually held beside the heap it was given.
+    /// </summary>
+    /// <remarks>
+    /// The whole memory model rests on a single measurement - Limitless 8, 874
+    /// jars, about eight gigabytes outside a twelve gigabyte heap - and every
+    /// other pack is an extrapolation from it. That was defensible while there
+    /// was nothing else to go on, and it is what decides whether a three
+    /// hundred mod pack is offered to an eight gigabyte machine at all. So
+    /// every session that ends leaves the same measurement behind for the pack
+    /// it ran, and the guess gets to be checked.
+    ///
+    /// The subtraction is honest because -Xms is set equal to -Xmx: the heap is
+    /// committed from the start, so what the working set holds above it is the
+    /// room beside it and not an unfilled heap.
+    /// </remarks>
+    private void ReportMemoryHeld(long peakBytes, int heapGb)
+    {
+        var line = DescribeMemoryHeld(peakBytes, heapGb);
+        if (line.Length > 0) _logger.Info(line);
+    }
+
+    /// <summary>That measurement as a line of log, or nothing to say.</summary>
+    internal static string DescribeMemoryHeld(long peakBytes, int heapGb)
+    {
+        if (peakBytes <= 0) return "";
+        var peakMb = peakBytes / (1024 * 1024);
+        if (heapGb <= 0) return $"Memory: the game held {peakMb} MB at its largest.";
+
+        var heapMb = heapGb * 1024;
+        return $"Memory: the game held {peakMb} MB at its largest - a heap of {heapMb} MB " +
+               $"and about {Math.Max(0, peakMb - heapMb)} MB beside it.";
     }
 
     /// <summary>

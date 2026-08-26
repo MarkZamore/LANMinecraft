@@ -159,10 +159,12 @@ public sealed class SettingsService
         }
         else
         {
-            settings.MaxMemoryGb = Math.Clamp(
-                settings.MaxMemoryGb,
-                MemorySizingService.MinMemoryGb,
-                MemorySizingService.MaxMemoryGb);
+            // Held to what this machine may be asked for, not merely to what a
+            // number may be. The box in the window has always refused more than
+            // the machine can spare; the file did not, so a number written into
+            // it by hand went straight to -Xmx and the two disagreed about the
+            // same setting. A file is not a way around the window.
+            settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(settings.MaxMemoryGb);
         }
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";

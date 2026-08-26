@@ -19,6 +19,36 @@ public sealed class SettingsSchemaTests : IDisposable
     }
 
     /// <summary>
+    /// The file is not a way around the window. The box beside "RAM" has always
+    /// refused more than the machine can spare, but the file was held only to
+    /// what a number may be at all - so a value written into settings.json by
+    /// hand went straight through to -Xmx, and the two disagreed about the very
+    /// same setting.
+    /// </summary>
+    [Fact]
+    public void AMemoryNumberBiggerThanTheMachine_IsCutToWhatTheMachineAllows()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        File.WriteAllText(paths.SettingsFile, """
+        {
+          "playerName": "MarkZamore",
+          "maxMemoryGb": 128,
+          "memorySettingIsWholeGame": true,
+          "memoryChosenByPlayer": true,
+          "clientRelativePath": "E10"
+        }
+        """);
+
+        var settings = new SettingsService(paths).Load();
+
+        // 128 is the largest number the type allows and no machine's share of
+        // itself, so whatever this one is, the answer is that share.
+        Assert.Equal(MemorySizingService.GetAllowedMaxMemoryGb(), settings.MaxMemoryGb);
+        Assert.Equal(settings.MaxMemoryGb, MemorySizingService.ClampMemoryGb(settings.MaxMemoryGb));
+    }
+
+    /// <summary>
     /// The keys of the VPN and voice era are gone from the model; a file that
     /// still has them loads, keeps what matters, and drops the rest.
     /// </summary>
