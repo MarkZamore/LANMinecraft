@@ -28,8 +28,17 @@ public sealed class WindowCanvasTests
             var content = (FrameworkElement)window.Content;
 
             // The right column is a scrolling list: it would answer with the
-            // height of the whole history, so it is asked to stand aside.
-            var right = canvas.Children.Cast<UIElement>().Where(child => Grid.GetColumn(child) == 2).ToList();
+            // height of the whole history, so it is asked to stand aside. Only
+            // the scrolling part of it, though. The footer row underneath holds
+            // a button of its own, and it is the tallest thing in that row - so
+            // hiding the whole column measured a footer six pixels shorter than
+            // the one that gets drawn, and let the canvas be declared too short
+            // by exactly that.
+            var footerRow = canvas.RowDefinitions.Count - 1;
+            var right = canvas.Children
+                .Cast<UIElement>()
+                .Where(child => Grid.GetColumn(child) == 2 && Grid.GetRow(child) < footerRow)
+                .ToList();
             foreach (var child in right) child.Visibility = Visibility.Collapsed;
 
             var height = canvas.Height;

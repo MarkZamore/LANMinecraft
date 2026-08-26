@@ -2147,7 +2147,7 @@ public partial class MainWindow : Window
         _sidePanelShowsNews = news;
         ChangelogPanel.Visibility = news ? Visibility.Visible : Visibility.Collapsed;
         ChatPanel.Visibility = news ? Visibility.Collapsed : Visibility.Visible;
-        SidePanelTitle.Text = news ? "Что нового" : "Чат";
+        SidePanelTitle.Text = news ? "Что нового" : "AI-помощник";
         SidePanelToggleButton.Content = news ? "Чат" : "Новости";
     }
 
