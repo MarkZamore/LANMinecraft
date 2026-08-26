@@ -44,8 +44,11 @@ public final class PortableFtbTeleportTransformer implements ClassFileTransforme
             for (AbstractInsnNode instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
-                if (instruction instanceof MethodInsnNode call &&
-                    call.getOpcode() == Opcodes.INVOKEVIRTUAL &&
+                if (!(instruction instanceof MethodInsnNode)) {
+                    continue;
+                }
+                MethodInsnNode call = (MethodInsnNode) instruction;
+                if (call.getOpcode() == Opcodes.INVOKEVIRTUAL &&
                     contains(permissionMethods, call.name) &&
                     call.desc.equals("(I)Z")) {
                     calls.add(call);

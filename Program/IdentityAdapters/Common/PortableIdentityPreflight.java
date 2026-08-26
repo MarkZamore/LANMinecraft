@@ -8,6 +8,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
@@ -119,11 +120,14 @@ public final class PortableIdentityPreflight {
         String[] names = aliases("ftbPermissionMethods");
         int count = 0;
         for (MethodNode method : node.methods) {
-            for (var instruction = method.instructions.getFirst();
+            for (AbstractInsnNode instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
-                if (instruction instanceof MethodInsnNode call &&
-                    Arrays.asList(names).contains(call.name) &&
+                if (!(instruction instanceof MethodInsnNode)) {
+                    continue;
+                }
+                MethodInsnNode call = (MethodInsnNode) instruction;
+                if (Arrays.asList(names).contains(call.name) &&
                     call.desc.equals("(I)Z")) {
                     count++;
                 }
@@ -161,11 +165,14 @@ public final class PortableIdentityPreflight {
         new ClassReader(transformed).accept(patched, 0);
         int hookCalls = 0;
         for (MethodNode method : patched.methods) {
-            for (var instruction = method.instructions.getFirst();
+            for (AbstractInsnNode instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
-                if (instruction instanceof MethodInsnNode call &&
-                    call.owner.equals("minecraft/portable/identity/PortableXaeroWaypointHooks") &&
+                if (!(instruction instanceof MethodInsnNode)) {
+                    continue;
+                }
+                MethodInsnNode call = (MethodInsnNode) instruction;
+                if (call.owner.equals("minecraft/portable/identity/PortableXaeroWaypointHooks") &&
                     call.name.equals("rewriteCrossDimensionCommand") &&
                     call.desc.equals("(Ljava/lang/String;)Ljava/lang/String;")) {
                     hookCalls++;

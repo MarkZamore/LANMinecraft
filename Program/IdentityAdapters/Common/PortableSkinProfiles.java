@@ -81,11 +81,11 @@ public final class PortableSkinProfiles {
     }
 
     public static Object selectSkin(Object future, Object defaultSkin, boolean requireSecure) {
-        if (!(future instanceof CompletableFuture<?> completableFuture)) {
+        if (!(future instanceof CompletableFuture)) {
             return defaultSkin;
         }
 
-        Object candidate = completableFuture.getNow(null);
+        Object candidate = ((CompletableFuture<?>) future).getNow(null);
         if (candidate == null) {
             return defaultSkin;
         }
@@ -102,7 +102,7 @@ public final class PortableSkinProfiles {
             Object textureUrl = PortableIdentityReflection.invoke(
                 candidate,
                 aliases("skinTextureUrlMethods", "textureUrl", "b"));
-            if (textureUrl instanceof String url && isRegisteredUrl(url)) {
+            if (textureUrl instanceof String && isRegisteredUrl((String) textureUrl)) {
                 return candidate;
             }
         } catch (ReflectiveOperationException exception) {
@@ -224,25 +224,45 @@ public final class PortableSkinProfiles {
         for (int index = 0; index < value.length(); index++) {
             char character = value.charAt(index);
             switch (character) {
-                case '\\' -> output.append("\\\\");
-                case '"' -> output.append("\\\"");
-                case '\b' -> output.append("\\b");
-                case '\f' -> output.append("\\f");
-                case '\n' -> output.append("\\n");
-                case '\r' -> output.append("\\r");
-                case '\t' -> output.append("\\t");
-                default -> {
-                    if (character < 0x20) {
-                        output.append(String.format("\\u%04x", (int) character));
-                    } else {
-                        output.append(character);
-                    }
+                case '\\': output.append("\\\\"); break;
+                case '"': output.append("\\\""); break;
+                case '\b': output.append("\\b"); break;
+                case '\f': output.append("\\f"); break;
+                case '\n': output.append("\\n"); break;
+                case '\r': output.append("\\r"); break;
+                case '\t': output.append("\\t"); break;
+                default:
+                if (character < 0x20) {
+                    output.append(String.format("\\u%04x", (int) character));
+                } else {
+                    output.append(character);
                 }
+                    break;
             }
         }
         return output.toString();
     }
 
-    private record SkinEntry(String url, String model) {
+    /**
+     * A class rather than a record, and the plainer forms above rather than
+     * pattern matching, because this jar is built for the oldest Java any pack
+     * is started on rather than for the newest.
+     */
+    private static final class SkinEntry {
+        private final String url;
+        private final String model;
+
+        SkinEntry(String url, String model) {
+            this.url = url;
+            this.model = model;
+        }
+
+        String url() {
+            return url;
+        }
+
+        String model() {
+            return model;
+        }
     }
 }

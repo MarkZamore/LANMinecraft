@@ -126,10 +126,20 @@ try {
     New-Item -ItemType Directory -Path $classes -Force | Out-Null
     New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
 
+    # The oldest Java any pack this adapter reaches is started on. It used to
+    # say 21, which was true of the one pack the adapter ran in - and then the
+    # adapter started reaching every pack, and All The Fabric 3 refused to start
+    # at all: 1.18.2 runs on Java 17, and a class file built for 21 will not
+    # load there. Java 8 is the real floor the launcher ships (1.7 to 1.16 packs
+    # get it), and this cannot reach it yet: the agent implements the
+    # ClassFileTransformer.transform overload that takes a Module, which does
+    # not exist before Java 9. Packs on Java 8 start without hooks and say so,
+    # rather than failing.
+    #
     # --release (not -source/-target) keeps a JDK 25 javac quiet while still
-    # emitting class files that load on Java 21 and later.
+    # emitting class files that load on the named version and later.
     & $javac `
-        --release 21 `
+        --release 17 `
         -cp ($asmJars -join [System.IO.Path]::PathSeparator) `
         -d $classes `
         @javaFiles

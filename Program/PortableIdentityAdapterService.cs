@@ -95,20 +95,41 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     "gives them offline rather than the one the launcher derives.");
             }
 
-            foreach (var target in configuration.Targets)
+            try
             {
-                await RunPreflightAsync(runtime.JavaPath, adapterPath, configuration.Properties, target, token)
-                    .ConfigureAwait(false);
-                if (IsConfiguredAlias(configuration.Properties, "textureUrlCheckerClasses", target.ClassName))
+                foreach (var target in configuration.Targets)
                 {
-                    await RunSkinSemanticPreflightAsync(
-                            runtime.JavaPath,
-                            adapterPath,
-                            configuration.Properties,
-                            target,
-                            token)
+                    await RunPreflightAsync(runtime.JavaPath, adapterPath, configuration.Properties, target, token)
                         .ConfigureAwait(false);
+                    if (IsConfiguredAlias(configuration.Properties, "textureUrlCheckerClasses", target.ClassName))
+                    {
+                        await RunSkinSemanticPreflightAsync(
+                                runtime.JavaPath,
+                                adapterPath,
+                                configuration.Properties,
+                                target,
+                                token)
+                            .ConfigureAwait(false);
+                    }
                 }
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException
+                                           or TimeoutException or IOException)
+            {
+                // The preflight is how the launcher finds out that its hooks do
+                // not fit this runtime. Finding that out is not a reason to
+                // refuse to start the pack - it is the reason to start it
+                // without them, which is what happens when the configuration
+                // could not be built at all. It used to stop the launch and put
+                // the failure on screen, and All The Fabric 3 met that as a
+                // dialog it could not get past: the adapter was built for Java
+                // 21 and 1.18.2 runs on 17, so the check could not even load.
+                _logger.Warn(
+                    $"No portable hooks for Minecraft {runtime.Descriptor.MinecraftVersion} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {ex.Message} " +
+                    "The pack starts without them: everyone keeps the UUID Minecraft gives them offline, " +
+                    "and the skin chosen in the launcher is not shown.");
+                return [];
             }
 
             var mappingInfo = new FileInfo(configuration.MappingPath);

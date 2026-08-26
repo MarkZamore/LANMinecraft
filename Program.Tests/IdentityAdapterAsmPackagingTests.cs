@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -101,8 +101,22 @@ public sealed class IdentityAdapterAsmPackagingTests
         }
     }
 
+    /// <summary>
+    /// The adapter is built for the oldest Java a pack it reaches is started
+    /// on, not for the newest.
+    /// </summary>
+    /// <remarks>
+    /// It said 21, which was true while the adapter ran in one pack on 1.21.1.
+    /// Then it started reaching every pack, and All The Fabric 3 would not
+    /// start at all: 1.18.2 runs on Java 17, and a class file built for 21 does
+    /// not load there - the launcher's own preflight died on
+    /// UnsupportedClassVersionError and put it on screen as a dialog there was
+    /// no way past. Java 8 is the real floor the launcher ships, and the agent
+    /// cannot reach it yet: it implements the ClassFileTransformer.transform
+    /// overload taking a Module, which arrived in Java 9.
+    /// </remarks>
     [Fact]
-    public void BuildScript_PinsTheVendoredAsmAndTargetsRelease21()
+    public void BuildScript_PinsTheVendoredAsm_AndBuildsForTheOldestJavaAPackRunsOn()
     {
         var script = File.ReadAllText(
             Path.Combine(
@@ -110,7 +124,8 @@ public sealed class IdentityAdapterAsmPackagingTests
                 "Build-IdentityAdapter.ps1"));
 
         // --release (not -source/-target) keeps a JDK 25 javac warning-free.
-        Assert.Contains("--release 21", script, StringComparison.Ordinal);
+        Assert.Contains("--release 17", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("--release 21", script, StringComparison.Ordinal);
         Assert.DoesNotContain("-source 21", script, StringComparison.Ordinal);
         Assert.DoesNotContain("--add-exports", script, StringComparison.Ordinal);
         foreach (var (name, length, sha256) in PinnedAsmArtifacts)
