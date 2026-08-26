@@ -86,10 +86,8 @@ public sealed class OutOfMemoryExitTests
     {
         var service = Read("Program", "MinecraftProcessService.cs");
         Assert.Contains("public event Action<int, int>? ClientMemoryIsTooSmall;", service, StringComparison.Ordinal);
-        Assert.Contains(
-            "ClientMemoryIsTooSmall?.Invoke(settings.MaxMemoryGb, smallestUsefulBudgetGb);",
-            service,
-            StringComparison.Ordinal);
+        Assert.Contains("ClientMemoryIsTooSmall?.Invoke(", service, StringComparison.Ordinal);
+        Assert.Contains("GetRecommendedDefaultMemoryGb(packMemory, video)", service, StringComparison.Ordinal);
 
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;", window, StringComparison.Ordinal);
@@ -97,6 +95,27 @@ public sealed class OutOfMemoryExitTests
         Assert.Contains("SetBugReportStatus(", handler, StringComparison.Ordinal);
         Assert.Contains("{chosenGb} ГБ", handler, StringComparison.Ordinal);
         Assert.Contains("{neededGb} ГБ", handler, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the number it offers has to be advice rather than the threshold that
+    /// raised it. They are not the same number: the threshold is where the heap
+    /// stops being crushed below its floor, so a player who sets exactly that
+    /// gets the floor - the two gigabytes this was all found on, which the game
+    /// had already died in twice. On the pack it was found on they differ by
+    /// four gigabytes.
+    /// </summary>
+    [Fact]
+    public void TheNumberOffered_LeavesAHeapWorthHaving()
+    {
+        var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
+        var noCard = VideoMemoryProfile.Unknown;
+        var threshold = MemorySizingService.GetSmallestUsefulBudgetGb(pack, noCard);
+        var offered = MemorySizingService.GetRecommendedDefaultMemoryGb(pack, 32L * 1024 * 1024 * 1024, noCard);
+
+        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetHeapGb(pack, threshold, noCard));
+        Assert.True(offered > threshold, $"{offered} GB should be more than the {threshold} GB that merely stops the fall");
+        Assert.Equal(6, MemorySizingService.GetHeapGb(pack, offered, noCard));
     }
 
     private static string Between(string source, string start, string end)
