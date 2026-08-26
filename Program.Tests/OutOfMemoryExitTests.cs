@@ -157,7 +157,12 @@ public sealed class OutOfMemoryExitTests
     [Fact]
     public void EverySessionLeavesWhatItActuallyHeld()
     {
-        Assert.Contains("-Xms{maximumRamMb}M -Xmx{maximumRamMb}M", Read("Program", "MinecraftProcessService.cs"), StringComparison.Ordinal);
+        // The line the game is started with names both ends of the heap, since
+        // they are no longer the same number on a machine short of memory.
+        Assert.Contains(
+            "-Xms{InitialHeapMbFor(maximumRamMb)}M -Xmx{maximumRamMb}M",
+            Read("Program", "MinecraftProcessService.cs"),
+            StringComparison.Ordinal);
 
         var held = MinecraftProcessService.DescribeMemoryHeld(
             residentBytes: 6L * 1024 * 1024 * 1024,
