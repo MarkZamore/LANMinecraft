@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private Logger? _logger;
     private PackHashService? _packHash;
     private PortablePackSyncService? _packSync;
+    private PackAutoManifestService? _autoManifest;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
     private SteamClientService? _steamClient;
@@ -154,6 +155,7 @@ public partial class MainWindow : Window
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
+            _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
             _transferPacing = _transferPacingStore.Load();
             _worldMetadata = new WorldMetadataService();
@@ -1271,6 +1273,16 @@ public partial class MainWindow : Window
             {
                 RequireLogger().Warn(syncResult.Warning);
                 SetState(syncResult.Warning);
+            }
+
+            // A folder somebody filled with mods becomes a pack here: what
+            // loader and which Minecraft comes out of the jars, which build of
+            // that loader comes from whoever publishes it, and the answer is
+            // written into the folder as the manifest every service downstream
+            // already reads. A pack that came with one is untouched.
+            if (_autoManifest is not null)
+            {
+                await _autoManifest.EnsureAsync(build.RelativePath, _lifetimeCts.Token);
             }
 
             await RefreshPackHashAsync();

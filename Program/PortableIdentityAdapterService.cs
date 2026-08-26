@@ -66,9 +66,17 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 // derives from the name offline: just as stable, just as
                 // playable together, simply a different number, and one that
                 // carries nothing over from packs where the hooks did run.
+                // Named here rather than left to the exception: only the one
+                // thrown for an unsupported runtime carries the version, and the
+                // one thrown for a missing class does not, so the warning read
+                // "No portable UUID hooks for Required identity mapping class is
+                // missing: net/minecraft/client/resources/PlayerSkin" - true,
+                // and silent about which pack it was true of.
                 _logger.Warn(
-                    $"No portable UUID hooks for {ex.Message} " +
-                    "The pack starts without them, and everyone keeps the UUID Minecraft gives them offline.");
+                    $"No portable UUID hooks for Minecraft {runtime.Descriptor.MinecraftVersion} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {ex.Message} " +
+                    "The pack starts without them: everyone keeps the UUID Minecraft gives them offline, " +
+                    "and the skin chosen in the launcher is not shown, because these hooks are what show it.");
                 return [];
             }
 

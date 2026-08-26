@@ -198,11 +198,14 @@ public sealed class PackInstanceService : IDisposable
             throw new DirectoryNotFoundException($"Minecraft pack is missing {PackManifestService.ManifestFileName}: {packDir}");
         }
         var descriptor = PackManifestService.Load(packDir);
-        var clientJar = PackManifestService.ResolveClientJarPath(packDir, descriptor);
-        if (!File.Exists(clientJar))
-        {
-            throw new FileNotFoundException("Minecraft client jar is missing from the selected pack.", clientJar);
-        }
+        // Only ever used as a name to skip while mirroring the pack over the
+        // instance - the jar itself belongs to the runtime, not here - so a
+        // pack that brings none needs nothing in its place. It was checked for
+        // existence here as well, which was ceremony even when every pack
+        // carried one: the value the check guarded is never read.
+        var clientJar = descriptor.ClientJar.Length == 0
+            ? ""
+            : PackManifestService.ResolveClientJarPath(packDir, descriptor);
 
         Directory.CreateDirectory(gameDir);
         var statePath = Path.Combine(gameDir, StateFileName);

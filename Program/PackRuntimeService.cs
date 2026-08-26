@@ -87,8 +87,15 @@ public sealed class PackRuntimeService : IDisposable
     {
         var packDirectory = _paths.CombineUnderPacks(packRelativePath);
         var descriptor = PackManifestService.Load(packDirectory);
-        var sourceClientJar = PackManifestService.ResolveClientJarPath(packDirectory, descriptor);
-        if (!File.Exists(sourceClientJar))
+        // A pack may bring the client jar or leave it to be fetched. One that
+        // names a jar must have that jar - it was named for a reason, and a
+        // missing one is a broken pack rather than a silent download. One that
+        // names none is a folder of mods somebody assembled, and Mojang's own
+        // client for the version the mods ask for is exactly right for it.
+        var sourceClientJar = descriptor.ClientJar.Length == 0
+            ? ""
+            : PackManifestService.ResolveClientJarPath(packDirectory, descriptor);
+        if (sourceClientJar.Length != 0 && !File.Exists(sourceClientJar))
         {
             throw new FileNotFoundException("The client jar declared by portable-pack.json is missing.", sourceClientJar);
         }
@@ -151,8 +158,11 @@ public sealed class PackRuntimeService : IDisposable
         }
 
         var clientFile = await ResolveClientFileAsync(launcher, baseVersion, token).ConfigureAwait(false);
-        ValidateClientJar(sourceClientJar, clientFile);
-        CopyClientJar(sourceClientJar, clientFile.Path!);
+        if (sourceClientJar.Length != 0)
+        {
+            ValidateClientJar(sourceClientJar, clientFile);
+            CopyClientJar(sourceClientJar, clientFile.Path!);
+        }
 
         await RuntimeRetry.RunAsync(
             retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
@@ -380,9 +390,10 @@ public sealed class PackRuntimeService : IDisposable
             JavaRuntimeId = javaRuntimeId,
             JavaVersion = javaVersion,
             ClientJarRelativePath = ToRelativePath(runtimeRoot, clientJarPath),
-            SourceClientJarSizeBytes = new FileInfo(sourceClientJarPath).Length,
-            SourceClientJarLastWriteUtcTicks = File.GetLastWriteTimeUtc(sourceClientJarPath).Ticks,
-            SourceClientJarSha1 = ComputeSha1(sourceClientJarPath),
+            SourceClientJarSizeBytes = sourceClientJarPath.Length == 0 ? 0 : new FileInfo(sourceClientJarPath).Length,
+            SourceClientJarLastWriteUtcTicks =
+                sourceClientJarPath.Length == 0 ? 0 : File.GetLastWriteTimeUtc(sourceClientJarPath).Ticks,
+            SourceClientJarSha1 = sourceClientJarPath.Length == 0 ? "" : ComputeSha1(sourceClientJarPath),
             PreparedAtUtc = DateTimeOffset.UtcNow
         };
         foreach (var path in requiredFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
@@ -443,6 +454,8 @@ public sealed class PackRuntimeService : IDisposable
 
     private static bool ValidateSourceClientJarState(string sourceClientJarPath, RuntimeState state)
     {
+        // A pack that ships no jar has nothing here to have changed.
+        if (sourceClientJarPath.Length == 0) return state.SourceClientJarSizeBytes == 0;
         var info = new FileInfo(sourceClientJarPath);
         if (!info.Exists || info.Length != state.SourceClientJarSizeBytes) return false;
         return info.LastWriteTimeUtc.Ticks == state.SourceClientJarLastWriteUtcTicks ||
@@ -491,7 +504,7 @@ public sealed class PackRuntimeService : IDisposable
 
     private static void RejectUnexpectedMinecraftJars(string packDirectory, string selectedClientJar)
     {
-        var selected = Path.GetFullPath(selectedClientJar);
+        var selected = selectedClientJar.Length == 0 ? "" : Path.GetFullPath(selectedClientJar);
         var unexpected = Directory.EnumerateFiles(packDirectory, "*.jar", SearchOption.AllDirectories)
             .Where(path =>
             {
