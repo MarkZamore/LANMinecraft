@@ -38,6 +38,14 @@ public static class MemorySizingService
     private const double BytesPerGb = 1024d * 1024d * 1024d;
     private const double BytesPerMb = 1024d * 1024d;
 
+    /// <summary>
+    /// How much of a machine a pack nobody has weighed is offered. Two thirds
+    /// is generous on purpose: the pack the first press of Play downloads is a
+    /// large one, and the first launch that can see it replaces this with its
+    /// own number anyway.
+    /// </summary>
+    private const double UnseenPackShareOfMachine = 2d / 3d;
+
     // The pack-weight model, in megabytes. Calibrated against the one pack that
     // has been measured: Limitless 8, 874 jars and 1.9 GB of them, held almost
     // eight gigabytes outside a twelve gigabyte heap. The terms are what that
@@ -266,16 +274,26 @@ public static class MemorySizingService
     /// pack it downloads on the first press of Play is a large one. The first
     /// launch that can see a pack replaces this with that pack's own number.
     /// </summary>
+    /// <remarks>
+    /// Arithmetic, not a table of sizes. The steps this replaces answered every
+    /// machine between twelve and sixteen gigabytes with the same number and
+    /// then jumped four at the boundary, which is a shape no machine has: two
+    /// laptops a gigabyte apart were offered four gigabytes apart, and the one
+    /// just under a step was offered less than a smaller machine's share of
+    /// itself. A fraction of the machine, rounded to a whole gigabyte, moves
+    /// with the machine instead.
+    /// </remarks>
     private static int GetRecommendedDefaultForAnUnseenPack(ulong totalPhysicalMemoryBytes)
     {
-        var installedGb = (int)Math.Round(totalPhysicalMemoryBytes / BytesPerGb, MidpointRounding.AwayFromZero);
-        return installedGb switch
-        {
-            < 12 => 8,
-            < 16 => 12,
-            < 24 => 16,
-            _ => 20
-        };
+        var installedGb = totalPhysicalMemoryBytes / BytesPerGb;
+        var wanted = (int)Math.Round(installedGb * UnseenPackShareOfMachine, MidpointRounding.AwayFromZero);
+        // And no further than the point where more stops being worth having:
+        // past this the heap an unweighed pack would be given is larger than
+        // the largest one worth recommending, and a larger heap buys longer
+        // collections rather than more comfort. Derived from those two rules
+        // rather than written down, so it follows them if either ever moves.
+        var ceiling = GetBudgetForHeapGb(PackMemoryProfile.Unknown, MaxRecommendedHeapGb);
+        return Math.Clamp(wanted, MinMemoryGb, ceiling);
     }
 
     public static int ClampMemoryGb(int value)

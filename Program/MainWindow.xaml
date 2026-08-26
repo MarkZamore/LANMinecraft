@@ -132,7 +132,7 @@
                              TextChanged="MemoryTextBox_TextChanged"
                              DataObject.Pasting="MemoryTextBox_Pasting"
                              LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
-                    <TextBlock Grid.Column="3" Text="GB" Style="{StaticResource LabelTextStyle}" Margin="{StaticResource Gap.Left2}"/>
+                    <TextBlock Grid.Column="3" Text="ГБ" Style="{StaticResource LabelTextStyle}" Margin="{StaticResource Gap.Left2}"/>
                 </Grid>
 
                 <!-- One press writes the pack's key layout into the game's options,

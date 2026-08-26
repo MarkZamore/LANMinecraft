@@ -619,7 +619,7 @@ public partial class MainWindow : Window
         }
         if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient)
         {
-            SetBugReportStatus("Некому отправить отчёт: в сети нет игроков с лаунчером.");
+            SetBugReportStatus("Некому отправить отчёт");
             return;
         }
 
@@ -1198,7 +1198,7 @@ public partial class MainWindow : Window
     private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
     {
         PostToUi(() => SetBugReportStatus(
-            $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM {neededGb} ГБ."));
+            $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM от {neededGb} ГБ."));
     }
 
     private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
