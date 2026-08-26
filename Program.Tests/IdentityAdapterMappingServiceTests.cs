@@ -162,6 +162,24 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             target => target.ClassName.Contains("ShareToLanScreen", StringComparison.Ordinal) ||
                       target.ClassName.Contains("NetworkServerEntry", StringComparison.Ordinal));
 
+        // Both places authlib has ever kept the rule about which hosts a skin
+        // may come from, and both names it has gone by. Read out of all
+        // eighteen published authlib jars, 1.5.21 to 9.0.75: the rule sat on
+        // the session service as isWhitelistedDomain through 2.1.28, as
+        // isAllowedTextureDomain from 2.3.31 to 3.16.29, and moved to
+        // TextureUrlChecker at 3.18.38. Naming only the last of the three is
+        // what left every pack before Minecraft 1.19.4 - All The Fabric 3 among
+        // them - unable to show a skin at all: the class the launcher went
+        // looking for is not in those versions. None of this comes from the
+        // runtime's mappings, because com.mojang.authlib is never obfuscated,
+        // which is why this one patch is the same on every loader.
+        Assert.Equal(
+            "com/mojang/authlib/yggdrasil/TextureUrlChecker," +
+            "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
+            properties["textureUrlCheckerClasses"]);
+        Assert.Equal("isAllowedTextureDomain,isWhitelistedDomain", properties["textureUrlCheckerMethods"]);
+        Assert.Equal("(Ljava/lang/String;)Z", properties["textureUrlCheckerDescriptors"]);
+
         // The removed teleport patches must stay dormant: their properties are
         // still emitted, pinned off, and nothing is targeted for them.
         Assert.Equal("false", properties["ftbTeleportEnabled"]);

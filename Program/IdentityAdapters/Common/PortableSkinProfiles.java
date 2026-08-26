@@ -1,6 +1,7 @@
 package minecraft.portable.identity;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -14,6 +15,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class PortableSkinProfiles {
+    private static final java.util.concurrent.atomic.AtomicBoolean immutableProfilesReported =
+        new java.util.concurrent.atomic.AtomicBoolean();
     private static volatile long registryModified = Long.MIN_VALUE;
     private static volatile Map<UUID, SkinEntry> entries = Collections.emptyMap();
 
@@ -26,7 +29,15 @@ public final class PortableSkinProfiles {
         }
 
         try {
-            UUID id = (UUID) PortableIdentityReflection.invoke(profile, "getId");
+            // Read GameProfile's fields, not its getters. getId, getName and
+            // getProperties are gone from authlib 7.0.61 (Minecraft 1.21.9),
+            // where the class became a record and they are called id, name and
+            // properties instead. The three private fields are the one thing
+            // that did not move: same names, same types, same order in all 18
+            // authlib releases from 1.5.21 to 9.0.75, record or not. So the
+            // fields are what this reads, and one code path covers every
+            // version the launcher can start.
+            UUID id = (UUID) PortableIdentityReflection.getField(profile, "id");
             if (id == null) {
                 return;
             }
@@ -35,15 +46,35 @@ public final class PortableSkinProfiles {
                 return;
             }
 
-            String name = (String) PortableIdentityReflection.invoke(profile, "getName");
+            String name = (String) PortableIdentityReflection.getField(profile, "name");
             String textureJson = createTextureJson(id, name, entry);
             String encoded = Base64.getEncoder().encodeToString(textureJson.getBytes(StandardCharsets.UTF_8));
             ClassLoader loader = profile.getClass().getClassLoader();
             Class<?> propertyType = Class.forName("com.mojang.authlib.properties.Property", true, loader);
             Object property = createProperty(propertyType, encoded);
-            Object properties = PortableIdentityReflection.invoke(profile, "getProperties");
+            Object properties = PortableIdentityReflection.getField(profile, "properties");
             invokeCompatible(properties, "removeAll", "textures");
             invokeCompatible(properties, "put", "textures", property);
+        } catch (InvocationTargetException invocation) {
+            if (!(invocation.getCause() instanceof UnsupportedOperationException)) {
+                throw new IllegalStateException("Portable skin could not be attached to GameProfile.", invocation);
+            }
+            // From authlib 7.0.61 - Minecraft 1.21.9 - a profile built without
+            // properties gets the shared PropertyMap.EMPTY, whose backing map is
+            // an ImmutableListMultimap, and GameProfile became a record whose
+            // properties field cannot be reassigned either. So the profile
+            // cannot be given a skin after it exists; it would have to be built
+            // with one, which is a different hook in a different place. Mutating
+            // EMPTY is not the way out - every profile without properties shares
+            // that one instance, so a skin put there would be everybody's.
+            //
+            // Said once and then dropped: the pack plays, everyone keeps the
+            // UUID the launcher gave them, and only the skin is missing.
+            if (immutableProfilesReported.compareAndSet(false, true)) {
+                System.out.println(
+                    "[PortableIdentity] This Minecraft keeps player profiles unchangeable once made, so the skin "
+                        + "chosen in the launcher is not shown. Everything else about the pack is unaffected.");
+            }
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Portable skin could not be attached to GameProfile.", exception);
         }

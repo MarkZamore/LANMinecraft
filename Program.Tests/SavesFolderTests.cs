@@ -11,7 +11,7 @@ namespace Minecraft.Tests;
 /// over by whoever holds it. The game must not: opening a world under a build
 /// that lacks its mods is how the blocks of every missing mod are lost. So the
 /// instance's saves folder holds one junction per world this build may open,
-/// and nothing for the rest.
+/// and an empty folder holding the name of every world it may not.
 /// </summary>
 public sealed class SavesFolderTests : IDisposable
 {
@@ -44,10 +44,99 @@ public sealed class SavesFolderTests : IDisposable
 
         Assert.Equal(2, changes.Shown);
         Assert.True(Directory.Exists(Path.Combine(Saves, "Chebupeli")));
-        Assert.False(Directory.Exists(Path.Combine(Saves, "Sky Factory")));
+        // Withdrawn: there is no world there to open. Its name is held all the
+        // same, so the game cannot hand it to a second world.
+        Assert.False(File.Exists(Path.Combine(Saves, "Sky Factory", "level.dat")));
         // A world nobody stamped is shown to every build: hiding it would be
         // losing it, and playing it is what gives it a build.
         Assert.True(Directory.Exists(Path.Combine(Saves, "hand-dropped")));
+    }
+
+    /// <summary>
+    /// The name of a world this build may not open is held by an empty folder,
+    /// so the game never offers that name to a new world.
+    /// </summary>
+    /// <remarks>
+    /// The game does not read its own world list to decide whether a name is
+    /// free. It calls Files.createDirectory on the name and catches
+    /// FileAlreadyExistsException - verified in the bytecode of 1.18.2, 1.20.1
+    /// and 1.21.1, where the method is instruction for instruction the same, and
+    /// on the runtime this launcher ships, where an empty directory throws just
+    /// as a full one does. So an empty folder is answer enough, and no level.dat
+    /// is needed to make it one. What the game does instead is what it always
+    /// does with a taken name: it appends " (1)".
+    /// </remarks>
+    [Fact]
+    public void AWithdrawnWorldsName_IsHeldByAnEmptyFolder()
+    {
+        MakeWorld("New World", "ATM10");
+
+        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+
+        var held = Path.Combine(Saves, "New World");
+        Assert.True(Directory.Exists(held));
+        Assert.Null(new DirectoryInfo(held).LinkTarget);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(held));
+        // And the world itself is untouched where it lives.
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World", "level.dat")));
+    }
+
+    /// <summary>
+    /// A held name is given back the moment the world behind it goes away.
+    /// Otherwise the folder would go on holding a name against every world made
+    /// here afterwards, which is the very thing it was put there to prevent.
+    /// </summary>
+    [Fact]
+    public void APlaceholderWhoseWorldHasGone_IsTakenAway()
+    {
+        MakeWorld("New World", "ATM10");
+        var service = new SavesFolderService();
+        service.Prepare(Worlds, Instance, "LL8 Extended");
+        Assert.True(Directory.Exists(Path.Combine(Saves, "New World")));
+
+        Directory.Delete(Path.Combine(Worlds, "New World"), recursive: true);
+        service.Prepare(Worlds, Instance, "LL8 Extended");
+
+        Assert.False(Directory.Exists(Path.Combine(Saves, "New World")));
+    }
+
+    /// <summary>
+    /// A placeholder is not a world and is never moved into the shared folder.
+    /// Adoption asks for a level.dat, which is what a world is; a placeholder
+    /// has none, and a phantom world beside the real ones would be worse than
+    /// the collision it was standing in the way of.
+    /// </summary>
+    [Fact]
+    public void APlaceholder_IsNeverAdoptedAsAWorld()
+    {
+        MakeWorld("New World", "ATM10");
+        var service = new SavesFolderService();
+        service.Prepare(Worlds, Instance, "LL8 Extended");
+
+        Assert.Equal(0, service.Adopt(Worlds, Instance));
+        Assert.Single(Directory.EnumerateDirectories(Worlds));
+    }
+
+    /// <summary>
+    /// And the whole point, end to end: the build that cannot see the other
+    /// build's "New World" makes its own, the game gives it the name it gives a
+    /// taken one, and both worlds end up beside each other under names that
+    /// tell them apart.
+    /// </summary>
+    [Fact]
+    public void TwoBuildsBothMakingANewWorld_EndUpWithTwoWorlds()
+    {
+        MakeWorld("New World", "ATM10");
+        var service = new SavesFolderService();
+        service.Prepare(Worlds, Instance, "LL8 Extended");
+
+        // What the game does when it finds the name held: it counts on. The
+        // launcher does not choose this name, the game does.
+        MakeInstanceWorld("New World (1)");
+        service.Adopt(Worlds, Instance);
+
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World (1)", "level.dat")));
     }
 
     /// <summary>A junction is a way in, not a copy: writing through it lands in the world.</summary>
@@ -78,7 +167,7 @@ public sealed class SavesFolderTests : IDisposable
 
         Assert.Equal(1, withdrawn.Shown);
         Assert.Equal(1, withdrawn.Hidden);
-        Assert.False(Directory.Exists(Path.Combine(Saves, "Chebupeli")));
+        Assert.False(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
         Assert.True(Directory.Exists(Path.Combine(Saves, "Sky Factory")));
         Assert.True(File.Exists(Path.Combine(Worlds, "Chebupeli", "level.dat")));
         Assert.True(File.Exists(Path.Combine(Worlds, "Sky Factory", "level.dat")));
@@ -163,7 +252,7 @@ public sealed class SavesFolderTests : IDisposable
 
         new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
 
-        Assert.False(Directory.Exists(Path.Combine(Saves, "Sky Factory")));
+        Assert.False(File.Exists(Path.Combine(Saves, "Sky Factory", "level.dat")));
         Assert.True(File.Exists(Path.Combine(Worlds, "Sky Factory", "level.dat")));
         Assert.True(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
     }

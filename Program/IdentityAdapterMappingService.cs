@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 
@@ -22,7 +22,20 @@ internal sealed class IdentityAdapterMappingService
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
     private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
+    // The rule about which hosts a skin may come from moved once and was
+    // renamed once across the eighteen published authlib releases, and these
+    // are the only three forms it has ever taken: isWhitelistedDomain on the
+    // session service through 2.1.28, isAllowedTextureDomain on the session
+    // service from 2.3.31 to 3.16.29, and isAllowedTextureDomain on
+    // TextureUrlChecker from 3.18.38 on. Both classes are named and both method
+    // names offered; the transformer patches whichever pair actually exists and
+    // leaves the other class alone. Nothing here comes from the runtime's
+    // mappings, because com.mojang.authlib is never obfuscated - which is what
+    // makes this the one part of the adapter that is the same on every loader
+    // and every Minecraft version.
     private const string TextureUrlChecker = "com/mojang/authlib/yggdrasil/TextureUrlChecker";
+    private const string YggdrasilSessionService =
+        "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
     private readonly AppPaths _paths;
 
     public IdentityAdapterMappingService(AppPaths paths)
@@ -104,8 +117,8 @@ internal sealed class IdentityAdapterMappingService
             ["skinSecureMethods"] = JoinAliases(
                 "secure",
                 playerSkin.RequireMethod("secure", descriptor => descriptor == "()Z").LeftName),
-            ["textureUrlCheckerClasses"] = TextureUrlChecker,
-            ["textureUrlCheckerMethods"] = "isAllowedTextureDomain",
+            ["textureUrlCheckerClasses"] = JoinAliases(TextureUrlChecker, YggdrasilSessionService),
+            ["textureUrlCheckerMethods"] = JoinAliases("isAllowedTextureDomain", "isWhitelistedDomain"),
             ["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z",
             // The agent reads one fixed property set, so the transformers the
             // launcher no longer drives keep their keys and stay switched off.
