@@ -18,24 +18,26 @@ public sealed class PortableGameInstaller : IGameInstaller
     private readonly string _runtimeRoot;
     private readonly string _temporaryRoot;
     private readonly IProgress<RuntimePreparationProgress>? _runtimeProgress;
-    private readonly int _phaseIndex;
-    private readonly int _phaseCount;
+    private readonly string _subject;
     private long _lastRuntimeProgressTimestamp;
 
+    /// <param name="subject">
+    /// What these files are, in the word the button will show: "Minecraft" for
+    /// the base game, the loader's name for everything the loader brings. It
+    /// is the whole explanation of why a bar starts again.
+    /// </param>
     public PortableGameInstaller(
         HttpClient httpClient,
         string runtimeRoot,
         string temporaryRoot,
         IProgress<RuntimePreparationProgress>? runtimeProgress,
-        int phaseIndex,
-        int phaseCount)
+        string subject)
     {
         _httpClient = httpClient;
         _runtimeRoot = Path.GetFullPath(runtimeRoot);
         _temporaryRoot = Path.GetFullPath(temporaryRoot);
         _runtimeProgress = runtimeProgress;
-        _phaseIndex = phaseIndex;
-        _phaseCount = phaseCount;
+        _subject = string.IsNullOrWhiteSpace(subject) ? "Файлы" : subject;
     }
 
     public async ValueTask Install(
@@ -208,12 +210,10 @@ public sealed class PortableGameInstaller : IGameInstaller
         double? fraction = total > 0 ? boundedDownloaded / (double)total : null;
         _runtimeProgress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.Downloading,
-            "Скачивание файлов",
+            _subject,
             fraction,
             boundedDownloaded,
-            total,
-            _phaseIndex,
-            _phaseCount));
+            total));
     }
 
     private bool TryAcquireProgressUpdate()

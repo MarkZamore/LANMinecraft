@@ -1486,6 +1486,7 @@ public partial class MainWindow : Window
             var identity = RequireIdentityService().ResolveContext(_settings);
             var skin = _skinService.SelectLocalSkin(_settings, identity.MinecraftUuid, dialog.FileName);
             RequireSettingsService().Save(_settings);
+            RefreshSkinHint();
             SetState($"Skin selected ({skin.Model})");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
@@ -1959,9 +1960,12 @@ public partial class MainWindow : Window
         if (memoryGb >= MinMemoryGb)
         {
             _settings.MaxMemoryGb = memoryGb;
-            // Typed by hand: from here the number is the player's, and no pack
-            // moves it again.
-            _settings.MemoryChosenByPlayer = true;
+            // Typed by hand: from here this is what the pack in front of them
+            // is worth, kept under that pack's name and put back in the field
+            // every time they return to it. Written on the keystroke rather
+            // than on the launch, because thinking better of playing is not
+            // thinking better of the number.
+            _settingsService.RememberMemoryForPack(_settings, memoryGb);
             _settingsService.Save(_settings);
         }
     }
@@ -2191,16 +2195,14 @@ public partial class MainWindow : Window
         PlayProgressBar.Visibility = busy || progress.Stage == RuntimePreparationStage.Ready
             ? Visibility.Visible
             : Visibility.Collapsed;
-        var phase = progress.PhaseCount > 1 &&
-                    progress.PhaseIndex > 0 &&
-                    progress.PhaseIndex <= progress.PhaseCount
-            ? $" {progress.PhaseIndex}/{progress.PhaseCount}"
-            : string.Empty;
         var isByteStage = progress.Stage is RuntimePreparationStage.SyncingPack or
             RuntimePreparationStage.Downloading or
             RuntimePreparationStage.InstallingJava;
+        // Keyed by what is being fetched, so the measured rate starts again
+        // where the bytes do: the base game and the loader's files are two
+        // downloads, and one's speed is not the other's.
         var runtimeSpeed = isByteStage && progress.TotalBytes > 0
-            ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.PhaseIndex}/{progress.PhaseCount}")
+            ? _runtimeRate.Update(progress.DownloadedBytes, $"runtime:{progress.Stage}:{progress.Message}")
             : 0;
         if (!isByteStage) _runtimeRate.Reset();
         _playProgressText = PlayButtonCaption.For(progress, runtimeSpeed);
@@ -2389,7 +2391,7 @@ public partial class MainWindow : Window
     /// Reads the field back into the settings. <paramref name="chosenByPlayer"/>
     /// is false where the launcher is only re-applying what it put there
     /// itself - pressing Play, above all - because a number the player never
-    /// touched goes on following the pack.
+    /// touched goes on following the pack it is for.
     /// </summary>
     private void ApplyMemoryText(bool chosenByPlayer)
     {
@@ -2407,24 +2409,39 @@ public partial class MainWindow : Window
         var settings = RequireSettings();
         var clamped = ClampMemoryGb(memoryGb);
         settings.MaxMemoryGb = clamped;
-        if (chosenByPlayer) settings.MemoryChosenByPlayer = true;
-        RequireSettingsService().Save(settings);
+        var service = RequireSettingsService();
+        if (chosenByPlayer) service.RememberMemoryForPack(settings, clamped);
+        service.Save(settings);
         SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
     }
 
     /// <summary>
     /// Weighs the pack that is selected - its mods, their bytes, the texture it
-    /// ships - and, when the number in the field is the launcher's own rather
-    /// than the player's, moves it to what that pack asks for. Vanilla on an old
-    /// version and a pack heavier than Limitless 8 are both packs here.
+    /// ships - and puts the field back to the number that belongs to it: the one
+    /// the player last set here, or what the pack asks for where they never set
+    /// one. Vanilla on an old version and a pack heavier than Limitless 8 are
+    /// both packs here, and they are why the number is not shared between them.
     /// </summary>
     private void RefreshPackMemory()
     {
         if (_settings is null || _settingsService is null) return;
 
         _settingsService.MeasurePack(_settings.ClientRelativePath);
-        _settingsService.ApplyPackRecommendation(_settings);
+        _settingsService.ApplyPackMemory(_settings);
         RefreshMemoryText();
+        RefreshSkinHint();
+    }
+
+    /// <summary>
+    /// What the Skin button says on hover, the way the memory field does: the
+    /// rule for the file, and - where the pack is old enough for it to matter -
+    /// what this pack's Minecraft will make of the skin that is chosen.
+    /// </summary>
+    private void RefreshSkinHint()
+    {
+        SkinButton.ToolTip = SkinCompatibility.Describe(
+            _settingsService?.PackMemory.MinecraftVersion,
+            _settings?.SkinPath);
     }
 
     private void RefreshMemoryText(bool saveIfChanged = false)

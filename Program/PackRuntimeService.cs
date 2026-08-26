@@ -118,15 +118,16 @@ public sealed class PackRuntimeService : IDisposable
         }
 
         Directory.CreateDirectory(temporaryRoot);
-        var phaseCount = descriptor.Loader.Type == PackLoaderKind.Vanilla ? 1 : 2;
-        var loaderPhase = phaseCount;
+        // What the button says while each set of files comes down. The base
+        // game is Minecraft's own; everything after it belongs to the loader,
+        // however many rounds that takes.
+        var loaderName = LoaderDisplayName(descriptor.Loader.Type);
         var launcher = CreateLauncher(
             runtimeRoot,
             temporaryRoot,
             progress,
             localOnly: false,
-            phaseIndex: 1,
-            phaseCount: phaseCount);
+            subject: "Minecraft");
         IVersion baseVersion;
         try
         {
@@ -161,9 +162,7 @@ public sealed class PackRuntimeService : IDisposable
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
-            LoaderDisplayName(descriptor.Loader.Type),
-            PhaseIndex: loaderPhase,
-            PhaseCount: phaseCount));
+            loaderName));
         if (!_providers.TryGetValue(descriptor.Loader.Type, out var provider))
         {
             throw new NotSupportedException($"Unsupported loader: {descriptor.Loader.Type}");
@@ -174,8 +173,7 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             localOnly: false,
-            phaseIndex: loaderPhase,
-            phaseCount: phaseCount);
+            subject: loaderName);
 
         var context = new PackLoaderInstallationContext(
             descriptor,
@@ -194,8 +192,7 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             localOnly: true,
-            phaseIndex: loaderPhase,
-            phaseCount: phaseCount);
+            subject: loaderName);
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
@@ -237,7 +234,7 @@ public sealed class PackRuntimeService : IDisposable
     public MinecraftLauncher CreateLocalLauncher(PreparedRuntime runtime)
     {
         var temporaryRoot = Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads", "launch");
-        return CreateLauncher(runtime.RuntimeRoot, temporaryRoot, progress: null, localOnly: true, phaseIndex: 0, phaseCount: 0);
+        return CreateLauncher(runtime.RuntimeRoot, temporaryRoot, progress: null, localOnly: true, subject: "");
     }
 
     internal void CleanupLaunchTemporaryFiles()
@@ -253,8 +250,7 @@ public sealed class PackRuntimeService : IDisposable
         string temporaryRoot,
         IProgress<RuntimePreparationProgress>? progress,
         bool localOnly,
-        int phaseIndex,
-        int phaseCount)
+        string subject)
     {
         var minecraftPath = new MinecraftPath(runtimeRoot);
         minecraftPath.CreateDirs();
@@ -269,8 +265,7 @@ public sealed class PackRuntimeService : IDisposable
             runtimeRoot,
             temporaryRoot,
             progress,
-            phaseIndex,
-            phaseCount);
+            subject);
         if (localOnly)
         {
             parameters.VersionLoader = new LocalJsonVersionLoader(minecraftPath);

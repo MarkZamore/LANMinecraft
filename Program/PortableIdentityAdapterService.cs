@@ -58,11 +58,18 @@ public sealed class PortableIdentityAdapterService : IDisposable
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException)
             {
-                throw new NotSupportedException(
-                    $"Portable UUID adapter is not compatible with Minecraft {runtime.Descriptor.MinecraftVersion} " +
-                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}. " +
-                    "Update LANMinecraft.exe before starting this pack.",
-                    ex);
+                // No hooks for this runtime, which is not a reason to refuse to
+                // start it. What the hooks buy is that an offline player's UUID
+                // is the one the launcher derives, so a person's progress
+                // follows them rather than the machine they sat at. A pack the
+                // launcher has no hooks for falls back to the UUID Minecraft
+                // derives from the name offline: just as stable, just as
+                // playable together, simply a different number, and one that
+                // carries nothing over from packs where the hooks did run.
+                _logger.Warn(
+                    $"No portable UUID hooks for {ex.Message} " +
+                    "The pack starts without them, and everyone keeps the UUID Minecraft gives them offline.");
+                return [];
             }
 
             foreach (var target in configuration.Targets)

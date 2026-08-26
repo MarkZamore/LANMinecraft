@@ -328,6 +328,14 @@ public sealed class MinecraftProcessService
         var javaTempDir = Path.Combine(_paths.Personal, "Temp", "Java", settings.ClientRelativePath);
         _paths.EnsureUnderRoot(javaTempDir);
         Directory.CreateDirectory(javaTempDir);
+        // Beside Temp rather than inside it: startup cleanup empties Temp, and
+        // what a mod keeps in a home directory is meant to survive a restart.
+        // One home for every pack, because what lands here is keyed by the
+        // machine rather than by the build - e4steam's native libraries are the
+        // same three files whichever pack asked for them.
+        var javaHome = Path.Combine(_paths.Personal, "Home");
+        _paths.EnsureUnderRoot(javaHome);
+        Directory.CreateDirectory(javaHome);
         var session = MSession.CreateOfflineSession(identityContext.IdentityName);
         session.UUID = identityContext.MinecraftUuid;
         session.AccessToken = identityContext.SessionAccessToken;
@@ -394,6 +402,14 @@ public sealed class MinecraftProcessService
             "-Djava.net.preferIPv4Stack=true",
             "-Djava.net.preferIPv6Addresses=false",
             $"-Djava.io.tmpdir={javaTempDir}",
+            // A home of its own, inside the folder, because things reach for
+            // one. e4steam unpacks the three Steam native libraries into
+            // "$user.home/.e4steam-steam-natives" and reads no property that
+            // would move them, so on a machine where the launcher was meant to
+            // leave nothing behind it left three DLLs in the user's profile.
+            // Anything else that writes to a home directory lands here too,
+            // which is the point: the folder is the whole installation.
+            $"-Duser.home={javaHome}",
             $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
             // ModernFix's lazy model loading, as a JVM property. Without it a
             // player on 8 GB of heap ran out of memory before the world had
