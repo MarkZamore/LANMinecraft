@@ -77,6 +77,13 @@ public sealed class SavesFolderService(Logger? logger = null)
                     if (PointsAt(link, world)) continue;
                     Directory.Delete(link);
                 }
+                else if (IsEmptyDirectory(link))
+                {
+                    // Empty is not "something real": nothing is lost by taking
+                    // the name back, and leaving it hides the world it stands
+                    // in front of.
+                    TryDeleteEmptyDirectory(link);
+                }
                 else if (Directory.Exists(link) || File.Exists(link))
                 {
                     // Something real is standing where the junction belongs.
@@ -135,11 +142,22 @@ public sealed class SavesFolderService(Logger? logger = null)
             if (!File.Exists(Path.Combine(entry, "level.dat"))) continue;
             var name = Path.GetFileName(entry);
             var destination = Path.Combine(worldsRoot, name);
+            // A directory is not a world. The line above already says what one
+            // is - a folder with a level.dat in it - and this used to forget it
+            // one line later, so an empty folder left behind by a crash or a
+            // transfer stood in the way of every world of that name, from every
+            // pack, for ever. "New World" is the name Minecraft offers by
+            // default, so that folder blocked the likeliest name there is.
+            if (IsEmptyDirectory(destination))
+            {
+                TryDeleteEmptyDirectory(destination);
+            }
             if (Directory.Exists(destination))
             {
                 logger?.Warn(
                     $"World {name} was made inside this build and a world of that name already " +
-                    "exists beside the others; it stays where it is.");
+                    $"exists beside the others, so it stays where it is: {entry}. " +
+                    "Rename one of the two and it will move over by itself.");
                 continue;
             }
             try
@@ -155,6 +173,36 @@ public sealed class SavesFolderService(Logger? logger = null)
             }
         }
         return moved;
+    }
+
+    /// <summary>
+    /// A directory that exists and holds no file anywhere beneath it. Not a
+    /// world, not anybody's data, and safe to take the name back from.
+    /// </summary>
+    internal static bool IsEmptyDirectory(string path)
+    {
+        try
+        {
+            return Directory.Exists(path) &&
+                   !IsLink(path) &&
+                   !Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable is not empty.
+            return false;
+        }
+    }
+
+    private static void TryDeleteEmptyDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private static bool IsLink(string path)

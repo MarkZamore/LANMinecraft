@@ -178,6 +178,84 @@ public sealed class SavesFolderTests : IDisposable
         Assert.Empty(Directory.EnumerateFileSystemEntries(Saves));
     }
 
+    /// <summary>
+    /// An empty folder is not a world, and must not stand in front of one.
+    /// </summary>
+    /// <remarks>
+    /// A crash that made a world and never wrote it, or a world handed away,
+    /// can leave a bare folder in the shared store. Adoption asked only whether
+    /// a folder of that name existed - one line after establishing that a world
+    /// is a folder with a level.dat in it - so the husk blocked every world of
+    /// that name from every build, permanently. The name it blocked was "New
+    /// World", which is the one Minecraft offers by default, so two packs and
+    /// two real worlds were invisible at once.
+    /// </remarks>
+    [Fact]
+    public void AnEmptyFolderInTheStore_DoesNotBlockARealWorld()
+    {
+        Directory.CreateDirectory(Path.Combine(Worlds, "New World"));
+        MakeInstanceWorld("New World");
+
+        var adopted = new SavesFolderService().Adopt(Worlds, Instance);
+
+        Assert.Equal(1, adopted);
+        Assert.True(File.Exists(Path.Combine(Worlds, "New World", "level.dat")));
+        Assert.Single(Directory.GetDirectories(Worlds));
+    }
+
+    /// <summary>
+    /// And a real world of the same name still is not touched: two worlds under
+    /// one name is not something to resolve by guessing.
+    /// </summary>
+    [Fact]
+    public void ARealWorldOfTheSameName_StillStopsAdoption()
+    {
+        MakeWorld("New World", build: null);
+        var theirs = MakeInstanceWorld("New World");
+
+        var adopted = new SavesFolderService().Adopt(Worlds, Instance);
+
+        Assert.Equal(0, adopted);
+        Assert.True(File.Exists(Path.Combine(theirs, "level.dat")));
+    }
+
+    /// <summary>
+    /// An empty folder where the junction belongs is taken back too, for the
+    /// same reason: nothing is lost, and leaving it hides a world.
+    /// </summary>
+    [Fact]
+    public void AnEmptyFolderInTheInstance_DoesNotBlockTheJunction()
+    {
+        MakeWorld("Chebupeli", "LL8 Extended");
+        Directory.CreateDirectory(Path.Combine(Saves, "Chebupeli"));
+
+        var changes = new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+
+        Assert.Equal(1, changes.Shown);
+        Assert.True(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
+    }
+
+    /// <summary>A folder with anything in it is somebody's, empty of worlds or not.</summary>
+    [Fact]
+    public void AFolderWithFilesInIt_IsNeverTakenBack()
+    {
+        var stray = Path.Combine(Worlds, "New World");
+        Directory.CreateDirectory(stray);
+        File.WriteAllText(Path.Combine(stray, "notes.txt"), "mine");
+        MakeInstanceWorld("New World");
+
+        Assert.Equal(0, new SavesFolderService().Adopt(Worlds, Instance));
+        Assert.True(File.Exists(Path.Combine(stray, "notes.txt")));
+    }
+
+    private string MakeInstanceWorld(string name)
+    {
+        var world = Path.Combine(Saves, name);
+        Directory.CreateDirectory(world);
+        File.WriteAllBytes(Path.Combine(world, "level.dat"), new byte[16]);
+        return world;
+    }
+
     private void MakeWorld(string name, string? build)
     {
         var world = Path.Combine(Worlds, name);
