@@ -231,6 +231,32 @@ public sealed class PackDetectionTests : IDisposable
         Assert.Equal("1.18.2", detected.MinecraftVersion);
     }
 
+    /// <summary>
+    /// A fabric.mod.json with a raw newline inside one of its strings. Invalid
+    /// by the letter of JSON, accepted by Fabric's own loader, and shipped in
+    /// better-end-1.1.1.jar - which is a jar this launcher has to read, because
+    /// it is one of ninety-four in a pack it runs.
+    /// </summary>
+    [Fact]
+    public void AJarWhoseJsonIsNotQuiteJson_IsStillRead()
+    {
+        var pack = Pack();
+        for (var index = 0; index < 8; index++)
+        {
+            // The newline is raw and inside a string, exactly as the real jar
+            // has it: char 10, not the two characters backslash-n.
+            Jar(pack, $"betterend{index}.jar", ("fabric.mod.json",
+                "{\"schemaVersion\":1,\"id\":\"betterend\",\"version\":\"1.1.1\"," +
+                "\"description\":\"A line" + (char)10 + "and another\"," +
+                "\"depends\":{\"minecraft\":\">=1.18.2 <1.19\"}}"));
+        }
+
+        var detected = PackDetector.Detect(pack);
+
+        Assert.Equal(PackLoaderKind.Fabric, detected.Loader);
+        Assert.Equal("1.18.2", detected.MinecraftVersion);
+    }
+
     [Fact]
     public void AFolderWithoutMods_IsNotAPack()
     {
