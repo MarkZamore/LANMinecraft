@@ -110,7 +110,9 @@ public sealed class PackRuntimeService : IDisposable
             CleanupUntrackedRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
-            var cachedJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
+            var cachedJava = await _javaRuntime
+                .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
+                .ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
             return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
@@ -153,7 +155,9 @@ public sealed class PackRuntimeService : IDisposable
         {
             throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
         }
-        var gameJava = await _javaRuntime.EnsureAsync(runtimeRoot, progress, token).ConfigureAwait(false);
+        var gameJava = await _javaRuntime
+            .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
+            .ConfigureAwait(false);
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
@@ -206,8 +210,8 @@ public sealed class PackRuntimeService : IDisposable
             runtimeRoot,
             descriptor,
             profileId,
-            gameJava.JavaWPath,
             gameJava.RuntimeId,
+            gameJava.JavaVersion,
             sourceClientJar,
             clientFile.Path!,
             requiredFiles,
@@ -353,8 +357,8 @@ public sealed class PackRuntimeService : IDisposable
         string runtimeRoot,
         PackRuntimeDescriptor descriptor,
         string profileId,
-        string javaPath,
         string javaRuntimeId,
+        string javaVersion,
         string sourceClientJarPath,
         string clientJarPath,
         IReadOnlyCollection<string> requiredFiles,
@@ -365,8 +369,13 @@ public sealed class PackRuntimeService : IDisposable
             SchemaVersion = RuntimeCacheGeneration,
             DescriptorHash = descriptor.DescriptorHash,
             ProfileId = profileId,
-            JavaPathRelativePath = ToRelativePath(runtimeRoot, javaPath),
+            // Empty on purpose: Java lives in the shared store now, which is
+            // outside this root and therefore has no path relative to it. The
+            // field stays because the cleanup of two long-dead layouts still
+            // reads it, and an empty string matches neither of them.
+            JavaPathRelativePath = "",
             JavaRuntimeId = javaRuntimeId,
+            JavaVersion = javaVersion,
             ClientJarRelativePath = ToRelativePath(runtimeRoot, clientJarPath),
             SourceClientJarSizeBytes = new FileInfo(sourceClientJarPath).Length,
             SourceClientJarLastWriteUtcTicks = File.GetLastWriteTimeUtc(sourceClientJarPath).Ticks,
@@ -582,6 +591,14 @@ public sealed class PackRuntimeService : IDisposable
         public string DescriptorHash { get; set; } = "";
         public string ProfileId { get; set; } = "";
         public string JavaPathRelativePath { get; set; } = "";
+
+        /// <summary>
+        /// What the runtime this pack was prepared against calls itself.
+        /// Written down rather than read back off disk: a support report
+        /// used to find it by walking up from the java path, which only
+        /// worked while the JDK lived inside the pack's own folder.
+        /// </summary>
+        public string JavaVersion { get; set; } = "";
         public string JavaRuntimeId { get; set; } = "";
         public string ClientJarRelativePath { get; set; } = "";
         public long SourceClientJarSizeBytes { get; set; }
