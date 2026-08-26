@@ -76,6 +76,7 @@ public sealed partial class PortablePackSyncService
         new("ATM10", new PackSyncSource("MarkZamore", "ATM10", "pack-latest")),
         new("The Broken Script Enhanced",
             new PackSyncSource("MarkZamore", "The-Broken-Script-Enhanced", "pack-latest")),
+        new("E10", new PackSyncSource("MarkZamore", "E10", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
