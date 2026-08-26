@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace Minecraft;
 
@@ -47,15 +47,24 @@ public static class MemorySizingService
     private const double UnseenPackShareOfMachine = 2d / 3d;
 
     // The pack-weight model, in megabytes. Calibrated against the one pack that
-    // has been measured: Limitless 8, 874 jars and 1.9 GB of them, held almost
+    // has been measured: Limitless 8, 1128 mods and 1.9 GB of jars, held almost
     // eight gigabytes outside a twelve gigabyte heap. The terms are what that
     // memory is made of, so the numbers carry to a pack of another shape: a
     // base every client pays, a per-mod cost (classes, mixins, threads), a
     // share of the jar bytes (class data and the models inside them), and a
     // share of the texture the pack ships loose.
+    //
+    // The per-mod numbers look oddly precise because they are the old ones
+    // divided by 1.279. They were fitted when a "mod" meant a file in the mods
+    // folder, and a mod is not a file: mods carry other mods inside themselves,
+    // and Limitless 8's 882 files are 1128 mods. Dividing by its own ratio
+    // leaves that pack's answers exactly where they were measured, and lets
+    // every other pack be counted the way the loader counts it. All The Fabric 3
+    // is 95 files and 287 mods, and counting files under-charged it by 1373 MB
+    // of the 1129 it went over its budget by.
     private const int NativeBaseMb = 1024;
     private const int OlderMinecraftNativeBaseMb = 768;
-    private const int NativePerModMb = 5;
+    private const double NativePerModMb = 3.909;
     private const double NativePerJarMegabyte = 1.2;
     private const double NativePerAssetMegabyte = 0.5;
 
@@ -64,7 +73,7 @@ public static class MemorySizingService
     // entities of every mod that adds any.
     private const int HeapBaseMb = 2048;
     private const int OlderMinecraftHeapBaseMb = 1024;
-    private const int HeapPerModMb = 12;
+    private const double HeapPerModMb = 9.383;
 
     // And what the pack hands the card. A modern client keeps a couple of
     // gigabytes of atlases and buffers there before a single mod is added;
@@ -76,7 +85,7 @@ public static class MemorySizingService
     // system memory.
     private const int VideoBaseMb = 2048;
     private const int OlderMinecraftVideoBaseMb = 512;
-    private const int VideoPerModMb = 10;
+    private const double VideoPerModMb = 7.819;
     private const double VideoPerAssetMegabyte = 12;
     /// <summary>
     /// The most a small card is charged. Past this it is not short of room, it

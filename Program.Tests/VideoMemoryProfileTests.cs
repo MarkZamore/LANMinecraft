@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -109,9 +109,18 @@ public sealed class VideoMemoryProfileTests
     [Fact]
     public void ThePackThatDiedOfIt_KeepsItsHeapNow()
     {
+        // 312 was this pack's file count when it was recorded, and the profile
+        // now carries the count the loader loads, which is larger. Nobody went
+        // back to measure that pack, so the number stands as written and buys a
+        // slightly smaller reserve than it did - which only widens the gap the
+        // test is about.
         var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
 
-        Assert.Equal(6, MemorySizingService.GetHeapGb(pack, 10, VideoMemoryProfile.Unknown));
-        Assert.Equal(2, MemorySizingService.GetHeapGb(pack, 10, new VideoMemoryProfile(2)));
+        Assert.Equal(7, MemorySizingService.GetHeapGb(pack, 10, VideoMemoryProfile.Unknown));
+        // Three gigabytes of heap, taken by a card that does not exist. It was
+        // four when this was found, and the pack was on its floor; the numbers
+        // moved when the per-mod costs were refitted to the count the loader
+        // uses, and what they cost is the same kind of thing.
+        Assert.Equal(4, MemorySizingService.GetHeapGb(pack, 10, new VideoMemoryProfile(2)));
     }
 }

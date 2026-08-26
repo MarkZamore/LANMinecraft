@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
 namespace Minecraft;
@@ -17,7 +17,19 @@ namespace Minecraft;
 /// collections of 2.2 seconds - a heap partly in the page file - while the
 /// first, same processor and same pack, played the same evening without them.
 /// </summary>
-public readonly record struct VideoMemoryProfile(int DedicatedGb)
+/// <param name="DedicatedGb">Whole gigabytes of the card's own memory, or zero.</param>
+/// <param name="MemorylessAdapter">
+/// The name of an adapter that was read and reports no memory of its own, or
+/// null. This is knowledge, not ignorance, and the two used to be written down
+/// the same way: "the card could not be read" was logged for a machine whose
+/// card had been read perfectly and had truthfully answered that it has none.
+/// An adapter like that is the processor's own graphics, and its textures come
+/// out of system memory - which is to say out of the same pool the heap is
+/// measured against. Nothing is charged for it yet, because one machine is not
+/// a calibration; naming it in the log is what makes the next measurement
+/// attributable instead of guessed at.
+/// </param>
+public readonly record struct VideoMemoryProfile(int DedicatedGb, string? MemorylessAdapter = null)
 {
     /// <summary>
     /// A card nobody could measure - no driver key, a machine that answers
@@ -25,6 +37,12 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
     /// cannot be read never costs anybody heap.
     /// </summary>
     public static VideoMemoryProfile Unknown { get; } = new(0);
+
+    /// <summary>
+    /// True where an adapter answered and said it has no memory of its own.
+    /// Distinct from <see cref="Unknown"/>, which is nobody answering at all.
+    /// </summary>
+    public bool HasMemorylessAdapter => !string.IsNullOrWhiteSpace(MemorylessAdapter);
 
     /// <summary>False for <see cref="Unknown"/> alone.</summary>
     public bool IsKnown => DedicatedGb > 0;
@@ -46,7 +64,11 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
     {
         try
         {
-            return FromAdapterBytes(ReadAdapterMemory(ReadPresentAdapterNames()));
+            var adapters = ReadAdapters(ReadPresentAdapterNames());
+            var measured = FromAdapterBytes(adapters.Bytes);
+            return measured.IsKnown
+                ? measured
+                : new VideoMemoryProfile(0, adapters.Memoryless.FirstOrDefault());
         }
         catch
         {
@@ -79,12 +101,13 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
     /// One value is read and one is not, and the difference matters more than
     /// its width. See <see cref="DedicatedBytes"/>.
     /// </remarks>
-    private static List<long> ReadAdapterMemory(HashSet<string> present)
+    private static (List<long> Bytes, List<string> Memoryless) ReadAdapters(HashSet<string> present)
     {
         using var adapters = Registry.LocalMachine.OpenSubKey(DisplayAdapterClass);
-        if (adapters is null) return [];
+        if (adapters is null) return ([], []);
 
         var found = new List<(string Name, long Bytes)>();
+        var memoryless = new List<string>();
         foreach (var name in adapters.GetSubKeyNames())
         {
             // The cards are numbered - 0000, 0001 - and the class key holds two
@@ -100,10 +123,16 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
                 using var adapter = adapters.OpenSubKey(name);
                 if (adapter is null) continue;
 
+                var description = adapter.GetValue("DriverDesc") as string ?? "";
                 var bytes = DedicatedBytes(adapter.GetValue);
-                if (bytes <= 0) continue;
+                if (bytes <= 0)
+                {
+                    // Read, and it has none. Worth remembering which one it was.
+                    if (description.Length != 0) memoryless.Add(description);
+                    continue;
+                }
 
-                found.Add((adapter.GetValue("DriverDesc") as string ?? "", bytes));
+                found.Add((description, bytes));
             }
             catch (Exception error) when (error is System.Security.SecurityException or UnauthorizedAccessException)
             {
@@ -116,7 +145,7 @@ public readonly record struct VideoMemoryProfile(int DedicatedGb)
         // whole list is used rather than none of it: a card read too large only
         // leaves the sizing where it was before this existed.
         var driven = found.Where(entry => present.Contains(entry.Name)).ToList();
-        return (driven.Count > 0 ? driven : found).Select(entry => entry.Bytes).ToList();
+        return ((driven.Count > 0 ? driven : found).Select(entry => entry.Bytes).ToList(), memoryless);
     }
 
     /// <summary>

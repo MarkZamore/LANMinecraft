@@ -363,10 +363,21 @@ public sealed class MinecraftProcessService
         // from the outside, and this line is the only place the difference
         // shows.
         var videoSpillGb = MemorySizingService.GetVideoSpillGb(packMemory, video);
-        _logger.Info(video.IsKnown
-            ? $"Video memory: {video.DedicatedGb} GB on the card, of which this pack outgrows {videoSpillGb} GB - " +
-              "that much of what it draws is kept in system memory instead, and out of the heap."
-            : "Video memory: the card could not be read, so nothing is kept out of the heap for it.");
+        _logger.Info(video switch
+        {
+            { IsKnown: true } =>
+                $"Video memory: {video.DedicatedGb} GB on the card, of which this pack outgrows {videoSpillGb} GB - " +
+                "that much of what it draws is kept in system memory instead, and out of the heap.",
+            // Read, and it answered that it has none: the processor's own
+            // graphics, whose textures come out of system memory - the same pool
+            // the heap is measured against. Not charged, because one machine is
+            // not a calibration, but said plainly so the next measurement that
+            // comes in over its budget can be attributed rather than guessed at.
+            { HasMemorylessAdapter: true } =>
+                $"Video memory: {video.MemorylessAdapter} reports none of its own, so what it draws comes " +
+                "out of system memory. That is not charged separately, and a pack may go over its budget by it.",
+            _ => "Video memory: the card could not be read, so nothing is kept out of the heap for it."
+        });
         var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video);
         var wantedHeapGb = MemorySizingService.GetRecommendedHeapGb(packMemory);
         // There are two ways a budget can be too small and only one of them was
