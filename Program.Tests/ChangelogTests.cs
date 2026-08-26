@@ -30,6 +30,61 @@ public sealed class ChangelogTests
     }
 
     /// <summary>
+    /// The newest version is the commit about to be made, or the one just made.
+    /// </summary>
+    /// <remarks>
+    /// The release number is the commit count, and the build refuses to publish
+    /// a commit the changelog does not name. Every other test here reads the
+    /// file alone, so all of them passed while a commit went out with no entry
+    /// of its own - a tidy-up commit nobody thought of as a release - and the
+    /// build died on it with "Program/Changelog.md has no entry for release
+    /// 225". Twice. Two numbers are allowed because this runs on both sides of
+    /// a commit: before it the file is one ahead of the count, after it they
+    /// are equal.
+    /// </remarks>
+    [Fact]
+    public void TheNewestVersion_IsTheCommitItIsWrittenFor()
+    {
+        if (!TryCountCommits(out var commits)) return;
+
+        var newest = ChangelogService.Load()[0].Version;
+        Assert.True(
+            newest == commits || newest == commits + 1,
+            $"the changelog's newest version is {newest} and main has {commits} commits; " +
+            $"a commit needs its own '## {commits + 1}' section before it is made, " +
+            "or the build will refuse to publish it");
+    }
+
+    /// <summary>How many commits lead here, when this is a git checkout at all.</summary>
+    private static bool TryCountCommits(out int commits)
+    {
+        commits = 0;
+        try
+        {
+            using var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "rev-list --count HEAD",
+                WorkingDirectory = AppContext.BaseDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (git is null) return false;
+            var output = git.StandardOutput.ReadToEnd();
+            if (!git.WaitForExit(15_000)) return false;
+            return git.ExitCode == 0 && int.TryParse(output.Trim(), out commits);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // No git here - a source drop rather than a checkout. The build
+            // that publishes is a checkout and does the same sum.
+            return false;
+        }
+    }
+
+    /// <summary>
     /// A version says two short sentences and stops. This is the window a
     /// player opens to see what changed, not the commit that changed it: the
     /// two most visible things go here and the rest stays in the history.
