@@ -1187,11 +1187,18 @@ public partial class MainWindow : Window
     /// the settings is smaller than this pack can run in, and the game is about
     /// to prove it.
     /// </summary>
+    /// <remarks>
+    /// Two numbers and the name of the box they go in, and nothing else. Why
+    /// the pack needs it is a paragraph, and a player reading a line above a
+    /// button they are already pressing does not want a paragraph - they want
+    /// to know where to type and what. "RAM" is the label beside that box in
+    /// this very window, so it is the word used here rather than a description
+    /// of it.
+    /// </remarks>
     private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
     {
         PostToUi(() => SetBugReportStatus(
-            $"Этой сборке мало {chosenGb} ГБ: почти всё уходит мимо кучи Java, и ей достаётся самый минимум. " +
-            $"Поставьте в настройках памяти {neededGb} ГБ или больше, иначе игра закроется без памяти."));
+            $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM {neededGb} ГБ."));
     }
 
     private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
