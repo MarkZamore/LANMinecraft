@@ -65,3 +65,6 @@ Program/*_wpftmp.csproj
 
 # Test run artefacts
 Program.Tests/TestResults/
+
+# Worktrees and scratch the agent harness keeps beside the repository.
+.claude/

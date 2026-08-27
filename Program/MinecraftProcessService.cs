@@ -180,6 +180,7 @@ public sealed class MinecraftProcessService
     private readonly SkinService _skinService;
     private readonly PortableIdentityRegistryService _identityRegistry;
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
+    private readonly MeasuredMemoryStore _measuredMemory;
     private readonly ConcurrentDictionary<int, byte> _activeClientProcesses = new();
     private int _clientPreparing;
     private string _lastJavaPath = "";
@@ -239,6 +240,7 @@ public sealed class MinecraftProcessService
         _skinService = skinService;
         _identityRegistry = identityRegistry;
         _gameWindowPlacement = new MinecraftWindowPlacementService(paths, logger);
+        _measuredMemory = new MeasuredMemoryStore(paths);
     }
 
     public async Task StartClientAsync(
@@ -359,11 +361,21 @@ public sealed class MinecraftProcessService
         // And the card, because what does not fit in it the driver keeps in
         // system memory, and that copy is the game's too.
         var video = VideoMemoryProfile.Measure();
-        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video);
+        // And what this pack was last seen holding on this machine, which beats
+        // both of the above where it exists: the model was fitted to one pack
+        // on one computer, and this is the pack in front of us on the computer
+        // in front of us.
+        var installedGb = MemorySizingService.GetInstalledMemoryGb();
+        var measured = _measuredMemory.Recall(settings.ClientRelativePath, video, installedGb);
+        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video, measured);
         var maximumRamMb = checked(heapGb * 1024);
         _logger.Info(
             $"Memory: {settings.MaxMemoryGb} GB for the game ({packMemory.ModCount} mods, " +
-            $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap.");
+            $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap. " +
+            (measured.IsKnown
+                ? $"The room beside it is measured: {measured.BesideHeapMb} MB over " +
+                  $"{measured.Sessions} session(s) on this card and this much memory."
+                : "The room beside it is estimated from the pack; no session here has been measured yet."));
         // Said every launch, not only when it costs something: a card that has
         // stopped being readable looks exactly like a card with room to spare
         // from the outside, and this line is the only place the difference
@@ -371,9 +383,17 @@ public sealed class MinecraftProcessService
         var videoSpillGb = MemorySizingService.GetVideoSpillGb(packMemory, video);
         _logger.Info(video switch
         {
+            // What the card cannot hold is charged once or not at all. Where
+            // the pair has been measured it is already inside that measurement
+            // - the driver's copy is part of what the process asked for - so
+            // the line says the card is short without saying it costs heap
+            // twice.
             { IsKnown: true } =>
                 $"Video memory: {video.DedicatedGb} GB on the card, of which this pack outgrows {videoSpillGb} GB - " +
-                "that much of what it draws is kept in system memory instead, and out of the heap.",
+                (measured.IsKnown
+                    ? "that much of what it draws is kept in system memory instead, and the measured room " +
+                      "beside the heap already contains it."
+                    : "that much of what it draws is kept in system memory instead, and out of the heap."),
             // Read, and it answered that it has none: the processor's own
             // graphics, whose textures come out of system memory - the same pool
             // the heap is measured against. Not charged, because one machine is
@@ -384,7 +404,8 @@ public sealed class MinecraftProcessService
                 "out of system memory. That is not charged separately, and a pack may go over its budget by it.",
             _ => "Video memory: the card could not be read, so nothing is kept out of the heap for it."
         });
-        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video);
+        var smallestUsefulBudgetGb =
+            MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video, measured);
         var wantedHeapGb = MemorySizingService.GetRecommendedHeapGb(packMemory);
         // There are two ways a budget can be too small and only one of them was
         // caught. Below the threshold the arithmetic itself fails: the room
@@ -402,7 +423,7 @@ public sealed class MinecraftProcessService
         if (packMemory.IsKnown && heapGb < wantedHeapGb)
         {
             _logger.Warn(
-                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video)} GB outside its heap " +
+                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video, measured)} GB outside its heap " +
                 $"and wants {wantedHeapGb} GB in it, so {settings.MaxMemoryGb} GB leaves it {heapGb} GB of heap.");
             // And said to the player, not only to the log. A number somebody
             // typed is theirs and is never moved for them - but it was typed
@@ -423,7 +444,7 @@ public sealed class MinecraftProcessService
             ClientMemoryIsTooSmall?.Invoke(
                 settings.MaxMemoryGb,
                 Math.Max(
-                    MemorySizingService.GetRecommendedDefaultMemoryGb(packMemory, video),
+                    MemorySizingService.GetRecommendedDefaultMemoryGb(packMemory, video, measured),
                     smallestUsefulBudgetGb));
         }
         // Held as text, not as MArgument, so the line logged below is the line
@@ -557,7 +578,7 @@ public sealed class MinecraftProcessService
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MonitorClientExitAsync(
             minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir,
-            settings.MaxMemoryGb, heapGb);
+            settings.MaxMemoryGb, heapGb, video, installedGb);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -579,9 +600,16 @@ public sealed class MinecraftProcessService
         StartupOutputBuffer startupOutput,
         string gameDir,
         int maxMemoryGb,
-        int heapGb = 0)
+        int heapGb = 0,
+        VideoMemoryProfile video = default,
+        int installedGb = 0)
     {
         var processId = process.Id;
+        // Timed here rather than from the process's own start time: a session
+        // that lasted four minutes says nothing about what the pack holds, and
+        // Windows will not answer for the start time of a process that has
+        // already exited.
+        var played = Stopwatch.StartNew();
         try
         {
             using var owned = process;
@@ -602,6 +630,9 @@ public sealed class MinecraftProcessService
                 watchingMemory.Cancel();
                 var held = await heldMemory.ConfigureAwait(false);
                 ReportMemoryHeld(held.Resident, held.Committed, heapGb);
+                RememberMemoryHeld(
+                    packRelativePath, video, installedGb, heapGb, played.Elapsed,
+                    held.Resident, held.Committed);
                 // A game that dies after the two second startup window used to
                 // leave no trace at all: the window had closed, so nobody
                 // reported the exit code and nobody kept what the process said
@@ -788,6 +819,58 @@ public sealed class MinecraftProcessService
     {
         var line = DescribeMemoryHeld(residentBytes, committedBytes, heapGb);
         if (line.Length > 0) _logger.Info(line);
+    }
+
+    /// <summary>
+    /// Keeps that measurement, so the next launch of this pack on this machine
+    /// can size itself by what happened rather than by what was modelled.
+    /// </summary>
+    /// <remarks>
+    /// The line above has been written every session for a while and read by
+    /// nobody: it is the one number that could tell the sizing rules they are
+    /// wrong, and it went into a log file. It was wrong, too - Limitless 8 on a
+    /// 24 GB budget was estimated at 12 GB beside its heap and left with a 12 GB
+    /// heap that spark reported 11.5 GB of in use, while the log for the same
+    /// pack said 7533 MB.
+    ///
+    /// Not every session is worth keeping, and <see cref="MemorySession"/> says
+    /// which; a session that is thrown away says why in the log, because a pair
+    /// that never gathers a measurement is otherwise indistinguishable from one
+    /// nobody has played.
+    /// </remarks>
+    private void RememberMemoryHeld(
+        string packRelativePath,
+        VideoMemoryProfile video,
+        int installedGb,
+        int heapGb,
+        TimeSpan played,
+        long residentBytes,
+        long committedBytes)
+    {
+        // A game this launcher did not start has no -Xmx of ours to subtract, so
+        // there is nothing to measure the room beside the heap against. Silence
+        // is honest here; "could not be measured" would not be, since the
+        // process was measured perfectly well.
+        if (heapGb <= 0) return;
+
+        var session = new MemorySession(
+            CommittedMb: (int)(committedBytes / (1024 * 1024)),
+            ResidentMb: (int)(residentBytes / (1024 * 1024)),
+            HeapMb: heapGb * 1024,
+            Minutes: (int)played.TotalMinutes,
+            When: DateTimeOffset.Now);
+        if (!session.IsWorthKeeping)
+        {
+            if (session.CommittedMb > 0) _logger.Info($"Memory: not written down - {session.WhyNotKept}.");
+            return;
+        }
+
+        var measured = _measuredMemory.Remember(packRelativePath, video, installedGb, session);
+        if (!measured.IsKnown) return;
+        _logger.Info(
+            $"Memory: written down - {session.BesideHeapMb} MB beside the heap over {session.Minutes} min. " +
+            $"This pack on this machine now stands at {measured.BesideHeapMb} MB " +
+            $"over {measured.Sessions} session(s), which is what the next launch will keep out of the budget.");
     }
 
     /// <summary>That measurement as a line of log, or nothing to say.</summary>

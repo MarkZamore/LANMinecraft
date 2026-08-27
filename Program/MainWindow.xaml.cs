@@ -1133,6 +1133,10 @@ public partial class MainWindow : Window
                 StampWorldsPlayedThisSession();
                 RefreshWorlds();
                 RefreshControlsPresetStatus();
+                // The session may have left a measurement behind, and the split
+                // of the budget for the next launch is already a different one:
+                // the field has to describe that launch, not the one before it.
+                RefreshPackMemory();
             }
             RefreshUi();
         });
@@ -1685,6 +1689,12 @@ public partial class MainWindow : Window
                 : previousName;
             settings.PlayerName = normalized;
             PersistActivePlayerIdentity();
+            // The file the running game reads its names from is rewritten here
+            // rather than at the next launch. A name that only travels when the
+            // game starts is a name nobody else's server knows yet, and the
+            // adapter on the other end re-reads this file whenever its timestamp
+            // moves - so a rename can reach a world somebody is already in.
+            RefreshIdentityRegistry();
             FinishPlayerNameEdit(normalized);
             return Task.CompletedTask;
         });
@@ -1885,6 +1895,24 @@ public partial class MainWindow : Window
 
         _settings.PlayerName = normalized;
         PersistActivePlayerIdentity();
+    }
+
+    /// <summary>
+    /// Writes this machine's player into the registry the game reads names
+    /// from, if Steam has answered and there is an identity to write.
+    /// </summary>
+    private void RefreshIdentityRegistry()
+    {
+        if (_identityRegistry is null || _identityService is not { IsBound: true } || _settings is null) return;
+        try
+        {
+            _identityRegistry.Prepare(_identityService.ResolveContext(_settings));
+        }
+        catch (IdentityUnavailableException)
+        {
+            // Steam went away between the check and the answer; the launch will
+            // write the registry itself.
+        }
     }
 
     private void PersistActivePlayerIdentity()
@@ -2539,14 +2567,24 @@ public partial class MainWindow : Window
         }
         var pack = _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
         var video = VideoMemoryProfile.Measure();
-        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb, video);
-        var smallestUsefulBudgetGb = MemorySizingService.GetSmallestUsefulBudgetGb(pack, video);
+        var measured = _settingsService?.MeasuredMemory ?? MeasuredMemoryProfile.Unknown;
+        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb, video, measured);
+        var smallestUsefulBudgetGb =
+            MemorySizingService.GetSmallestUsefulBudgetGb(pack, video, measured);
         var tooltip =
             $"Столько памяти игра может занять всего - до {budgetGb} ГБ. " +
             $"Из них {heapGb} ГБ достаётся куче Java, остальное держат классы модов, " +
             "скомпилированный код и буферы Sodium.";
+        // Where there is a measurement it is the whole answer, card included,
+        // so the card is not named twice: the driver's copy is already inside
+        // the number the game was seen holding.
         var videoSpillGb = MemorySizingService.GetVideoSpillGb(pack, video);
-        if (videoSpillGb > 0)
+        if (measured.IsKnown)
+        {
+            tooltip += " Запас вне кучи здесь не оценка, а замер: игра занимала около " +
+                $"{measured.BesideHeapMb} МБ сверх кучи за последние сессии на этой машине.";
+        }
+        else if (videoSpillGb > 0)
         {
             tooltip += $" У видеокарты {video.DedicatedGb} ГБ, сборке этого мало, и около " +
                 $"{videoSpillGb} ГБ текстур драйвер держит в оперативной - куче достаётся меньше.";

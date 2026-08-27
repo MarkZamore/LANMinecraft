@@ -10,12 +10,14 @@ public sealed class SettingsService
 
     private readonly AppPaths _paths;
     private readonly Logger? _logger;
+    private readonly MeasuredMemoryStore _measuredMemory;
     private readonly JsonSerializerOptions _options = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public SettingsService(AppPaths paths, Logger? logger = null)
     {
         _paths = paths;
         _logger = logger;
+        _measuredMemory = new MeasuredMemoryStore(paths);
     }
 
     /// <summary>
@@ -24,6 +26,14 @@ public sealed class SettingsService
     /// another build or one finishes downloading.
     /// </summary>
     public PackMemoryProfile PackMemory { get; private set; } = PackMemoryProfile.Unknown;
+
+    /// <summary>
+    /// What that pack was last seen holding beside its heap on this machine.
+    /// Read from disk with the pack, because the field's answer has to be the
+    /// launch's answer, and the launch uses the measurement wherever there is
+    /// one.
+    /// </summary>
+    public MeasuredMemoryProfile MeasuredMemory { get; private set; } = MeasuredMemoryProfile.Unknown;
 
     /// <summary>
     /// Looks at a pack folder and remembers what it weighs. Cheap enough for a
@@ -36,6 +46,7 @@ public sealed class SettingsService
         if (relativePath.Length == 0)
         {
             PackMemory = PackMemoryProfile.Unknown;
+            MeasuredMemory = MeasuredMemoryProfile.Unknown;
             return PackMemory;
         }
 
@@ -48,6 +59,8 @@ public sealed class SettingsService
             // A path that escapes the portable root is not a pack.
             PackMemory = PackMemoryProfile.Unknown;
         }
+        MeasuredMemory = _measuredMemory.Recall(
+            relativePath, VideoMemoryProfile.Measure(), MemorySizingService.GetInstalledMemoryGb());
 
         return PackMemory;
     }
@@ -62,12 +75,12 @@ public sealed class SettingsService
         var video = VideoMemoryProfile.Measure();
         var remembered = RememberedMemoryGb(settings);
         var wanted = remembered
-            ?? MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, video);
+            ?? MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, video, MeasuredMemory);
         if (settings.MaxMemoryGb == wanted) return false;
 
         _logger?.Info(
             $"Memory for this pack ({DescribePack()}): {wanted} GB for the game, " +
-            $"of which {MemorySizingService.GetHeapGb(PackMemory, wanted, video)} GB is the Java heap" +
+            $"of which {MemorySizingService.GetHeapGb(PackMemory, wanted, video, MeasuredMemory)} GB is the Java heap" +
             (remembered is null ? "." : ", which is what was set here last."));
         settings.MaxMemoryGb = wanted;
         Save(settings);
@@ -132,13 +145,14 @@ public sealed class SettingsService
             if (hasConfiguredMemory && !HasJsonProperty(json, "memorySettingIsWholeGame"))
             {
                 var budget = MemorySizingService.GetBudgetForHeapGb(
-                    pack, settings.MaxMemoryGb, VideoMemoryProfile.Measure());
+                    pack, settings.MaxMemoryGb, VideoMemoryProfile.Measure(), MeasuredMemory);
                 _logger?.Info(
                     $"Memory setting carried across: {settings.MaxMemoryGb} GB of heap becomes {budget} GB for the whole game.");
                 settings.MaxMemoryGb = budget;
             }
             settings.MemorySettingIsWholeGame = true;
-            settings = ApplyFallbacks(settings, pack, useRecommendedMemory: !hasConfiguredMemory);
+            settings = ApplyFallbacks(
+                settings, pack, MeasuredMemory, useRecommendedMemory: !hasConfiguredMemory);
             // Whose number is it, and which pack was it for? Up to schema 12
             // there was one answer for every pack, kept under a flag; a file
             // written then is read once and its number becomes the answer for
@@ -169,13 +183,14 @@ public sealed class SettingsService
 
     public void Save(AppSettings settings)
     {
-        settings = ApplyFallbacks(settings, PackMemory);
+        settings = ApplyFallbacks(settings, PackMemory, MeasuredMemory);
         AtomicFile.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
 
     private static AppSettings ApplyFallbacks(
         AppSettings? source,
         PackMemoryProfile pack,
+        MeasuredMemoryProfile measured = default,
         bool useRecommendedMemory = false)
     {
         var settings = source ?? new AppSettings();
@@ -190,8 +205,8 @@ public sealed class SettingsService
             settings.MaxMemoryGb < MemorySizingService.MinMemoryGb ||
             settings.MaxMemoryGb > MemorySizingService.MaxMemoryGb)
         {
-            settings.MaxMemoryGb =
-                MemorySizingService.GetRecommendedDefaultMemoryGb(pack, VideoMemoryProfile.Measure());
+            settings.MaxMemoryGb = MemorySizingService.GetRecommendedDefaultMemoryGb(
+                pack, VideoMemoryProfile.Measure(), measured);
         }
         else
         {
@@ -226,7 +241,7 @@ public sealed class SettingsService
 
     private AppSettings CreateSafeDefaults()
     {
-        return ApplyFallbacks(new AppSettings(), PackMemory, useRecommendedMemory: true);
+        return ApplyFallbacks(new AppSettings(), PackMemory, MeasuredMemory, useRecommendedMemory: true);
     }
 
     /// <summary>1 when the file predates the version field.</summary>

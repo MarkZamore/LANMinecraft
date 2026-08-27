@@ -59,9 +59,11 @@ public static class SteamIdentityDerivation
 
     /// <summary>
     /// System.Guid stores its first three fields little-endian while RFC 4122
-    /// defines them big-endian, so both directions need the same swap.
+    /// defines them big-endian, so both directions need the same swap. Shared
+    /// with <see cref="E4steamIdentity"/>, which reads another program's
+    /// name-based UUIDs and needs the very same reordering.
     /// </summary>
-    private static void SwapEndianness(byte[] guid)
+    internal static void SwapEndianness(byte[] guid)
     {
         (guid[0], guid[3]) = (guid[3], guid[0]);
         (guid[1], guid[2]) = (guid[2], guid[1]);

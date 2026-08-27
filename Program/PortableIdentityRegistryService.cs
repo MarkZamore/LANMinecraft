@@ -21,6 +21,11 @@ namespace Minecraft;
 /// A name two accounts both answer to is left out rather than guessed at, so
 /// both of them keep the UUID the name gives them and neither is handed the
 /// other's inventory.
+///
+/// Each line also carries the UUID a Steam tunnel would give that account
+/// (<see cref="E4steamIdentity"/>). e4steam stamps its own identity onto every
+/// profile it admits, after the launcher's login hook has handed over the
+/// portable one, so the adapter needs to recognise the stamp to undo it.
 /// </remarks>
 public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logger)
 {
@@ -28,20 +33,26 @@ public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logge
     // but two accounts may well answer to one name - and keying by the name
     // would let the second of them quietly overwrite the first, which is how
     // one player ends up opening the other's inventory.
-    private readonly ConcurrentDictionary<string, string> _players = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Player> _players = new(StringComparer.Ordinal);
+
+    /// <summary>What one account answers to, and what a Steam tunnel calls it.</summary>
+    private sealed record Player(string Name, string TunnelUuid);
 
     /// <summary>Records what a peer calls itself and whose progress that is.</summary>
     public void ObservePeer(PeerViewModel peer)
     {
         ArgumentNullException.ThrowIfNull(peer);
-        Remember((peer.PlayerName ?? "").Trim(), Normalize(peer.MinecraftUuid));
+        Remember((peer.PlayerName ?? "").Trim(), Normalize(peer.MinecraftUuid), peer.SteamId);
     }
 
-    private void Remember(string name, string uuid)
+    private void Remember(string name, string uuid, SteamId64 steamId)
     {
         if (name.Length == 0 || uuid.Length == 0) return;
-        if (_players.TryGetValue(uuid, out var known) && known == name) return;
-        _players[uuid] = name;
+        var player = new Player(
+            name,
+            steamId.IsValid ? E4steamIdentity.ProfileUuid(steamId).ToString("D") : "");
+        if (_players.TryGetValue(uuid, out var known) && known == player) return;
+        _players[uuid] = player;
         Write();
     }
 
@@ -52,13 +63,21 @@ public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logge
     public string Prepare(LocalIdentityContext identity)
     {
         ArgumentNullException.ThrowIfNull(identity);
-        Remember((identity.IdentityName ?? "").Trim(), Normalize(identity.MinecraftUuid));
+        Remember((identity.IdentityName ?? "").Trim(), Normalize(identity.MinecraftUuid), identity.SteamId64);
         Write();
         return paths.IdentityRegistryFile;
     }
 
     private static string Normalize(string? uuid) =>
         Guid.TryParse(uuid, out var parsed) ? parsed.ToString("D") : "";
+
+    // The third field is left off rather than left empty when Steam has no
+    // answer, so a line the adapter has always understood still looks the way
+    // it always did.
+    private static string Compose(string name, string uuid, string tunnelUuid) =>
+        tunnelUuid.Length == 0
+            ? string.Join('|', name, uuid)
+            : string.Join('|', name, uuid, tunnelUuid);
 
     private void Write()
     {
@@ -71,10 +90,10 @@ public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logge
             var contents = string.Join(
                 Environment.NewLine,
                 _players
-                    .GroupBy(pair => pair.Value, StringComparer.Ordinal)
+                    .GroupBy(pair => pair.Value.Name, StringComparer.Ordinal)
                     .Where(group => group.Select(pair => pair.Key).Distinct(StringComparer.Ordinal).Count() == 1)
                     .OrderBy(group => group.Key, StringComparer.Ordinal)
-                    .Select(group => string.Join('|', group.Key, group.First().Key)));
+                    .Select(group => Compose(group.Key, group.First().Key, group.First().Value.TunnelUuid)));
             if (contents.Length == 0)
             {
                 if (File.Exists(paths.IdentityRegistryFile)) File.Delete(paths.IdentityRegistryFile);

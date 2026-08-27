@@ -87,7 +87,11 @@ public sealed class OutOfMemoryExitTests
         var service = Read("Program", "MinecraftProcessService.cs");
         Assert.Contains("public event Action<int, int>? ClientMemoryIsTooSmall;", service, StringComparison.Ordinal);
         Assert.Contains("ClientMemoryIsTooSmall?.Invoke(", service, StringComparison.Ordinal);
-        Assert.Contains("GetRecommendedDefaultMemoryGb(packMemory, video)", service, StringComparison.Ordinal);
+        // The number offered carries the measurement too - it is what the
+        // launch about to be refused would have used, so advising a budget
+        // without it would advise one the launcher then divides differently.
+        Assert.Contains(
+            "GetRecommendedDefaultMemoryGb(packMemory, video, measured)", service, StringComparison.Ordinal);
 
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;", window, StringComparison.Ordinal);

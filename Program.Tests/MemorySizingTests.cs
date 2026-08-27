@@ -334,13 +334,27 @@ public sealed class MemorySizingTests
     /// the budget leaves - both worked out from the pack that is selected, not
     /// from a constant left over from one pack.
     /// </summary>
+    /// <remarks>
+    /// The launch call gained a fourth argument when the room beside the heap
+    /// stopped being estimated wherever it has been measured, and this test
+    /// asks for the new one by name: a launch that divided the budget by the
+    /// pack model while the field divided it by the measurement would describe
+    /// a game that does not start. <c>measured</c> has to be in that call for
+    /// the same reason <c>video</c> did.
+    /// </remarks>
     [Fact]
     public void TheLaunchAndTheField_BothSpeakOfThePacksSplit()
     {
         var launch = ReadRepositoryFile("Program", "MinecraftProcessService.cs");
         Assert.Contains("PackMemoryProfile.Measure(packDir)", launch, StringComparison.Ordinal);
         Assert.Contains(
-            "MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video)",
+            "MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video, measured)",
+            launch,
+            StringComparison.Ordinal);
+        // And the measurement is looked up for this pack on this machine, not
+        // taken from whatever pack was played last.
+        Assert.Contains(
+            "_measuredMemory.Recall(settings.ClientRelativePath, video, installedGb)",
             launch,
             StringComparison.Ordinal);
 
@@ -358,6 +372,8 @@ public sealed class MemorySizingTests
                  })
         {
             Assert.Contains("VideoMemoryProfile.Measure()", source, StringComparison.Ordinal);
+            // And so does the measurement, for the same three.
+            Assert.Contains("measured", source, StringComparison.OrdinalIgnoreCase);
         }
         // The pack is weighed again when another build is chosen and when one
         // finishes downloading; without that the field describes the pack that
