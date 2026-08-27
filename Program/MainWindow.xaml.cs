@@ -1670,7 +1670,7 @@ public partial class MainWindow : Window
         await RunUiActionAsync(() =>
         {
             var settings = RequireSettings();
-            if (!LocalIdentityService.TryNormalizeNickname(candidate, out var normalized, out var error))
+            if (!LocalIdentityService.TryNormalizeNewNickname(candidate, out var normalized, out var error))
             {
                 throw new InvalidOperationException(error);
             }
