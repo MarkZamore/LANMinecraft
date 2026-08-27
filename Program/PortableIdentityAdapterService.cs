@@ -91,8 +91,9 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 _logger.Info(
                     $"Skins only for Minecraft {runtime.Descriptor.MinecraftVersion} " +
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: " +
-                    "the skin chosen in the launcher is shown, and everyone keeps the UUID Minecraft " +
-                    "gives them offline rather than the one the launcher derives.");
+                    "the skin chosen in the launcher is shown, and a profile still carries the UUID the " +
+                    "launcher derives - both of those patches are in com.mojang.authlib. What is left out " +
+                    "is the hook that settles the UUID at the door and the refusal of two players under one.");
             }
 
             try

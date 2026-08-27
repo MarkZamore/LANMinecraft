@@ -193,6 +193,33 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
                     "apply",
                     "(Ljava/lang/Object;)V",
                     false));
+                // Argument 2, where authlib has one, is "this skin must be
+                // signed". Only Mojang can sign a skin, so a launcher skin
+                // never is, and authlib answers with nothing at all - which is
+                // why on Minecraft 1.18 a player saw their own skin and no
+                // one else's: the game asks again without the demand for its
+                // own player, and never does for anybody else. The demand is
+                // lowered here for the profiles this launcher has a skin for,
+                // and for them the line above has just taken every other
+                // textures property off the profile, so what authlib reads is
+                // ours and nothing else. Every other profile keeps the rule it
+                // always had.
+                if (!isStatic(method) &&
+                    method.desc.startsWith("(Lcom/mojang/authlib/GameProfile;Z)")) {
+                    LabelNode keepTheRule = new LabelNode();
+                    inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                    inject.add(new MethodInsnNode(
+                        Opcodes.INVOKESTATIC,
+                        SKIN_PROFILES,
+                        "isPortableSkin",
+                        "(Ljava/lang/Object;)Z",
+                        false));
+                    inject.add(new JumpInsnNode(Opcodes.IFEQ, keepTheRule));
+                    inject.add(new InsnNode(Opcodes.ICONST_0));
+                    inject.add(new VarInsnNode(Opcodes.ISTORE, 2));
+                    inject.add(keepTheRule);
+                    inject.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+                }
                 method.instructions.insert(inject);
                 checkerPatched = true;
                 continue;
@@ -274,6 +301,10 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         node.accept(writer);
         System.out.println("[PortableIdentity] Patched profile class " + className + ".");
         return writer.toByteArray();
+    }
+
+    private static boolean isStatic(MethodNode method) {
+        return (method.access & Opcodes.ACC_STATIC) != 0;
     }
 
     // The method the game calls to read a profile's skin. Matched by name and

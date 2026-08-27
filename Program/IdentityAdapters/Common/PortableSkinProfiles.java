@@ -80,6 +80,35 @@ public final class PortableSkinProfiles {
         }
     }
 
+    /**
+     * Whether the skin on this profile is one the launcher put there.
+     *
+     * <p>Up to authlib 5.0.47 the game asks for a skin and says whether it must
+     * be signed, and for another player it always must be. Only Mojang can sign
+     * a skin, so a launcher skin never is, and authlib throws the whole reply
+     * away with "Signature is missing from textures payload". That is why a
+     * player on Minecraft 1.18 saw their own skin and nobody else's: the game
+     * asks a second time without the demand for its own player, and never does
+     * for anyone else.
+     *
+     * <p>So the demand is lowered for exactly the profiles this registry knows,
+     * and only where {@link #apply} has just taken every other textures
+     * property off them. What authlib reads then is the launcher's own line and
+     * nothing besides.
+     */
+    public static boolean isPortableSkin(Object profile) {
+        if (profile == null) {
+            return false;
+        }
+
+        try {
+            UUID id = (UUID) PortableIdentityReflection.getField(profile, "id");
+            return id != null && loadEntries().containsKey(id);
+        } catch (ReflectiveOperationException exception) {
+            return false;
+        }
+    }
+
     public static Object selectSkin(Object future, Object defaultSkin, boolean requireSecure) {
         if (!(future instanceof CompletableFuture)) {
             return defaultSkin;
