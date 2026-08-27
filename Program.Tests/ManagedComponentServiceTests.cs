@@ -305,6 +305,74 @@ public sealed class ManagedComponentServiceTests
             SearchOption.AllDirectories));
     }
 
+    /// <summary>
+    /// A line that stumbles is asked again. The component this fetches is
+    /// e4steam, without which no pack can host or join; before this, one
+    /// timed-out request - a pack downloading beside the launcher was enough -
+    /// ended with "All 1 official download sources failed" and a game that
+    /// would not start.
+    /// </summary>
+    [Fact]
+    public async Task ASourceThatStumbles_IsAskedAgainAndSucceeds()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("component that arrives on the second ask");
+        var component = TestComponent(payload);
+        var asks = 0;
+        var handler = new RecordingHandler((_, _) =>
+        {
+            asks++;
+            return asks == 1
+                ? throw new HttpRequestException("the line was busy")
+                : Task.FromResult(Success(payload));
+        });
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component, TimeSpan.Zero);
+        var instance = fixture.CreatePreparedInstance();
+
+        var result = await service.EnsureSteamTransportModAsync(instance);
+
+        Assert.True(result.Downloaded);
+        Assert.Equal(2, asks);
+        Assert.Equal(payload, await File.ReadAllBytesAsync(result.InstalledPath));
+    }
+
+    /// <summary>
+    /// And a payload that arrived and was wrong is not asked for again: the
+    /// same bytes would come back. Only the source after it is tried.
+    /// </summary>
+    [Fact]
+    public async Task ASourceThatAnswersWrongly_IsNotAskedTwice()
+    {
+        using var fixture = new TemporaryPortableRoot();
+        var payload = Encoding.UTF8.GetBytes("component");
+        var primary = new Uri("https://primary.example.test/e4steam.jar");
+        var fallback = new Uri("https://fallback.example.test/e4steam.jar");
+        var component = TestComponent(payload, primary, fallback);
+        var handler = new RecordingHandler((request, _) => Task.FromResult(
+            request.RequestUri == primary
+                ? Success(Encoding.UTF8.GetBytes("something else entirely"))
+                : Success(payload)));
+        using var httpClient = new HttpClient(handler);
+        var service = fixture.CreateService(httpClient, component, TimeSpan.Zero);
+        var instance = fixture.CreatePreparedInstance();
+
+        var result = await service.EnsureSteamTransportModAsync(instance);
+
+        Assert.True(result.Downloaded);
+        Assert.Equal([primary, fallback], handler.RequestUris);
+    }
+
+    /// <summary>The wait grows, and stops growing.</summary>
+    [Fact]
+    public void TheWaitBetweenAttempts_GrowsAndIsBounded()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(1), ManagedComponentService.BackoffBeforeAttempt(1));
+        Assert.Equal(TimeSpan.FromSeconds(2), ManagedComponentService.BackoffBeforeAttempt(2));
+        Assert.Equal(TimeSpan.FromSeconds(4), ManagedComponentService.BackoffBeforeAttempt(3));
+        Assert.Equal(TimeSpan.FromSeconds(8), ManagedComponentService.BackoffBeforeAttempt(9));
+    }
+
     [Fact]
     public void ComponentSourceWithCredentials_IsRejected()
     {
@@ -465,8 +533,9 @@ public sealed class ManagedComponentServiceTests
 
         public ManagedComponentService CreateService(
             HttpClient httpClient,
-            ManagedComponentDescriptor component) =>
-            new(Paths, Logger, httpClient, component);
+            ManagedComponentDescriptor component,
+            TimeSpan? retryDelay = null) =>
+            new(Paths, Logger, httpClient, component, retryDelay);
 
         public PackInstanceContext CreatePreparedInstance()
         {

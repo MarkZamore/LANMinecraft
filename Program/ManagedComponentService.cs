@@ -16,9 +16,37 @@ public sealed class ManagedComponentService
 {
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
 
-    // The timeout covers the whole body copy, so it has to scale with the
-    // artifact: a flat 45s fits a 200 KB jar but would abort a 69 MB one on
-    // any connection slower than ~12 Mbit/s. The floor assumes 128 KiB/s.
+    /// <summary>
+    /// How long a download may go with nothing arriving at all. It is a stall
+    /// that this measures, not slowness: once the body starts, every block
+    /// received pushes the clock back.
+    /// </summary>
+    internal static readonly TimeSpan DownloadStallTimeout = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// How many times one source is asked before the next is tried, and before
+    /// the launch fails.
+    /// </summary>
+    /// <remarks>
+    /// One attempt was one too few. A timed-out request is almost always the
+    /// line being busy - a pack downloading beside the launcher, a world going
+    /// to a friend - and the component this fetches is e4steam, without which
+    /// no pack can host or join at all. So a player whose only fault was a busy
+    /// connection met "All 1 official download sources failed" and could not
+    /// start the game, at a moment when waiting ten seconds would have done.
+    /// </remarks>
+    internal const int DownloadAttemptsPerSource = 3;
+
+    /// <summary>Waiting between attempts, which tests set to nothing.</summary>
+    private readonly TimeSpan? _retryDelay;
+
+    /// <summary>How long to wait before attempt <paramref name="attempt"/>.</summary>
+    internal static TimeSpan BackoffBeforeAttempt(int attempt) =>
+        TimeSpan.FromSeconds(Math.Min(8, 1 << Math.Clamp(attempt - 1, 0, 3)));
+
+    // The first request's timeout covers reaching the source and its headers,
+    // and scales with the artifact so that a slow start on a large one is not
+    // mistaken for a dead source. The floor assumes 128 KiB/s.
     internal static TimeSpan DownloadTimeoutFor(ManagedComponentDescriptor component) =>
         DownloadSourceTimeout + TimeSpan.FromSeconds(component.SizeBytes / (128d * 1024d));
 
@@ -65,12 +93,14 @@ public sealed class ManagedComponentService
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient,
-        ManagedComponentDescriptor? e4steam)
+        ManagedComponentDescriptor? e4steam,
+        TimeSpan? retryDelay = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
         _pinnedOverride = e4steam is null ? null : ValidateDescriptor(e4steam);
+        _retryDelay = retryDelay;
     }
 
     /// <summary>
@@ -254,11 +284,18 @@ public sealed class ManagedComponentService
         EnsureOrdinaryDirectory(cacheDirectory);
         var failures = new List<string>(component.DownloadUris.Count);
 
+        // Every source once, and then - if what stopped them was the line
+        // rather than an answer - all of them again. Falling to the next source
+        // first is what a second source is for; asking a refusal twice is not.
+        for (var round = 1; round <= DownloadAttemptsPerSource; round++)
+        {
+        var stumbled = false;
+        failures.Clear();
         for (var sourceIndex = 0; sourceIndex < component.DownloadUris.Count; sourceIndex++)
         {
-            token.ThrowIfCancellationRequested();
             var source = component.DownloadUris[sourceIndex];
             var sourceNumber = sourceIndex + 1;
+            token.ThrowIfCancellationRequested();
             var temporaryPath = CreateTemporarySiblingPath(cachePath, "download");
             try
             {
@@ -267,7 +304,9 @@ public sealed class ManagedComponentService
                 var sourceToken = sourceTimeout.Token;
                 _logger.Info(
                     $"Trying official managed-component source {sourceNumber}/" +
-                    $"{component.DownloadUris.Count}: {SanitizeUri(source)}");
+                    $"{component.DownloadUris.Count}" +
+                    (round > 1 ? $", round {round}/{DownloadAttemptsPerSource}" : "") +
+                    $": {SanitizeUri(source)}");
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, source);
                 using var response = await _httpClient.SendAsync(
@@ -284,6 +323,9 @@ public sealed class ManagedComponentService
                 }
                 if (!response.IsSuccessStatusCode)
                 {
+                    // An answer, and a refusal: the next source is what is left
+                    // to try, and asking this one again in a later round would
+                    // be told the same thing.
                     var failure = DescribeHttpFailure(response.StatusCode, effectiveUri);
                     RecordSourceFailure(
                         component,
@@ -305,7 +347,19 @@ public sealed class ManagedComponentService
                                  .ConfigureAwait(false))
                 await using (var output = OpenTemporaryOutput(temporaryPath))
                 {
-                    await CopyExactAsync(input, output, component.SizeBytes, sourceToken)
+                    // The clock is pushed back by every block that arrives, so
+                    // what it measures is a download that has stopped rather
+                    // than one that is merely slow. A deadline over the whole
+                    // body is the same thing as a bandwidth floor, and the
+                    // launcher does not own the line: a pack syncing beside it
+                    // was enough to fail the launch of a game whose download
+                    // was moving the whole time.
+                    await CopyExactAsync(
+                        input,
+                        output,
+                        component.SizeBytes,
+                        () => sourceTimeout.CancelAfter(DownloadStallTimeout),
+                        sourceToken)
                         .ConfigureAwait(false);
                     await output.FlushAsync(sourceToken).ConfigureAwait(false);
                     output.Flush(flushToDisk: true);
@@ -327,15 +381,17 @@ public sealed class ManagedComponentService
             }
             catch (OperationCanceledException)
             {
+                stumbled = true;
                 RecordSourceFailure(
                     component,
                     sourceNumber,
-                    $"request timed out after {DownloadSourceTimeout.TotalSeconds:0} seconds at " +
+                    $"nothing arrived for {DownloadStallTimeout.TotalSeconds:0} seconds at " +
                     $"{SanitizeUri(source)}",
                     failures);
             }
             catch (HttpIOException ex)
             {
+                stumbled = true;
                 RecordSourceFailure(
                     component,
                     sourceNumber,
@@ -344,6 +400,7 @@ public sealed class ManagedComponentService
             }
             catch (HttpRequestException ex)
             {
+                stumbled = true;
                 RecordSourceFailure(
                     component,
                     sourceNumber,
@@ -362,6 +419,14 @@ public sealed class ManagedComponentService
             {
                 TryDeleteFile(temporaryPath);
             }
+        }
+
+        // A payload that arrived and was wrong, or a source that answered and
+        // refused, is not asked again: the same thing would come back. A line
+        // that stumbled is - after a wait that grows, because what is in the
+        // way is usually something else finishing.
+        if (!stumbled || round == DownloadAttemptsPerSource) break;
+        await Task.Delay(_retryDelay ?? BackoffBeforeAttempt(round + 1), token).ConfigureAwait(false);
         }
 
         throw new HttpRequestException(
@@ -468,6 +533,7 @@ public sealed class ManagedComponentService
         Stream input,
         Stream output,
         long expectedSize,
+        Action onProgress,
         CancellationToken token)
     {
         var buffer = new byte[128 * 1024];
@@ -476,6 +542,7 @@ public sealed class ManagedComponentService
         {
             var read = await input.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false);
             if (read == 0) break;
+            onProgress();
             total = checked(total + read);
             if (total > expectedSize)
             {
