@@ -25,7 +25,8 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         HandleIncomingAsync(stream, initialFrame, token);
     /// <summary>The launcher's one protocol version; see <see cref="PortableFormat"/>.</summary>
     public const int ProtocolVersion = PortableFormat.ProtocolVersion;
-    public const int HttpPort = 35658;
+    /// <summary>Where the game is told to look for skins when the port is free.</summary>
+    public const int PreferredHttpPort = 35658;
     /// <summary>
     /// The widest a skin may be, and the most it may weigh.
     /// </summary>
@@ -52,6 +53,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
     private readonly object _taskGate = new();
     private readonly HashSet<Task> _backgroundTasks = [];
     private TcpListener? _httpListener;
+    private int _httpPort = PreferredHttpPort;
     private Task? _httpTask;
     private Task? _disposeTask;
     private bool _stopping;
@@ -147,27 +149,64 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 
     public Task StartAsync(CancellationToken token = default)
     {
+        int port;
         lock (_taskGate)
         {
             if (_stopping || _httpTask is not null) return Task.CompletedTask;
-            var listener = new TcpListener(IPAddress.Loopback, HttpPort);
-            try
-            {
-                listener.Start();
-            }
-            catch (Exception ex)
-            {
-                listener.Stop();
-                if (ex is not SocketException) throw;
-                _logger.Warn($"Local skin endpoint could not start on 127.0.0.1:{HttpPort}: {ex.Message}");
-                return Task.CompletedTask;
-            }
-
+            var listener = Listen();
+            if (listener is null) return Task.CompletedTask;
             _httpListener = listener;
+            port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            _httpPort = port;
             _httpTask = HttpLoopAsync(listener, _shutdown.Token);
         }
 
+        // The port is part of every line the game reads, and until now it was
+        // only the port that was asked for.
+        if (port != PreferredHttpPort) WriteRegistry();
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Opens the endpoint on the port the game is normally told about, and on
+    /// any free port when that one is taken.
+    /// </summary>
+    /// <remarks>
+    /// The launcher restarts itself after an update, seconds after the copy it
+    /// replaces let go of the socket - and Windows does not hand the port on
+    /// that quickly. Giving up there cost more than it looked: the registry
+    /// went on naming a port nobody answered, so the game asked, was refused,
+    /// and every player wore the default skin for the whole session, with one
+    /// line in the launcher log to say why. The port is written into that
+    /// registry, so any port does.
+    /// </remarks>
+    private TcpListener? Listen()
+    {
+        foreach (var port in new[] { PreferredHttpPort, 0 })
+        {
+            var listener = new TcpListener(IPAddress.Loopback, port);
+            try
+            {
+                listener.Start();
+                if (port != PreferredHttpPort)
+                {
+                    _logger.Info(
+                        "Local skin endpoint is on 127.0.0.1:" +
+                        $"{((IPEndPoint)listener.LocalEndpoint).Port}, as {PreferredHttpPort} was taken.");
+                }
+                return listener;
+            }
+            catch (SocketException ex)
+            {
+                listener.Stop();
+                if (port != PreferredHttpPort)
+                {
+                    _logger.Warn($"Local skin endpoint could not start: {ex.Message}");
+                }
+            }
+        }
+
+        return null;
     }
 
     public void ObservePeer(PeerViewModel peer)
@@ -449,7 +488,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
                     pair.Key,
                     pair.Value.Hash,
                     pair.Value.Model,
-                    $"http://127.0.0.1:{HttpPort}/skin/{pair.Key}/{pair.Value.Hash}"));
+                    $"http://127.0.0.1:{_httpPort}/skin/{pair.Key}/{pair.Value.Hash}"));
             var contents = string.Join(Environment.NewLine, lines);
             if (contents.Length == 0)
             {

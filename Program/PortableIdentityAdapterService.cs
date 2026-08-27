@@ -271,8 +271,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
         const string playerUuid = "00000000-0000-4000-8000-000000000001";
         const string skinHash = "1111111111111111111111111111111111111111111111111111111111111111";
         const string otherHash = "2222222222222222222222222222222222222222222222222222222222222222";
-        var registeredUrl = $"http://127.0.0.1:{SkinService.HttpPort}/skin/{playerUuid}/{skinHash}";
-        var unregisteredUrl = $"http://127.0.0.1:{SkinService.HttpPort}/skin/{playerUuid}/{otherHash}";
+        var registeredUrl = $"http://127.0.0.1:{SkinService.PreferredHttpPort}/skin/{playerUuid}/{skinHash}";
+        var unregisteredUrl = $"http://127.0.0.1:{SkinService.PreferredHttpPort}/skin/{playerUuid}/{otherHash}";
         const string officialUrl = "https://textures.minecraft.net/texture/portable-preflight";
         var registryPath = Path.Combine(
             Path.GetDirectoryName(adapterPath)!,
