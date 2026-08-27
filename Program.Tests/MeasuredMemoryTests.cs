@@ -1,0 +1,299 @@
+using Minecraft;
+
+namespace Minecraft.Tests;
+
+/// <summary>
+/// Sizing the game by what it was seen taking rather than by what a model says
+/// it should take.
+///
+/// The model is one pack weighed once, and it was measured being wrong on the
+/// pack it was fitted to: Limitless 8 on a 24 GB budget was charged 12 GB
+/// beside its heap - eight for the pack and four for an eight gigabyte card -
+/// and the 12 GB heap that left it was 11.5 GB full, with AllTheLeaks warning
+/// at 95% and full collections of 2.2 seconds. The launcher had the right
+/// number the whole time and was writing it into a log file: "the game asked
+/// for 26989 MB at its largest - a heap of 19456 MB and about 7533 MB beside
+/// it". These tests are that number becoming the reserve.
+/// </summary>
+public sealed class MeasuredMemoryTests : IDisposable
+{
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(),
+        $"minecraft-measured-memory-tests-{Guid.NewGuid():N}");
+
+    public void Dispose() => TempTree.Delete(_root);
+
+    /// <summary>Limitless 8: 1128 mods, 1.9 GB of jars, and the texture beside them.</summary>
+    private static PackMemoryProfile BigModpack =>
+        new(1128, 1959L * 1024 * 1024, 115L * 1024 * 1024, "1.21.1");
+
+    /// <summary>The session out of the log this whole feature was built on.</summary>
+    private static MemorySession TheLoggedSession => new(
+        CommittedMb: 26989, ResidentMb: 14687, HeapMb: 19456, Minutes: 95, When: DateTimeOffset.Now);
+
+    private AppPaths Paths()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        return paths;
+    }
+
+    /// <summary>
+    /// An evening of playing is a measurement; the four minutes it takes to
+    /// find out that a mod crashes on the title screen is not. The pack takes
+    /// about a minute to reach the menu with its 882 jars, and nothing that
+    /// lives beside the heap - chunk buffers above all - exists until a world
+    /// has been open for a while.
+    /// </summary>
+    [Fact]
+    public void AShortSession_IsNotBelieved()
+    {
+        var brief = TheLoggedSession with { Minutes = MemorySession.ShortestSessionMinutes - 1 };
+
+        Assert.False(brief.IsWorthKeeping);
+        Assert.Contains("under the", brief.WhyNotKept, StringComparison.Ordinal);
+        Assert.True((TheLoggedSession with { Minutes = MemorySession.ShortestSessionMinutes }).IsWorthKeeping);
+    }
+
+    /// <summary>
+    /// A machine that could not hold what the game asked for was not measuring
+    /// the pack, it was negotiating with the page file, and what the pack held
+    /// there is smaller than what it wanted.
+    /// </summary>
+    /// <remarks>
+    /// The line is drawn at half of the commit rather than higher because a
+    /// healthy session sits well under its own commit too: the heap is
+    /// committed the instant the game starts and only becomes resident as it
+    /// fills, which is why the session in the log - 14687 MB of 26989, 54% -
+    /// has to be kept, and is.
+    /// </remarks>
+    [Fact]
+    public void ASessionOnAPagingMachine_IsNotBelieved()
+    {
+        Assert.True(TheLoggedSession.IsWorthKeeping);
+
+        var paging = TheLoggedSession with { ResidentMb = 9000 };
+
+        Assert.False(paging.IsWorthKeeping);
+        Assert.Contains("paging", paging.WhyNotKept, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The subtraction only means anything when the heap was committed from the
+    /// first instant. A small heap starts at a gigabyte and grows on purpose,
+    /// so subtracting its maximum from the commit would report a pack holding
+    /// nothing beside its heap - and hand the smallest machines the largest
+    /// heaps.
+    /// </summary>
+    [Fact]
+    public void ASessionWhoseHeapWasStillGrowing_IsNotBelieved()
+    {
+        var small = new MemorySession(
+            CommittedMb: 5000, ResidentMb: 4200,
+            HeapMb: MinecraftProcessService.SmallHeapCeilingMb, Minutes: 90, When: DateTimeOffset.Now);
+
+        Assert.False(small.IsWorthKeeping);
+        Assert.Contains("starts small and grows", small.WhyNotKept, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A session is filed under the pair it happened on, and the machine is
+    /// half of that pair: the same pack on a smaller card holds gigabytes more
+    /// in system memory, because the driver keeps there what the card cannot.
+    /// </summary>
+    [Fact]
+    public void AMeasurement_BelongsToOnePackOnOneMachine()
+    {
+        var store = new MeasuredMemoryStore(Paths());
+
+        store.Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession);
+
+        Assert.True(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.False(store.Recall("Limitless8", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(8), 32).IsKnown);
+        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 16).IsKnown);
+        // A card nobody could read is its own machine: the sizing charges it
+        // nothing, so a measurement taken under that rule is not the answer for
+        // a machine whose card answered.
+        Assert.False(store.Recall("Infinity", VideoMemoryProfile.Unknown, 32).IsKnown);
+        // And the same folder spelled another way is the same folder; Windows
+        // has never thought otherwise.
+        Assert.True(store.Recall("infinity", new VideoMemoryProfile(16), 32).IsKnown);
+    }
+
+    /// <summary>
+    /// Several sessions are kept and the largest of them decides, because a
+    /// reserve set too low is spent by the game anyway - over the budget and
+    /// into the memory the machine kept for itself. The oldest fall off, so a
+    /// pack that has grown is described by the evenings since it grew.
+    /// </summary>
+    [Fact]
+    public void TheLastFewSessions_AreKept_AndTheLargestOfThemDecides()
+    {
+        var store = new MeasuredMemoryStore(Paths());
+        var card = new VideoMemoryProfile(16);
+
+        // One unusually heavy evening, then enough ordinary ones to push it out.
+        store.Remember(
+            "Infinity", card, 32, TheLoggedSession with { CommittedMb = 30000, ResidentMb = 20000 });
+        Assert.Equal(30000 - 19456, store.Recall("Infinity", card, 32).BesideHeapMb);
+
+        for (var session = 0; session < MeasuredMemoryStore.SessionsKept; session++)
+        {
+            store.Remember("Infinity", card, 32, TheLoggedSession);
+        }
+
+        var measured = store.Recall("Infinity", card, 32);
+        Assert.Equal(MeasuredMemoryStore.SessionsKept, measured.Sessions);
+        Assert.Equal(26989 - 19456, measured.BesideHeapMb);
+    }
+
+    /// <summary>
+    /// A file nobody can read is a file nobody has, and the launcher goes on
+    /// estimating rather than failing a launch over a cache.
+    /// </summary>
+    [Fact]
+    public void AnUnreadableFile_IsTheSameAsNoFile()
+    {
+        var paths = Paths();
+        File.WriteAllText(Path.Combine(paths.Personal, "memory-measurements.json"), "{ this is not json");
+        var store = new MeasuredMemoryStore(paths);
+
+        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+
+        // And it heals: the next session that finishes writes a file that reads.
+        store.Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession);
+
+        Assert.True(new MeasuredMemoryStore(paths).Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+    }
+
+    /// <summary>
+    /// A pack that has never been played through, or a machine whose memory
+    /// could not be read at all, has no pair to file anything under.
+    /// </summary>
+    [Fact]
+    public void AMachineOrPackThatCannotBeNamed_IsNotFiled()
+    {
+        var store = new MeasuredMemoryStore(Paths());
+
+        Assert.False(store.Remember("", new VideoMemoryProfile(16), 32, TheLoggedSession).IsKnown);
+        Assert.False(store.Remember("Infinity", new VideoMemoryProfile(16), 0, TheLoggedSession).IsKnown);
+        // A session not worth keeping is not written down either.
+        Assert.False(store
+            .Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession with { Minutes = 2 })
+            .IsKnown);
+        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+    }
+
+    /// <summary>
+    /// The whole point, in the numbers the player has: a 24 GB budget on
+    /// Limitless 8.
+    ///
+    /// Estimated, the card decides everything. An eight gigabyte card is
+    /// charged the four gigabytes the pack outgrows it by on top of the pack's
+    /// own eight, and the heap comes out at 12 - the heap that was measured
+    /// 11.5 GB full, with full collections of 2.2 seconds. A sixteen gigabyte
+    /// card is charged nothing and the same budget leaves 16.
+    ///
+    /// Measured, the card is not guessed at twice: whatever the driver keeps in
+    /// system memory is already inside the 7533 MB the game was seen holding,
+    /// so both machines keep 9 GB - the measurement and a tenth, rounded up -
+    /// and both play in a 15 GB heap.
+    /// </summary>
+    [Theory]
+    [InlineData(8, 12, 12, 9, 15)]
+    [InlineData(16, 8, 16, 9, 15)]
+    public void ABudgetOfTwentyFour_IsSplitByTheMeasurementWhereThereIsOne(
+        int cardGb, int estimatedReserveGb, int estimatedHeapGb, int measuredReserveGb, int measuredHeapGb)
+    {
+        var card = new VideoMemoryProfile(cardGb);
+        var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
+
+        Assert.Equal(26989 - 19456, measured.BesideHeapMb);
+        Assert.Equal(estimatedReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card));
+        Assert.Equal(estimatedHeapGb, MemorySizingService.GetHeapGb(BigModpack, 24, card));
+        Assert.Equal(measuredReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
+        Assert.Equal(measuredHeapGb, MemorySizingService.GetHeapGb(BigModpack, 24, card, measured));
+    }
+
+    /// <summary>
+    /// And it cuts both ways. A machine that really does keep four gigabytes of
+    /// textures in system memory says so in its own measurement - the number
+    /// the launcher writes down is what the process asked for, driver copies
+    /// and all - and gets a smaller heap than the estimate would have given it,
+    /// without anybody having guessed.
+    /// </summary>
+    [Fact]
+    public void AMachineThatReallyHoldsMore_IsGivenLessHeap()
+    {
+        var card = new VideoMemoryProfile(8);
+        var spilling = MeasuredMemoryProfile.From(
+            [TheLoggedSession with { CommittedMb = 26989 + 4000, ResidentMb = 20000 }]);
+
+        Assert.Equal(13, MemorySizingService.GetNativeReserveGb(BigModpack, card, spilling));
+        Assert.Equal(11, MemorySizingService.GetHeapGb(BigModpack, 24, card, spilling));
+    }
+
+    /// <summary>
+    /// Every other rule that divides the number follows the measurement too, or
+    /// the field would describe a launch that does not happen: the smallest
+    /// budget worth setting, the budget a stored heap becomes, and the number
+    /// the launcher suggests.
+    /// </summary>
+    [Fact]
+    public void EveryRuleThatDividesTheNumber_FollowsTheMeasurement()
+    {
+        var card = new VideoMemoryProfile(8);
+        var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
+
+        Assert.Equal(
+            9 + MemorySizingService.MinHeapGb,
+            MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card, measured));
+        Assert.Equal(
+            12 + MemorySizingService.MinHeapGb,
+            MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card));
+        Assert.Equal(
+            9 + 12,
+            MemorySizingService.GetBudgetForHeapGb(BigModpack, 12, card, measured));
+        Assert.Equal(
+            9 + MemorySizingService.GetRecommendedHeapGb(BigModpack),
+            MemorySizingService.GetRecommendedDefaultMemoryGb(
+                BigModpack, 64UL * 1024 * 1024 * 1024, card, measured));
+    }
+
+    /// <summary>
+    /// The ceiling on a recommended heap was sixteen, and sixteen was set when
+    /// the only thing a large heap had been seen doing was pausing. What has
+    /// been seen since is the opposite: 1128 mods in the 12 GB heap this file
+    /// recommends for them, 11.5 of it in use, and full collections of 2.2
+    /// seconds because there was nowhere left to collect into. Sixteen is
+    /// thirty per cent above the pack the whole model was calibrated on, which
+    /// makes it a ceiling the next pack up meets instead of meeting its own
+    /// arithmetic.
+    /// </summary>
+    /// <remarks>
+    /// It binds on nobody's machine today, which is the other half of the
+    /// argument: a 32 GB machine may be asked for 24 GB altogether, and this
+    /// pack holds 8-9 of them beside its heap, so twenty is reached from 48 GB
+    /// installed upwards on a pack half again the size of the largest one on
+    /// record.
+    /// </remarks>
+    [Fact]
+    public void TheHeapCeiling_ClearsThePackTheModelWasFittedTo()
+    {
+        Assert.True(
+            MemorySizingService.MaxRecommendedHeapGb >= 20,
+            "a ceiling of 16 is barely above the 12 GB heap that was measured 95% full");
+
+        // A 32 GB machine cannot reach it whatever the pack, so raising it took
+        // nothing away from anyone: the machine's own quarter still rules.
+        const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
+        var card = new VideoMemoryProfile(8);
+        var onATypicalMachine = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, thirtyTwoGb, card);
+
+        Assert.InRange(onATypicalMachine, 2, MemorySizingService.GetAllowedMaxMemoryGb(thirtyTwoGb));
+        Assert.True(
+            MemorySizingService.GetHeapGb(BigModpack, onATypicalMachine, card) <
+            MemorySizingService.MaxRecommendedHeapGb);
+    }
+}

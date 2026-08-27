@@ -21,6 +21,16 @@ namespace Minecraft;
 /// and that copy is the game's, so a pack on an eight gigabyte card holds room
 /// beside its heap that the same pack on a sixteen does not. A
 /// <see cref="VideoMemoryProfile"/> nobody could read is charged nothing.
+///
+/// All of that is estimate, and estimate is what a launcher does before it has
+/// watched anything. Once a pack has been played through on a machine there is
+/// a <see cref="MeasuredMemoryProfile"/> for the pair, and it wins: it is the
+/// room the game was seen holding rather than the room a model says it should,
+/// and it already contains the card, the drivers and this Windows, so nothing
+/// is added to it for any of them. Limitless 8 on a 24 GB budget was estimated
+/// at 12 GB beside its heap - eight for the pack, four for an eight gigabyte
+/// card - and left with a 12 GB heap it filled to 11.5. Measured at 7533 MB, it
+/// keeps 9 and plays in 15.
 /// </summary>
 public static class MemorySizingService
 {
@@ -33,7 +43,26 @@ public static class MemorySizingService
     /// comfort, so it bounds what the launcher suggests - not what a player may
     /// type.
     /// </summary>
-    public const int MaxRecommendedHeapGb = 16;
+    /// <remarks>
+    /// It was sixteen, and sixteen was written down when the only thing anyone
+    /// had seen a large heap do was pause. Then Limitless 8 was watched at the
+    /// number this file recommends for it - 1128 mods, which the per-mod rule
+    /// below turns into a 12 GB heap - and that heap was not large, it was
+    /// full: spark reported 11.5 GB of the 12 in use, AllTheLeaks warned at
+    /// 95%, and the full collections that came of it ran for 2.2 seconds. The
+    /// pauses the old ceiling was protecting anyone from are what a heap this
+    /// tight produces, not what a roomy one does.
+    ///
+    /// So sixteen is only thirty per cent above the pack the whole model was
+    /// calibrated on, and the next pack up would meet the ceiling rather than
+    /// its own arithmetic. Twenty is where a heap stops being about this game:
+    /// a 32 GB machine may be asked for 24 GB altogether and this pack holds
+    /// eight or nine of them beside the heap, so nobody reaches twenty by
+    /// accident - it binds from 48 GB installed upwards, on packs half again
+    /// the size of the largest one on record. G1 is asked for 32 MB regions and
+    /// a 40 ms pause goal here, which is a collector sized for exactly that.
+    /// </remarks>
+    public const int MaxRecommendedHeapGb = 20;
 
     private const double BytesPerGb = 1024d * 1024d * 1024d;
     private const double BytesPerMb = 1024d * 1024d;
@@ -95,6 +124,9 @@ public static class MemorySizingService
     /// </summary>
     private const int MaxVideoSpillGb = 4;
 
+    /// <summary>How much over a measurement its reserve is set; see <see cref="MeasuredReserveGb"/>.</summary>
+    private const double MeasuredMargin = 1.1;
+
     public static int GetAllowedMaxMemoryGb()
     {
         try
@@ -107,15 +139,35 @@ public static class MemorySizingService
         }
     }
 
-    public static int GetRecommendedDefaultMemoryGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
+    public static int GetRecommendedDefaultMemoryGb(
+        PackMemoryProfile pack,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
     {
         try
         {
-            return GetRecommendedDefaultMemoryGb(pack, GetTotalPhysicalMemoryBytes(), video);
+            return GetRecommendedDefaultMemoryGb(pack, GetTotalPhysicalMemoryBytes(), video, measured);
         }
         catch
         {
             return 16;
+        }
+    }
+
+    /// <summary>
+    /// Installed memory in whole gigabytes, or zero where it could not be read.
+    /// Part of the key a measurement is filed under: the same pack on a machine
+    /// with half the memory is a machine that pages, not one that holds less.
+    /// </summary>
+    public static int GetInstalledMemoryGb()
+    {
+        try
+        {
+            return (int)Math.Floor(GetTotalPhysicalMemoryBytes() / BytesPerGb);
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -161,16 +213,26 @@ public static class MemorySizingService
     /// </summary>
     /// <remarks>
     /// The budget is consulted in one case only: a pack the launcher has not
-    /// been able to look at. Then it keeps to the rule it used when it could
-    /// not tell packs apart at all - half the budget, never more than eight -
-    /// rather than guessing at a weight.
+    /// been able to look at, and has not watched either. Then it keeps to the
+    /// rule it used when it could not tell packs apart at all - half the
+    /// budget, never more than eight - rather than guessing at a weight.
     /// </remarks>
-    public static int GetNativeReserveGb(PackMemoryProfile pack, int budgetGb, VideoMemoryProfile video = default) =>
-        pack.IsKnown ? GetNativeReserveGb(pack, video) : Math.Clamp(budgetGb / 2, 2, 8);
+    public static int GetNativeReserveGb(
+        PackMemoryProfile pack,
+        int budgetGb,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default) =>
+        measured.IsKnown ? MeasuredReserveGb(measured)
+        : pack.IsKnown ? GetNativeReserveGb(pack, video)
+        : Math.Clamp(budgetGb / 2, 2, 8);
 
-    /// <summary>The same room, for a pack that has been measured.</summary>
-    public static int GetNativeReserveGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
+    /// <summary>The same room, for a pack that has been weighed or watched.</summary>
+    public static int GetNativeReserveGb(
+        PackMemoryProfile pack,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
     {
+        if (measured.IsKnown) return MeasuredReserveGb(measured);
         if (!pack.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb, video);
 
         var megabytes =
@@ -185,6 +247,27 @@ public static class MemorySizingService
             1,
             MaxMemoryGb - MinHeapGb);
     }
+
+    /// <summary>
+    /// The room a measured pair is given: what it was seen holding, and a
+    /// little over.
+    /// </summary>
+    /// <remarks>
+    /// The margin is a tenth, on top of the rounding up to a whole gigabyte
+    /// that follows it - so 7533 MB measured becomes 9 GB kept, about 1.6 GB of
+    /// slack. It is there because the sessions behind the number are the ones
+    /// that have happened, not the ones that will: a new dimension, a bigger
+    /// render distance or a resource pack the player adds next week all land
+    /// beside the heap, and a reserve set too low is spent by the game anyway -
+    /// over the budget, and into the memory the machine kept for itself. It is
+    /// only a tenth because every gigabyte of it is a gigabyte of heap out of a
+    /// budget somebody chose, and the estimate this replaces was over by four.
+    /// </remarks>
+    private static int MeasuredReserveGb(MeasuredMemoryProfile measured) =>
+        Math.Clamp(
+            (int)Math.Ceiling(measured.BesideHeapMb * MeasuredMargin / 1024d),
+            1,
+            MaxMemoryGb - MinHeapGb);
 
     /// <summary>
     /// What this pack hands the card and the card cannot hold, which the driver
@@ -214,18 +297,29 @@ public static class MemorySizingService
     }
 
     /// <summary>The heap a budget leaves this pack: what goes to <c>-Xmx</c>.</summary>
-    public static int GetHeapGb(PackMemoryProfile pack, int budgetGb, VideoMemoryProfile video = default) =>
-        Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video));
+    public static int GetHeapGb(
+        PackMemoryProfile pack,
+        int budgetGb,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default) =>
+        Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video, measured));
 
     /// <summary>
     /// The smallest budget that leaves this pack a heap at all. Below it the
     /// heap stops shrinking - it has a floor - and the game simply takes more
     /// than the number says, which is worth telling a player.
     /// </summary>
-    public static int GetSmallestUsefulBudgetGb(PackMemoryProfile pack, VideoMemoryProfile video = default)
+    public static int GetSmallestUsefulBudgetGb(
+        PackMemoryProfile pack,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
     {
         var budget = MinMemoryGb;
-        while (budget < MaxMemoryGb && budget - GetNativeReserveGb(pack, budget, video) < MinHeapGb) budget++;
+        while (budget < MaxMemoryGb &&
+               budget - GetNativeReserveGb(pack, budget, video, measured) < MinHeapGb)
+        {
+            budget++;
+        }
         return budget;
     }
 
@@ -254,10 +348,14 @@ public static class MemorySizingService
     /// the game are carried across with this, so nobody has their game quietly
     /// shrink.
     /// </summary>
-    public static int GetBudgetForHeapGb(PackMemoryProfile pack, int heapGb, VideoMemoryProfile video = default)
+    public static int GetBudgetForHeapGb(
+        PackMemoryProfile pack,
+        int heapGb,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
     {
         var budget = Math.Max(MinMemoryGb, heapGb);
-        while (budget < MaxMemoryGb && GetHeapGb(pack, budget, video) < heapGb) budget++;
+        while (budget < MaxMemoryGb && GetHeapGb(pack, budget, video, measured) < heapGb) budget++;
         return budget;
     }
 
@@ -269,10 +367,11 @@ public static class MemorySizingService
     public static int GetRecommendedDefaultMemoryGb(
         PackMemoryProfile pack,
         ulong totalPhysicalMemoryBytes,
-        VideoMemoryProfile video = default)
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
     {
-        var wanted = pack.IsKnown
-            ? GetRecommendedHeapGb(pack) + GetNativeReserveGb(pack, video)
+        var wanted = pack.IsKnown || measured.IsKnown
+            ? GetRecommendedHeapGb(pack) + GetNativeReserveGb(pack, video, measured)
             : GetRecommendedDefaultForAnUnseenPack(totalPhysicalMemoryBytes);
         return Math.Clamp(wanted, MinMemoryGb, GetAllowedMaxMemoryGb(totalPhysicalMemoryBytes));
     }
