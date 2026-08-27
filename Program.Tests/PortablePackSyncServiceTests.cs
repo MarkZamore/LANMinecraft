@@ -401,15 +401,36 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var second = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v2"));
         using var httpClient = new HttpClient(CreateReleaseHandler(
             BuildRelease("rev-2", [second, packManifest], [JarAsset(second), JarAsset(packManifest)])));
-        // A scanner that opens the jar and lets go a moment later.
+        // A scanner that opens the jar and lets go a moment later - on a thread
+        // of its own rather than the pool's. The sync being tested keeps the
+        // pool busy, and a timer callback waiting its turn there is what made
+        // this test fail on a loaded machine: the file was still held when the
+        // last retry came round, and the failure said nothing about packs.
         var hold = new FileStream(
             LivePath(packDir, first.Path), FileMode.Open, FileAccess.Read, FileShare.None);
-        using var released = new Timer(_ => hold.Dispose(), null, 200, Timeout.Infinite);
+        var released = new Thread(() =>
+        {
+            Thread.Sleep(200);
+            hold.Dispose();
+        })
+        {
+            IsBackground = true,
+            Name = "pack-sync-test-release",
+        };
+        released.Start();
 
-        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+        try
+        {
+            var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
 
-        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
-        AssertFileContent(packDir, second);
+            Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+            AssertFileContent(packDir, second);
+        }
+        finally
+        {
+            released.Join(TimeSpan.FromSeconds(30));
+            hold.Dispose();
+        }
     }
 
     [Fact]
