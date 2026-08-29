@@ -336,27 +336,46 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" x:Name="ChatMessageTextBox"
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBox Grid.Row="0" Grid.Column="0" x:Name="ChatMessageTextBox"
                                      Text="Пока не работает :("
                                      IsReadOnly="True" IsEnabled="False"/>
-                            <Button Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
+                            <Button Grid.Row="0" Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
                                     Margin="{StaticResource Gap.Left2}" IsEnabled="False"
                                     MinWidth="{StaticResource Size.ButtonMin}"/>
+                            <!-- Steam sits under the field rather than in the
+                                 footer, and inside the field's own column, so
+                                 the button that retries ends where the field
+                                 ends. -->
+                            <Grid Grid.Row="1" Grid.Column="0" Margin="{StaticResource Gap.Above2}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}"/>
+                                    <TextBlock x:Name="SteamPersonaText" Visibility="Collapsed"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="RetrySteamButton" Content="Повторить"
+                                        MinWidth="{StaticResource Size.ButtonMin}"
+                                        Click="RetrySteamButton_Click"/>
+                            </Grid>
                         </Grid>
                     </Grid>
                 </Grid>
             </Grid>
 
-            <!-- Steam lives in the footer: the account it signed in as, or - when
-                 it could not - the one button that tries again. The reason sits
-                 in the button's tooltip and in the log. -->
+            <!-- The footer is one line of one size: the name on the left, the
+                 switch on the right, both centred on the same row. Steam moved
+                 up under the chat field, where its button can line up with
+                 something. -->
             <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
-                        Orientation="Horizontal" HorizontalAlignment="Left">
-                <TextBlock Text="Лучше TLauncher" Style="{StaticResource CaptionTextStyle}"/>
-                <TextBlock Text="Steam:" Style="{StaticResource CaptionTextStyle}" Margin="{StaticResource Gap.Left4Right1}"/>
-                <TextBlock x:Name="SteamPersonaText" Style="{StaticResource CaptionTextStyle}" Visibility="Collapsed"/>
-                <Button x:Name="RetrySteamButton" Content="Повторить"
-                        Style="{StaticResource SmallButtonStyle}" Click="RetrySteamButton_Click"/>
+                        Orientation="Horizontal" HorizontalAlignment="Left"
+                        VerticalAlignment="Center">
+                <TextBlock Text="Лучше TLauncher"/>
             </StackPanel>
             <!-- Where the version number used to sit: the switch between the two
                  faces of the column above it. It is named for what pressing it
