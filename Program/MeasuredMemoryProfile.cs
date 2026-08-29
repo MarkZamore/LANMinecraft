@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace Minecraft;
 
@@ -36,11 +36,35 @@ public readonly record struct MemorySession(
     public const int ShortestSessionMinutes = 10;
 
     /// <summary>
-    /// What the game held outside its heap: class data, compiled code, thread
-    /// stacks, and the buffers the graphics driver keeps in system memory.
+    /// The most the game can have held outside its heap: everything it asked
+    /// the system to commit, less the heap it was started with.
     /// </summary>
+    /// <remarks>
+    /// A ceiling rather than a reading. Commit is address space the process has
+    /// claimed, and a great deal of it is never touched: the driver's mirror of
+    /// a sixteen gigabyte card is committed whether or not a texture is in it.
+    /// Taken for the answer, this number charges the game for memory nobody
+    /// spent - on the machine this comment was written for it read 14135 MB
+    /// while the same session had 2853 MB of resident memory outside its heap,
+    /// and a 24 GB budget was cut to an 8 GB heap on the strength of it.
+    /// </remarks>
     [JsonIgnore]
-    public int BesideHeapMb => Math.Max(0, CommittedMb - HeapMb);
+    public int BesideHeapAtMostMb => Math.Max(0, CommittedMb - HeapMb);
+
+    /// <summary>
+    /// The least it can have held: what was resident, less a heap that could at
+    /// most have been all of it.
+    /// </summary>
+    /// <remarks>
+    /// A floor, and a low one. Resident memory outside the heap is memory the
+    /// machine really gave up, so nothing under this number is defensible - but
+    /// the subtraction assumes the whole heap was resident, and a heap that was
+    /// half empty makes this zero. Which end of the pair the truth sits at
+    /// depends on how full the heap got, which is the one thing here the
+    /// launcher set rather than watched.
+    /// </remarks>
+    [JsonIgnore]
+    public int BesideHeapAtLeastMb => Math.Max(0, ResidentMb - HeapMb);
 
     /// <summary>
     /// Whether this session says anything about the pack rather than about the
@@ -73,7 +97,7 @@ public readonly record struct MemorySession(
     public bool IsWorthKeeping =>
         Minutes >= ShortestSessionMinutes &&
         CommittedMb > 0 && ResidentMb > 0 && HeapMb > 0 &&
-        BesideHeapMb > 0 &&
+        BesideHeapAtMostMb > 0 &&
         ResidentMb * 2 >= CommittedMb &&
         MinecraftProcessService.InitialHeapMbFor(HeapMb) == HeapMb;
 
@@ -83,7 +107,7 @@ public readonly record struct MemorySession(
         IsWorthKeeping ? ""
         : Minutes < ShortestSessionMinutes
             ? $"it ran {Minutes} min, under the {ShortestSessionMinutes} a footprint needs"
-        : CommittedMb <= 0 || ResidentMb <= 0 || HeapMb <= 0 || BesideHeapMb <= 0
+        : CommittedMb <= 0 || ResidentMb <= 0 || HeapMb <= 0 || BesideHeapAtMostMb <= 0
             ? "the process could not be measured"
         : ResidentMb * 2 < CommittedMb
             ? $"only {ResidentMb} MB of {CommittedMb} MB stayed in memory, so the machine was paging"
@@ -102,23 +126,27 @@ public readonly record struct MemorySession(
 /// keeps in system memory, whatever the mods allocate off-heap and whatever
 /// this particular Windows adds - so nothing is added to it for the card.
 /// </summary>
-/// <param name="BesideHeapMb">
-/// The largest room beside the heap of the sessions being remembered. Largest
-/// rather than typical: a reserve set too low is spent by the game anyway, over
-/// the budget and into the memory the machine kept for itself, while one set a
-/// gigabyte too high costs a gigabyte of heap out of a budget that has more.
+/// <param name="AtMostMb">
+/// The largest ceiling of the sessions remembered: no session held more beside
+/// its heap than this. Largest rather than typical, because a reserve set too
+/// low is spent by the game anyway - over the budget and into the memory the
+/// machine kept for itself.
 /// </param>
-/// <param name="Sessions">How many sessions that number stands on.</param>
-public readonly record struct MeasuredMemoryProfile(int BesideHeapMb, int Sessions)
+/// <param name="AtLeastMb">
+/// The largest floor of the same sessions: one of them was holding at least
+/// this much, and no estimate under it can be believed.
+/// </param>
+/// <param name="Sessions">How many sessions the pair stands on.</param>
+public readonly record struct MeasuredMemoryProfile(int AtMostMb, int AtLeastMb, int Sessions)
 {
     /// <summary>
     /// A pack on a machine that has not been watched yet - the state every pair
     /// starts in, and the one the estimate exists for.
     /// </summary>
-    public static MeasuredMemoryProfile Unknown { get; } = new(0, 0);
+    public static MeasuredMemoryProfile Unknown { get; } = new(0, 0, 0);
 
     /// <summary>False for <see cref="Unknown"/> alone.</summary>
-    public bool IsKnown => BesideHeapMb > 0 && Sessions > 0;
+    public bool IsKnown => AtMostMb > 0 && Sessions > 0;
 
     /// <summary>What a handful of kept sessions come to.</summary>
     public static MeasuredMemoryProfile From(IEnumerable<MemorySession> sessions)
@@ -126,6 +154,9 @@ public readonly record struct MeasuredMemoryProfile(int BesideHeapMb, int Sessio
         var kept = sessions.Where(session => session.IsWorthKeeping).ToList();
         return kept.Count == 0
             ? Unknown
-            : new MeasuredMemoryProfile(kept.Max(session => session.BesideHeapMb), kept.Count);
+            : new MeasuredMemoryProfile(
+                kept.Max(session => session.BesideHeapAtMostMb),
+                kept.Max(session => session.BesideHeapAtLeastMb),
+                kept.Count);
     }
 }

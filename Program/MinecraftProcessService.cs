@@ -373,7 +373,7 @@ public sealed class MinecraftProcessService
             $"Memory: {settings.MaxMemoryGb} GB for the game ({packMemory.ModCount} mods, " +
             $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap. " +
             (measured.IsKnown
-                ? $"The room beside it is measured: {measured.BesideHeapMb} MB over " +
+                ? $"The room beside it is held between {measured.AtLeastMb} and {measured.AtMostMb} MB over " +
                   $"{measured.Sessions} session(s) on this card and this much memory."
                 : "The room beside it is estimated from the pack; no session here has been measured yet."));
         // Said every launch, not only when it costs something: a card that has
@@ -868,8 +868,8 @@ public sealed class MinecraftProcessService
         var measured = _measuredMemory.Remember(packRelativePath, video, installedGb, session);
         if (!measured.IsKnown) return;
         _logger.Info(
-            $"Memory: written down - {session.BesideHeapMb} MB beside the heap over {session.Minutes} min. " +
-            $"This pack on this machine now stands at {measured.BesideHeapMb} MB " +
+            $"Memory: written down - between {session.BesideHeapAtLeastMb} and {session.BesideHeapAtMostMb} MB beside the heap over {session.Minutes} min. " +
+            $"This pack on this machine now stands between {measured.AtLeastMb} and {measured.AtMostMb} MB " +
             $"over {measured.Sessions} session(s), which is what the next launch will keep out of the budget.");
     }
 
