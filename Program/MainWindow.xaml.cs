@@ -2554,11 +2554,29 @@ public partial class MainWindow : Window
             MemoryTextBox.Text = text;
             MemoryTextBox.CaretIndex = MemoryTextBox.Text.Length;
             DescribeMemorySplit(text);
+            RefreshMemoryEstimate();
         }
         finally
         {
             _suppressMemoryTextChanged = false;
         }
+    }
+
+    /// <summary>
+    /// The number the launcher would put in the field for the pack that is
+    /// selected: the heap that pack asks for, held inside what this machine
+    /// offers. It stands beside the field rather than in it, because a number
+    /// somebody typed is theirs and this is only what the launcher makes of the
+    /// pack's weight.
+    /// </summary>
+    private void RefreshMemoryEstimate()
+    {
+        var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
+            PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
+        MemoryEstimateText.Text = $"~ {estimateGb} ГБ";
+        MemoryEstimateText.ToolTip =
+            $"Оценка: столько памяти лаунчер советует этой сборке - {estimateGb} ГБ кучи. " +
+            "Число в поле рядом ваше и остаётся вашим.";
     }
 
     /// <summary>
