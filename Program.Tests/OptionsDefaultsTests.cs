@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -124,9 +124,63 @@ public sealed class OptionsDefaultsTests : IDisposable
 
         Assert.Equal(
             [
-                new KeyValuePair<string, string>("renderDistance", "6"),
-                new KeyValuePair<string, string>("graphicsMode", "0")
+                new OptionsDefaultsService.OptionDefault("renderDistance", "6", Held: false),
+                new OptionsDefaultsService.OptionDefault("graphicsMode", "0", Held: false)
             ],
             wanted);
+    }
+
+    /// <summary>
+    /// A line marked with <c>!</c> is the pack's rather than the player's: it is
+    /// put back at every launch, where an unmarked one is only ever a starting
+    /// point. This is for the settings a build depends on looking the same for
+    /// everybody, and it is why the mark exists at all.
+    /// </summary>
+    [Fact]
+    public void ASettingThePackKeeps_IsPutBackAfterItIsChanged()
+    {
+        var pack = Path.Combine(_root, "pack");
+        var instance = Path.Combine(_root, "instance");
+        Directory.CreateDirectory(Path.Combine(pack, "launcher"));
+        Directory.CreateDirectory(instance);
+        File.WriteAllText(
+            Path.Combine(pack, "launcher", OptionsDefaultsService.ListFileName),
+            "!textBackgroundOpacity:0.0\nrenderDistance:8\n");
+        // The player has been playing: every key exists, and they moved both.
+        File.WriteAllText(
+            Path.Combine(instance, "options.txt"),
+            "fov:0.5\ntextBackgroundOpacity:0.7\nrenderDistance:16\nguiScale:2\n");
+
+        var changed = new OptionsDefaultsService().Apply(pack, instance);
+
+        Assert.Equal(1, changed);
+        var lines = File.ReadAllLines(Path.Combine(instance, "options.txt"));
+        Assert.Equal(
+            ["fov:0.5", "textBackgroundOpacity:0.0", "renderDistance:16", "guiScale:2"],
+            lines);
+
+        // And it stays put: a second launch has nothing left to do.
+        Assert.Equal(0, new OptionsDefaultsService().Apply(pack, instance));
+    }
+
+    /// <summary>
+    /// The mark says nothing about whether the key is there yet. A held setting
+    /// an instance has never had is simply written, like any other.
+    /// </summary>
+    [Fact]
+    public void ASettingThePackKeeps_IsWrittenWhenItIsMissing()
+    {
+        var pack = Path.Combine(_root, "pack");
+        var instance = Path.Combine(_root, "instance");
+        Directory.CreateDirectory(Path.Combine(pack, "launcher"));
+        Directory.CreateDirectory(instance);
+        File.WriteAllText(
+            Path.Combine(pack, "launcher", OptionsDefaultsService.ListFileName),
+            "!backgroundForChatOnly:false\n");
+
+        Assert.Equal(1, new OptionsDefaultsService().Apply(pack, instance));
+        Assert.Equal(
+            ["backgroundForChatOnly:false"],
+            File.ReadAllLines(Path.Combine(instance, "options.txt")));
     }
 }
