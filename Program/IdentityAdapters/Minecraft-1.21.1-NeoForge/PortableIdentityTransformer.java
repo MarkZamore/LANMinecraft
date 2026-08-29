@@ -118,7 +118,13 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         // fail to find the method they expect - killing the game instead of
         // quietly doing nothing.
         boolean identityHooks = !"false".equals(property("identityHooksEnabled", "true"));
-        boolean nameTagClass = identityHooks && contains(property("nameTagClasses", ""), className);
+        // Off unless the launcher says the instance is running shaders. A plate
+        // behind a name is the game's own way of keeping it readable, and
+        // taking it from somebody who never saw the black rectangle would be
+        // fixing their game for them.
+        boolean nameTagClass = identityHooks &&
+            "true".equals(property("nameTagPlateEnabled", "false")) &&
+            contains(property("nameTagClasses", ""), className);
         boolean loginClass = identityHooks && contains(listeners, className);
         boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
@@ -370,6 +376,25 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
                 method.instructions.insert(instruction, plate);
                 patched = true;
                 break;
+            }
+
+            // And a shadow in its place. The plate is what the game uses to
+            // keep a name legible against a bright sky, so taking it away
+            // without putting anything back would fix one screen and dim
+            // another. The flag is the argument after the colour in both calls
+            // - the see-through pass at 0x20FFFFFF and the solid one at -1 -
+            // and it is false in both, which is what leaves the letters flat.
+            for (AbstractInsnNode instruction : method.instructions.toArray()) {
+                boolean colour = (instruction instanceof LdcInsnNode ldc &&
+                    ldc.cst instanceof Integer value &&
+                    value == 553648127) || instruction.getOpcode() == Opcodes.ICONST_M1;
+                if (!colour) {
+                    continue;
+                }
+                AbstractInsnNode shadow = instruction.getNext();
+                if (shadow != null && shadow.getOpcode() == Opcodes.ICONST_0) {
+                    method.instructions.set(shadow, new InsnNode(Opcodes.ICONST_1));
+                }
             }
         }
 

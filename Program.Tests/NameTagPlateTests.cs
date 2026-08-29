@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft.Tests;
 
@@ -55,6 +55,27 @@ public sealed class NameTagPlateTests
         Assert.Contains("value == 0.25F", transformer, StringComparison.Ordinal);
         Assert.Contains("Opcodes.ISTORE", transformer, StringComparison.Ordinal);
         Assert.Contains("if (!patched) {\n            return null;", transformer, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And only where the rectangle is: with the shaders off the plate is the
+    /// game's own way of keeping a name readable, and taking it from somebody
+    /// who never saw the problem would be fixing their game for them.
+    /// </summary>
+    [Fact]
+    public void ThePlateIsKept_WhereNoShaderIsRunning()
+    {
+        var service = ReadRepositoryFile("Program", "PortableIdentityAdapterService.cs");
+        var transformer = ReadRepositoryFile(
+            "Program", "IdentityAdapters", "Minecraft-1.21.1-NeoForge", "PortableIdentityTransformer.java");
+
+        // The launcher asks Iris what it is about to do, per launch.
+        Assert.Contains("iris.properties", service, StringComparison.Ordinal);
+        Assert.Contains("enableShaders", service, StringComparison.Ordinal);
+        Assert.Contains("nameTagPlateEnabled=", service, StringComparison.Ordinal);
+        // And the adapter does nothing until it is told.
+        Assert.Contains("nameTagPlateEnabled", transformer, StringComparison.Ordinal);
+        Assert.Contains("\"false\"", transformer, StringComparison.Ordinal);
     }
 
     private static string ReadRepositoryFile(params string[] relativeParts)
