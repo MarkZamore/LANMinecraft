@@ -61,6 +61,10 @@ public final class PortableIdentityPreflight {
                 verifySolarFluxTargets(className, transformed);
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
+            } else if (isAlias("skinManagerClasses", className)) {
+                verifySkinWaitTargets(archive, className, transformed);
+            } else if (isAlias("lanShareScreenClasses", className)) {
+                verifyLanSharePublishTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
                 !isAlias("textureUrlCheckerClasses", className) &&
                 !isAlias("gameProfileClasses", className)) {
@@ -68,6 +72,109 @@ public final class PortableIdentityPreflight {
             }
         }
         System.out.println("Portable identity preflight passed: " + className + " in " + jarPath);
+    }
+
+    /**
+     * The skin wait: one call to the hook, and the loader method it asks for
+     * behind it.
+     */
+    private static void verifySkinWaitTargets(
+        ZipFile archive,
+        String skinManagerClass,
+        byte[] transformed) throws Exception {
+        int mappingIndex = aliasIndex("skinManagerClasses", skinManagerClass);
+        ClassNode skinManager = readClass(archive, skinManagerClass);
+        requireMethod(skinManager, "insecureSkinMethods", 1);
+        requireMethod(skinManager, "skinOrLoadMethods", 1);
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hookCalls = 0;
+        for (MethodNode method : patched.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableSkinWaitHooks") &&
+                    call.name.equals("awaitSkin") &&
+                    call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")) {
+                    hookCalls++;
+                }
+            }
+        }
+        if (hookCalls != 1) {
+            throw new IllegalStateException(
+                "Skin manager transformer inserted " + hookCalls + " wait hooks instead of 1.");
+        }
+        if (mappingIndex < 0) {
+            throw new IllegalStateException("Skin manager class is not one of its aliases: " + skinManagerClass);
+        }
+    }
+
+    /**
+     * The one-press publish: one call to the hook, and every member the hook
+     * reaches for through reflection, in the mapping this class was found under.
+     */
+    private static void verifyLanSharePublishTargets(
+        ZipFile archive,
+        String screenClass,
+        byte[] transformed) throws Exception {
+        int mappingIndex = aliasIndex("lanShareScreenClasses", screenClass);
+        ClassNode screen = readClass(archive, screenClass);
+        requireMethod(screen, "lanShareInitMethods", 0);
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hookCalls = 0;
+        for (MethodNode method : patched.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks") &&
+                    call.name.equals("autoPublish") &&
+                    call.desc.equals("(Ljava/lang/Object;)Z")) {
+                    hookCalls++;
+                }
+            }
+        }
+        if (hookCalls != 1) {
+            throw new IllegalStateException(
+                "LAN share screen transformer inserted " + hookCalls + " publish hooks instead of 1.");
+        }
+
+        ClassNode integrated = readClass(archive, alias("integratedServerClasses", mappingIndex));
+        requireMethod(integrated, "publishServerMethods", 3);
+
+        ClassNode server = readClass(archive, alias("serverClasses", mappingIndex));
+        requireMethod(server, "getWorldDataMethods", 0);
+        requireMethod(server, "isPublishedMethods", 0);
+        requireMethod(server, "getDefaultGameTypeMethods", 0);
+
+        ClassNode worldData = readClass(archive, alias("worldDataClasses", mappingIndex));
+        requireMethod(worldData, "isAllowCommandsMethods", 0);
+
+        ClassNode httpUtil = readClass(archive, alias("httpUtilClasses", mappingIndex).replace('.', '/'));
+        requireMethod(httpUtil, "getAvailablePortMethods", 0);
+
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", mappingIndex).replace('.', '/'));
+        requireMethod(minecraft, "minecraftGetInstanceMethods", 0);
+        requireMethod(minecraft, "getSingleplayerServerMethods", 0);
+        requireMethod(minecraft, "setScreenMethods", 1);
+        requireMethod(minecraft, "updateTitleMethods", 0);
+        requireField(minecraft, "minecraftGuiFields");
+
+        ClassNode gui = readClass(archive, alias("guiClasses", mappingIndex));
+        requireMethod(gui, "guiChatMethods", 0);
+
+        ClassNode chat = readClass(archive, alias("chatComponentClasses", mappingIndex));
+        requireMethod(chat, "chatAddMessageMethods", 1);
+
+        ClassNode publishCommand = readClass(archive, alias("publishCommandClasses", mappingIndex).replace('.', '/'));
+        requireMethod(publishCommand, "publishSuccessMethods", 1);
+
+        readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
+        readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
     }
 
     private static void verifyHookTargets(ZipFile archive, String loginClass) throws Exception {
