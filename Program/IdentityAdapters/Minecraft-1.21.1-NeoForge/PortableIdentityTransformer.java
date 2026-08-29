@@ -5,13 +5,11 @@ import java.security.ProtectionDomain;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
-import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -118,13 +116,6 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         // fail to find the method they expect - killing the game instead of
         // quietly doing nothing.
         boolean identityHooks = !"false".equals(property("identityHooksEnabled", "true"));
-        // Off unless the launcher says the instance is running shaders. A plate
-        // behind a name is the game's own way of keeping it readable, and
-        // taking it from somebody who never saw the black rectangle would be
-        // fixing their game for them.
-        boolean nameTagClass = identityHooks &&
-            "true".equals(property("nameTagPlateEnabled", "false")) &&
-            contains(property("nameTagClasses", ""), className);
         boolean loginClass = identityHooks && contains(listeners, className);
         boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
@@ -143,9 +134,6 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         }
         if (playerInfoClass) {
             return transformPlayerInfo(node, className);
-        }
-        if (nameTagClass) {
-            return transformNameTag(node, className);
         }
 
         boolean helloPatched = false;
@@ -312,99 +300,6 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         System.out.println("[PortableIdentity] Patched profile class " + className + ".");
-        return writer.toByteArray();
-    }
-
-    /**
-     * Takes the plate out from behind a player's name.
-     */
-    /*
-     * The name is drawn twice over a quarter-black rectangle, and the rectangle
-     * is the trouble. A shaderpack draws it through its own entity program, and
-     * the ones that draw entities without blending turn a quarter of black into
-     * all of it: a filled rectangle where the name should be, black in torch
-     * light and gone in the sun, because the same program multiplies it by the
-     * light of the place the player stands.
-     *
-     * Nothing about that is the launcher's to fix in a shader it did not write
-     * and may not redistribute. What it can do is not ask for the rectangle.
-     * The colour is built here - the option, times 255, shifted into the alpha
-     * byte, stored in a local - and storing zero over it leaves the letters and
-     * takes the plate. The game's own Text Background setting does the same
-     * thing, and takes the chat's background with it; this one is the name tag
-     * alone.
-     *
-     * The store is found rather than counted: the default the option is asked
-     * with is a float 0.25 and the only one in the method, and the first store
-     * after it is the colour. A version that stops doing that is a version this
-     * quietly leaves alone - a name with a plate behind it is worth no crash.
-     */
-    private static byte[] transformNameTag(ClassNode node, String className) {
-        boolean patched = false;
-        for (MethodNode method : node.methods) {
-            if (!matchesMethod(
-                method,
-                "nameTagMethods",
-                "renderNameTag",
-                "nameTagDescriptors",
-                "")) {
-                continue;
-            }
-
-            AbstractInsnNode opacity = null;
-            for (AbstractInsnNode instruction : method.instructions.toArray()) {
-                if (instruction instanceof LdcInsnNode ldc &&
-                    ldc.cst instanceof Float value &&
-                    value == 0.25F) {
-                    opacity = instruction;
-                    break;
-                }
-            }
-            if (opacity == null) {
-                continue;
-            }
-
-            for (AbstractInsnNode instruction = opacity;
-                 instruction != null;
-                 instruction = instruction.getNext()) {
-                if (instruction.getOpcode() != Opcodes.ISTORE) {
-                    continue;
-                }
-                InsnList plate = new InsnList();
-                plate.add(new InsnNode(Opcodes.ICONST_0));
-                plate.add(new VarInsnNode(Opcodes.ISTORE, ((VarInsnNode) instruction).var));
-                method.instructions.insert(instruction, plate);
-                patched = true;
-                break;
-            }
-
-            // And a shadow in its place. The plate is what the game uses to
-            // keep a name legible against a bright sky, so taking it away
-            // without putting anything back would fix one screen and dim
-            // another. The flag is the argument after the colour in both calls
-            // - the see-through pass at 0x20FFFFFF and the solid one at -1 -
-            // and it is false in both, which is what leaves the letters flat.
-            for (AbstractInsnNode instruction : method.instructions.toArray()) {
-                boolean colour = (instruction instanceof LdcInsnNode ldc &&
-                    ldc.cst instanceof Integer value &&
-                    value == 553648127) || instruction.getOpcode() == Opcodes.ICONST_M1;
-                if (!colour) {
-                    continue;
-                }
-                AbstractInsnNode shadow = instruction.getNext();
-                if (shadow != null && shadow.getOpcode() == Opcodes.ICONST_0) {
-                    method.instructions.set(shadow, new InsnNode(Opcodes.ICONST_1));
-                }
-            }
-        }
-
-        if (!patched) {
-            return null;
-        }
-
-        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
-        node.accept(writer);
-        System.out.println("[PortableIdentity] Took the plate out from behind names in " + className + ".");
         return writer.toByteArray();
     }
 

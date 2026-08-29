@@ -48,7 +48,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
             var state = ReadState(statePath);
             if (state is not null && IsStateValid(state, runtime, targetRoot, adapterHash))
             {
-                return CreateJvmArguments(adapterPath, state.Properties, targetRoot);
+                return CreateJvmArguments(adapterPath, state.Properties);
             }
 
             IdentityAdapterConfiguration configuration;
@@ -165,7 +165,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
             _logger.Info(
                 $"Portable UUID adapter verified for {runtime.Descriptor.MinecraftVersion} " +
                 $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}.");
-            return CreateJvmArguments(adapterPath, state.Properties, targetRoot);
+            return CreateJvmArguments(adapterPath, state.Properties);
         }
         finally
         {
@@ -349,8 +349,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
 
     private static List<string> CreateJvmArguments(
         string adapterPath,
-        IReadOnlyDictionary<string, string> properties,
-        string gameDirectory)
+        IReadOnlyDictionary<string, string> properties)
     {
         var arguments = new List<string>
         {
@@ -358,46 +357,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
         };
         arguments.AddRange(properties.OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => $"-Dminecraft.portable.identity.{pair.Key}={pair.Value}"));
-        arguments.Add(
-            $"-Dminecraft.portable.identity.nameTagPlateEnabled={(ShadersAreOn(gameDirectory) ? "true" : "false")}");
         arguments.Add($"-javaagent:{adapterPath}");
         return arguments;
-    }
-
-    /// <summary>Whether this instance is about to start with a shaderpack on.</summary>
-    /// <remarks>
-    /// The plate behind a player's name is only a problem under a shaderpack -
-    /// fourteen of the seventeen Limitless 8 ships draw entities without
-    /// blending and turn a quarter of black into a filled rectangle - and it is
-    /// the game's own way of keeping a name readable everywhere else. So the
-    /// question is asked per launch rather than answered once: Iris writes what
-    /// it is doing into the instance, and a pack with the shaders switched off
-    /// keeps the name it always had.
-    ///
-    /// Read rather than cached, because the player turns shaders on and off in
-    /// the game and the next launch should follow them. Anything unreadable is
-    /// taken for no shaders: that leaves the game exactly as it was.
-    /// </remarks>
-    private static bool ShadersAreOn(string gameDirectory)
-    {
-        try
-        {
-            var path = Path.Combine(gameDirectory, "config", "iris.properties");
-            if (!File.Exists(path)) return false;
-            foreach (var line in File.ReadLines(path))
-            {
-                var text = line.Trim();
-                if (!text.StartsWith("enableShaders", StringComparison.OrdinalIgnoreCase)) continue;
-                var separator = text.IndexOf('=');
-                if (separator < 0) continue;
-                return text[(separator + 1)..].Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-
-        return false;
     }
 
     private bool IsStateValid(
