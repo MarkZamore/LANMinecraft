@@ -336,33 +336,12 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            <TextBox Grid.Row="0" Grid.Column="0" x:Name="ChatMessageTextBox"
+                            <TextBox Grid.Column="0" x:Name="ChatMessageTextBox"
                                      Text="Пока не работает :("
                                      IsReadOnly="True" IsEnabled="False"/>
-                            <Button Grid.Row="0" Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
+                            <Button Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
                                     Margin="{StaticResource Gap.Left2}" IsEnabled="False"
                                     MinWidth="{StaticResource Size.ButtonMin}"/>
-                            <!-- Steam sits under the field rather than in the
-                                 footer, and inside the field's own column, so
-                                 the button that retries ends where the field
-                                 ends. -->
-                            <Grid Grid.Row="1" Grid.Column="0" Margin="{StaticResource Gap.Above2}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal">
-                                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}"/>
-                                    <TextBlock x:Name="SteamPersonaText" Visibility="Collapsed"/>
-                                </StackPanel>
-                                <Button Grid.Column="1" x:Name="RetrySteamButton" Content="Повторить"
-                                        MinWidth="{StaticResource Size.ButtonMin}"
-                                        Click="RetrySteamButton_Click"/>
-                            </Grid>
                         </Grid>
                     </Grid>
                 </Grid>
@@ -377,12 +356,29 @@
                         VerticalAlignment="Center">
                 <TextBlock Text="Лучше TLauncher"/>
             </StackPanel>
-            <!-- Where the version number used to sit: the switch between the two
-                 faces of the column above it. It is named for what pressing it
-                 brings, not for what is on screen. -->
-            <Button Grid.Row="7" Grid.Column="2" x:Name="SidePanelToggleButton" Content="Новости"
-                    Click="SidePanelToggleButton_Click"
-                    HorizontalAlignment="Right" MinWidth="{StaticResource Size.ButtonMin}"/>
+            <!-- The right end of the footer, in the news column's own width so
+                 that "Steam:" starts where the panel above it starts. The
+                 switch keeps the corner it has always had - it is named for
+                 what pressing it brings, not for what is on screen - and the
+                 button that retries Steam sits directly to its left. -->
+            <Grid Grid.Row="7" Grid.Column="2" Margin="{StaticResource Gap.Left5}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}"/>
+                    <TextBlock x:Name="SteamPersonaText" Visibility="Collapsed"/>
+                </StackPanel>
+                <Button Grid.Column="1" x:Name="RetrySteamButton" Content="Повторить"
+                        Margin="{StaticResource Gap.Right2}"
+                        MinWidth="{StaticResource Size.ButtonMin}"
+                        Click="RetrySteamButton_Click"/>
+                <Button Grid.Column="2" x:Name="SidePanelToggleButton" Content="Новости"
+                        Click="SidePanelToggleButton_Click"
+                        HorizontalAlignment="Right" MinWidth="{StaticResource Size.ButtonMin}"/>
+            </Grid>
 
             <Grid Visibility="Collapsed">
                 <TextBlock x:Name="PackHashText"/>
