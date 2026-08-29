@@ -198,8 +198,11 @@ public sealed class MeasuredMemoryTests : IDisposable
     /// Measured, the card is not guessed at twice: whatever the driver keeps in
     /// system memory is already inside the 7533 MB the largest session could
     /// have been holding, and the estimate is not allowed above it. The eight
-    /// gigabyte card's 12 comes down to 9 - the ceiling and a tenth, rounded up
-    /// - and its heap goes from 12 to 15.
+    /// gigabyte card's 12 comes down to 8 - the ceiling as it stands, rounded
+    /// up - and its heap goes from 12 to 16. The tenth is added to the floor
+    /// only: a floor is one evening's high-water mark and the next may pass it,
+    /// while a ceiling is already the largest commit this machine has ever
+    /// asked for.
     ///
     /// The sixteen gigabyte card is charged nothing to begin with, its estimate
     /// of 8 is already under that ceiling, and it keeps the 16 GB heap it had.
@@ -207,7 +210,7 @@ public sealed class MeasuredMemoryTests : IDisposable
     /// correct.
     /// </summary>
     [Theory]
-    [InlineData(8, 12, 12, 9, 15)]
+    [InlineData(8, 12, 12, 8, 16)]
     [InlineData(16, 8, 16, 8, 16)]
     public void ABudgetOfTwentyFour_IsSplitByTheMeasurementWhereThereIsOne(
         int cardGb, int estimatedReserveGb, int estimatedHeapGb, int measuredReserveGb, int measuredHeapGb)
@@ -289,16 +292,16 @@ public sealed class MeasuredMemoryTests : IDisposable
         var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
 
         Assert.Equal(
-            9 + MemorySizingService.MinHeapGb,
+            8 + MemorySizingService.MinHeapGb,
             MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card, measured));
         Assert.Equal(
             12 + MemorySizingService.MinHeapGb,
             MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card));
         Assert.Equal(
-            9 + 12,
+            8 + 12,
             MemorySizingService.GetBudgetForHeapGb(BigModpack, 12, card, measured));
         Assert.Equal(
-            9 + MemorySizingService.GetRecommendedHeapGb(BigModpack),
+            8 + MemorySizingService.GetRecommendedHeapGb(BigModpack),
             MemorySizingService.GetRecommendedDefaultMemoryGb(
                 BigModpack, 64UL * 1024 * 1024 * 1024, card, measured));
     }
