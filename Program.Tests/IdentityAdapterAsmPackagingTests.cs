@@ -16,6 +16,32 @@ public sealed class IdentityAdapterAsmPackagingTests
         ("asm-tree-9.8.jar", 51_934, "14b7880cb7c85eed101e2710432fc3ffb83275532a6a894dc4c4095d49ad59f1")
     ];
 
+    /// <summary>
+    /// javac refuses a source file that begins with a byte order mark, and the
+    /// only place it is ever noticed is the release build - the adapter is
+    /// compiled there and nowhere else, so a mark added by an editor or a
+    /// script takes the whole build down with an error about an illegal
+    /// character. It happened once; this is why it cannot happen twice.
+    /// </summary>
+    [Fact]
+    public void AdapterSources_DoNotStartWithAByteOrderMark()
+    {
+        var root = FindRepositoryDirectory("Program", "IdentityAdapters");
+        var sources = Directory.EnumerateFiles(root, "*.java", SearchOption.AllDirectories).ToList();
+        Assert.NotEmpty(sources);
+        foreach (var path in sources)
+        {
+            var head = new byte[3];
+            using (var stream = File.OpenRead(path))
+            {
+                if (stream.Read(head, 0, 3) < 3) continue;
+            }
+            Assert.False(
+                head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF,
+                $"{Path.GetFileName(path)} starts with a byte order mark, which javac will not read");
+        }
+    }
+
     [Fact]
     public void VendoredAsmArtifacts_MatchPinnedBytes()
     {
