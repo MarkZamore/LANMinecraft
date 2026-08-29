@@ -1,4 +1,4 @@
-﻿package minecraft.portable.identity;
+package minecraft.portable.identity;
 
 import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
