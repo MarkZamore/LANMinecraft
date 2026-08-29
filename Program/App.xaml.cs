@@ -1,10 +1,12 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace Minecraft;
 
 public partial class App : Application
 {
     private const string SkipPrestartUpdateArgument = "--skip-prestart-update=";
+
+    private SingleInstanceGuard? _instanceGuard;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -14,6 +16,16 @@ public partial class App : Application
         // Steam checks in a console instead of opening the launcher window.
         if (SteamSpikeRunner.TryRun(e.Args))
         {
+            Shutdown();
+            return;
+        }
+
+        // Before anything that touches the settings file or the instance
+        // folders: a second copy must not get as far as writing to them.
+        _instanceGuard = SingleInstanceGuard.TryAcquire();
+        if (_instanceGuard is null)
+        {
+            SingleInstanceGuard.AskRunningInstanceToShowItself();
             Shutdown();
             return;
         }
@@ -54,6 +66,23 @@ public partial class App : Application
 
         var window = new MainWindow();
         MainWindow = window;
+        // A second press of the icon is a request for this window, not for
+        // another one, and the guard is what carries the request across.
+        _instanceGuard.AnotherInstanceStarted += () => window.Dispatcher.BeginInvoke(() =>
+        {
+            if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
+            window.Show();
+            window.Activate();
+            window.Topmost = true;
+            window.Topmost = false;
+        });
         window.Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _instanceGuard?.Dispose();
+        _instanceGuard = null;
+        base.OnExit(e);
     }
 }
