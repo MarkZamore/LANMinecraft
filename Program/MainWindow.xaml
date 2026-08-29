@@ -148,6 +148,7 @@
                     <TextBlock Grid.Column="0" x:Name="MemoryEstimateText"
                                Style="{StaticResource LabelTextStyle}"
                                TextTrimming="CharacterEllipsis"
+                               HorizontalAlignment="Right"
                                Margin="{StaticResource Gap.Right2}"/>
                     <Button Grid.Column="1" x:Name="ControlsPresetButton"
                             Content="Пресет настроек управления"
