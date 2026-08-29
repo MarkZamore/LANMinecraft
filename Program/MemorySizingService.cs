@@ -262,6 +262,15 @@ public static class MemorySizingService
     /// between them, and where exactly depends on how full the heap got - which
     /// is the one quantity here the launcher set rather than watched.
     ///
+    /// The margin belongs to the floor alone. A floor is what one evening
+    /// happened to hold and the next may exceed; a ceiling is already the
+    /// largest commit ever seen on this machine, and a tenth on top of that is
+    /// a tenth of a gigabyte-rounded reserve given away for nothing. On an
+    /// eight gigabyte card the difference is a whole gigabyte of heap: the
+    /// estimate of 12 GB, held under a ceiling of 10846 MB, comes to 11 - and
+    /// with the margin it came back to 12, which is the number the player had
+    /// before any of this was measured.
+    ///
     /// Reading the ceiling as the answer is what cut a 24 GB budget to an 8 GB
     /// heap on a machine with a sixteen gigabyte card: the driver's mirror of
     /// that card is committed whether or not anything is in it, so the game was
@@ -272,7 +281,7 @@ public static class MemorySizingService
     /// </remarks>
     private static double HeldWithinWhatWasSeen(double estimateMb, MeasuredMemoryProfile measured) =>
         measured.IsKnown
-            ? Math.Clamp(estimateMb, measured.AtLeastMb * MeasuredMargin, measured.AtMostMb * MeasuredMargin)
+            ? Math.Clamp(estimateMb, measured.AtLeastMb * MeasuredMargin, measured.AtMostMb)
             : estimateMb;
 
 
