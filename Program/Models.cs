@@ -25,16 +25,19 @@ public sealed class AppSettings
     public string LocalIdentityName { get; set; } = "";
 
     /// <summary>
-    /// Everything the game may take: the Java heap and the room beside it for
-    /// class data, compiled code and the buffers Sodium hands the driver.
+    /// The Java heap, which is what <c>-Xmx</c> is set to and what the game
+    /// reports. The room beside it - class data, compiled code and the buffers
+    /// Sodium hands the driver - is kept out of the largest number this field
+    /// accepts rather than out of this one.
     /// </summary>
-    public int MaxMemoryGb { get; set; } = 16;
+    [JsonPropertyName("maxMemoryGb")]
+    public int MaxHeapGb { get; set; } = MemorySizingService.MaxRecommendedHeapGb / 2;
 
     /// <summary>
-    /// False in a settings file written when this number was the heap alone.
-    /// The launcher reads it once, converts, and never asks again.
+    /// Absent from a settings file written while this number meant the whole of
+    /// the game. The launcher reads it once, converts, and never asks again.
     /// </summary>
-    public bool MemorySettingIsWholeGame { get; set; }
+    public bool MemorySettingIsTheHeap { get; set; }
 
     /// <summary>
     /// What the player last set the field to, for each pack they set it on,

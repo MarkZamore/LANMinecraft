@@ -59,7 +59,7 @@ public sealed class PackMemoryProfileTests : IDisposable
         Assert.Equal(0, profile.ModBytes);
         Assert.False(profile.IsModernMinecraft);
         Assert.True(
-            MemorySizingService.GetRecommendedDefaultMemoryGb(profile, 32UL * 1024 * 1024 * 1024) <= 6,
+            MemorySizingService.GetRecommendedMemoryGb(profile, 32UL * 1024 * 1024 * 1024) <= 6,
             "vanilla must not be offered a modpack's number");
     }
 

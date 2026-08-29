@@ -44,8 +44,13 @@ public sealed class SettingsSchemaTests : IDisposable
 
         // 128 is the largest number the type allows and no machine's share of
         // itself, so whatever this one is, the answer is that share.
-        Assert.Equal(MemorySizingService.GetAllowedMaxMemoryGb(), settings.MaxMemoryGb);
-        Assert.Equal(settings.MaxMemoryGb, MemorySizingService.ClampMemoryGb(settings.MaxMemoryGb));
+        var unseenPack = PackMemoryProfile.Unknown;
+        Assert.Equal(
+            MemorySizingService.GetAllowedHeapGb(unseenPack, VideoMemoryProfile.Measure()),
+            settings.MaxHeapGb);
+        Assert.Equal(
+            settings.MaxHeapGb,
+            MemorySizingService.ClampHeapGb(settings.MaxHeapGb, unseenPack, VideoMemoryProfile.Measure()));
     }
 
     /// <summary>
@@ -72,19 +77,15 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal("MarkZamore", settings.PlayerName);
-        // 12 was written when the number meant the Java heap alone. It becomes
-        // the smallest budget that still leaves that heap, so the game keeps
-        // exactly the memory it had. There is no pack under this root, so the
-        // split is the one the launcher uses for a pack it cannot see.
-        // ...and then held to what this machine may be asked for, which is why
-        // the carried-across budget is clamped rather than taken as it comes:
-        // a sixteen gigabyte runner cannot offer what a thirty-two gigabyte
-        // desktop can, and the number has to be right on both.
+        // 12 was written before either flag existed, which means it was already
+        // a heap: the number is taken as it stands and only held to what this
+        // machine will leave a pack it cannot see. A sixteen gigabyte runner
+        // cannot offer what a thirty-two gigabyte desktop can, and the number
+        // has to be right on both.
         var unseen = PackMemoryProfile.Unknown;
-        var carried = MemorySizingService.ClampMemoryGb(
-            MemorySizingService.GetBudgetForHeapGb(unseen, 12));
-        Assert.Equal(carried, settings.MaxMemoryGb);
-        Assert.True(settings.MemorySettingIsWholeGame);
+        var carried = MemorySizingService.ClampHeapGb(12, unseen, VideoMemoryProfile.Measure());
+        Assert.Equal(carried, settings.MaxHeapGb);
+        Assert.True(settings.MemorySettingIsTheHeap);
         Assert.Equal("Infinity", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
 
@@ -99,7 +100,7 @@ public sealed class SettingsSchemaTests : IDisposable
         // across is read as it stands, not converted again.
         var reloaded = new SettingsService(paths).Load();
         Assert.Equal("MarkZamore", reloaded.PlayerName);
-        Assert.Equal(settings.MaxMemoryGb, reloaded.MaxMemoryGb);
+        Assert.Equal(settings.MaxHeapGb, reloaded.MaxHeapGb);
     }
 
     [Fact]
@@ -131,9 +132,9 @@ public sealed class SettingsSchemaTests : IDisposable
         var vanilla = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
         Assert.True(vanilla.IsKnown);
         Assert.Equal(
-            MemorySizingService.GetRecommendedDefaultMemoryGb(vanilla, VideoMemoryProfile.Measure()),
-            settings.MaxMemoryGb);
-        Assert.True(settings.MaxMemoryGb < 20, "vanilla must not keep a modpack's number");
+            MemorySizingService.GetRecommendedMemoryGb(vanilla, VideoMemoryProfile.Measure()),
+            settings.MaxHeapGb);
+        Assert.True(settings.MaxHeapGb < 20, "vanilla must not keep a modpack's number");
     }
 
     /// <summary>
@@ -158,11 +159,19 @@ public sealed class SettingsSchemaTests : IDisposable
 
         var settings = new SettingsService(paths).Load();
 
-        Assert.Equal(MemorySizingService.ClampMemoryGb(20), settings.MaxMemoryGb);
+        // 20 was written while the number meant the whole of the game, so what
+        // survives is the heap those 20 were already leaving this pack - one
+        // gigabyte less for a vanilla client - and then only as much of it as
+        // the machine reading the file will allow.
+        var vanillaPack = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
+        var video = VideoMemoryProfile.Measure();
+        var kept = MemorySizingService.ClampHeapGb(
+            MemorySizingService.GetHeapForBudgetGb(vanillaPack, 20, video), vanillaPack, video);
+        Assert.Equal(kept, settings.MaxHeapGb);
         // And it is kept under the name of the pack it was chosen on. A file
         // from before the number was per-pack cannot say which pack that was,
         // so it is taken to have been the one that was selected.
-        Assert.Equal(MemorySizingService.ClampMemoryGb(20), settings.MemoryByPack["Vanilla"]);
+        Assert.Equal(kept, settings.MemoryByPack["Vanilla"]);
     }
 
     /// <summary>
@@ -187,20 +196,21 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = service.Load();
 
         // Set on one pack.
-        settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(3);
-        service.RememberMemoryForPack(settings, settings.MaxMemoryGb);
+        settings.MaxHeapGb = 3;
+        service.RememberMemoryForPack(settings, settings.MaxHeapGb);
         service.Save(settings);
-        var laptopNumber = settings.MaxMemoryGb;
+        var laptopNumber = settings.MaxHeapGb;
 
         // Switch to the other, which was never set: it gets the suggestion.
         settings.ClientRelativePath = "Heavy";
         service.MeasurePack(settings.ClientRelativePath);
         service.ApplyPackMemory(settings);
-        Assert.Null(SettingsService.RememberedMemoryGb(settings));
-        settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(12);
-        service.RememberMemoryForPack(settings, settings.MaxMemoryGb);
+        Assert.Null(service.RememberedMemoryGb(settings));
+        settings.MaxHeapGb = MemorySizingService.ClampHeapGb(
+            12, service.PackMemory, VideoMemoryProfile.Measure(), service.MeasuredMemory);
+        service.RememberMemoryForPack(settings, settings.MaxHeapGb);
         service.Save(settings);
-        var heavyNumber = settings.MaxMemoryGb;
+        var heavyNumber = settings.MaxHeapGb;
 
         // Back to the first, in a launcher that has just started.
         var reloaded = new SettingsService(paths).Load();
@@ -209,7 +219,7 @@ public sealed class SettingsSchemaTests : IDisposable
         second.MeasurePack(reloaded.ClientRelativePath);
         second.ApplyPackMemory(reloaded);
 
-        Assert.Equal(laptopNumber, reloaded.MaxMemoryGb);
+        Assert.Equal(laptopNumber, reloaded.MaxHeapGb);
         Assert.Equal(heavyNumber, reloaded.MemoryByPack["Heavy"]);
     }
 
@@ -227,12 +237,12 @@ public sealed class SettingsSchemaTests : IDisposable
 
         var service = new SettingsService(paths);
         var settings = service.Load();
-        var chosen = MemorySizingService.ClampMemoryGb(3);
-        settings.MaxMemoryGb = chosen;
+        const int chosen = 3;
+        settings.MaxHeapGb = chosen;
         service.RememberMemoryForPack(settings, chosen);
         service.Save(settings);
 
-        Assert.Equal(chosen, new SettingsService(paths).Load().MaxMemoryGb);
+        Assert.Equal(chosen, new SettingsService(paths).Load().MaxHeapGb);
     }
 
     private static void WriteSettings(AppPaths paths, int memoryGb, bool chosenByPlayer, string pack)

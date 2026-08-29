@@ -5,11 +5,20 @@ namespace Minecraft;
 /// <summary>
 /// How much memory the game is allowed, and how that number is divided.
 ///
-/// The number a player sets is everything the game may take: the Java heap and
-/// the room beside it - class data, compiled code, thread stacks, and above all
-/// the buffers Sodium hands the graphics driver, which no Java setting bounds.
-/// Only the heap can be handed to the JVM, so the launcher works out what the
-/// pack holds outside it and gives the heap what is left.
+/// The number a player sets is the Java heap, and nothing is taken out of it:
+/// it goes to <c>-Xmx</c> as it stands, which is the number the game prints on
+/// F3 and in a crash report. The room beside the heap - class data, compiled
+/// code, thread stacks, and above all the buffers Sodium hands the graphics
+/// driver, which no Java setting bounds - is real and still has to come from
+/// somewhere, so it is kept out of the largest number the field will accept
+/// rather than out of the number in it.
+///
+/// That is a rearrangement rather than a loosening. The largest heap a machine
+/// can reach is what it always was: a 32 GB machine may be asked for 24 GB
+/// altogether, Limitless 8 holds eight of them outside its heap, and the field
+/// tops out at sixteen - the same sixteen a 24 GB budget used to leave. What
+/// changed is that the player is told the sixteen instead of the twenty-four,
+/// and the game agrees with them afterwards.
 ///
 /// Every rule here reads a <see cref="PackMemoryProfile"/> rather than a
 /// constant, because the same launcher runs vanilla on an old version and packs
@@ -34,10 +43,10 @@ namespace Minecraft;
 /// </summary>
 public static class MemorySizingService
 {
-    public const int MinMemoryGb = 2;
-    public const int MaxMemoryGb = 128;
-    /// <summary>The smallest heap worth starting with, whatever the budget.</summary>
+    /// <summary>The smallest heap worth starting with, and the floor of the field.</summary>
     public const int MinHeapGb = 2;
+    /// <summary>The largest heap any arithmetic here may produce.</summary>
+    public const int MaxHeapGb = 128;
     /// <summary>
     /// Past this a larger heap buys garbage-collection pauses rather than
     /// comfort, so it bounds what the launcher suggests - not what a player may
@@ -127,30 +136,62 @@ public static class MemorySizingService
     /// <summary>How much over a measurement its reserve is set; see <see cref="MeasuredReserveGb"/>.</summary>
     private const double MeasuredMargin = 1.1;
 
-    public static int GetAllowedMaxMemoryGb()
+    public static int GetWholeGameAllowanceGb()
     {
         try
         {
-            return GetAllowedMaxMemoryGb(GetTotalPhysicalMemoryBytes());
+            return GetWholeGameAllowanceGb(GetTotalPhysicalMemoryBytes());
         }
         catch
         {
-            return MaxMemoryGb;
+            return MaxHeapGb;
         }
     }
 
-    public static int GetRecommendedDefaultMemoryGb(
+    /// <summary>
+    /// The largest heap this machine offers this pack: everything the machine
+    /// may be asked for, less the room the pack holds outside its heap. This is
+    /// what the field refuses to go above, and it is where the reserve is spent
+    /// now that the player's own number is not touched.
+    /// </summary>
+    public static int GetAllowedHeapGb(
         PackMemoryProfile pack,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default)
     {
         try
         {
-            return GetRecommendedDefaultMemoryGb(pack, GetTotalPhysicalMemoryBytes(), video, measured);
+            return GetAllowedHeapGb(pack, GetTotalPhysicalMemoryBytes(), video, measured);
         }
         catch
         {
-            return 16;
+            return MaxHeapGb;
+        }
+    }
+
+    /// <summary>The same ceiling, for a machine of a stated size.</summary>
+    public static int GetAllowedHeapGb(
+        PackMemoryProfile pack,
+        ulong totalPhysicalMemoryBytes,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
+    {
+        var wholeGameGb = GetWholeGameAllowanceGb(totalPhysicalMemoryBytes);
+        return Math.Clamp(wholeGameGb - GetNativeReserveGb(pack, wholeGameGb, video, measured), MinHeapGb, MaxHeapGb);
+    }
+
+    public static int GetRecommendedMemoryGb(
+        PackMemoryProfile pack,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default)
+    {
+        try
+        {
+            return GetRecommendedMemoryGb(pack, GetTotalPhysicalMemoryBytes(), video, measured);
+        }
+        catch
+        {
+            return MaxRecommendedHeapGb / 2;
         }
     }
 
@@ -208,22 +249,23 @@ public static class MemorySizingService
     /// <summary>
     /// Everything the pack needs beside its heap. No Java setting bounds the
     /// last of it, so this is not a limit the launcher can impose - it is room
-    /// it keeps out of the budget, so that the number a player sets is what the
-    /// game takes altogether rather than what one part of it takes.
+    /// it keeps out of the largest heap it will offer, so that the machine has
+    /// somewhere to put it while the number the player sets stays theirs.
     /// </summary>
     /// <remarks>
-    /// The budget is consulted in one case only: a pack the launcher has not
-    /// been able to look at, and has not watched either. Then it keeps to the
-    /// rule it used when it could not tell packs apart at all - half the
-    /// budget, never more than eight - rather than guessing at a weight.
+    /// The whole-game number is consulted in one case only: a pack the launcher
+    /// has not been able to look at, and has not watched either. Then it keeps
+    /// to the rule it used when it could not tell packs apart at all - half of
+    /// what the machine may be asked for, never more than eight - rather than
+    /// guessing at a weight.
     /// </remarks>
     public static int GetNativeReserveGb(
         PackMemoryProfile pack,
-        int budgetGb,
+        int wholeGameGb,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default) =>
         pack.IsKnown || measured.IsKnown ? GetNativeReserveGb(pack, video, measured)
-        : Math.Clamp(budgetGb / 2, 2, 8);
+        : Math.Clamp(wholeGameGb / 2, 2, 8);
 
     /// <summary>The same room, for a pack that has been weighed or watched.</summary>
     public static int GetNativeReserveGb(
@@ -231,7 +273,7 @@ public static class MemorySizingService
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default)
     {
-        if (!pack.IsKnown && !measured.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb, video);
+        if (!pack.IsKnown && !measured.IsKnown) return GetNativeReserveGb(pack, MaxHeapGb, video);
 
         // A pack that can no longer be weighed - the folder gone or unreadable -
         // still has its sessions, and for it the ceiling is the whole answer.
@@ -247,7 +289,7 @@ public static class MemorySizingService
         return Math.Clamp(
             (int)Math.Ceiling(HeldWithinWhatWasSeen(megabytes, measured) / 1024d),
             1,
-            MaxMemoryGb - MinHeapGb);
+            MaxHeapGb - MinHeapGb);
     }
 
     /// <summary>
@@ -312,32 +354,19 @@ public static class MemorySizingService
         return Math.Min(MaxVideoSpillGb, (int)Math.Ceiling(shortfallMb / 1024d));
     }
 
-    /// <summary>The heap a budget leaves this pack: what goes to <c>-Xmx</c>.</summary>
-    public static int GetHeapGb(
+    /// <summary>
+    /// The heap a whole-game budget was leaving this pack. Nothing asks this on
+    /// the way to a launch any more - the field is the heap now - but a settings
+    /// file written while the number meant the whole of the game is read through
+    /// it once, so that the carried-across number is the heap that file was
+    /// already producing and nobody's game changes size.
+    /// </summary>
+    public static int GetHeapForBudgetGb(
         PackMemoryProfile pack,
         int budgetGb,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default) =>
         Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video, measured));
-
-    /// <summary>
-    /// The smallest budget that leaves this pack a heap at all. Below it the
-    /// heap stops shrinking - it has a floor - and the game simply takes more
-    /// than the number says, which is worth telling a player.
-    /// </summary>
-    public static int GetSmallestUsefulBudgetGb(
-        PackMemoryProfile pack,
-        VideoMemoryProfile video = default,
-        MeasuredMemoryProfile measured = default)
-    {
-        var budget = MinMemoryGb;
-        while (budget < MaxMemoryGb &&
-               budget - GetNativeReserveGb(pack, budget, video, measured) < MinHeapGb)
-        {
-            budget++;
-        }
-        return budget;
-    }
 
     /// <summary>
     /// The heap this pack wants: enough to open a world and keep playing in it.
@@ -358,38 +387,22 @@ public static class MemorySizingService
             MaxRecommendedHeapGb);
     }
 
-    /// <summary>
-    /// The budget a stored heap size stands for: the smallest one that still
-    /// leaves that heap. Settings written before the number meant the whole of
-    /// the game are carried across with this, so nobody has their game quietly
-    /// shrink.
-    /// </summary>
-    public static int GetBudgetForHeapGb(
-        PackMemoryProfile pack,
-        int heapGb,
-        VideoMemoryProfile video = default,
-        MeasuredMemoryProfile measured = default)
-    {
-        var budget = Math.Max(MinMemoryGb, heapGb);
-        while (budget < MaxMemoryGb && GetHeapGb(pack, budget, video, measured) < heapGb) budget++;
-        return budget;
-    }
 
     /// <summary>
     /// What the launcher suggests for a pack on this machine: the heap the pack
-    /// wants plus the room it holds beside it - and never more than the machine
-    /// can lend, whatever the pack would like.
+    /// wants - and never more heap than the machine can leave it once the room
+    /// beside the heap is accounted for, whatever the pack would like.
     /// </summary>
-    public static int GetRecommendedDefaultMemoryGb(
+    public static int GetRecommendedMemoryGb(
         PackMemoryProfile pack,
         ulong totalPhysicalMemoryBytes,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default)
     {
         var wanted = pack.IsKnown || measured.IsKnown
-            ? GetRecommendedHeapGb(pack) + GetNativeReserveGb(pack, video, measured)
-            : GetRecommendedDefaultForAnUnseenPack(totalPhysicalMemoryBytes);
-        return Math.Clamp(wanted, MinMemoryGb, GetAllowedMaxMemoryGb(totalPhysicalMemoryBytes));
+            ? GetRecommendedHeapGb(pack)
+            : GetRecommendedHeapForAnUnseenPack(totalPhysicalMemoryBytes);
+        return Math.Clamp(wanted, MinHeapGb, GetAllowedHeapGb(pack, totalPhysicalMemoryBytes, video, measured));
     }
 
     /// <summary>
@@ -406,30 +419,45 @@ public static class MemorySizingService
     /// just under a step was offered less than a smaller machine's share of
     /// itself. A fraction of the machine, rounded to a whole gigabyte, moves
     /// with the machine instead.
+    ///
+    /// Two thirds of the machine is still what an unseen pack is offered
+    /// altogether; what it is offered as heap is that, less the room such a pack
+    /// is assumed to hold outside one. The number this hands back is therefore
+    /// the same heap the old whole-game suggestion was already producing.
     /// </remarks>
-    private static int GetRecommendedDefaultForAnUnseenPack(ulong totalPhysicalMemoryBytes)
+    private static int GetRecommendedHeapForAnUnseenPack(ulong totalPhysicalMemoryBytes)
     {
         var installedGb = totalPhysicalMemoryBytes / BytesPerGb;
-        var wanted = (int)Math.Round(installedGb * UnseenPackShareOfMachine, MidpointRounding.AwayFromZero);
+        var wholeGame = (int)Math.Round(installedGb * UnseenPackShareOfMachine, MidpointRounding.AwayFromZero);
         // And no further than the point where more stops being worth having:
-        // past this the heap an unweighed pack would be given is larger than
-        // the largest one worth recommending, and a larger heap buys longer
-        // collections rather than more comfort. Derived from those two rules
-        // rather than written down, so it follows them if either ever moves.
-        var ceiling = GetBudgetForHeapGb(PackMemoryProfile.Unknown, MaxRecommendedHeapGb);
-        return Math.Clamp(wanted, MinMemoryGb, ceiling);
-    }
-
-    public static int ClampMemoryGb(int value)
-    {
-        return Math.Clamp(value, MinMemoryGb, GetAllowedMaxMemoryGb());
+        // past this a larger heap buys longer collections rather than more
+        // comfort.
+        wholeGame = Math.Max(MinHeapGb, wholeGame);
+        return Math.Clamp(
+            wholeGame - GetNativeReserveGb(PackMemoryProfile.Unknown, wholeGame),
+            MinHeapGb,
+            MaxRecommendedHeapGb);
     }
 
     /// <summary>
-    /// The largest budget a machine may be asked for - all of the game, heap
-    /// and everything beside it. A quarter of the machine is kept back: a game
-    /// that fits the installed memory exactly is a machine that pages, and a
-    /// paging machine spends whole seconds inside one tick.
+    /// A number held to what this machine will leave this pack. The field in the
+    /// window has always refused more than the machine can spare; the file did
+    /// not, so a number written into it by hand went straight to <c>-Xmx</c> and
+    /// the two disagreed about the same setting.
+    /// </summary>
+    public static int ClampHeapGb(
+        int value,
+        PackMemoryProfile pack,
+        VideoMemoryProfile video = default,
+        MeasuredMemoryProfile measured = default) =>
+        Math.Clamp(value, MinHeapGb, GetAllowedHeapGb(pack, video, measured));
+
+    /// <summary>
+    /// The largest a machine may be asked for altogether - the heap and
+    /// everything beside it. A quarter of the machine is kept back: a game that
+    /// fits the installed memory exactly is a machine that pages, and a paging
+    /// machine spends whole seconds inside one tick. The field never shows this
+    /// number; what it shows is this less the pack's own room beside the heap.
     /// </summary>
     /// <remarks>
     /// The floor under that quarter is three gigabytes, not four. Four was too
@@ -442,10 +470,10 @@ public static class MemorySizingService
     /// gigabytes installed there is no arrangement that leaves everybody happy,
     /// and the one that lets the game start is the better of them.
     /// </remarks>
-    public static int GetAllowedMaxMemoryGb(ulong totalPhysicalMemoryBytes)
+    public static int GetWholeGameAllowanceGb(ulong totalPhysicalMemoryBytes)
     {
         var installedGb = (int)Math.Floor(totalPhysicalMemoryBytes / BytesPerGb);
         var reserved = Math.Max(3, installedGb / 4);
-        return Math.Clamp(installedGb - reserved, MinMemoryGb, MaxMemoryGb);
+        return Math.Clamp(installedGb - reserved, MinHeapGb, MaxHeapGb);
     }
 }

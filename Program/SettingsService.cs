@@ -75,14 +75,14 @@ public sealed class SettingsService
         var video = VideoMemoryProfile.Measure();
         var remembered = RememberedMemoryGb(settings);
         var wanted = remembered
-            ?? MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemory, video, MeasuredMemory);
-        if (settings.MaxMemoryGb == wanted) return false;
+            ?? MemorySizingService.GetRecommendedMemoryGb(PackMemory, video, MeasuredMemory);
+        if (settings.MaxHeapGb == wanted) return false;
 
         _logger?.Info(
-            $"Memory for this pack ({DescribePack()}): {wanted} GB for the game, " +
-            $"of which {MemorySizingService.GetHeapGb(PackMemory, wanted, video, MeasuredMemory)} GB is the Java heap" +
+            $"Memory for this pack ({DescribePack()}): a {wanted} GB Java heap, and about " +
+            $"{MemorySizingService.GetNativeReserveGb(PackMemory, video, MeasuredMemory)} GB more beside it" +
             (remembered is null ? "." : ", which is what was set here last."));
-        settings.MaxMemoryGb = wanted;
+        settings.MaxHeapGb = wanted;
         Save(settings);
         return true;
     }
@@ -93,11 +93,11 @@ public sealed class SettingsService
     /// machine it was chosen on, so a file carried to a smaller one still comes
     /// back to a number that fits.
     /// </summary>
-    public static int? RememberedMemoryGb(AppSettings settings)
+    public int? RememberedMemoryGb(AppSettings settings)
     {
         var pack = PackKey(settings);
         return pack.Length != 0 && settings.MemoryByPack.TryGetValue(pack, out var stored)
-            ? MemorySizingService.ClampMemoryGb(stored)
+            ? MemorySizingService.ClampHeapGb(stored, PackMemory, VideoMemoryProfile.Measure(), MeasuredMemory)
             : null;
     }
 
@@ -111,7 +111,51 @@ public sealed class SettingsService
     {
         var pack = PackKey(settings);
         if (pack.Length == 0) return;
-        settings.MemoryByPack[pack] = MemorySizingService.ClampMemoryGb(memoryGb);
+        settings.MemoryByPack[pack] =
+            MemorySizingService.ClampHeapGb(memoryGb, PackMemory, VideoMemoryProfile.Measure(), MeasuredMemory);
+    }
+
+    /// <summary>
+    /// Reads a settings file written while the number meant the whole of the
+    /// game and turns every number in it into the heap that number was already
+    /// producing: the top-level one by the pack that is selected, and each
+    /// remembered pack by its own weight, because a pack's room beside the heap
+    /// is its own. Nobody's game changes size on the launch that changes the
+    /// meaning - only the number they are shown.
+    /// </summary>
+    private void CarryBudgetsAcrossToHeaps(AppSettings settings, PackMemoryProfile pack)
+    {
+        var video = VideoMemoryProfile.Measure();
+        var installedGb = MemorySizingService.GetInstalledMemoryGb();
+
+        var heapGb = MemorySizingService.GetHeapForBudgetGb(pack, settings.MaxHeapGb, video, MeasuredMemory);
+        _logger?.Info(
+            $"Memory setting carried across: {settings.MaxHeapGb} GB for the whole game becomes a {heapGb} GB " +
+            "Java heap, which is the -Xmx that number was already producing.");
+        settings.MaxHeapGb = heapGb;
+
+        var byPack = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, budgetGb) in settings.MemoryByPack ?? [])
+        {
+            var key = name?.Trim() ?? "";
+            if (key.Length == 0) continue;
+            byPack[key] = MemorySizingService.GetHeapForBudgetGb(
+                WeighPack(key), budgetGb, video, _measuredMemory.Recall(key, video, installedGb));
+        }
+        settings.MemoryByPack = byPack;
+    }
+
+    /// <summary>What a pack folder weighs, without disturbing the selected one.</summary>
+    private PackMemoryProfile WeighPack(string relativePath)
+    {
+        try
+        {
+            return PackMemoryProfile.Measure(_paths.CombineUnderPacks(relativePath));
+        }
+        catch (InvalidOperationException)
+        {
+            return PackMemoryProfile.Unknown;
+        }
     }
 
     private static string PackKey(AppSettings settings) => settings.ClientRelativePath?.Trim() ?? "";
@@ -138,19 +182,21 @@ public sealed class SettingsService
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
             var pack = MeasurePack(settings.ClientRelativePath);
-            // Up to schema 11 the number was the Java heap alone; from 12 it is
-            // everything the game may take. A stored heap is carried across as
-            // the smallest budget that still leaves it, so no one's game shrinks
-            // on the launch that changed the meaning.
-            if (hasConfiguredMemory && !HasJsonProperty(json, "memorySettingIsWholeGame"))
+            // The number has meant two things and now means the first of them
+            // again. It was the Java heap; for a while it was everything the
+            // game may take, marked by memorySettingIsWholeGame; and it is the
+            // heap once more. A file from the middle of that is read through the
+            // arithmetic it was written under, so the heap it was already
+            // producing is the heap it keeps - top-level number and every
+            // remembered pack alike, each by its own pack's weight. A file from
+            // before it has a number that was always a heap, and is left alone.
+            if (hasConfiguredMemory &&
+                !HasJsonProperty(json, "memorySettingIsTheHeap") &&
+                HasJsonProperty(json, "memorySettingIsWholeGame"))
             {
-                var budget = MemorySizingService.GetBudgetForHeapGb(
-                    pack, settings.MaxMemoryGb, VideoMemoryProfile.Measure(), MeasuredMemory);
-                _logger?.Info(
-                    $"Memory setting carried across: {settings.MaxMemoryGb} GB of heap becomes {budget} GB for the whole game.");
-                settings.MaxMemoryGb = budget;
+                CarryBudgetsAcrossToHeaps(settings, pack);
             }
-            settings.MemorySettingIsWholeGame = true;
+            settings.MemorySettingIsTheHeap = true;
             settings = ApplyFallbacks(
                 settings, pack, MeasuredMemory, useRecommendedMemory: !hasConfiguredMemory);
             // Whose number is it, and which pack was it for? Up to schema 12
@@ -165,9 +211,9 @@ public sealed class SettingsService
             {
                 var typedByHand = HasJsonProperty(json, "memoryChosenByPlayer")
                     ? ReadBoolean(json, "memoryChosenByPlayer")
-                    : settings.MaxMemoryGb !=
-                      MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown);
-                if (typedByHand) RememberMemoryForPack(settings, settings.MaxMemoryGb);
+                    : settings.MaxHeapGb !=
+                      MemorySizingService.GetRecommendedMemoryGb(PackMemoryProfile.Unknown);
+                if (typedByHand) RememberMemoryForPack(settings, settings.MaxHeapGb);
             }
             ApplyPackMemory(settings);
             TryPersistSafeDefaults(settings);
@@ -202,34 +248,37 @@ public sealed class SettingsService
         settings.LocalIdentityId = settings.LocalIdentityId?.Trim() ?? "";
         settings.LocalIdentityName = settings.LocalIdentityName?.Trim() ?? "";
         if (source is null || useRecommendedMemory ||
-            settings.MaxMemoryGb < MemorySizingService.MinMemoryGb ||
-            settings.MaxMemoryGb > MemorySizingService.MaxMemoryGb)
+            settings.MaxHeapGb < MemorySizingService.MinHeapGb ||
+            settings.MaxHeapGb > MemorySizingService.MaxHeapGb)
         {
-            settings.MaxMemoryGb = MemorySizingService.GetRecommendedDefaultMemoryGb(
+            settings.MaxHeapGb = MemorySizingService.GetRecommendedMemoryGb(
                 pack, VideoMemoryProfile.Measure(), measured);
         }
         else
         {
-            // Held to what this machine may be asked for, not merely to what a
-            // number may be. The box in the window has always refused more than
-            // the machine can spare; the file did not, so a number written into
-            // it by hand went straight to -Xmx and the two disagreed about the
-            // same setting. A file is not a way around the window.
-            settings.MaxMemoryGb = MemorySizingService.ClampMemoryGb(settings.MaxMemoryGb);
+            // Held to what this machine will leave this pack, not merely to what
+            // a number may be. The box in the window has always refused more
+            // than the machine can spare; the file did not, so a number written
+            // into it by hand went straight to -Xmx and the two disagreed about
+            // the same setting. A file is not a way around the window.
+            settings.MaxHeapGb = MemorySizingService.ClampHeapGb(
+                settings.MaxHeapGb, pack, VideoMemoryProfile.Measure(), measured);
         }
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
 
-        // Held to the same limit as the box in the window, one pack at a time,
-        // and case-insensitively keyed however the file spelled it: these are
-        // folder names, and Windows does not think two spellings of one folder
-        // are two folders.
+        // Case-insensitively keyed however the file spelled it: these are folder
+        // names, and Windows does not think two spellings of one folder are two
+        // folders. Held only to what a heap may be, not to what this machine
+        // leaves any one pack - the ceiling is the selected pack's now, and
+        // cutting pack A's number with pack B's reserve would be worse than
+        // leaving it be. It meets the real ceiling when it is put in the field.
         var byPack = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, memoryGb) in settings.MemoryByPack ?? [])
         {
             var key = name?.Trim() ?? "";
             if (key.Length == 0) continue;
-            byPack[key] = MemorySizingService.ClampMemoryGb(memoryGb);
+            byPack[key] = Math.Clamp(memoryGb, MemorySizingService.MinHeapGb, MemorySizingService.MaxHeapGb);
         }
         settings.MemoryByPack = byPack;
 
