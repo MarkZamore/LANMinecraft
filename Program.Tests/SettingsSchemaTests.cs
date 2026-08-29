@@ -44,13 +44,8 @@ public sealed class SettingsSchemaTests : IDisposable
 
         // 128 is the largest number the type allows and no machine's share of
         // itself, so whatever this one is, the answer is that share.
-        var unseenPack = PackMemoryProfile.Unknown;
-        Assert.Equal(
-            MemorySizingService.GetAllowedHeapGb(unseenPack, VideoMemoryProfile.Measure()),
-            settings.MaxHeapGb);
-        Assert.Equal(
-            settings.MaxHeapGb,
-            MemorySizingService.ClampHeapGb(settings.MaxHeapGb, unseenPack, VideoMemoryProfile.Measure()));
+        Assert.Equal(MemorySizingService.GetAllowedHeapGb(), settings.MaxHeapGb);
+        Assert.Equal(settings.MaxHeapGb, MemorySizingService.ClampHeapGb(settings.MaxHeapGb));
     }
 
     /// <summary>
@@ -83,7 +78,7 @@ public sealed class SettingsSchemaTests : IDisposable
         // cannot offer what a thirty-two gigabyte desktop can, and the number
         // has to be right on both.
         var unseen = PackMemoryProfile.Unknown;
-        var carried = MemorySizingService.ClampHeapGb(12, unseen, VideoMemoryProfile.Measure());
+        var carried = MemorySizingService.ClampHeapGb(12);
         Assert.Equal(carried, settings.MaxHeapGb);
         Assert.True(settings.MemorySettingIsTheHeap);
         Assert.Equal("Infinity", settings.ClientRelativePath);
@@ -166,7 +161,7 @@ public sealed class SettingsSchemaTests : IDisposable
         var vanillaPack = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
         var video = VideoMemoryProfile.Measure();
         var kept = MemorySizingService.ClampHeapGb(
-            MemorySizingService.GetHeapForBudgetGb(vanillaPack, 20, video), vanillaPack, video);
+            MemorySizingService.GetHeapForBudgetGb(vanillaPack, 20, video));
         Assert.Equal(kept, settings.MaxHeapGb);
         // And it is kept under the name of the pack it was chosen on. A file
         // from before the number was per-pack cannot say which pack that was,
@@ -206,8 +201,7 @@ public sealed class SettingsSchemaTests : IDisposable
         service.MeasurePack(settings.ClientRelativePath);
         service.ApplyPackMemory(settings);
         Assert.Null(service.RememberedMemoryGb(settings));
-        settings.MaxHeapGb = MemorySizingService.ClampHeapGb(
-            12, service.PackMemory, VideoMemoryProfile.Measure(), service.MeasuredMemory);
+        settings.MaxHeapGb = MemorySizingService.ClampHeapGb(12);
         service.RememberMemoryForPack(settings, settings.MaxHeapGb);
         service.Save(settings);
         var heavyNumber = settings.MaxHeapGb;

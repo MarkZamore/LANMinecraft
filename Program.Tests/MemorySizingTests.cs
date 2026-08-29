@@ -80,8 +80,10 @@ public sealed class MemorySizingTests
     {
         Assert.Equal(8, MemorySizingService.GetNativeReserveGb(BigModpack));
         Assert.Equal(12, MemorySizingService.GetHeapForBudgetGb(BigModpack, 20));
-        Assert.Equal(16, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32)));
         Assert.Equal(12, MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32)));
+        // And the ceiling is the machine, not the pack: 32 GB less the eighth
+        // kept for Windows.
+        Assert.Equal(28, MemorySizingService.GetAllowedHeapGb(Gb(32)));
     }
 
     /// <summary>
@@ -92,11 +94,14 @@ public sealed class MemorySizingTests
     public void APackWithoutMods_IsNotChargedForThem()
     {
         Assert.Equal(1, MemorySizingService.GetNativeReserveGb(Vanilla));
-        Assert.Equal(23, MemorySizingService.GetAllowedHeapGb(Vanilla, Gb(32)));
         Assert.True(
-            MemorySizingService.GetAllowedHeapGb(Vanilla, Gb(32)) >
-            MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32)),
-            "the same machine must offer vanilla the larger heap");
+            MemorySizingService.GetNativeReserveGb(Vanilla) <
+            MemorySizingService.GetNativeReserveGb(BigModpack),
+            "vanilla must not be charged a modpack's room beside the heap");
+        Assert.True(
+            MemorySizingService.GetRecommendedMemoryGb(Vanilla, Gb(32)) <
+            MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32)),
+            "and must not be suggested a modpack's heap");
 
         var suggested = MemorySizingService.GetRecommendedMemoryGb(Vanilla, Gb(32));
         Assert.InRange(suggested, MemorySizingService.MinHeapGb, 6);
@@ -189,12 +194,19 @@ public sealed class MemorySizingTests
     [InlineData(10, 10, 14)]
     [InlineData(8, 12, 12)]
     [InlineData(6, 12, 12)]  // past the cap the shortfall stops being charged
-    public void ASmallCard_IsChargedToTheRoomBesideTheHeap(int videoGb, int reserveGb, int heapGb)
+    public void ASmallCard_IsChargedToTheRoomBesideTheHeap(int videoGb, int reserveGb, int comfortableHeapGb)
     {
         var video = new VideoMemoryProfile(videoGb);
 
         Assert.Equal(reserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, video));
-        Assert.Equal(heapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), video));
+        // What the card costs is room, and room is what the launcher suggests
+        // within - never what it allows. The field's own ceiling is 28 on this
+        // machine whatever card is in it.
+        Assert.Equal(
+            comfortableHeapGb,
+            MemorySizingService.GetWholeGameAllowanceGb(Gb(32)) -
+            MemorySizingService.GetNativeReserveGb(BigModpack, video));
+        Assert.Equal(28, MemorySizingService.GetAllowedHeapGb(Gb(32)));
     }
 
     /// <summary>
@@ -211,8 +223,11 @@ public sealed class MemorySizingTests
         var smallCard = new VideoMemoryProfile(8);
         var largeCard = new VideoMemoryProfile(16);
 
-        Assert.Equal(12, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), smallCard));
-        Assert.Equal(16, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), largeCard));
+        Assert.Equal(12, MemorySizingService.GetNativeReserveGb(BigModpack, smallCard));
+        Assert.Equal(8, MemorySizingService.GetNativeReserveGb(BigModpack, largeCard));
+        Assert.Equal(
+            MemorySizingService.GetAllowedHeapGb(Gb(32)),
+            MemorySizingService.GetAllowedHeapGb(Gb(32)));
 
         Assert.Equal(
             MemorySizingService.GetRecommendedHeapGb(BigModpack),
@@ -243,8 +258,8 @@ public sealed class MemorySizingTests
 
         Assert.Equal(0, MemorySizingService.GetVideoSpillGb(PackMemoryProfile.Unknown, smallCard));
         Assert.Equal(
-            MemorySizingService.GetAllowedHeapGb(PackMemoryProfile.Unknown, Gb(32)),
-            MemorySizingService.GetAllowedHeapGb(PackMemoryProfile.Unknown, Gb(32), smallCard));
+            MemorySizingService.GetNativeReserveGb(PackMemoryProfile.Unknown, 24),
+            MemorySizingService.GetNativeReserveGb(PackMemoryProfile.Unknown, 24, smallCard));
         Assert.Equal(0, MemorySizingService.GetVideoSpillGb(BigModpack, VideoMemoryProfile.Unknown));
     }
 
@@ -265,6 +280,39 @@ public sealed class MemorySizingTests
     }
 
     /// <summary>
+    /// The number a player may type is a fact about their computer and nothing
+    /// else. Not the build, not the card, and above all not what an evening of
+    /// play measured: a ceiling that moves after a session is a launcher that
+    /// takes memory away from somebody who never touched the field.
+    /// </summary>
+    [Theory]
+    [InlineData(8, 5)]
+    [InlineData(16, 13)]
+    [InlineData(32, 28)]
+    [InlineData(64, 56)]
+    public void TheCeiling_IsTheMachineLessTheOperatingSystem_AndNothingElse(int installedGb, int expected)
+    {
+        var measured = MeasuredMemoryProfile.From(
+        [
+            new MemorySession(CommittedMb: 30989, ResidentMb: 20000, HeapMb: 8192, Minutes: 40,
+                When: DateTimeOffset.Now),
+        ]);
+
+        Assert.Equal(expected, MemorySizingService.GetAllowedHeapGb(Gb(installedGb)));
+        foreach (var pack in new[]
+                 {
+                     PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanLimitless
+                 })
+        {
+            // The pack model, the card and the measurement all have answers
+            // here, and the ceiling asks none of them.
+            Assert.True(MemorySizingService.GetNativeReserveGb(pack, new VideoMemoryProfile(8)) > 0);
+            Assert.True(measured.IsKnown);
+            Assert.Equal(expected, MemorySizingService.GetAllowedHeapGb(Gb(installedGb)));
+        }
+    }
+
+    /// <summary>
     /// However small the machine, the field still offers a heap: a pack that
     /// holds more beside its heap than the machine can lend altogether would
     /// otherwise be offered nothing at all, and a launcher that offers nothing
@@ -273,14 +321,11 @@ public sealed class MemorySizingTests
     [Fact]
     public void AMachineTooSmallForThePack_StillOffersTheFloor()
     {
-        foreach (var pack in new[] { Vanilla, SmallModpack, BigModpack, HeavierThanLimitless })
+        for (var installedGb = 4; installedGb <= 64; installedGb++)
         {
-            for (var installedGb = 4; installedGb <= 64; installedGb++)
-            {
-                Assert.True(
-                    MemorySizingService.GetAllowedHeapGb(pack, Gb(installedGb)) >= MemorySizingService.MinHeapGb,
-                    $"{installedGb} GB installed offered less than the floor");
-            }
+            Assert.True(
+                MemorySizingService.GetAllowedHeapGb(Gb(installedGb)) >= MemorySizingService.MinHeapGb,
+                $"{installedGb} GB installed offered less than the floor");
         }
     }
 
@@ -327,7 +372,7 @@ public sealed class MemorySizingTests
                      PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanLimitless
                  })
         {
-            var allowed = MemorySizingService.GetAllowedHeapGb(pack, Gb(installedGb));
+            var allowed = MemorySizingService.GetAllowedHeapGb(Gb(installedGb));
             var suggested = MemorySizingService.GetRecommendedMemoryGb(pack, Gb(installedGb));
 
             Assert.InRange(suggested, MemorySizingService.MinHeapGb, allowed);

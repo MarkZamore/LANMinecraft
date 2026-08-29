@@ -2525,22 +2525,20 @@ public partial class MainWindow : Window
         SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
     }
 
-    private int ClampHeapGb(int value)
+    private static int ClampHeapGb(int value)
     {
-        return MemorySizingService.ClampHeapGb(
-            value, PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
+        return MemorySizingService.ClampHeapGb(value);
     }
 
     /// <summary>
-    /// The largest heap this machine leaves the selected pack. It is the pack's
-    /// number rather than the machine's: the room a pack holds outside its heap
-    /// is what the ceiling is short by, and nine hundred mods hold more of it
-    /// than vanilla does.
+    /// The largest heap this machine offers, which is the machine less the
+    /// operating system and nothing else. It does not depend on the build, on
+    /// the card or on anything a session measured, so the number a player may
+    /// type is the same tomorrow as it was today.
     /// </summary>
-    private int GetAllowedHeapGb()
+    private static int GetAllowedHeapGb()
     {
-        return MemorySizingService.GetAllowedHeapGb(
-            PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
+        return MemorySizingService.GetAllowedHeapGb();
     }
 
     private PackMemoryProfile PackForMemory() => _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
@@ -2583,12 +2581,12 @@ public partial class MainWindow : Window
         var video = VideoMemoryProfile.Measure();
         var measured = MeasuredForMemory();
         var reserveGb = MemorySizingService.GetNativeReserveGb(pack, video, measured);
-        var allowedHeapGb = MemorySizingService.GetAllowedHeapGb(pack, video, measured);
+        var allowedHeapGb = MemorySizingService.GetAllowedHeapGb();
         var tooltip =
             $"Столько памяти получит куча Java - ровно {heapGb} ГБ, это же число покажет игра по F3. " +
             $"Сверх кучи игра займёт ещё около {reserveGb} ГБ: классы модов, скомпилированный код " +
-            $"и буферы Sodium. Больше {allowedHeapGb} ГБ здесь не поставить - это всё, что остаётся " +
-            "после них.";
+            $"и буферы Sodium, итого около {heapGb + reserveGb} ГБ. " +
+            $"Больше {allowedHeapGb} ГБ здесь не поставить - остальное оставлено системе.";
         // Where there is a measurement it is the whole answer, card included,
         // so the card is not named twice: the driver's copy is already inside
         // the number the game was seen holding.

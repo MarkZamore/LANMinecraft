@@ -13,12 +13,13 @@ namespace Minecraft;
 /// somewhere, so it is kept out of the largest number the field will accept
 /// rather than out of the number in it.
 ///
-/// That is a rearrangement rather than a loosening. The largest heap a machine
-/// can reach is what it always was: a 32 GB machine may be asked for 24 GB
-/// altogether, Limitless 8 holds eight of them outside its heap, and the field
-/// tops out at sixteen - the same sixteen a 24 GB budget used to leave. What
-/// changed is that the player is told the sixteen instead of the twenty-four,
-/// and the game agrees with them afterwards.
+/// The ceiling is the machine and nothing else: everything installed, less
+/// what is left to the operating system. A 32 GB computer offers 28, whichever
+/// build is selected and whether or not it has ever been played, which is what
+/// every other Minecraft launcher offers and the only ceiling that does not
+/// move under a player between sessions. What the pack holds beside its heap is
+/// said rather than deducted - the field's own text names it, the log names it,
+/// and the launcher still says so before a launch that cannot work.
 ///
 /// Every rule here reads a <see cref="PackMemoryProfile"/> rather than a
 /// constant, because the same launcher runs vanilla on an old version and packs
@@ -149,19 +150,31 @@ public static class MemorySizingService
     }
 
     /// <summary>
-    /// The largest heap this machine offers this pack: everything the machine
-    /// may be asked for, less the room the pack holds outside its heap. This is
-    /// what the field refuses to go above, and it is where the reserve is spent
-    /// now that the player's own number is not touched.
+    /// The largest heap this machine offers: everything installed, less what is
+    /// left to the operating system. Nothing about the pack, the card or any
+    /// session is in it, which is the point - the number a player may type is a
+    /// fact about their computer and does not move under them.
     /// </summary>
-    public static int GetAllowedHeapGb(
-        PackMemoryProfile pack,
-        VideoMemoryProfile video = default,
-        MeasuredMemoryProfile measured = default)
+    /// <remarks>
+    /// It used to be this less the room the pack holds outside its heap, which
+    /// made the ceiling a different number for every build and, worse, a number
+    /// that changed after an evening of play: the first measurement of a pack
+    /// replaced the estimate and the field silently gained or lost gigabytes.
+    /// A player who set a number and came back to a smaller one has no way to
+    /// tell that from the launcher taking something away.
+    ///
+    /// So this is what every other Minecraft launcher offers - the machine,
+    /// less the operating system - and the room beside the heap is said rather
+    /// than enforced: the field's own text names it, the log names it, and the
+    /// launcher still warns before a launch that cannot work. Whether to spend
+    /// the last gigabytes on a heap is the player's to decide, and they are the
+    /// only one who knows what else is running.
+    /// </remarks>
+    public static int GetAllowedHeapGb()
     {
         try
         {
-            return GetAllowedHeapGb(pack, GetTotalPhysicalMemoryBytes(), video, measured);
+            return GetAllowedHeapGb(GetTotalPhysicalMemoryBytes());
         }
         catch
         {
@@ -170,15 +183,26 @@ public static class MemorySizingService
     }
 
     /// <summary>The same ceiling, for a machine of a stated size.</summary>
-    public static int GetAllowedHeapGb(
-        PackMemoryProfile pack,
-        ulong totalPhysicalMemoryBytes,
-        VideoMemoryProfile video = default,
-        MeasuredMemoryProfile measured = default)
+    public static int GetAllowedHeapGb(ulong totalPhysicalMemoryBytes)
     {
-        var wholeGameGb = GetWholeGameAllowanceGb(totalPhysicalMemoryBytes);
-        return Math.Clamp(wholeGameGb - GetNativeReserveGb(pack, wholeGameGb, video, measured), MinHeapGb, MaxHeapGb);
+        var installedGb = (int)Math.Floor(totalPhysicalMemoryBytes / BytesPerGb);
+        return Math.Clamp(installedGb - GetOperatingSystemReserveGb(installedGb), MinHeapGb, MaxHeapGb);
     }
+
+    /// <summary>
+    /// What is kept for Windows and whatever else the player has open. An
+    /// eighth of the machine, and never less than three gigabytes.
+    /// </summary>
+    /// <remarks>
+    /// Three is the floor because Windows counts what the hardware took for
+    /// itself: a laptop sold with eight gigabytes reports seven and a half,
+    /// which rounds down to seven, and a fourth gigabyte held back there would
+    /// leave less than a pack of fifty mods needs. An eighth is what grows: 32
+    /// GB keeps four and offers 28, 64 keeps eight and offers 56. The old rule
+    /// held back a quarter, which is a reasonable share of a machine to leave
+    /// idle and an unreasonable one to refuse a player who asked for it.
+    /// </remarks>
+    public static int GetOperatingSystemReserveGb(int installedGb) => Math.Max(3, installedGb / 8);
 
     public static int GetRecommendedMemoryGb(
         PackMemoryProfile pack,
@@ -402,7 +426,12 @@ public static class MemorySizingService
         var wanted = pack.IsKnown || measured.IsKnown
             ? GetRecommendedHeapGb(pack)
             : GetRecommendedHeapForAnUnseenPack(totalPhysicalMemoryBytes);
-        return Math.Clamp(wanted, MinHeapGb, GetAllowedHeapGb(pack, totalPhysicalMemoryBytes, video, measured));
+        // Suggested, not permitted: the suggestion still knows what the pack
+        // holds beside its heap and still fits inside the machine, while the
+        // ceiling above lets a player overrule both.
+        var room = GetWholeGameAllowanceGb(totalPhysicalMemoryBytes) -
+                   GetNativeReserveGb(pack, GetWholeGameAllowanceGb(totalPhysicalMemoryBytes), video, measured);
+        return Math.Clamp(wanted, MinHeapGb, Math.Max(MinHeapGb, Math.Min(room, GetAllowedHeapGb(totalPhysicalMemoryBytes))));
     }
 
     /// <summary>
@@ -445,19 +474,18 @@ public static class MemorySizingService
     /// not, so a number written into it by hand went straight to <c>-Xmx</c> and
     /// the two disagreed about the same setting.
     /// </summary>
-    public static int ClampHeapGb(
-        int value,
-        PackMemoryProfile pack,
-        VideoMemoryProfile video = default,
-        MeasuredMemoryProfile measured = default) =>
-        Math.Clamp(value, MinHeapGb, GetAllowedHeapGb(pack, video, measured));
+    public static int ClampHeapGb(int value) => Math.Clamp(value, MinHeapGb, GetAllowedHeapGb());
+
+    /// <summary>The same, for a machine of a stated size.</summary>
+    public static int ClampHeapGb(int value, ulong totalPhysicalMemoryBytes) =>
+        Math.Clamp(value, MinHeapGb, GetAllowedHeapGb(totalPhysicalMemoryBytes));
 
     /// <summary>
-    /// The largest a machine may be asked for altogether - the heap and
-    /// everything beside it. A quarter of the machine is kept back: a game that
-    /// fits the installed memory exactly is a machine that pages, and a paging
-    /// machine spends whole seconds inside one tick. The field never shows this
-    /// number; what it shows is this less the pack's own room beside the heap.
+    /// What the launcher considers a comfortable size for the whole game - the
+    /// heap and everything beside it - with a quarter of the machine left idle.
+    /// Nothing is refused on the strength of it any more: it bounds what the
+    /// launcher SUGGESTS, and the field's own ceiling is the machine less the
+    /// operating system.
     /// </summary>
     /// <remarks>
     /// The floor under that quarter is three gigabytes, not four. Four was too
