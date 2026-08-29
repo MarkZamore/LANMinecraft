@@ -3,12 +3,13 @@
 namespace Minecraft.Tests;
 
 /// <summary>
-/// The number a player sets is everything the game may take, and only the heap
-/// can be handed to Java. What the rest of it comes to belongs to the pack, not
-/// to the launcher: a vanilla client holds about a gigabyte outside its heap,
-/// and Limitless 8 - measured - held almost eight above a twelve gigabyte heap.
-/// So every rule here is asked about a pack, and the same field serves vanilla
-/// on an old version and something heavier than Limitless 8 on a new one.
+/// The number a player sets is the Java heap and goes to -Xmx untouched. What
+/// the game takes on top of it belongs to the pack, not to the launcher - a
+/// vanilla client holds about a gigabyte outside its heap, and Limitless 8,
+/// measured, held almost eight above a twelve gigabyte one - so that room comes
+/// out of the largest heap the field will accept. Every rule here is therefore
+/// asked about a pack, and the same field serves vanilla on an old version and
+/// something heavier than Limitless 8 on a new one.
 /// </summary>
 public sealed class MemorySizingTests
 {
@@ -33,9 +34,9 @@ public sealed class MemorySizingTests
     [InlineData(16, 12)]
     [InlineData(32, 24)]
     [InlineData(64, 48)]
-    public void TheLargestBudgetOffered_LeavesTheMachineItsQuarter(int installedGb, int expected)
+    public void TheLargestTheMachineIsAskedFor_LeavesItItsQuarter(int installedGb, int expected)
     {
-        Assert.Equal(expected, MemorySizingService.GetAllowedMaxMemoryGb(Gb(installedGb)));
+        Assert.Equal(expected, MemorySizingService.GetWholeGameAllowanceGb(Gb(installedGb)));
     }
 
     /// <summary>
@@ -56,27 +57,31 @@ public sealed class MemorySizingTests
     {
         var installed = (ulong)(installedGb * 1024 * 1024 * 1024);
 
-        Assert.Equal(expected, MemorySizingService.GetAllowedMaxMemoryGb(installed));
+        Assert.Equal(expected, MemorySizingService.GetWholeGameAllowanceGb(installed));
     }
 
     /// <summary>A very small machine still gets the floor, not a negative.</summary>
     [Fact]
     public void ASmallMachine_StillGetsTheFloor()
     {
-        Assert.Equal(MemorySizingService.MinMemoryGb, MemorySizingService.GetAllowedMaxMemoryGb(Gb(4)));
-        Assert.Equal(MemorySizingService.MinMemoryGb, MemorySizingService.GetAllowedMaxMemoryGb(Gb(2)));
+        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetWholeGameAllowanceGb(Gb(4)));
+        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetWholeGameAllowanceGb(Gb(2)));
     }
 
     /// <summary>
     /// The pack the model was calibrated on keeps the split it was calibrated
-    /// to: eight gigabytes outside the heap, twelve inside, out of twenty.
+    /// to: eight gigabytes outside the heap and twelve inside. On a 32 GB
+    /// machine those eight come out of the twenty-four the machine may be asked
+    /// for, so the field offers sixteen at most and suggests the twelve the
+    /// pack wants.
     /// </summary>
     [Fact]
     public void ThePackTheModelWasMeasuredOn_KeepsItsSplit()
     {
         Assert.Equal(8, MemorySizingService.GetNativeReserveGb(BigModpack));
-        Assert.Equal(12, MemorySizingService.GetHeapGb(BigModpack, 20));
-        Assert.Equal(20, MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(32)));
+        Assert.Equal(12, MemorySizingService.GetHeapForBudgetGb(BigModpack, 20));
+        Assert.Equal(16, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32)));
+        Assert.Equal(12, MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32)));
     }
 
     /// <summary>
@@ -87,13 +92,14 @@ public sealed class MemorySizingTests
     public void APackWithoutMods_IsNotChargedForThem()
     {
         Assert.Equal(1, MemorySizingService.GetNativeReserveGb(Vanilla));
-        Assert.Equal(19, MemorySizingService.GetHeapGb(Vanilla, 20));
+        Assert.Equal(23, MemorySizingService.GetAllowedHeapGb(Vanilla, Gb(32)));
         Assert.True(
-            MemorySizingService.GetHeapGb(Vanilla, 8) > MemorySizingService.GetHeapGb(BigModpack, 8),
-            "the same budget must leave vanilla the larger heap");
+            MemorySizingService.GetAllowedHeapGb(Vanilla, Gb(32)) >
+            MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32)),
+            "the same machine must offer vanilla the larger heap");
 
-        var suggested = MemorySizingService.GetRecommendedDefaultMemoryGb(Vanilla, Gb(32));
-        Assert.InRange(suggested, MemorySizingService.MinMemoryGb, 6);
+        var suggested = MemorySizingService.GetRecommendedMemoryGb(Vanilla, Gb(32));
+        Assert.InRange(suggested, MemorySizingService.MinHeapGb, 6);
     }
 
     /// <summary>
@@ -111,7 +117,7 @@ public sealed class MemorySizingTests
         var offered = Enumerable.Range(4, 61)
             .Select(installedGb => (
                 Installed: installedGb,
-                Offered: MemorySizingService.GetRecommendedDefaultMemoryGb(
+                Offered: MemorySizingService.GetRecommendedMemoryGb(
                     PackMemoryProfile.Unknown, Gb(installedGb))))
             .ToList();
 
@@ -130,8 +136,8 @@ public sealed class MemorySizingTests
 
         // And it is an answer about this machine, not about the band it fell in.
         Assert.NotEqual(
-            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown, Gb(12)),
-            MemorySizingService.GetRecommendedDefaultMemoryGb(PackMemoryProfile.Unknown, Gb(15)));
+            MemorySizingService.GetRecommendedMemoryGb(PackMemoryProfile.Unknown, Gb(12)),
+            MemorySizingService.GetRecommendedMemoryGb(PackMemoryProfile.Unknown, Gb(15)));
     }
 
     /// <summary>An older Minecraft asks for less than a new one, never more.</summary>
@@ -141,8 +147,8 @@ public sealed class MemorySizingTests
         Assert.True(
             MemorySizingService.GetNativeReserveGb(OldVanilla) <= MemorySizingService.GetNativeReserveGb(Vanilla));
         Assert.True(
-            MemorySizingService.GetRecommendedDefaultMemoryGb(OldVanilla, Gb(32)) <=
-            MemorySizingService.GetRecommendedDefaultMemoryGb(Vanilla, Gb(32)));
+            MemorySizingService.GetRecommendedMemoryGb(OldVanilla, Gb(32)) <=
+            MemorySizingService.GetRecommendedMemoryGb(Vanilla, Gb(32)));
     }
 
     /// <summary>
@@ -163,8 +169,8 @@ public sealed class MemorySizingTests
             MemorySizingService.GetNativeReserveGb(BigModpack),
             "a pack heavier than Limitless 8 must be given more room than it");
         Assert.True(
-            MemorySizingService.GetRecommendedDefaultMemoryGb(HeavierThanLimitless, Gb(64)) >
-            MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(64)));
+            MemorySizingService.GetRecommendedMemoryGb(HeavierThanLimitless, Gb(64)) >
+            MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(64)));
     }
 
     /// <summary>
@@ -188,32 +194,32 @@ public sealed class MemorySizingTests
         var video = new VideoMemoryProfile(videoGb);
 
         Assert.Equal(reserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, video));
-        Assert.Equal(heapGb, MemorySizingService.GetHeapGb(BigModpack, 24, video));
+        Assert.Equal(heapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), video));
     }
 
     /// <summary>
-    /// And the suggestion moves with it: the pack still gets the heap it wants,
-    /// and the number offered grows by what the driver takes - so a player who
-    /// never touches the field is not quietly given a heap the machine cannot
-    /// hold in memory.
+    /// And the ceiling moves with it rather than the pick: what the driver
+    /// keeps in system memory comes out of the largest heap the field will
+    /// take, so the smaller card offers the smaller maximum - by itself,
+    /// without anyone being told to type a different number. The suggestion is
+    /// the heap the pack wants either way, because that has nothing to do with
+    /// the card until the machine runs out of room for it.
     /// </summary>
     [Fact]
-    public void TheSuggestion_MakesRoomForWhatTheDriverKeeps()
+    public void TheCeiling_MakesRoomForWhatTheDriverKeeps()
     {
         var smallCard = new VideoMemoryProfile(8);
         var largeCard = new VideoMemoryProfile(16);
 
-        var onASmallCard = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(32), smallCard);
-        var onALargeCard = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, Gb(32), largeCard);
+        Assert.Equal(12, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), smallCard));
+        Assert.Equal(16, MemorySizingService.GetAllowedHeapGb(BigModpack, Gb(32), largeCard));
 
-        Assert.Equal(24, onASmallCard);
-        Assert.Equal(20, onALargeCard);
         Assert.Equal(
             MemorySizingService.GetRecommendedHeapGb(BigModpack),
-            MemorySizingService.GetHeapGb(BigModpack, onASmallCard, smallCard));
+            MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32), smallCard));
         Assert.Equal(
-            MemorySizingService.GetHeapGb(BigModpack, onALargeCard, largeCard),
-            MemorySizingService.GetHeapGb(BigModpack, onASmallCard, smallCard));
+            MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32), largeCard),
+            MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(32), smallCard));
     }
 
     /// <summary>
@@ -237,8 +243,8 @@ public sealed class MemorySizingTests
 
         Assert.Equal(0, MemorySizingService.GetVideoSpillGb(PackMemoryProfile.Unknown, smallCard));
         Assert.Equal(
-            MemorySizingService.GetHeapGb(PackMemoryProfile.Unknown, 24),
-            MemorySizingService.GetHeapGb(PackMemoryProfile.Unknown, 24, smallCard));
+            MemorySizingService.GetAllowedHeapGb(PackMemoryProfile.Unknown, Gb(32)),
+            MemorySizingService.GetAllowedHeapGb(PackMemoryProfile.Unknown, Gb(32), smallCard));
         Assert.Equal(0, MemorySizingService.GetVideoSpillGb(BigModpack, VideoMemoryProfile.Unknown));
     }
 
@@ -255,53 +261,53 @@ public sealed class MemorySizingTests
     public void AnUnseenPack_KeepsTheOlderHalfAndHalfRule(int budgetGb, int reserveGb, int heapGb)
     {
         Assert.Equal(reserveGb, MemorySizingService.GetNativeReserveGb(PackMemoryProfile.Unknown, budgetGb));
-        Assert.Equal(heapGb, MemorySizingService.GetHeapGb(PackMemoryProfile.Unknown, budgetGb));
+        Assert.Equal(heapGb, MemorySizingService.GetHeapForBudgetGb(PackMemoryProfile.Unknown, budgetGb));
     }
 
     /// <summary>
-    /// However small the number, the heap keeps its floor - and when the budget
-    /// is under what the pack holds beside that heap, the launcher can say so
-    /// rather than pretend the number was kept.
+    /// However small the machine, the field still offers a heap: a pack that
+    /// holds more beside its heap than the machine can lend altogether would
+    /// otherwise be offered nothing at all, and a launcher that offers nothing
+    /// is a launcher that cannot start.
     /// </summary>
     [Fact]
-    public void ABudgetBelowWhatThePackHolds_HasAFloorAndAName()
+    public void AMachineTooSmallForThePack_StillOffersTheFloor()
     {
-        Assert.Equal(
-            MemorySizingService.GetNativeReserveGb(BigModpack) + MemorySizingService.MinHeapGb,
-            MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack));
-
         foreach (var pack in new[] { Vanilla, SmallModpack, BigModpack, HeavierThanLimitless })
         {
-            for (var budget = MemorySizingService.MinMemoryGb; budget <= 32; budget++)
+            for (var installedGb = 4; installedGb <= 64; installedGb++)
             {
                 Assert.True(
-                    MemorySizingService.GetHeapGb(pack, budget) >= MemorySizingService.MinHeapGb,
-                    $"{budget} GB left less than the floor");
+                    MemorySizingService.GetAllowedHeapGb(pack, Gb(installedGb)) >= MemorySizingService.MinHeapGb,
+                    $"{installedGb} GB installed offered less than the floor");
             }
         }
     }
 
     /// <summary>
-    /// A setting written when the number was the heap alone becomes the
-    /// smallest budget that still leaves that heap - nobody's game shrinks on
-    /// the launch that changed what the number means, whichever pack they play.
+    /// A setting written while the number meant the whole of the game becomes
+    /// the heap that number was already producing - so nobody has their game
+    /// change size on the launch that changes what the number means, whichever
+    /// pack they play. Only what they are shown changes.
     /// </summary>
     [Theory]
     [InlineData(8)]
     [InlineData(12)]
     [InlineData(16)]
-    public void AStoredHeap_BecomesABudgetThatStillLeavesIt(int heapGb)
+    [InlineData(20)]
+    [InlineData(24)]
+    public void AStoredBudget_BecomesTheHeapItWasAlreadyLeaving(int budgetGb)
     {
         foreach (var pack in new[] { PackMemoryProfile.Unknown, Vanilla, BigModpack })
         {
-            var budget = MemorySizingService.GetBudgetForHeapGb(pack, heapGb);
+            var heapGb = MemorySizingService.GetHeapForBudgetGb(pack, budgetGb);
 
-            Assert.True(
-                MemorySizingService.GetHeapGb(pack, budget) >= heapGb,
-                $"{budget} GB leaves {MemorySizingService.GetHeapGb(pack, budget)} GB, less than the {heapGb} that was set");
-            Assert.True(
-                MemorySizingService.GetHeapGb(pack, budget - 1) < heapGb,
-                $"{budget - 1} GB would have been enough too");
+            Assert.Equal(
+                Math.Max(
+                    MemorySizingService.MinHeapGb,
+                    budgetGb - MemorySizingService.GetNativeReserveGb(pack, budgetGb)),
+                heapGb);
+            Assert.InRange(heapGb, MemorySizingService.MinHeapGb, budgetGb);
         }
     }
 
@@ -316,16 +322,15 @@ public sealed class MemorySizingTests
     [InlineData(64)]
     public void TheSuggestion_FitsInsideTheLargestOffered(int installedGb)
     {
-        var allowed = MemorySizingService.GetAllowedMaxMemoryGb(Gb(installedGb));
-
         foreach (var pack in new[]
                  {
                      PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanLimitless
                  })
         {
-            var suggested = MemorySizingService.GetRecommendedDefaultMemoryGb(pack, Gb(installedGb));
+            var allowed = MemorySizingService.GetAllowedHeapGb(pack, Gb(installedGb));
+            var suggested = MemorySizingService.GetRecommendedMemoryGb(pack, Gb(installedGb));
 
-            Assert.InRange(suggested, MemorySizingService.MinMemoryGb, allowed);
+            Assert.InRange(suggested, MemorySizingService.MinHeapGb, allowed);
         }
     }
 
@@ -347,10 +352,8 @@ public sealed class MemorySizingTests
     {
         var launch = ReadRepositoryFile("Program", "MinecraftProcessService.cs");
         Assert.Contains("PackMemoryProfile.Measure(packDir)", launch, StringComparison.Ordinal);
-        Assert.Contains(
-            "MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video, measured)",
-            launch,
-            StringComparison.Ordinal);
+        Assert.Contains("var heapGb = settings.MaxHeapGb;", launch, StringComparison.Ordinal);
+        Assert.Contains("var maximumRamMb = checked(heapGb * 1024);", launch, StringComparison.Ordinal);
         // And the measurement is looked up for this pack on this machine, not
         // taken from whatever pack was played last.
         Assert.Contains(
@@ -360,7 +363,7 @@ public sealed class MemorySizingTests
 
         var window = ReadRepositoryFile("Program", "MainWindow.xaml.cs");
         Assert.Contains("MemoryTextBox.ToolTip =", window, StringComparison.Ordinal);
-        Assert.Contains("игра может занять всего", window, StringComparison.Ordinal);
+        Assert.Contains("это же число покажет игра по F3", window, StringComparison.Ordinal);
 
         // The card belongs to the same sum, and to all three places that do it:
         // the number the launcher suggests, the number the field explains and

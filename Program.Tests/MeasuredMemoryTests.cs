@@ -212,17 +212,19 @@ public sealed class MeasuredMemoryTests : IDisposable
     [Theory]
     [InlineData(8, 12, 12, 8, 16)]
     [InlineData(16, 8, 16, 8, 16)]
-    public void ABudgetOfTwentyFour_IsSplitByTheMeasurementWhereThereIsOne(
+    public void TheCeilingOnA32GbMachine_IsSetByTheMeasurementWhereThereIsOne(
         int cardGb, int estimatedReserveGb, int estimatedHeapGb, int measuredReserveGb, int measuredHeapGb)
     {
         var card = new VideoMemoryProfile(cardGb);
         var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
+        const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
 
         Assert.Equal(26989 - 19456, measured.AtMostMb);
         Assert.Equal(estimatedReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card));
-        Assert.Equal(estimatedHeapGb, MemorySizingService.GetHeapGb(BigModpack, 24, card));
+        Assert.Equal(estimatedHeapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
         Assert.Equal(measuredReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
-        Assert.Equal(measuredHeapGb, MemorySizingService.GetHeapGb(BigModpack, 24, card, measured));
+        Assert.Equal(
+            measuredHeapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card, measured));
     }
 
     /// <summary>
@@ -247,7 +249,9 @@ public sealed class MeasuredMemoryTests : IDisposable
             [TheLoggedSession with { HeapMb = 8192, CommittedMb = 30989, ResidentMb = 20000 }]);
 
         Assert.Equal(13, MemorySizingService.GetNativeReserveGb(BigModpack, card, spilling));
-        Assert.Equal(11, MemorySizingService.GetHeapGb(BigModpack, 24, card, spilling));
+        Assert.Equal(
+            11,
+            MemorySizingService.GetAllowedHeapGb(BigModpack, 32UL * 1024 * 1024 * 1024, card, spilling));
     }
 
     /// <summary>
@@ -276,33 +280,29 @@ public sealed class MeasuredMemoryTests : IDisposable
 
         Assert.Equal(30519 - 16384, evening.AtMostMb);
         Assert.Equal(14605 - 8192, evening.AtLeastMb);
-        Assert.Equal(16, MemorySizingService.GetHeapGb(BigModpack, 24, card, evening));
+        Assert.Equal(
+            16,
+            MemorySizingService.GetAllowedHeapGb(BigModpack, 32UL * 1024 * 1024 * 1024, card, evening));
     }
 
     /// <summary>
-    /// Every other rule that divides the number follows the measurement too, or
-    /// the field would describe a launch that does not happen: the smallest
-    /// budget worth setting, the budget a stored heap becomes, and the number
-    /// the launcher suggests.
+    /// The ceiling follows the measurement and the suggestion does not, which is
+    /// the whole shape of the arrangement: what the pack was seen holding beside
+    /// its heap decides how much heap the machine can still offer, while the
+    /// heap the pack asks for is a property of the pack alone.
     /// </summary>
     [Fact]
-    public void EveryRuleThatDividesTheNumber_FollowsTheMeasurement()
+    public void TheCeilingFollowsTheMeasurement_AndTheSuggestionIsThePacks()
     {
         var card = new VideoMemoryProfile(8);
         var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
+        const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
 
+        Assert.Equal(24 - 8, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card, measured));
+        Assert.Equal(24 - 12, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
         Assert.Equal(
-            8 + MemorySizingService.MinHeapGb,
-            MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card, measured));
-        Assert.Equal(
-            12 + MemorySizingService.MinHeapGb,
-            MemorySizingService.GetSmallestUsefulBudgetGb(BigModpack, card));
-        Assert.Equal(
-            8 + 12,
-            MemorySizingService.GetBudgetForHeapGb(BigModpack, 12, card, measured));
-        Assert.Equal(
-            8 + MemorySizingService.GetRecommendedHeapGb(BigModpack),
-            MemorySizingService.GetRecommendedDefaultMemoryGb(
+            MemorySizingService.GetRecommendedHeapGb(BigModpack),
+            MemorySizingService.GetRecommendedMemoryGb(
                 BigModpack, 64UL * 1024 * 1024 * 1024, card, measured));
     }
 
@@ -334,11 +334,12 @@ public sealed class MeasuredMemoryTests : IDisposable
         // nothing away from anyone: the machine's own quarter still rules.
         const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
         var card = new VideoMemoryProfile(8);
-        var onATypicalMachine = MemorySizingService.GetRecommendedDefaultMemoryGb(BigModpack, thirtyTwoGb, card);
+        var onATypicalMachine = MemorySizingService.GetRecommendedMemoryGb(BigModpack, thirtyTwoGb, card);
 
-        Assert.InRange(onATypicalMachine, 2, MemorySizingService.GetAllowedMaxMemoryGb(thirtyTwoGb));
-        Assert.True(
-            MemorySizingService.GetHeapGb(BigModpack, onATypicalMachine, card) <
-            MemorySizingService.MaxRecommendedHeapGb);
+        Assert.InRange(
+            onATypicalMachine,
+            MemorySizingService.MinHeapGb,
+            MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
+        Assert.True(onATypicalMachine < MemorySizingService.MaxRecommendedHeapGb);
     }
 }

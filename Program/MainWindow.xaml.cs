@@ -15,7 +15,7 @@ namespace Minecraft;
 [SuppressMessage("Design", "CA1001", Justification = "WPF owns the window lifetime; disposable services are released by the coordinated Closing handler.")]
 public partial class MainWindow : Window
 {
-    private const int MinMemoryGb = MemorySizingService.MinMemoryGb;
+    private const int MinHeapGb = MemorySizingService.MinHeapGb;
     private static readonly TimeSpan PeerTtl = TimeSpan.FromSeconds(35);
     private static readonly TimeSpan DiagnosticTargetTtl = TimeSpan.FromMinutes(3);
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
@@ -1216,7 +1216,7 @@ public partial class MainWindow : Window
     private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
     {
         PostToUi(() => SetBugReportStatus(
-            neededGb > MemorySizingService.GetAllowedMaxMemoryGb()
+            neededGb > GetAllowedHeapGb()
                 ? "Обнаружен компьютер со слабой аурой"
                 : $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM от {neededGb} ГБ."));
     }
@@ -2015,16 +2015,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        var maxMemoryGb = GetAllowedMaxMemoryGb();
-        if (!int.TryParse(digitsOnly, out var memoryGb) || memoryGb > maxMemoryGb)
+        var allowedHeapGb = GetAllowedHeapGb();
+        if (!int.TryParse(digitsOnly, out var memoryGb) || memoryGb > allowedHeapGb)
         {
-            SetMemoryGb(maxMemoryGb, chosenByPlayer: true);
+            SetMemoryGb(allowedHeapGb, chosenByPlayer: true);
             return;
         }
 
-        if (memoryGb >= MinMemoryGb)
+        if (memoryGb >= MinHeapGb)
         {
-            _settings.MaxMemoryGb = memoryGb;
+            _settings.MaxHeapGb = memoryGb;
             // Typed by hand: from here this is what the pack in front of them
             // is worth, kept under that pack's name and put back in the field
             // every time they return to it. Written on the keystroke rather
@@ -2466,14 +2466,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        SetMemoryGb(MinMemoryGb, chosenByPlayer);
+        SetMemoryGb(MinHeapGb, chosenByPlayer);
     }
 
     private void SetMemoryGb(int memoryGb, bool chosenByPlayer)
     {
         var settings = RequireSettings();
-        var clamped = ClampMemoryGb(memoryGb);
-        settings.MaxMemoryGb = clamped;
+        var clamped = ClampHeapGb(memoryGb);
+        settings.MaxHeapGb = clamped;
         var service = RequireSettingsService();
         if (chosenByPlayer) service.RememberMemoryForPack(settings, clamped);
         service.Save(settings);
@@ -2512,10 +2512,10 @@ public partial class MainWindow : Window
     private void RefreshMemoryText(bool saveIfChanged = false)
     {
         var settings = RequireSettings();
-        var clamped = ClampMemoryGb(settings.MaxMemoryGb);
-        if (settings.MaxMemoryGb != clamped)
+        var clamped = ClampHeapGb(settings.MaxHeapGb);
+        if (settings.MaxHeapGb != clamped)
         {
-            settings.MaxMemoryGb = clamped;
+            settings.MaxHeapGb = clamped;
             if (saveIfChanged)
             {
                 RequireSettingsService().Save(settings);
@@ -2525,15 +2525,28 @@ public partial class MainWindow : Window
         SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
     }
 
-    private static int ClampMemoryGb(int value)
+    private int ClampHeapGb(int value)
     {
-        return MemorySizingService.ClampMemoryGb(value);
+        return MemorySizingService.ClampHeapGb(
+            value, PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
     }
 
-    private static int GetAllowedMaxMemoryGb()
+    /// <summary>
+    /// The largest heap this machine leaves the selected pack. It is the pack's
+    /// number rather than the machine's: the room a pack holds outside its heap
+    /// is what the ceiling is short by, and nine hundred mods hold more of it
+    /// than vanilla does.
+    /// </summary>
+    private int GetAllowedHeapGb()
     {
-        return MemorySizingService.GetAllowedMaxMemoryGb();
+        return MemorySizingService.GetAllowedHeapGb(
+            PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
     }
+
+    private PackMemoryProfile PackForMemory() => _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
+
+    private MeasuredMemoryProfile MeasuredForMemory() =>
+        _settingsService?.MeasuredMemory ?? MeasuredMemoryProfile.Unknown;
 
     private void SetMemoryText(string text)
     {
@@ -2551,48 +2564,44 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The number is everything the game may take, so the field says how it is
-    /// divided: what the Java heap gets and what is kept for the rest of the
-    /// game - the class data of the mods, the compiled code and the buffers
-    /// Sodium hands the graphics driver. The division is the selected pack's,
-    /// so the same number reads differently for vanilla and for nine hundred
-    /// mods; and a number too small for the pack says so.
+    /// The number is the Java heap and goes to <c>-Xmx</c> untouched, so the
+    /// field says two things: that the game will report this very number, and
+    /// how much the game takes on top of it - the class data of the mods, the
+    /// compiled code and the buffers Sodium hands the graphics driver, which is
+    /// what the ceiling of this field is short by. That room is the selected
+    /// pack's, so the same machine offers vanilla a larger heap than it offers
+    /// nine hundred mods.
     /// </summary>
     private void DescribeMemorySplit(string text)
     {
-        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var budgetGb))
+        if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var heapGb))
         {
             MemoryTextBox.ToolTip = null;
             return;
         }
-        var pack = _settingsService?.PackMemory ?? PackMemoryProfile.Unknown;
+        var pack = PackForMemory();
         var video = VideoMemoryProfile.Measure();
-        var measured = _settingsService?.MeasuredMemory ?? MeasuredMemoryProfile.Unknown;
-        var heapGb = MemorySizingService.GetHeapGb(pack, budgetGb, video, measured);
-        var smallestUsefulBudgetGb =
-            MemorySizingService.GetSmallestUsefulBudgetGb(pack, video, measured);
+        var measured = MeasuredForMemory();
+        var reserveGb = MemorySizingService.GetNativeReserveGb(pack, video, measured);
+        var allowedHeapGb = MemorySizingService.GetAllowedHeapGb(pack, video, measured);
         var tooltip =
-            $"Столько памяти игра может занять всего - до {budgetGb} ГБ. " +
-            $"Из них {heapGb} ГБ достаётся куче Java, остальное держат классы модов, " +
-            "скомпилированный код и буферы Sodium.";
+            $"Столько памяти получит куча Java - ровно {heapGb} ГБ, это же число покажет игра по F3. " +
+            $"Сверх кучи игра займёт ещё около {reserveGb} ГБ: классы модов, скомпилированный код " +
+            $"и буферы Sodium. Больше {allowedHeapGb} ГБ здесь не поставить - это всё, что остаётся " +
+            "после них.";
         // Where there is a measurement it is the whole answer, card included,
         // so the card is not named twice: the driver's copy is already inside
         // the number the game was seen holding.
         var videoSpillGb = MemorySizingService.GetVideoSpillGb(pack, video);
         if (measured.IsKnown)
         {
-            tooltip += " Запас вне кучи здесь не оценка, а замер: игра занимала около " +
+            tooltip += " Запас сверх кучи здесь не оценка, а замер: игра занимала около " +
                 $"{measured.AtMostMb} МБ сверх кучи за последние сессии на этой машине.";
         }
         else if (videoSpillGb > 0)
         {
             tooltip += $" У видеокарты {video.DedicatedGb} ГБ, сборке этого мало, и около " +
-                $"{videoSpillGb} ГБ текстур драйвер держит в оперативной - куче достаётся меньше.";
-        }
-        if (budgetGb < smallestUsefulBudgetGb)
-        {
-            tooltip += $" Этой сборке нужно хотя бы {smallestUsefulBudgetGb} ГБ - с меньшим числом " +
-                "игра всё равно возьмёт больше, чем здесь написано.";
+                $"{videoSpillGb} ГБ текстур драйвер держит в оперативной - потолок здесь ниже на столько же.";
         }
         MemoryTextBox.ToolTip = tooltip;
     }

@@ -367,11 +367,18 @@ public sealed class MinecraftProcessService
         // in front of us.
         var installedGb = MemorySizingService.GetInstalledMemoryGb();
         var measured = _measuredMemory.Recall(settings.ClientRelativePath, video, installedGb);
-        var heapGb = MemorySizingService.GetHeapGb(packMemory, settings.MaxMemoryGb, video, measured);
+        // The number the player set, untouched: it is the heap, and it is what
+        // -Xmx is about to be. Everything below is said about it rather than
+        // taken out of it.
+        var heapGb = settings.MaxHeapGb;
         var maximumRamMb = checked(heapGb * 1024);
+        var reserveGb = MemorySizingService.GetNativeReserveGb(packMemory, video, measured);
         _logger.Info(
-            $"Memory: {settings.MaxMemoryGb} GB for the game ({packMemory.ModCount} mods, " +
-            $"Minecraft {descriptor.MinecraftVersion}), of which {heapGb} GB is the Java heap. " +
+            $"Memory: a {heapGb} GB Java heap ({packMemory.ModCount} mods, " +
+            $"Minecraft {descriptor.MinecraftVersion}), which is -Xmx exactly and what the game will report. " +
+            $"This pack holds about {reserveGb} GB more beside it, so the machine is asked for about " +
+            $"{heapGb + reserveGb} GB altogether, and the largest heap it offers this pack is " +
+            $"{MemorySizingService.GetAllowedHeapGb(packMemory, video, measured)} GB. " +
             (measured.IsKnown
                 ? $"The room beside it is held between {measured.AtLeastMb} and {measured.AtMostMb} MB over " +
                   $"{measured.Sessions} session(s) on this card and this much memory."
@@ -393,7 +400,8 @@ public sealed class MinecraftProcessService
                 (measured.IsKnown
                     ? "that much of what it draws is kept in system memory instead, and the measured room " +
                       "beside the heap already contains it."
-                    : "that much of what it draws is kept in system memory instead, and out of the heap."),
+                    : "that much of what it draws is kept in system memory instead, and out of the largest " +
+                      "heap this machine offers."),
             // Read, and it answered that it has none: the processor's own
             // graphics, whose textures come out of system memory - the same pool
             // the heap is measured against. Not charged, because one machine is
@@ -404,8 +412,6 @@ public sealed class MinecraftProcessService
                 "out of system memory. That is not charged separately, and a pack may go over its budget by it.",
             _ => "Video memory: the card could not be read, so nothing is kept out of the heap for it."
         });
-        var smallestUsefulBudgetGb =
-            MemorySizingService.GetSmallestUsefulBudgetGb(packMemory, video, measured);
         var wantedHeapGb = MemorySizingService.GetRecommendedHeapGb(packMemory);
         // There are two ways a budget can be too small and only one of them was
         // caught. Below the threshold the arithmetic itself fails: the room
@@ -423,8 +429,8 @@ public sealed class MinecraftProcessService
         if (packMemory.IsKnown && heapGb < wantedHeapGb)
         {
             _logger.Warn(
-                $"This pack holds about {MemorySizingService.GetNativeReserveGb(packMemory, video, measured)} GB outside its heap " +
-                $"and wants {wantedHeapGb} GB in it, so {settings.MaxMemoryGb} GB leaves it {heapGb} GB of heap.");
+                $"This pack wants a {wantedHeapGb} GB heap and holds about {reserveGb} GB outside it, " +
+                $"so the {heapGb} GB set here is short of what it asks for.");
             // And said to the player, not only to the log. A number somebody
             // typed is theirs and is never moved for them - but it was typed
             // for whatever pack was selected that day, and it follows them onto
@@ -442,10 +448,8 @@ public sealed class MinecraftProcessService
             // Never advise less than the threshold either, since a small
             // machine can have its recommendation clamped below it.
             ClientMemoryIsTooSmall?.Invoke(
-                settings.MaxMemoryGb,
-                Math.Max(
-                    MemorySizingService.GetRecommendedDefaultMemoryGb(packMemory, video, measured),
-                    smallestUsefulBudgetGb));
+                heapGb,
+                MemorySizingService.GetRecommendedMemoryGb(packMemory, video, measured));
         }
         // Held as text, not as MArgument, so the line logged below is the line
         // handed to the JVM. MArgument does not override ToString, so logging
@@ -578,7 +582,7 @@ public sealed class MinecraftProcessService
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MonitorClientExitAsync(
             minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir,
-            settings.MaxMemoryGb, heapGb, video, installedGb);
+            heapGb, video, installedGb);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -599,7 +603,6 @@ public sealed class MinecraftProcessService
         TaskCompletionSource<int> exitCode,
         StartupOutputBuffer startupOutput,
         string gameDir,
-        int maxMemoryGb,
         int heapGb = 0,
         VideoMemoryProfile video = default,
         int installedGb = 0)
@@ -638,7 +641,7 @@ public sealed class MinecraftProcessService
                 // reported the exit code and nobody kept what the process said
                 // on its way out. Everything known about it goes to the log the
                 // moment it happens.
-                ReportUnexpectedExit(process, startupOutput, gameDir, maxMemoryGb);
+                ReportUnexpectedExit(process, startupOutput, gameDir, heapGb);
                 // The pipes are done; what they carried is on disk for a report.
                 startupOutput.Close();
                 // Published before any cleanup so the launch method never has
@@ -675,7 +678,7 @@ public sealed class MinecraftProcessService
     }
 
     private void ReportUnexpectedExit(
-        Process process, StartupOutputBuffer startupOutput, string gameDir, int maxMemoryGb)
+        Process process, StartupOutputBuffer startupOutput, string gameDir, int heapGb)
     {
         try
         {
@@ -691,8 +694,8 @@ public sealed class MinecraftProcessService
             // is said in the window rather than left in the log.
             if (NamesOutOfMemory(console, tail))
             {
-                _logger.Warn($"The game ran out of the {maxMemoryGb} GB it was given.");
-                ClientRanOutOfMemory?.Invoke(maxMemoryGb);
+                _logger.Warn($"The game ran out of the {heapGb} GB heap it was given.");
+                ClientRanOutOfMemory?.Invoke(heapGb);
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or SystemException)
@@ -1081,7 +1084,7 @@ public sealed class MinecraftProcessService
             // launcher's setting, so 0 stands for "not known" and the ending is
             // still named, without a number that might be someone else's.
             _ = MonitorClientExitAsync(process, session.PackRelativePath, exitCode, new StartupOutputBuffer(),
-                _paths.CombineUnderInstances(session.PackRelativePath), maxMemoryGb: 0);
+                _paths.CombineUnderInstances(session.PackRelativePath), heapGb: 0);
         }
         if (adopted > 0) NotifyClientRunningChanged(true);
         return adopted;

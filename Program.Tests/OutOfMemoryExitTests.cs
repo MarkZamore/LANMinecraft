@@ -29,7 +29,7 @@ public sealed class OutOfMemoryExitTests
     {
         var service = Read("Program", "MinecraftProcessService.cs");
         Assert.Contains("public event Action<int>? ClientRanOutOfMemory;", service, StringComparison.Ordinal);
-        Assert.Contains("ClientRanOutOfMemory?.Invoke(maxMemoryGb);", service, StringComparison.Ordinal);
+        Assert.Contains("ClientRanOutOfMemory?.Invoke(heapGb);", service, StringComparison.Ordinal);
 
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;", window, StringComparison.Ordinal);
@@ -91,7 +91,7 @@ public sealed class OutOfMemoryExitTests
         // launch about to be refused would have used, so advising a budget
         // without it would advise one the launcher then divides differently.
         Assert.Contains(
-            "GetRecommendedDefaultMemoryGb(packMemory, video, measured)", service, StringComparison.Ordinal);
+            "GetRecommendedMemoryGb(packMemory, video, measured)", service, StringComparison.Ordinal);
 
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;", window, StringComparison.Ordinal);
@@ -103,14 +103,15 @@ public sealed class OutOfMemoryExitTests
         // And it does not ask for a number the machine will not take: a laptop
         // keeps a quarter of itself back, so the box refuses what a three
         // hundred mod pack needs long before the pack is satisfied.
-        Assert.Contains("neededGb > MemorySizingService.GetAllowedMaxMemoryGb()", handler, StringComparison.Ordinal);
+        Assert.Contains("neededGb > GetAllowedHeapGb()", handler, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// The machine that cannot be advised is a real one, not a corner: eight
-    /// gigabytes installed leaves four or five to offer, and a three hundred
-    /// mod pack wants six before its heap is off the floor. Whichever of the
-    /// two the machine reports, the heap it gets is the floor.
+    /// gigabytes installed leaves four or five for the whole game, and a three
+    /// hundred mod pack holds more than that outside its heap alone. Whichever
+    /// of the two the machine reports, the largest heap it can offer is the
+    /// floor.
     /// </summary>
     [Theory]
     [InlineData(7)]
@@ -122,22 +123,18 @@ public sealed class OutOfMemoryExitTests
         // kitchen-sink pack rather than a shape invented for the test.
         var pack = new PackMemoryProfile(621, 1_386_772_253, 0, "1.21.1");
         var installed = (ulong)reportedGb * 1024 * 1024 * 1024;
-        var offerable = MemorySizingService.GetAllowedMaxMemoryGb(installed);
-        var needed = MemorySizingService.GetSmallestUsefulBudgetGb(pack, VideoMemoryProfile.Unknown);
+        var offerable = MemorySizingService.GetAllowedHeapGb(pack, installed, VideoMemoryProfile.Unknown);
+        var needed = MemorySizingService.GetRecommendedHeapGb(pack);
 
         Assert.True(needed > offerable, $"{needed} GB needed should be past the {offerable} GB this machine offers");
-        Assert.Equal(
-            MemorySizingService.MinHeapGb,
-            MemorySizingService.GetHeapGb(pack, offerable, VideoMemoryProfile.Unknown));
+        Assert.Equal(MemorySizingService.MinHeapGb, offerable);
     }
 
     /// <summary>
-    /// And the number it offers has to be advice rather than the threshold that
-    /// raised it. They are not the same number: the threshold is where the heap
-    /// stops being crushed below its floor, so a player who sets exactly that
-    /// gets the floor - the two gigabytes this was all found on, which the game
-    /// had already died in twice. On the pack it was found on they differ by
-    /// four gigabytes.
+    /// And the number it offers has to be a heap worth having rather than the
+    /// floor. The floor is two gigabytes - the size this was all found on, which
+    /// the game had already died in twice - and the pack it was found on asks
+    /// for five.
     /// </summary>
     [Fact]
     public void TheNumberOffered_LeavesAHeapWorthHaving()
@@ -147,12 +144,12 @@ public sealed class OutOfMemoryExitTests
         // together, so what it asserts is unchanged.
         var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
         var noCard = VideoMemoryProfile.Unknown;
-        var threshold = MemorySizingService.GetSmallestUsefulBudgetGb(pack, noCard);
-        var offered = MemorySizingService.GetRecommendedDefaultMemoryGb(pack, 32L * 1024 * 1024 * 1024, noCard);
+        var offered = MemorySizingService.GetRecommendedMemoryGb(pack, 32UL * 1024 * 1024 * 1024, noCard);
 
-        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetHeapGb(pack, threshold, noCard));
-        Assert.True(offered > threshold, $"{offered} GB should be more than the {threshold} GB that merely stops the fall");
-        Assert.Equal(5, MemorySizingService.GetHeapGb(pack, offered, noCard));
+        Assert.True(
+            offered > MemorySizingService.MinHeapGb,
+            $"{offered} GB should be more than the floor the game has already died in");
+        Assert.Equal(5, offered);
     }
 
     /// <summary>
