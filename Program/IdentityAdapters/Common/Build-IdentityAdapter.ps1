@@ -93,6 +93,8 @@ foreach ($requiredFile in @(
     (Join-Path $commonRoot "PortableXaeroWaypointTransformer.java"),
     (Join-Path $commonRoot "PortableSkinWaitHooks.java"),
     (Join-Path $commonRoot "PortableSkinWaitTransformer.java"),
+    (Join-Path $commonRoot "PortableLanAutoPublishHooks.java"),
+    (Join-Path $commonRoot "PortableLanAutoPublishTransformer.java"),
     (Join-Path $adapterRoot "PortableIdentityHooks.java"),
     (Join-Path $adapterRoot "PortableIdentityTransformer.java"),
     $manifest,
@@ -186,6 +188,7 @@ try {
         "PortableIdentityReflection",
         "PortableSkinProfiles",
         "PortableSkinWaitHooks",
+        "PortableLanAutoPublishHooks",
         "PortableXaeroWaypointHooks")
     $hookDirectory = Join-Path $classes "minecraft\portable\identity"
     $hookTarget = Join-Path $hooksClasses "minecraft\portable\identity"

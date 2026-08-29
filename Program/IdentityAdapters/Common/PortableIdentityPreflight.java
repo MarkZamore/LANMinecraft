@@ -37,6 +37,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableXaeroWaypointTransformer();
             } else if (isAlias("skinManagerClasses", className)) {
                 transformer = new PortableSkinWaitTransformer();
+            } else if (isAlias("lanShareScreenClasses", className)) {
+                transformer = new PortableLanAutoPublishTransformer();
             } else {
                 transformer = new PortableIdentityTransformer();
             }

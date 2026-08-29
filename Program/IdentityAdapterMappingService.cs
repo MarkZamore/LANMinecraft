@@ -21,6 +21,15 @@ internal sealed class IdentityAdapterMappingService
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
     private const string SkinManager = "net/minecraft/client/resources/SkinManager";
+    private const string ShareToLanScreen = "net/minecraft/client/gui/screens/ShareToLanScreen";
+    private const string IntegratedServer = "net/minecraft/client/server/IntegratedServer";
+    private const string MinecraftClient = "net/minecraft/client/Minecraft";
+    private const string Gui = "net/minecraft/client/gui/Gui";
+    private const string ChatComponent = "net/minecraft/client/gui/components/ChatComponent";
+    private const string HttpUtil = "net/minecraft/util/HttpUtil";
+    private const string GameType = "net/minecraft/world/level/GameType";
+    private const string PublishCommand = "net/minecraft/server/commands/PublishCommand";
+    private const string WorldData = "net/minecraft/world/level/storage/WorldData";
     private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
     // The rule about which hosts a skin may come from moved once and was
@@ -166,6 +175,15 @@ internal sealed class IdentityAdapterMappingService
         var playerInfo = mappings.RequireClass(PlayerInfo);
         var playerSkin = mappings.RequireClass(PlayerSkin);
         var skinManager = mappings.RequireClass(SkinManager);
+        var shareScreen = mappings.RequireClass(ShareToLanScreen);
+        var integrated = mappings.RequireClass(IntegratedServer);
+        var minecraftClient = mappings.RequireClass(MinecraftClient);
+        var gui = mappings.RequireClass(Gui);
+        var chatComponent = mappings.RequireClass(ChatComponent);
+        var httpUtil = mappings.RequireClass(HttpUtil);
+        var gameType = mappings.RequireClass(GameType);
+        var publishCommand = mappings.RequireClass(PublishCommand);
+        var worldData = mappings.RequireClass(WorldData);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
 
@@ -194,6 +212,38 @@ internal sealed class IdentityAdapterMappingService
             "getOrLoad",
             descriptor => descriptor ==
                 "(Lcom/mojang/authlib/GameProfile;)Ljava/util/concurrent/CompletableFuture;");
+        var shareInit = shareScreen.RequireMethod("init", descriptor => descriptor == "()V");
+        var publishServer = integrated.RequireMethod(
+            "publishServer",
+            descriptor => descriptor.EndsWith("ZI)Z", StringComparison.Ordinal));
+        var defaultGameType = server.RequireMethod(
+            "getDefaultGameType",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var getWorldData = server.RequireMethod(
+            "getWorldData",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var isPublished = server.RequireMethod("isPublished", descriptor => descriptor == "()Z");
+        var allowCommands = worldData.RequireMethod("isAllowCommands", descriptor => descriptor == "()Z");
+        var availablePort = httpUtil.RequireMethod("getAvailablePort", descriptor => descriptor == "()I");
+        var getInstance = minecraftClient.RequireMethod(
+            "getInstance",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var singleplayerServer = minecraftClient.RequireMethod(
+            "getSingleplayerServer",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var setScreen = minecraftClient.RequireMethod(
+            "setScreen",
+            descriptor => descriptor == $"(L{screen.LeftName};)V");
+        var updateTitle = minecraftClient.RequireMethod("updateTitle", descriptor => descriptor == "()V");
+        var getChat = gui.RequireMethod(
+            "getChat",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var addMessage = chatComponent.RequireMethod(
+            "addMessage",
+            descriptor => descriptor == $"(L{component.LeftName};)V");
+        var publishSuccess = publishCommand.RequireMethod(
+            "getSuccessMessage",
+            descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -263,7 +313,42 @@ internal sealed class IdentityAdapterMappingService
             ["skinWaitEnabled"] = "true",
             ["skinManagerClasses"] = JoinAliases(SkinManager, skinManager.LeftName),
             ["insecureSkinMethods"] = JoinAliases("getInsecureSkin", insecureSkin.LeftName),
-            ["skinOrLoadMethods"] = JoinAliases("getOrLoad", orLoadSkin.LeftName)
+            ["skinOrLoadMethods"] = JoinAliases("getOrLoad", orLoadSkin.LeftName),
+            ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
+            ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
+            ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
+            ["publishServerMethods"] = JoinAliases("publishServer", publishServer.LeftName),
+            ["getDefaultGameTypeMethods"] = JoinAliases("getDefaultGameType", defaultGameType.LeftName),
+            ["getWorldDataMethods"] = JoinAliases("getWorldData", getWorldData.LeftName),
+            ["isPublishedMethods"] = JoinAliases("isPublished", isPublished.LeftName),
+            ["worldDataClasses"] = JoinAliases(WorldData, worldData.LeftName),
+            ["isAllowCommandsMethods"] = JoinAliases("isAllowCommands", allowCommands.LeftName),
+            ["httpUtilClasses"] = JoinAliases(
+                HttpUtil.Replace('/', '.'),
+                httpUtil.LeftName.Replace('/', '.')),
+            ["getAvailablePortMethods"] = JoinAliases("getAvailablePort", availablePort.LeftName),
+            ["gameTypeClasses"] = JoinAliases(
+                GameType.Replace('/', '.'),
+                gameType.LeftName.Replace('/', '.')),
+            ["publishCommandClasses"] = JoinAliases(
+                PublishCommand.Replace('/', '.'),
+                publishCommand.LeftName.Replace('/', '.')),
+            ["publishSuccessMethods"] = JoinAliases("getSuccessMessage", publishSuccess.LeftName),
+            ["minecraftClasses"] = JoinAliases(
+                MinecraftClient.Replace('/', '.'),
+                minecraftClient.LeftName.Replace('/', '.')),
+            ["minecraftGetInstanceMethods"] = JoinAliases("getInstance", getInstance.LeftName),
+            ["getSingleplayerServerMethods"] = JoinAliases("getSingleplayerServer", singleplayerServer.LeftName),
+            ["setScreenMethods"] = JoinAliases("setScreen", setScreen.LeftName),
+            ["updateTitleMethods"] = JoinAliases("updateTitle", updateTitle.LeftName),
+            ["minecraftGuiFields"] = JoinAliases("gui", minecraftClient.RequireField("gui")),
+            ["screenClasses"] = JoinAliases(
+                Screen.Replace('/', '.'),
+                screen.LeftName.Replace('/', '.')),
+            ["guiClasses"] = JoinAliases(Gui, gui.LeftName),
+            ["guiChatMethods"] = JoinAliases("getChat", getChat.LeftName),
+            ["chatComponentClasses"] = JoinAliases(ChatComponent, chatComponent.LeftName),
+            ["chatAddMessageMethods"] = JoinAliases("addMessage", addMessage.LeftName)
         };
 
         AddSkinProperties(properties);
@@ -277,7 +362,9 @@ internal sealed class IdentityAdapterMappingService
             YggdrasilSessionService,
             GameProfile,
             SkinManager,
-            skinManager.LeftName
+            skinManager.LeftName,
+            ShareToLanScreen,
+            shareScreen.LeftName
         };
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
@@ -404,7 +491,16 @@ internal sealed class IdentityAdapterMappingService
                 ClientPacketListener,
                 Screen,
                 PlayerSkin,
-                SkinManager
+                SkinManager,
+                ShareToLanScreen,
+                IntegratedServer,
+                MinecraftClient,
+                Gui,
+                ChatComponent,
+                HttpUtil,
+                GameType,
+                PublishCommand,
+                WorldData
             };
             var classes = new Dictionary<string, Tsrg2Class>(StringComparer.Ordinal);
             Tsrg2Class? current = null;
