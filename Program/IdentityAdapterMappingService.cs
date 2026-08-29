@@ -22,6 +22,11 @@ internal sealed class IdentityAdapterMappingService
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
     private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
+    // Where every entity's name is drawn, whatever the entity. The plate behind
+    // the letters is built here out of one option and one shift, and on a
+    // shaderpack that draws entities without blending it stops being a quarter
+    // of black and becomes all of it - a filled rectangle over the name.
+    private const string EntityRenderer = "net/minecraft/client/renderer/entity/EntityRenderer";
     // The rule about which hosts a skin may come from moved once and was
     // renamed once across the eighteen published authlib releases, and these
     // are the only three forms it has ever taken: isWhitelistedDomain on the
@@ -122,6 +127,7 @@ internal sealed class IdentityAdapterMappingService
             // above are what decide whether anything is patched.
             ["loginClasses"] = LoginListener,
             ["playerInfoClasses"] = PlayerInfo,
+            ["nameTagClasses"] = EntityRenderer,
             ["ftbTeleportClasses"] = JoinAliases(
                 FtbWaypointRowPanel,
                 FtbWaypointMapIcon,
@@ -166,6 +172,7 @@ internal sealed class IdentityAdapterMappingService
         var playerSkin = mappings.RequireClass(PlayerSkin);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
+        var entityRenderer = mappings.RequireClass(EntityRenderer);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -181,8 +188,19 @@ internal sealed class IdentityAdapterMappingService
         var sendCommand = clientPacketListener.RequireMethod(
             "sendCommand",
             descriptor => descriptor == "(Ljava/lang/String;)V");
+        // Matched by name and by ending in a component and a light: the class
+        // has one method called this, and it is the one that draws the plate.
+        var nameTag = entityRenderer.RequireMethod(
+            "renderNameTag",
+            descriptor => descriptor.EndsWith("IF)V", StringComparison.Ordinal));
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
+            ["nameTagClasses"] = JoinAliases(EntityRenderer, entityRenderer.LeftName),
+            ["nameTagMethods"] = JoinAliases("renderNameTag", nameTag.LeftName),
+            ["nameTagDescriptors"] = JoinAliases(
+                "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/network/chat/Component;" +
+                "Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;IF)V",
+                nameTag.LeftDescriptor),
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
             ["packetClasses"] = JoinAliases(HelloPacket, packet.LeftName),
             ["serverClasses"] = JoinAliases(MinecraftServer, server.LeftName),
@@ -383,7 +401,8 @@ internal sealed class IdentityAdapterMappingService
                 PlayerInfo,
                 PlayerSkin,
                 ClientPacketListener,
-                Screen
+                Screen,
+                EntityRenderer
             };
             var classes = new Dictionary<string, Tsrg2Class>(StringComparer.Ordinal);
             Tsrg2Class? current = null;

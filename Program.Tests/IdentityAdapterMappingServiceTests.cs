@@ -43,6 +43,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\ta (Ljava/util/UUID;)Laqv; getPlayer",
         "wz net/minecraft/network/chat/Component",
         "\tb (Ljava/lang/String;)Lxn; literal",
+        "gki net/minecraft/client/renderer/entity/EntityRenderer",
+        "	a (Lbsr;Lwz;Lfbi;Lgez;IF)V renderNameTag",
         "fzq net/minecraft/client/multiplayer/PlayerInfo",
         "\ta (Ljava/util/concurrent/CompletableFuture;Lgrl;Z)Lgrl; lambda$createSkinLookup$2",
         "\ta (Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier; createSkinLookup",
