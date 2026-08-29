@@ -137,13 +137,24 @@
 
                 <!-- One press writes the pack's key layout into the game's options,
                      and the button stays quiet until something - the player in
-                     game, or the pack - changes what is there. -->
-                <Button Grid.Row="1" Grid.Column="1" x:Name="ControlsPresetButton"
-                        Content="Пресет настроек управления"
-                        Click="ControlsPresetButton_Click"
-                        IsEnabled="False"
-                        Margin="{StaticResource Gap.Left2Above2}"
-                        ToolTipService.ShowOnDisabled="True"/>
+                     game, or the pack - changes what is there. The button is
+                     only as wide as its own words, and what that frees goes to
+                     the number the launcher would put in the field above. -->
+                <Grid Grid.Row="1" Grid.Column="1" Margin="{StaticResource Gap.Left2Above2}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" x:Name="MemoryEstimateText"
+                               Style="{StaticResource LabelTextStyle}"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="{StaticResource Gap.Right2}"/>
+                    <Button Grid.Column="1" x:Name="ControlsPresetButton"
+                            Content="Пресет настроек управления"
+                            Click="ControlsPresetButton_Click"
+                            IsEnabled="False"
+                            ToolTipService.ShowOnDisabled="True"/>
+                </Grid>
             </Grid>
 
             <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below2}">
