@@ -56,6 +56,27 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\tc (Ljava/lang/String;)V sendCommand",
         "\td (Ljava/lang/String;)Z sendUnsignedCommand",
         "fod net/minecraft/client/gui/screens/Screen",
+        "foe net/minecraft/client/gui/screens/ShareToLanScreen",
+        "\taT_ ()V init",
+        "guo net/minecraft/client/server/IntegratedServer",
+        "\ta (Ldct;ZI)Z publishServer",
+        "fgo net/minecraft/client/Minecraft",
+        "\tl gui",
+        "\tQ ()Lfgo; getInstance",
+        "\tV ()Lguo; getSingleplayerServer",
+        "\ta (Lfod;)V setScreen",
+        "\td ()V updateTitle",
+        "fhy net/minecraft/client/gui/Gui",
+        "\td ()Lfin; getChat",
+        "fin net/minecraft/client/gui/components/ChatComponent",
+        "\ta (Lwz;)V addMessage",
+        "ayf net/minecraft/util/HttpUtil",
+        "\ta ()I getAvailablePort",
+        "dct net/minecraft/world/level/GameType",
+        "ans net/minecraft/server/commands/PublishCommand",
+        "\ta (I)Lxn; getSuccessMessage",
+        "erl net/minecraft/world/level/storage/WorldData",
+        "\tm ()Z isAllowCommands",
         "fqx$c net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry",
         "\tb serverData",
         "\td LAN_SERVER_HEADER",
@@ -97,6 +118,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "net/minecraft/client/gui/screens/ShareToLanScreen",
         "foe",
         "net/minecraft/client/resources/SkinManager",
+        "grm",
         "grm",
         "com/mojang/authlib/yggdrasil/TextureUrlChecker",
         "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
@@ -295,17 +317,35 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             configuration.Targets,
             target => target.ClassName == "net/minecraft/client/resources/SkinManager");
 
-        // The LAN sharing patches are gone with the VPN transport: neither the
-        // aliases nor the targets may come back.
-        Assert.DoesNotContain(
-            properties.Keys,
-            key => key.StartsWith("lan", StringComparison.Ordinal) ||
-                   key.StartsWith("publish", StringComparison.Ordinal) ||
-                   key is "integratedServerClasses" or "httpUtilClasses" or "getAvailablePortMethods");
+        // Opening a world to the network again skips the settings screen, so
+        // the aliases the guard reads are pinned like every other pair. The LAN
+        // list the VPN transport used is a different thing and stays gone.
+        Assert.Equal("net/minecraft/client/gui/screens/ShareToLanScreen,foe", properties["lanShareScreenClasses"]);
+        Assert.Equal("init,aT_", properties["lanShareInitMethods"]);
+        Assert.Equal("net/minecraft/client/server/IntegratedServer,guo", properties["integratedServerClasses"]);
+        Assert.Equal("publishServer,a", properties["publishServerMethods"]);
+        Assert.Equal("isPublished,r", properties["isPublishedMethods"]);
+        Assert.Equal("getDefaultGameType,u_", properties["getDefaultGameTypeMethods"]);
+        Assert.Equal("getWorldData,bb", properties["getWorldDataMethods"]);
+        Assert.Equal("isAllowCommands,m", properties["isAllowCommandsMethods"]);
+        Assert.Equal("net.minecraft.util.HttpUtil,ayf", properties["httpUtilClasses"]);
+        Assert.Equal("getAvailablePort,a", properties["getAvailablePortMethods"]);
+        Assert.Equal("net.minecraft.world.level.GameType,dct", properties["gameTypeClasses"]);
+        Assert.Equal("net.minecraft.client.Minecraft,fgo", properties["minecraftClasses"]);
+        Assert.Equal("getInstance,Q", properties["minecraftGetInstanceMethods"]);
+        Assert.Equal("getSingleplayerServer,V", properties["getSingleplayerServerMethods"]);
+        Assert.Equal("setScreen,a", properties["setScreenMethods"]);
+        Assert.Equal("updateTitle,d", properties["updateTitleMethods"]);
+        Assert.Equal("gui,l", properties["minecraftGuiFields"]);
+        Assert.Equal("getChat,d", properties["guiChatMethods"]);
+        Assert.Equal("addMessage,a", properties["chatAddMessageMethods"]);
+        Assert.Equal("getSuccessMessage,a", properties["publishSuccessMethods"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "net/minecraft/client/gui/screens/ShareToLanScreen");
         Assert.DoesNotContain(
             configuration.Targets,
-            target => target.ClassName.Contains("ShareToLanScreen", StringComparison.Ordinal) ||
-                      target.ClassName.Contains("NetworkServerEntry", StringComparison.Ordinal));
+            target => target.ClassName.Contains("NetworkServerEntry", StringComparison.Ordinal));
 
         // Both places authlib has ever kept the rule about which hosts a skin
         // may come from, and both names it has gone by. Read out of all

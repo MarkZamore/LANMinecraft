@@ -47,6 +47,7 @@ public final class PortableIdentityAgent {
         instrumentation.addTransformer(new PortableFtbTeleportTransformer(), false);
         instrumentation.addTransformer(new PortableSolarFluxSyncTransformer(), false);
         instrumentation.addTransformer(new PortableSkinWaitTransformer(), false);
+        instrumentation.addTransformer(new PortableLanAutoPublishTransformer(), false);
         System.out.println("[PortableIdentity] Stable UUID adapter enabled.");
     }
 }
