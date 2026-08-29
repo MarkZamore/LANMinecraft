@@ -96,6 +96,7 @@
         <Thickness x:Key="Gap.Left2">8,0,0,0</Thickness>
         <Thickness x:Key="Gap.Left3">12,0,0,0</Thickness>
         <Thickness x:Key="Gap.Left5">24,0,0,0</Thickness>
+        <Thickness x:Key="Gap.Right1">0,0,4,0</Thickness>
         <Thickness x:Key="Gap.Right2">0,0,8,0</Thickness>
         <Thickness x:Key="Gap.Right3">0,0,12,0</Thickness>
         <!-- Two-sided gaps the settings row and the footer need; named by their sides -->
