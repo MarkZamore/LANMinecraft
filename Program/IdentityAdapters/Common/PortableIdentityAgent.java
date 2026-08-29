@@ -1,4 +1,4 @@
-package minecraft.portable.identity;
+﻿package minecraft.portable.identity;
 
 import java.io.InputStream;
 import java.lang.instrument.Instrumentation;
@@ -46,6 +46,7 @@ public final class PortableIdentityAgent {
         instrumentation.addTransformer(new PortableXaeroWaypointTransformer(), false);
         instrumentation.addTransformer(new PortableFtbTeleportTransformer(), false);
         instrumentation.addTransformer(new PortableSolarFluxSyncTransformer(), false);
+        instrumentation.addTransformer(new PortableSkinWaitTransformer(), false);
         System.out.println("[PortableIdentity] Stable UUID adapter enabled.");
     }
 }

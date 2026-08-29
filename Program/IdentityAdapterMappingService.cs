@@ -20,6 +20,7 @@ internal sealed class IdentityAdapterMappingService
     private const string Component = "net/minecraft/network/chat/Component";
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
+    private const string SkinManager = "net/minecraft/client/resources/SkinManager";
     private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
     // The rule about which hosts a skin may come from moved once and was
@@ -164,6 +165,7 @@ internal sealed class IdentityAdapterMappingService
         var component = mappings.RequireClass(Component);
         var playerInfo = mappings.RequireClass(PlayerInfo);
         var playerSkin = mappings.RequireClass(PlayerSkin);
+        var skinManager = mappings.RequireClass(SkinManager);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
 
@@ -181,6 +183,17 @@ internal sealed class IdentityAdapterMappingService
         var sendCommand = clientPacketListener.RequireMethod(
             "sendCommand",
             descriptor => descriptor == "(Ljava/lang/String;)V");
+        // The door a mod uses when it wants a face this instant: it answers
+        // with the default one rather than waiting, which is right for a skin
+        // coming over the internet and wrong for one the launcher is serving
+        // from this machine.
+        var insecureSkin = skinManager.RequireMethod(
+            "getInsecureSkin",
+            descriptor => descriptor == $"(Lcom/mojang/authlib/GameProfile;)L{playerSkin.LeftName};");
+        var orLoadSkin = skinManager.RequireMethod(
+            "getOrLoad",
+            descriptor => descriptor ==
+                "(Lcom/mojang/authlib/GameProfile;)Ljava/util/concurrent/CompletableFuture;");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -246,7 +259,11 @@ internal sealed class IdentityAdapterMappingService
             ["sendUnsignedCommandMethods"] = JoinAliases(
                 "sendUnsignedCommand",
                 sendUnsignedCommand.LeftName),
-            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName)
+            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName),
+            ["skinWaitEnabled"] = "true",
+            ["skinManagerClasses"] = JoinAliases(SkinManager, skinManager.LeftName),
+            ["insecureSkinMethods"] = JoinAliases("getInsecureSkin", insecureSkin.LeftName),
+            ["skinOrLoadMethods"] = JoinAliases("getOrLoad", orLoadSkin.LeftName)
         };
 
         AddSkinProperties(properties);
@@ -258,7 +275,9 @@ internal sealed class IdentityAdapterMappingService
             PlayerInfo,
             playerInfo.LeftName,
             YggdrasilSessionService,
-            GameProfile
+            GameProfile,
+            SkinManager,
+            skinManager.LeftName
         };
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
@@ -383,7 +402,9 @@ internal sealed class IdentityAdapterMappingService
                 PlayerInfo,
                 PlayerSkin,
                 ClientPacketListener,
-                Screen
+                Screen,
+                PlayerSkin,
+                SkinManager
             };
             var classes = new Dictionary<string, Tsrg2Class>(StringComparer.Ordinal);
             Tsrg2Class? current = null;

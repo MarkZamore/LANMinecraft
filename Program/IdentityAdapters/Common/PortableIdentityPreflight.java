@@ -1,4 +1,4 @@
-package minecraft.portable.identity;
+﻿package minecraft.portable.identity;
 
 import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
@@ -35,6 +35,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableSolarFluxSyncTransformer();
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 transformer = new PortableXaeroWaypointTransformer();
+            } else if (isAlias("skinManagerClasses", className)) {
+                transformer = new PortableSkinWaitTransformer();
             } else {
                 transformer = new PortableIdentityTransformer();
             }
