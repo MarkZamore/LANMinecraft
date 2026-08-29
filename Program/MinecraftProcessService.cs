@@ -378,7 +378,7 @@ public sealed class MinecraftProcessService
             $"Minecraft {descriptor.MinecraftVersion}), which is -Xmx exactly and what the game will report. " +
             $"This pack holds about {reserveGb} GB more beside it, so the machine is asked for about " +
             $"{heapGb + reserveGb} GB altogether, and the largest heap it offers this pack is " +
-            $"{MemorySizingService.GetAllowedHeapGb(packMemory, video, measured)} GB. " +
+            $"{MemorySizingService.GetAllowedHeapGb()} GB. " +
             (measured.IsKnown
                 ? $"The room beside it is held between {measured.AtLeastMb} and {measured.AtMostMb} MB over " +
                   $"{measured.Sessions} session(s) on this card and this much memory."

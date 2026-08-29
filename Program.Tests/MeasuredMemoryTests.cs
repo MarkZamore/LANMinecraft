@@ -220,11 +220,14 @@ public sealed class MeasuredMemoryTests : IDisposable
         const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
 
         Assert.Equal(26989 - 19456, measured.AtMostMb);
+        var wholeGame = MemorySizingService.GetWholeGameAllowanceGb(thirtyTwoGb);
         Assert.Equal(estimatedReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card));
-        Assert.Equal(estimatedHeapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
+        Assert.Equal(estimatedHeapGb, wholeGame - MemorySizingService.GetNativeReserveGb(BigModpack, card));
         Assert.Equal(measuredReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
         Assert.Equal(
-            measuredHeapGb, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card, measured));
+            measuredHeapGb, wholeGame - MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
+        // And none of it moves the field's ceiling, which is the machine alone.
+        Assert.Equal(28, MemorySizingService.GetAllowedHeapGb(thirtyTwoGb));
     }
 
     /// <summary>
@@ -251,7 +254,8 @@ public sealed class MeasuredMemoryTests : IDisposable
         Assert.Equal(13, MemorySizingService.GetNativeReserveGb(BigModpack, card, spilling));
         Assert.Equal(
             11,
-            MemorySizingService.GetAllowedHeapGb(BigModpack, 32UL * 1024 * 1024 * 1024, card, spilling));
+            MemorySizingService.GetWholeGameAllowanceGb(32UL * 1024 * 1024 * 1024) -
+            MemorySizingService.GetNativeReserveGb(BigModpack, card, spilling));
     }
 
     /// <summary>
@@ -282,7 +286,8 @@ public sealed class MeasuredMemoryTests : IDisposable
         Assert.Equal(14605 - 8192, evening.AtLeastMb);
         Assert.Equal(
             16,
-            MemorySizingService.GetAllowedHeapGb(BigModpack, 32UL * 1024 * 1024 * 1024, card, evening));
+            MemorySizingService.GetWholeGameAllowanceGb(32UL * 1024 * 1024 * 1024) -
+            MemorySizingService.GetNativeReserveGb(BigModpack, card, evening));
     }
 
     /// <summary>
@@ -298,8 +303,13 @@ public sealed class MeasuredMemoryTests : IDisposable
         var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
         const ulong thirtyTwoGb = 32UL * 1024 * 1024 * 1024;
 
-        Assert.Equal(24 - 8, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card, measured));
-        Assert.Equal(24 - 12, MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
+        Assert.Equal(8, MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
+        Assert.Equal(12, MemorySizingService.GetNativeReserveGb(BigModpack, card));
+        // The ceiling is deaf to all of it: same machine, same number, before
+        // and after a session.
+        Assert.Equal(
+            MemorySizingService.GetAllowedHeapGb(thirtyTwoGb),
+            MemorySizingService.GetAllowedHeapGb(thirtyTwoGb));
         Assert.Equal(
             MemorySizingService.GetRecommendedHeapGb(BigModpack),
             MemorySizingService.GetRecommendedMemoryGb(
@@ -339,7 +349,7 @@ public sealed class MeasuredMemoryTests : IDisposable
         Assert.InRange(
             onATypicalMachine,
             MemorySizingService.MinHeapGb,
-            MemorySizingService.GetAllowedHeapGb(BigModpack, thirtyTwoGb, card));
+            MemorySizingService.GetAllowedHeapGb(thirtyTwoGb));
         Assert.True(onATypicalMachine < MemorySizingService.MaxRecommendedHeapGb);
     }
 }

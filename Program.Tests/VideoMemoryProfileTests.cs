@@ -116,17 +116,19 @@ public sealed class VideoMemoryProfileTests
         // test is about.
         var pack = new PackMemoryProfile(312, 611_350_362, 0, "1.21.1");
 
-        // 13 GB installed is a machine that may be asked for 10 altogether,
-        // which is the number this was found on.
+        // 13 GB installed is a machine that may comfortably be asked for 10
+        // altogether, which is the number this was found on.
         Assert.Equal(
             7,
-            MemorySizingService.GetAllowedHeapGb(pack, 13UL * 1024 * 1024 * 1024, VideoMemoryProfile.Unknown));
+            MemorySizingService.GetWholeGameAllowanceGb(13UL * 1024 * 1024 * 1024) -
+            MemorySizingService.GetNativeReserveGb(pack, VideoMemoryProfile.Unknown));
         // Three gigabytes of heap, taken by a card that does not exist. It was
         // four when this was found, and the pack was on its floor; the numbers
         // moved when the per-mod costs were refitted to the count the loader
         // uses, and what they cost is the same kind of thing.
         Assert.Equal(
             4,
-            MemorySizingService.GetAllowedHeapGb(pack, 13UL * 1024 * 1024 * 1024, new VideoMemoryProfile(2)));
+            MemorySizingService.GetWholeGameAllowanceGb(13UL * 1024 * 1024 * 1024) -
+            MemorySizingService.GetNativeReserveGb(pack, new VideoMemoryProfile(2)));
     }
 }

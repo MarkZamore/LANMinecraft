@@ -123,11 +123,13 @@ public sealed class OutOfMemoryExitTests
         // kitchen-sink pack rather than a shape invented for the test.
         var pack = new PackMemoryProfile(621, 1_386_772_253, 0, "1.21.1");
         var installed = (ulong)reportedGb * 1024 * 1024 * 1024;
-        var offerable = MemorySizingService.GetAllowedHeapGb(pack, installed, VideoMemoryProfile.Unknown);
+        var offerable = MemorySizingService.GetAllowedHeapGb(installed);
         var needed = MemorySizingService.GetRecommendedHeapGb(pack);
 
         Assert.True(needed > offerable, $"{needed} GB needed should be past the {offerable} GB this machine offers");
-        Assert.Equal(MemorySizingService.MinHeapGb, offerable);
+        // What is left after Windows on a machine this size, and it is not
+        // enough: the pack asks for eight.
+        Assert.Equal(reportedGb - 3, offerable);
     }
 
     /// <summary>

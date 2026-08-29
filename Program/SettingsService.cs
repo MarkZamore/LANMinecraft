@@ -97,7 +97,7 @@ public sealed class SettingsService
     {
         var pack = PackKey(settings);
         return pack.Length != 0 && settings.MemoryByPack.TryGetValue(pack, out var stored)
-            ? MemorySizingService.ClampHeapGb(stored, PackMemory, VideoMemoryProfile.Measure(), MeasuredMemory)
+            ? MemorySizingService.ClampHeapGb(stored)
             : null;
     }
 
@@ -111,8 +111,7 @@ public sealed class SettingsService
     {
         var pack = PackKey(settings);
         if (pack.Length == 0) return;
-        settings.MemoryByPack[pack] =
-            MemorySizingService.ClampHeapGb(memoryGb, PackMemory, VideoMemoryProfile.Measure(), MeasuredMemory);
+        settings.MemoryByPack[pack] = MemorySizingService.ClampHeapGb(memoryGb);
     }
 
     /// <summary>
@@ -261,8 +260,7 @@ public sealed class SettingsService
             // than the machine can spare; the file did not, so a number written
             // into it by hand went straight to -Xmx and the two disagreed about
             // the same setting. A file is not a way around the window.
-            settings.MaxHeapGb = MemorySizingService.ClampHeapGb(
-                settings.MaxHeapGb, pack, VideoMemoryProfile.Measure(), measured);
+            settings.MaxHeapGb = MemorySizingService.ClampHeapGb(settings.MaxHeapGb);
         }
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
