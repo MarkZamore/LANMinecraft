@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -136,7 +136,7 @@ public sealed class MeasuredMemoryTests : IDisposable
         // One unusually heavy evening, then enough ordinary ones to push it out.
         store.Remember(
             "Infinity", card, 32, TheLoggedSession with { CommittedMb = 30000, ResidentMb = 20000 });
-        Assert.Equal(30000 - 19456, store.Recall("Infinity", card, 32).BesideHeapMb);
+        Assert.Equal(30000 - 19456, store.Recall("Infinity", card, 32).AtMostMb);
 
         for (var session = 0; session < MeasuredMemoryStore.SessionsKept; session++)
         {
@@ -145,7 +145,7 @@ public sealed class MeasuredMemoryTests : IDisposable
 
         var measured = store.Recall("Infinity", card, 32);
         Assert.Equal(MeasuredMemoryStore.SessionsKept, measured.Sessions);
-        Assert.Equal(26989 - 19456, measured.BesideHeapMb);
+        Assert.Equal(26989 - 19456, measured.AtMostMb);
     }
 
     /// <summary>
@@ -196,20 +196,26 @@ public sealed class MeasuredMemoryTests : IDisposable
     /// card is charged nothing and the same budget leaves 16.
     ///
     /// Measured, the card is not guessed at twice: whatever the driver keeps in
-    /// system memory is already inside the 7533 MB the game was seen holding,
-    /// so both machines keep 9 GB - the measurement and a tenth, rounded up -
-    /// and both play in a 15 GB heap.
+    /// system memory is already inside the 7533 MB the largest session could
+    /// have been holding, and the estimate is not allowed above it. The eight
+    /// gigabyte card's 12 comes down to 9 - the ceiling and a tenth, rounded up
+    /// - and its heap goes from 12 to 15.
+    ///
+    /// The sixteen gigabyte card is charged nothing to begin with, its estimate
+    /// of 8 is already under that ceiling, and it keeps the 16 GB heap it had.
+    /// The measurement is a bound here, not an answer: it has nothing to
+    /// correct.
     /// </summary>
     [Theory]
     [InlineData(8, 12, 12, 9, 15)]
-    [InlineData(16, 8, 16, 9, 15)]
+    [InlineData(16, 8, 16, 8, 16)]
     public void ABudgetOfTwentyFour_IsSplitByTheMeasurementWhereThereIsOne(
         int cardGb, int estimatedReserveGb, int estimatedHeapGb, int measuredReserveGb, int measuredHeapGb)
     {
         var card = new VideoMemoryProfile(cardGb);
         var measured = MeasuredMemoryProfile.From([TheLoggedSession]);
 
-        Assert.Equal(26989 - 19456, measured.BesideHeapMb);
+        Assert.Equal(26989 - 19456, measured.AtMostMb);
         Assert.Equal(estimatedReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card));
         Assert.Equal(estimatedHeapGb, MemorySizingService.GetHeapGb(BigModpack, 24, card));
         Assert.Equal(measuredReserveGb, MemorySizingService.GetNativeReserveGb(BigModpack, card, measured));
@@ -218,20 +224,56 @@ public sealed class MeasuredMemoryTests : IDisposable
 
     /// <summary>
     /// And it cuts both ways. A machine that really does keep four gigabytes of
-    /// textures in system memory says so in its own measurement - the number
-    /// the launcher writes down is what the process asked for, driver copies
-    /// and all - and gets a smaller heap than the estimate would have given it,
-    /// without anybody having guessed.
+    /// textures in system memory gets a smaller heap than the estimate would
+    /// have given it, without anybody having guessed.
     /// </summary>
+    /// <remarks>
+    /// What proves it is the resident half of the pair, not the committed one.
+    /// Memory that is resident is memory the machine actually gave up, so an
+    /// estimate under it cannot be believed whatever the model says; commit,
+    /// which the driver inflates by the whole size of the card, can only ever
+    /// say what the game did not exceed. Here a session with an 8 GB heap was
+    /// resident at 20000 MB - 11808 MB of it outside the heap - and the
+    /// estimate of 12 GB is raised to that floor and a tenth.
+    /// </remarks>
     [Fact]
     public void AMachineThatReallyHoldsMore_IsGivenLessHeap()
     {
         var card = new VideoMemoryProfile(8);
         var spilling = MeasuredMemoryProfile.From(
-            [TheLoggedSession with { CommittedMb = 26989 + 4000, ResidentMb = 20000 }]);
+            [TheLoggedSession with { HeapMb = 8192, CommittedMb = 30989, ResidentMb = 20000 }]);
 
         Assert.Equal(13, MemorySizingService.GetNativeReserveGb(BigModpack, card, spilling));
         Assert.Equal(11, MemorySizingService.GetHeapGb(BigModpack, 24, card, spilling));
+    }
+
+    /// <summary>
+    /// The evening this rule was rewritten. A sixteen gigabyte card commits its
+    /// own size in system memory whether or not a texture is in it, so a
+    /// twenty-six minute session of Limitless 8 was written down as holding
+    /// 14135 MB beside its heap while 2853 MB of it was resident. Read as an
+    /// answer, that turned a 24 GB budget into an 8 GB heap - half of what the
+    /// same launcher had given the same pack the day before.
+    /// </summary>
+    /// <remarks>
+    /// The heap was not what broke that evening, as it turned out; the game was
+    /// standing in the long silence where the class transformer runs, and
+    /// Windows called the loading window hung. But the arithmetic behind the 8
+    /// was wrong on its own terms, and this is the number that says so.
+    /// </remarks>
+    [Fact]
+    public void ACardCommittingItsOwnSize_DoesNotHalveTheHeap()
+    {
+        var card = new VideoMemoryProfile(16);
+        var evening = MeasuredMemoryProfile.From(
+        [
+            TheLoggedSession with { CommittedMb = 30519, ResidentMb = 19237, HeapMb = 16384, Minutes = 26 },
+            TheLoggedSession with { CommittedMb = 18768, ResidentMb = 14605, HeapMb = 8192, Minutes = 22 },
+        ]);
+
+        Assert.Equal(30519 - 16384, evening.AtMostMb);
+        Assert.Equal(14605 - 8192, evening.AtLeastMb);
+        Assert.Equal(16, MemorySizingService.GetHeapGb(BigModpack, 24, card, evening));
     }
 
     /// <summary>

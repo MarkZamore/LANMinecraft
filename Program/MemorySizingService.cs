@@ -222,8 +222,7 @@ public static class MemorySizingService
         int budgetGb,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default) =>
-        measured.IsKnown ? MeasuredReserveGb(measured)
-        : pack.IsKnown ? GetNativeReserveGb(pack, video)
+        pack.IsKnown || measured.IsKnown ? GetNativeReserveGb(pack, video, measured)
         : Math.Clamp(budgetGb / 2, 2, 8);
 
     /// <summary>The same room, for a pack that has been weighed or watched.</summary>
@@ -232,42 +231,50 @@ public static class MemorySizingService
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default)
     {
-        if (measured.IsKnown) return MeasuredReserveGb(measured);
-        if (!pack.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb, video);
+        if (!pack.IsKnown && !measured.IsKnown) return GetNativeReserveGb(pack, MaxMemoryGb, video);
 
-        var megabytes =
-            (pack.IsModernMinecraft ? NativeBaseMb : OlderMinecraftNativeBaseMb) +
-            (double)pack.ModCount * NativePerModMb +
-            pack.ModBytes / BytesPerMb * NativePerJarMegabyte +
-            pack.AssetBytes / BytesPerMb * NativePerAssetMegabyte;
+        // A pack that can no longer be weighed - the folder gone or unreadable -
+        // still has its sessions, and for it the ceiling is the whole answer.
+        var megabytes = pack.IsKnown
+            ? (pack.IsModernMinecraft ? NativeBaseMb : OlderMinecraftNativeBaseMb) +
+              (double)pack.ModCount * NativePerModMb +
+              pack.ModBytes / BytesPerMb * NativePerJarMegabyte +
+              pack.AssetBytes / BytesPerMb * NativePerAssetMegabyte +
+              (double)GetVideoSpillGb(pack, video) * 1024d
+            : measured.AtMostMb;
         // Rounded up: a reserve set too low is spent by the game anyway - over
         // the budget, and into the memory the machine kept for itself.
         return Math.Clamp(
-            (int)Math.Ceiling(megabytes / 1024d) + GetVideoSpillGb(pack, video),
+            (int)Math.Ceiling(HeldWithinWhatWasSeen(megabytes, measured) / 1024d),
             1,
             MaxMemoryGb - MinHeapGb);
     }
 
     /// <summary>
-    /// The room a measured pair is given: what it was seen holding, and a
-    /// little over.
+    /// The estimate, held inside what the sessions actually prove: never below
+    /// the room one of them was seen holding, never above the room the largest
+    /// of them could possibly have held.
     /// </summary>
     /// <remarks>
-    /// The margin is a tenth, on top of the rounding up to a whole gigabyte
-    /// that follows it - so 7533 MB measured becomes 9 GB kept, about 1.6 GB of
-    /// slack. It is there because the sessions behind the number are the ones
-    /// that have happened, not the ones that will: a new dimension, a bigger
-    /// render distance or a resource pack the player adds next week all land
-    /// beside the heap, and a reserve set too low is spent by the game anyway -
-    /// over the budget, and into the memory the machine kept for itself. It is
-    /// only a tenth because every gigabyte of it is a gigabyte of heap out of a
-    /// budget somebody chose, and the estimate this replaces was over by four.
+    /// The measurement used to be the answer outright, and that was one number
+    /// too few. A session gives two: everything the process asked to commit,
+    /// and everything it had resident. What sits beside the heap is somewhere
+    /// between them, and where exactly depends on how full the heap got - which
+    /// is the one quantity here the launcher set rather than watched.
+    ///
+    /// Reading the ceiling as the answer is what cut a 24 GB budget to an 8 GB
+    /// heap on a machine with a sixteen gigabyte card: the driver's mirror of
+    /// that card is committed whether or not anything is in it, so the game was
+    /// charged 14 GB beside its heap while holding 3. The estimate is a model
+    /// and wrong in its own way - on the pack it was fitted to it was over by
+    /// four gigabytes - so neither number is trusted alone. The estimate
+    /// answers, and the pair says how far it is allowed to be wrong.
     /// </remarks>
-    private static int MeasuredReserveGb(MeasuredMemoryProfile measured) =>
-        Math.Clamp(
-            (int)Math.Ceiling(measured.BesideHeapMb * MeasuredMargin / 1024d),
-            1,
-            MaxMemoryGb - MinHeapGb);
+    private static double HeldWithinWhatWasSeen(double estimateMb, MeasuredMemoryProfile measured) =>
+        measured.IsKnown
+            ? Math.Clamp(estimateMb, measured.AtLeastMb * MeasuredMargin, measured.AtMostMb * MeasuredMargin)
+            : estimateMb;
+
 
     /// <summary>
     /// What this pack hands the card and the card cannot hold, which the driver

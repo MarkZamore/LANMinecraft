@@ -2582,7 +2582,7 @@ public partial class MainWindow : Window
         if (measured.IsKnown)
         {
             tooltip += " Запас вне кучи здесь не оценка, а замер: игра занимала около " +
-                $"{measured.BesideHeapMb} МБ сверх кучи за последние сессии на этой машине.";
+                $"{measured.AtMostMb} МБ сверх кучи за последние сессии на этой машине.";
         }
         else if (videoSpillGb > 0)
         {
