@@ -128,6 +128,240 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "com/mojang/authlib/GameProfile"
     ];
 
+    /// <summary>
+    /// A Forge runtime reads the same names out of two files instead of one:
+    /// mcp_config's TSRG2, which numbers every member, and Mojang's own
+    /// mappings, which say what the numbers stand for. Both are derived from
+    /// the golden excerpt above rather than typed out again, so the three can
+    /// never drift apart.
+    /// </summary>
+    [Fact]
+    public void AForgeRuntime_IsReadThroughMojangsOwnMappings()
+    {
+        var (service, runtime, gameDirectory) = CreateForgeFixture(GoldenMappings, DefaultJarClasses);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        // A member comes out numbered, because a number is what the game loads
+        // it as; the obfuscated name is still beside it for the vanilla jar.
+        Assert.Matches(@"^m_\d+_,K$", properties["getAllLevelsMethods"]);
+        Assert.Matches(@"^m_\d+_,a$", properties["setChunkViewDistanceMethods"]);
+        Assert.Matches(@"^m_\d+_,F$", properties["requestedViewDistanceMethods"]);
+        Assert.Matches(@"^f_\d+_,f$", properties["serverFields"]);
+        // A class does not: SRG has used Mojang's own class names since 1.17.
+        Assert.Equal(
+            "net/minecraft/server/level/ServerChunkCache,aqs",
+            properties["chunkSourceClasses"]);
+        // And a class Mojang never obfuscated is one name, not two of the same.
+        Assert.Equal("net/minecraft/server/MinecraftServer", properties["serverClasses"]);
+        // The descriptors are the runtime's own, which for Forge means the
+        // obfuscated one beside the official one, exactly as on NeoForge.
+        Assert.Equal(
+            "(Lcom/mojang/authlib/GameProfile;)V",
+            properties["verifyDescriptors"]);
+    }
+
+    /// <summary>
+    /// Without Mojang's file the numbers stand for nothing, and the build falls
+    /// back to what needs no mappings at all rather than to a wrong guess.
+    /// </summary>
+    [Fact]
+    public void AForgeRuntimeWithoutMojangsMappings_KeepsTheSkinsAndNothingElse()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateForgeFixture(GoldenMappings, DefaultJarClasses, withMojangMappings: false);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("false", properties["identityHooksEnabled"]);
+        Assert.False(properties.ContainsKey("getAllLevelsMethods"));
+    }
+
+    private (IdentityAdapterMappingService Service, PreparedRuntime Runtime, string GameDirectory)
+        CreateForgeFixture(
+            string mergedMappings,
+            IReadOnlyList<string> jarClasses,
+            bool withMojangMappings = true)
+    {
+        var (srg, proguard) = ForgeFlavoured(mergedMappings);
+        var paths = new AppPaths(_root);
+        var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Forge");
+        var mcpDirectory = Path.Combine(runtimeRoot, "libraries", "mcp_config");
+        Directory.CreateDirectory(mcpDirectory);
+        File.WriteAllText(Path.Combine(mcpDirectory, "mcp_config-test-mappings-merged.txt"), srg);
+        if (withMojangMappings)
+        {
+            var mojangDirectory = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client", "1.21.1");
+            Directory.CreateDirectory(mojangDirectory);
+            File.WriteAllText(Path.Combine(mojangDirectory, "client-1.21.1-mappings.txt"), proguard);
+        }
+
+        var clientJar = Path.Combine(runtimeRoot, "client.jar");
+        using (var archive = ZipFile.Open(clientJar, ZipArchiveMode.Create))
+        {
+            foreach (var className in jarClasses)
+            {
+                archive.CreateEntry(className + ".class");
+            }
+        }
+
+        var gameDirectory = Path.Combine(_root, "Minecraft", "Personal", "Instances", "Forge");
+        Directory.CreateDirectory(gameDirectory);
+        var runtime = new PreparedRuntime(
+            runtimeRoot,
+            "forge-profile",
+            Path.Combine(runtimeRoot, "java.exe"),
+            clientJar,
+            new PackRuntimeDescriptor(
+                1,
+                "1.21.1",
+                new PackLoaderDescriptor(PackLoaderKind.Forge, "47.3.0"),
+                "client.jar",
+                "forge-hash"));
+        return (new IdentityAdapterMappingService(paths), runtime, gameDirectory);
+    }
+
+    /// <summary>
+    /// Turns the merged excerpt into the pair a Forge runtime carries: the same
+    /// obfuscated names, members renumbered, and Mojang's own file inverted so
+    /// the numbers can be looked up again.
+    /// </summary>
+    private static (string Srg, string Proguard) ForgeFlavoured(string mergedMappings)
+    {
+        var lines = mergedMappings.Split('\n').Skip(1).Where(line => line.Length > 0).ToArray();
+        var officialOf = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var line in lines.Where(line => line[0] != '\t'))
+        {
+            var parts = line.Split(' ');
+            officialOf[parts[0]] = parts[1];
+        }
+
+        // The excerpt names some classes twice; Mojang's file never does, and
+        // its parser keeps the last of a repeated name, so members are gathered
+        // per class first.
+        var order = new List<string>();
+        var members = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var current = string.Empty;
+        foreach (var line in lines)
+        {
+            if (line[0] != '\t')
+            {
+                current = line.Split(' ')[0];
+                if (!members.ContainsKey(current))
+                {
+                    order.Add(current);
+                    members[current] = [];
+                }
+                continue;
+            }
+            if (!members[current].Contains(line, StringComparer.Ordinal)) members[current].Add(line);
+        }
+
+        var srg = new System.Text.StringBuilder("tsrg2 obf srg\n");
+        var proguard = new System.Text.StringBuilder(
+            "# Fixture in the shape Mojang publishes, which is not their file.\n");
+        var number = 1000;
+        foreach (var obf in order)
+        {
+            srg.Append(obf).Append(' ').Append(officialOf[obf]).Append('\n');
+            proguard.Append(officialOf[obf].Replace('/', '.')).Append(" -> ").Append(obf).Append(":\n");
+            foreach (var line in members[obf])
+            {
+                var parts = line.Trim().Split(' ');
+                if (parts.Length == 2)
+                {
+                    srg.Append('\t').Append(parts[0]).Append(" f_").Append(number).Append("_\n");
+                    proguard.Append("    int ").Append(parts[1])
+                        .Append(" -> ").Append(parts[0]).Append('\n');
+                }
+                else
+                {
+                    srg.Append('\t').Append(parts[0]).Append(' ').Append(parts[1])
+                        .Append(" m_").Append(number).Append("_\n");
+                    proguard.Append("    12:15:").Append(JavaSignature(parts[1], parts[2], officialOf))
+                        .Append(" -> ").Append(parts[0]).Append('\n');
+                }
+                number++;
+            }
+        }
+
+        // Every class a descriptor names has to be somewhere in Mojang's file,
+        // or the descriptor cannot be built back out of it.
+        foreach (var referenced in DescriptorClasses(lines).Where(name => !members.ContainsKey(name)))
+        {
+            proguard.Append(referenced).Append(" -> ").Append(referenced).Append(":\n");
+        }
+        return (srg.ToString(), proguard.ToString());
+    }
+
+    private static IEnumerable<string> DescriptorClasses(IEnumerable<string> lines)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines.Where(line => line[0] == '\t'))
+        {
+            var parts = line.Trim().Split(' ');
+            if (parts.Length < 3) continue;
+            foreach (var match in System.Text.RegularExpressions.Regex.Matches(parts[1], @"L([^;]+);")
+                         .Select(match => match.Groups[1].Value))
+            {
+                if (!match.Contains('/', StringComparison.Ordinal) && seen.Add(match)) yield return match;
+            }
+        }
+    }
+
+    /// <summary>A JVM descriptor written the way Mojang's file writes one.</summary>
+    private static string JavaSignature(
+        string descriptor,
+        string name,
+        Dictionary<string, string> officialOf)
+    {
+        var index = 1;
+        var parameters = new List<string>();
+        while (descriptor[index] != ')')
+        {
+            parameters.Add(ReadJavaType(descriptor, ref index, officialOf));
+        }
+        index++;
+        return $"{ReadJavaType(descriptor, ref index, officialOf)} {name}({string.Join(',', parameters)})";
+    }
+
+    private static string ReadJavaType(string descriptor, ref int index, Dictionary<string, string> officialOf)
+    {
+        var arrays = 0;
+        while (descriptor[index] == '[')
+        {
+            arrays++;
+            index++;
+        }
+        string core;
+        if (descriptor[index] == 'L')
+        {
+            var end = descriptor.IndexOf(';', index);
+            var internalName = descriptor[(index + 1)..end];
+            core = (officialOf.TryGetValue(internalName, out var official) ? official : internalName)
+                .Replace('/', '.');
+            index = end + 1;
+        }
+        else
+        {
+            core = descriptor[index] switch
+            {
+                'V' => "void",
+                'Z' => "boolean",
+                'B' => "byte",
+                'C' => "char",
+                'S' => "short",
+                'I' => "int",
+                'J' => "long",
+                'F' => "float",
+                'D' => "double",
+                _ => throw new InvalidOperationException($"Fixture descriptor is not one: {descriptor}")
+            };
+            index++;
+        }
+        return core + string.Concat(Enumerable.Repeat("[]", arrays));
+    }
+
     private (IdentityAdapterMappingService Service, PreparedRuntime Runtime, string GameDirectory) CreateFixture(
         string mappings,
         IReadOnlyList<string> jarClasses,

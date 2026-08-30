@@ -85,7 +85,7 @@ internal sealed class IdentityAdapterMappingService
 
         try
         {
-            return BuildEverything(runtime, gameDirectory, mappingPath);
+            return BuildEverything(runtime, gameDirectory, mappingPath, FindMojangMappings(runtime.RuntimeRoot));
         }
         catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
         {
@@ -165,9 +165,10 @@ internal sealed class IdentityAdapterMappingService
     private IdentityAdapterConfiguration BuildEverything(
         PreparedRuntime runtime,
         string gameDirectory,
-        string mappingPath)
+        string mappingPath,
+        string? mojangMappingPath)
     {
-        var mappings = Tsrg2Mappings.Read(mappingPath);
+        var mappings = RuntimeNames.Read(mappingPath, mojangMappingPath);
         var listener = mappings.RequireClass(LoginListener);
         var packet = mappings.RequireClass(HelloPacket);
         var server = mappings.RequireClass(MinecraftServer);
@@ -191,7 +192,7 @@ internal sealed class IdentityAdapterMappingService
         var chunkCache = mappings.FindClass(ServerChunkCache);
         var serverPlayer = mappings.FindClass(ServerPlayer);
 
-        var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
+        var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.ObfName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
         var skinLookup = playerInfo.RequireMethod(
             "createSkinLookup",
@@ -226,14 +227,14 @@ internal sealed class IdentityAdapterMappingService
             descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
         var setScreen = minecraftClient.RequireMethod(
             "setScreen",
-            descriptor => descriptor == $"(L{screen.LeftName};)V");
+            descriptor => descriptor == $"(L{screen.ObfName};)V");
         var updateTitle = minecraftClient.RequireMethod("updateTitle", descriptor => descriptor == "()V");
         var getChat = gui.RequireMethod(
             "getChat",
             descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
         var addMessage = chatComponent.RequireMethod(
             "addMessage",
-            descriptor => descriptor == $"(L{component.LeftName};)V");
+            descriptor => descriptor == $"(L{component.ObfName};)V");
         var publishSuccess = publishCommand.RequireMethod(
             "getSuccessMessage",
             descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
@@ -250,7 +251,7 @@ internal sealed class IdentityAdapterMappingService
             ? null
             : serverLevel?.FindMethod(
                 "getChunkSource",
-                descriptor => descriptor == $"()L{chunkCache.LeftName};");
+                descriptor => descriptor == $"()L{chunkCache.ObfName};");
         var chunkViewDistance = chunkCache?.FindMethod(
             "setViewDistance",
             descriptor => descriptor == "(I)V");
@@ -262,44 +263,40 @@ internal sealed class IdentityAdapterMappingService
             descriptor => descriptor == "()I");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
-            ["packetClasses"] = JoinAliases(HelloPacket, packet.LeftName),
-            ["serverClasses"] = JoinAliases(MinecraftServer, server.LeftName),
-            ["connectionClasses"] = JoinAliases(Connection, connection.LeftName),
-            ["playerListClasses"] = JoinAliases(PlayerList, playerList.LeftName),
-            ["helloMethods"] = JoinAliases("handleHello", hello.LeftName),
+            ["loginClasses"] = JoinAliases(listener),
+            ["packetClasses"] = JoinAliases(packet),
+            ["serverClasses"] = JoinAliases(server),
+            ["connectionClasses"] = JoinAliases(connection),
+            ["playerListClasses"] = JoinAliases(playerList),
+            ["helloMethods"] = JoinAliases(hello),
             ["helloDescriptors"] = JoinAliases(
                 "(Lnet/minecraft/network/protocol/login/ServerboundHelloPacket;)V",
-                hello.LeftDescriptor),
-            ["verifyMethods"] = JoinAliases("verifyLoginAndFinishConnectionSetup", verify.LeftName),
-            ["verifyDescriptors"] = JoinAliases("(Lcom/mojang/authlib/GameProfile;)V", verify.LeftDescriptor),
-            ["serverFields"] = JoinAliases("server", listener.RequireField("server")),
-            ["connectionFields"] = JoinAliases("connection", listener.RequireField("connection")),
-            ["requestedUsernameFields"] = JoinAliases("requestedUsername", listener.RequireField("requestedUsername")),
-            ["packetNameMethods"] = JoinAliases("name", packet.RequireMethod("name", descriptor => descriptor == "()Ljava/lang/String;").LeftName),
-            ["packetUuidMethods"] = JoinAliases("profileId", packet.RequireMethod("profileId", descriptor => descriptor == "()Ljava/util/UUID;").LeftName),
-            ["memoryConnectionMethods"] = JoinAliases("isMemoryConnection", connection.RequireMethod("isMemoryConnection", descriptor => descriptor == "()Z").LeftName),
-            ["startVerificationMethods"] = JoinAliases("startClientVerification", listener.RequireMethod("startClientVerification", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal)).LeftName),
-            ["playerListMethods"] = JoinAliases("getPlayerList", server.RequireMethod("getPlayerList", descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal)).LeftName),
-            ["getPlayerMethods"] = JoinAliases("getPlayer", playerList.RequireMethod("getPlayer", descriptor => descriptor.StartsWith("(Ljava/util/UUID;)", StringComparison.Ordinal)).LeftName),
-            ["componentClasses"] = JoinAliases(Component.Replace('/', '.'), component.LeftName.Replace('/', '.')),
-            ["componentLiteralMethods"] = JoinAliases("literal", component.RequireMethod("literal", descriptor => descriptor.StartsWith("(Ljava/lang/String;)", StringComparison.Ordinal)).LeftName),
-            ["disconnectMethods"] = JoinAliases("disconnect", listener.RequireMethod("disconnect", descriptor => descriptor.EndsWith(")V", StringComparison.Ordinal)).LeftName),
-            ["playerInfoClasses"] = JoinAliases(PlayerInfo, playerInfo.LeftName),
-            ["skinLookupMethods"] = JoinAliases("createSkinLookup", skinLookup.LeftName),
+                hello.ObfDescriptor),
+            ["verifyMethods"] = JoinAliases(verify),
+            ["verifyDescriptors"] = JoinAliases("(Lcom/mojang/authlib/GameProfile;)V", verify.ObfDescriptor),
+            ["serverFields"] = JoinAliases(listener.RequireField("server")),
+            ["connectionFields"] = JoinAliases(listener.RequireField("connection")),
+            ["requestedUsernameFields"] = JoinAliases(listener.RequireField("requestedUsername")),
+            ["packetNameMethods"] = JoinAliases(packet.RequireMethod("name", descriptor => descriptor == "()Ljava/lang/String;")),
+            ["packetUuidMethods"] = JoinAliases(packet.RequireMethod("profileId", descriptor => descriptor == "()Ljava/util/UUID;")),
+            ["memoryConnectionMethods"] = JoinAliases(connection.RequireMethod("isMemoryConnection", descriptor => descriptor == "()Z")),
+            ["startVerificationMethods"] = JoinAliases(listener.RequireMethod("startClientVerification", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal))),
+            ["playerListMethods"] = JoinAliases(server.RequireMethod("getPlayerList", descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal))),
+            ["getPlayerMethods"] = JoinAliases(playerList.RequireMethod("getPlayer", descriptor => descriptor.StartsWith("(Ljava/util/UUID;)", StringComparison.Ordinal))),
+            ["componentClasses"] = JoinDottedAliases(component),
+            ["componentLiteralMethods"] = JoinAliases(component.RequireMethod("literal", descriptor => descriptor.StartsWith("(Ljava/lang/String;)", StringComparison.Ordinal))),
+            ["disconnectMethods"] = JoinAliases(listener.RequireMethod("disconnect", descriptor => descriptor.EndsWith(")V", StringComparison.Ordinal))),
+            ["playerInfoClasses"] = JoinAliases(playerInfo),
+            ["skinLookupMethods"] = JoinAliases(skinLookup),
             ["skinLookupDescriptors"] = JoinAliases(
                 "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;",
-                skinLookup.LeftDescriptor),
-            ["skinSelectionMethods"] = JoinAliases("lambda$createSkinLookup$2", skinSelection.LeftName),
+                skinLookup.ObfDescriptor),
+            ["skinSelectionMethods"] = JoinAliases(skinSelection),
             ["skinSelectionDescriptors"] = JoinAliases(
                 "(Ljava/util/concurrent/CompletableFuture;Lnet/minecraft/client/resources/PlayerSkin;Z)Lnet/minecraft/client/resources/PlayerSkin;",
-                skinSelection.LeftDescriptor),
-            ["skinTextureUrlMethods"] = JoinAliases(
-                "textureUrl",
-                playerSkin.RequireMethod("textureUrl", descriptor => descriptor == "()Ljava/lang/String;").LeftName),
-            ["skinSecureMethods"] = JoinAliases(
-                "secure",
-                playerSkin.RequireMethod("secure", descriptor => descriptor == "()Z").LeftName),
+                skinSelection.ObfDescriptor),
+            ["skinTextureUrlMethods"] = JoinAliases(playerSkin.RequireMethod("textureUrl", descriptor => descriptor == "()Ljava/lang/String;")),
+            ["skinSecureMethods"] = JoinAliases(playerSkin.RequireMethod("secure", descriptor => descriptor == "()Z")),
             // The agent reads one fixed property set, so the transformers the
             // launcher no longer drives keep their keys and stay switched off.
             ["xaeroWaypointEnabled"] = "false",
@@ -318,49 +315,35 @@ internal sealed class IdentityAdapterMappingService
                 "(Lxaero/common/minimap/waypoints/Waypoint;Lxaero/hud/minimap/world/MinimapWorld;" +
                 "Lnet/minecraft/client/gui/screens/Screen;Z)V",
                 "(Lxaero/common/minimap/waypoints/Waypoint;Lxaero/hud/minimap/world/MinimapWorld;" +
-                $"L{screen.LeftName};Z)V"),
-            ["clientPacketListenerClasses"] = JoinAliases(
-                ClientPacketListener,
-                clientPacketListener.LeftName),
-            ["sendUnsignedCommandMethods"] = JoinAliases(
-                "sendUnsignedCommand",
-                sendUnsignedCommand.LeftName),
-            ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName),
-            ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
-            ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
-            ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
-            ["publishServerMethods"] = JoinAliases("publishServer", publishServer.LeftName),
-            ["getDefaultGameTypeMethods"] = JoinAliases("getDefaultGameType", defaultGameType.LeftName),
-            ["getWorldDataMethods"] = JoinAliases("getWorldData", getWorldData.LeftName),
-            ["isPublishedMethods"] = JoinAliases("isPublished", isPublished.LeftName),
-            ["worldDataClasses"] = JoinAliases(WorldData, worldData.LeftName),
-            ["isAllowCommandsMethods"] = JoinAliases("isAllowCommands", allowCommands.LeftName),
-            ["httpUtilClasses"] = JoinAliases(
-                HttpUtil.Replace('/', '.'),
-                httpUtil.LeftName.Replace('/', '.')),
-            ["getAvailablePortMethods"] = JoinAliases("getAvailablePort", availablePort.LeftName),
-            ["gameTypeClasses"] = JoinAliases(
-                GameType.Replace('/', '.'),
-                gameType.LeftName.Replace('/', '.')),
-            ["publishCommandClasses"] = JoinAliases(
-                PublishCommand.Replace('/', '.'),
-                publishCommand.LeftName.Replace('/', '.')),
-            ["publishSuccessMethods"] = JoinAliases("getSuccessMessage", publishSuccess.LeftName),
-            ["minecraftClasses"] = JoinAliases(
-                MinecraftClient.Replace('/', '.'),
-                minecraftClient.LeftName.Replace('/', '.')),
-            ["minecraftGetInstanceMethods"] = JoinAliases("getInstance", getInstance.LeftName),
-            ["getSingleplayerServerMethods"] = JoinAliases("getSingleplayerServer", singleplayerServer.LeftName),
-            ["setScreenMethods"] = JoinAliases("setScreen", setScreen.LeftName),
-            ["updateTitleMethods"] = JoinAliases("updateTitle", updateTitle.LeftName),
-            ["minecraftGuiFields"] = JoinAliases("gui", minecraftClient.RequireField("gui")),
-            ["screenClasses"] = JoinAliases(
-                Screen.Replace('/', '.'),
-                screen.LeftName.Replace('/', '.')),
-            ["guiClasses"] = JoinAliases(Gui, gui.LeftName),
-            ["guiChatMethods"] = JoinAliases("getChat", getChat.LeftName),
-            ["chatComponentClasses"] = JoinAliases(ChatComponent, chatComponent.LeftName),
-            ["chatAddMessageMethods"] = JoinAliases("addMessage", addMessage.LeftName)
+                $"L{screen.ObfName};Z)V"),
+            ["clientPacketListenerClasses"] = JoinAliases(clientPacketListener),
+            ["sendUnsignedCommandMethods"] = JoinAliases(sendUnsignedCommand),
+            ["sendCommandMethods"] = JoinAliases(sendCommand),
+            ["lanShareScreenClasses"] = JoinAliases(shareScreen),
+            ["lanShareInitMethods"] = JoinAliases(shareInit),
+            ["integratedServerClasses"] = JoinAliases(integrated),
+            ["publishServerMethods"] = JoinAliases(publishServer),
+            ["getDefaultGameTypeMethods"] = JoinAliases(defaultGameType),
+            ["getWorldDataMethods"] = JoinAliases(getWorldData),
+            ["isPublishedMethods"] = JoinAliases(isPublished),
+            ["worldDataClasses"] = JoinAliases(worldData),
+            ["isAllowCommandsMethods"] = JoinAliases(allowCommands),
+            ["httpUtilClasses"] = JoinDottedAliases(httpUtil),
+            ["getAvailablePortMethods"] = JoinAliases(availablePort),
+            ["gameTypeClasses"] = JoinDottedAliases(gameType),
+            ["publishCommandClasses"] = JoinDottedAliases(publishCommand),
+            ["publishSuccessMethods"] = JoinAliases(publishSuccess),
+            ["minecraftClasses"] = JoinDottedAliases(minecraftClient),
+            ["minecraftGetInstanceMethods"] = JoinAliases(getInstance),
+            ["getSingleplayerServerMethods"] = JoinAliases(singleplayerServer),
+            ["setScreenMethods"] = JoinAliases(setScreen),
+            ["updateTitleMethods"] = JoinAliases(updateTitle),
+            ["minecraftGuiFields"] = JoinAliases(minecraftClient.RequireField("gui")),
+            ["screenClasses"] = JoinDottedAliases(screen),
+            ["guiClasses"] = JoinAliases(gui),
+            ["guiChatMethods"] = JoinAliases(getChat),
+            ["chatComponentClasses"] = JoinAliases(chatComponent),
+            ["chatAddMessageMethods"] = JoinAliases(addMessage)
         };
 
         // Serving a world further than the host draws it needs three names an
@@ -372,14 +355,14 @@ internal sealed class IdentityAdapterMappingService
             chunkSource is not null && chunkViewDistance is not null &&
             players is not null && requestedViewDistance is not null)
         {
-            properties["serverLevelClasses"] = JoinAliases(ServerLevel, serverLevel.LeftName);
-            properties["chunkSourceClasses"] = JoinAliases(ServerChunkCache, chunkCache.LeftName);
-            properties["getAllLevelsMethods"] = JoinAliases("getAllLevels", allLevels.LeftName);
-            properties["getChunkSourceMethods"] = JoinAliases("getChunkSource", chunkSource.LeftName);
-            properties["setChunkViewDistanceMethods"] = JoinAliases("setViewDistance", chunkViewDistance.LeftName);
-            properties["getPlayersMethods"] = JoinAliases("getPlayers", players.LeftName);
+            properties["serverLevelClasses"] = JoinAliases(serverLevel);
+            properties["chunkSourceClasses"] = JoinAliases(chunkCache);
+            properties["getAllLevelsMethods"] = JoinAliases(allLevels);
+            properties["getChunkSourceMethods"] = JoinAliases(chunkSource);
+            properties["setChunkViewDistanceMethods"] = JoinAliases(chunkViewDistance);
+            properties["getPlayersMethods"] = JoinAliases(players);
             properties["requestedViewDistanceMethods"] =
-                JoinAliases("requestedViewDistance", requestedViewDistance.LeftName);
+                JoinAliases(requestedViewDistance);
         }
 
         AddSkinProperties(properties);
@@ -387,13 +370,13 @@ internal sealed class IdentityAdapterMappingService
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
         {
             LoginListener,
-            listener.LeftName,
+            listener.ObfName,
             PlayerInfo,
-            playerInfo.LeftName,
+            playerInfo.ObfName,
             YggdrasilSessionService,
             GameProfile,
             ShareToLanScreen,
-            shareScreen.LeftName
+            shareScreen.ObfName
         };
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
@@ -408,6 +391,41 @@ internal sealed class IdentityAdapterMappingService
         }
 
         return new IdentityAdapterConfiguration(mappingPath, properties, targets);
+    }
+
+    /// <summary>
+    /// Mojang's own mappings for this version, if the runtime carries them.
+    ///
+    /// Forge's installer downloads them beside the client jar, and they are
+    /// what turns an SRG number back into a name anybody can ask for. NeoForge
+    /// downloads them too and has no use for them here, because its own merged
+    /// file already answers in official names.
+    /// </summary>
+    private static string? FindMojangMappings(string runtimeRoot)
+    {
+        var libraries = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client");
+        if (!Directory.Exists(libraries)) return null;
+        foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var reader = new StreamReader(path);
+                // The first line of Mojang's file is their copyright notice,
+                // and the first line that is not is a class: "a.b.C -> d:".
+                for (var line = reader.ReadLine(); line is not null; line = reader.ReadLine())
+                {
+                    if (line.Length == 0 || line[0] == '#') continue;
+                    if (char.IsWhiteSpace(line[0])) break;
+                    if (line.EndsWith(':') && line.Contains(" -> ", StringComparison.Ordinal)) return path;
+                    break;
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+        return null;
     }
 
     private static string? FindTsrg2Mappings(string runtimeRoot)
@@ -483,6 +501,22 @@ internal sealed class IdentityAdapterMappingService
         return found;
     }
 
+    /// <summary>
+    /// What goes on the command line for one name: the spelling this runtime
+    /// loads it under, then the obfuscated one. Anything that turns out to be
+    /// the same word twice collapses to one, and the preflight's positional
+    /// read clamps to what is there.
+    /// </summary>
+    private static string JoinAliases(MappedMember member) =>
+        JoinAliases(member.RuntimeName, member.ObfName);
+
+    private static string JoinAliases(MappedClass mapped) =>
+        JoinAliases(mapped.RuntimeName, mapped.ObfName);
+
+    /// <summary>The same, for a name the hooks pass to Class.forName.</summary>
+    private static string JoinDottedAliases(MappedClass mapped) =>
+        JoinAliases(mapped.RuntimeName.Replace('/', '.'), mapped.ObfName.Replace('/', '.'));
+
     private static string JoinAliases(params string[] aliases) => string.Join(",", aliases
         .Where(alias => !string.IsNullOrWhiteSpace(alias))
         .Distinct(StringComparer.Ordinal));
@@ -496,44 +530,264 @@ internal sealed class IdentityAdapterMappingService
     private static NotSupportedException Unsupported(PackRuntimeDescriptor descriptor, string reason) => new(
         $"Minecraft {descriptor.MinecraftVersion} {descriptor.Loader.Type} {descriptor.Loader.Version}: {reason}.");
 
-    private sealed class Tsrg2Mappings
-    {
-        private readonly Dictionary<string, Tsrg2Class> _classes;
+    /// <summary>
+    /// One name, in the three spellings that matter.
+    ///
+    /// The launcher knows a class as Mojang named it. The game may load it
+    /// under that same name - NeoForge does since 1.20.2, and so does every
+    /// loader for a class Mojang never obfuscated - or under an SRG name, which
+    /// is what Forge remaps to and looks like <c>m_12345_</c> and
+    /// <c>f_12345_</c>, or under an intermediary one on Fabric and Quilt.
+    /// Underneath all of them is the obfuscated name in the jar Mojang ships,
+    /// which is what the vanilla client jar on disk still holds.
+    ///
+    /// Two of the three go on the command line, in this order: the name the
+    /// runtime loads, then the obfuscated one. The hooks try each in turn, and
+    /// the preflight reads them positionally - one flavour per index - so the
+    /// order is not decoration. What the launcher itself calls the name never
+    /// goes out at all; it is only how this file asks for it.
+    /// </summary>
+    private sealed record MappedMember(
+        string Official,
+        string ObfName,
+        string RuntimeName,
+        string ObfDescriptor);
 
-        private Tsrg2Mappings(Dictionary<string, Tsrg2Class> classes)
+    private sealed class MappedClass
+    {
+        public MappedClass(string official, string obfName, string runtimeName)
+        {
+            Official = official;
+            ObfName = obfName;
+            RuntimeName = runtimeName;
+        }
+
+        public string Official { get; }
+        public string ObfName { get; }
+        public string RuntimeName { get; }
+        public Dictionary<string, MappedMember> Fields { get; } = new(StringComparer.Ordinal);
+        public List<MappedMember> Methods { get; } = [];
+
+        public MappedMember RequireField(string official) => Fields.TryGetValue(official, out var field)
+            ? field
+            : throw new InvalidDataException($"Required identity mapping field is missing: {Official}.{official}");
+
+        public MappedMember? FindField(string official) =>
+            Fields.TryGetValue(official, out var field) ? field : null;
+
+        public MappedMember RequireMethod(string official, Func<string, bool> descriptorPredicate) =>
+            FindMethod(official, descriptorPredicate)
+            ?? throw new InvalidDataException($"Required identity mapping method is missing: {Official}.{official}");
+
+        /// <summary>The same, for a method only one feature needs.</summary>
+        public MappedMember? FindMethod(string official, Func<string, bool> descriptorPredicate) =>
+            Methods.FirstOrDefault(method =>
+                method.Official == official && descriptorPredicate(method.ObfDescriptor));
+    }
+
+    /// <summary>
+    /// Every name this build reaches for, in the spelling this runtime loads.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes of file answer this, and which one is on disk says which
+    /// loader prepared the runtime. NeoForge's installer merges Mojang's
+    /// mappings into a TSRG2 whose right column is the official name, and since
+    /// 1.20.2 that is also the name the game loads - so one file is the whole
+    /// answer. Forge's mcp_config ships a TSRG2 whose right column is SRG
+    /// instead, and SRG names nothing this launcher can ask for: the official
+    /// name is not in that file at all. The bridge is Mojang's own proguard
+    /// mappings, which every Forge runtime already carries beside the client
+    /// jar - official to obfuscated there, obfuscated to SRG here.
+    ///
+    /// Only the classes named in <see cref="Required"/> are kept, out of some
+    /// seven thousand: the rest is a megabyte and a half of parsing nobody
+    /// needs.
+    /// </remarks>
+    private sealed class RuntimeNames
+    {
+        private readonly Dictionary<string, MappedClass> _classes;
+
+        private RuntimeNames(Dictionary<string, MappedClass> classes)
         {
             _classes = classes;
         }
 
-        public static Tsrg2Mappings Read(string path)
+        /// <summary>The classes this build asks about, by their official names.</summary>
+        private static HashSet<string> Required { get; } = new(StringComparer.Ordinal)
         {
-            var requiredClasses = new HashSet<string>(StringComparer.Ordinal)
+            LoginListener,
+            HelloPacket,
+            MinecraftServer,
+            Connection,
+            PlayerList,
+            Component,
+            PlayerInfo,
+            PlayerSkin,
+            ClientPacketListener,
+            Screen,
+            ServerLevel,
+            ServerChunkCache,
+            ServerPlayer,
+            ShareToLanScreen,
+            IntegratedServer,
+            MinecraftClient,
+            Gui,
+            ChatComponent,
+            HttpUtil,
+            GameType,
+            PublishCommand,
+            WorldData
+        };
+
+        public static RuntimeNames Read(string tsrg2Path, string? proguardPath)
+        {
+            var rows = ReadTsrg2(tsrg2Path);
+            return IsSrgFlavoured(rows) ? Compose(rows, proguardPath) : FromOfficialTsrg2(rows);
+        }
+
+        /// <summary>
+        /// A TSRG2 whose members are numbered rather than named. Forge's
+        /// mcp_config file says <c>m_8354_</c> where NeoForge's says
+        /// <c>setViewDistance</c>, and no header distinguishes them - both open
+        /// "tsrg2 left right" - so the contents decide.
+        /// </summary>
+        private static bool IsSrgFlavoured(List<Tsrg2Row> rows) => rows.Any(row =>
+            row.Methods.Any(method => SrgNamePattern.IsMatch(method.RightName)) ||
+            row.Fields.Any(field => SrgNamePattern.IsMatch(field.RightName)));
+
+        /// <summary>What an SRG member is called: m_ or f_, a number, an underscore.</summary>
+        private static readonly System.Text.RegularExpressions.Regex SrgNamePattern =
+            new(@"^[mf]_\d+_$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>The NeoForge shape: the right column is already what we ask for.</summary>
+        private static RuntimeNames FromOfficialTsrg2(List<Tsrg2Row> rows)
+        {
+            var classes = new Dictionary<string, MappedClass>(StringComparer.Ordinal);
+            foreach (var row in rows)
             {
-                LoginListener,
-                HelloPacket,
-                MinecraftServer,
-                Connection,
-                PlayerList,
-                Component,
-                PlayerInfo,
-                PlayerSkin,
-                ClientPacketListener,
-                Screen,
-                ServerLevel,
-                ServerChunkCache,
-                ServerPlayer,
-                ShareToLanScreen,
-                IntegratedServer,
-                MinecraftClient,
-                Gui,
-                ChatComponent,
-                HttpUtil,
-                GameType,
-                PublishCommand,
-                WorldData
+                var mapped = new MappedClass(row.RightName, row.LeftName, row.RightName);
+                foreach (var field in row.Fields)
+                {
+                    mapped.Fields[field.RightName] = new MappedMember(
+                        field.RightName, field.LeftName, field.RightName, string.Empty);
+                }
+                foreach (var method in row.Methods)
+                {
+                    mapped.Methods.Add(new MappedMember(
+                        method.RightName, method.LeftName, method.RightName, method.ObfDescriptor));
+                }
+                classes[row.RightName] = mapped;
+            }
+            return new RuntimeNames(classes);
+        }
+
+        /// <summary>
+        /// The Forge shape: obfuscated to SRG here, official to obfuscated in
+        /// Mojang's own file, joined on the obfuscated name and descriptor.
+        /// </summary>
+        private static RuntimeNames Compose(List<Tsrg2Row> rows, string? proguardPath)
+        {
+            if (proguardPath is null)
+            {
+                throw new InvalidDataException(
+                    "the runtime's mappings name members by number and Mojang's own mappings, " +
+                    "which say what those numbers stand for, are not beside them");
+            }
+
+            var proguard = ReadProguard(proguardPath);
+            var byObfClass = rows.ToDictionary(row => row.LeftName, StringComparer.Ordinal);
+            var classes = new Dictionary<string, MappedClass>(StringComparer.Ordinal);
+            foreach (var (official, entry) in proguard)
+            {
+                if (!byObfClass.TryGetValue(entry.ObfName, out var row)) continue;
+                // The SRG class name and the official one have been the same
+                // since 1.17, which is where Forge's own support starts; the
+                // right column is used rather than assumed all the same.
+                var mapped = new MappedClass(official, entry.ObfName, row.RightName);
+                var fields = row.Fields.ToDictionary(field => field.LeftName, field => field.RightName, StringComparer.Ordinal);
+                foreach (var (fieldName, obfField) in entry.Fields)
+                {
+                    if (!fields.TryGetValue(obfField, out var runtime)) continue;
+                    mapped.Fields[fieldName] = new MappedMember(fieldName, obfField, runtime, string.Empty);
+                }
+                var methods = row.Methods.ToLookup(method => method.LeftName, StringComparer.Ordinal);
+                foreach (var member in entry.Methods)
+                {
+                    var descriptor = ObfDescriptorOf(member, proguard);
+                    var match = methods[member.ObfName].FirstOrDefault(method => method.ObfDescriptor == descriptor);
+                    // A member proguard names and the SRG file does not is a
+                    // bridge or a synthetic; the real one is in there under the
+                    // same name and a different descriptor.
+                    if (match is null) continue;
+                    mapped.Methods.Add(new MappedMember(
+                        member.Official, member.ObfName, match.RightName, descriptor));
+                }
+                classes[official.Replace('.', '/')] = mapped;
+            }
+            return new RuntimeNames(classes);
+        }
+
+        /// <summary>
+        /// A member's descriptor written in obfuscated names, which is the only
+        /// namespace both files share. Proguard writes Java source types -
+        /// "net.minecraft.server.level.ServerChunkCache" and "int[]" - so every
+        /// one of them goes back through the class map.
+        /// </summary>
+        private static string ObfDescriptorOf(
+            ProguardMethod member,
+            Dictionary<string, ProguardClass> proguard)
+        {
+            var descriptor = new System.Text.StringBuilder("(");
+            foreach (var parameter in member.Parameters)
+            {
+                descriptor.Append(ObfTypeOf(parameter, proguard));
+            }
+            return descriptor.Append(')').Append(ObfTypeOf(member.ReturnType, proguard)).ToString();
+        }
+
+        private static string ObfTypeOf(string javaType, Dictionary<string, ProguardClass> proguard)
+        {
+            var arrays = 0;
+            while (javaType.EndsWith("[]", StringComparison.Ordinal))
+            {
+                arrays++;
+                javaType = javaType[..^2];
+            }
+            var core = javaType switch
+            {
+                "void" => "V",
+                "boolean" => "Z",
+                "byte" => "B",
+                "char" => "C",
+                "short" => "S",
+                "int" => "I",
+                "long" => "J",
+                "float" => "F",
+                "double" => "D",
+                _ => "L" + (proguard.TryGetValue(javaType, out var known)
+                    ? known.ObfName
+                    : javaType.Replace('.', '/')) + ";"
             };
-            var classes = new Dictionary<string, Tsrg2Class>(StringComparer.Ordinal);
-            Tsrg2Class? current = null;
+            return new string('[', arrays) + core;
+        }
+
+        public MappedClass RequireClass(string official) => _classes.TryGetValue(official, out var mapping)
+            ? mapping
+            : throw new InvalidDataException($"Required identity mapping class is missing: {official}");
+
+        /// <summary>
+        /// A class this build would use if the game has it. Everything the
+        /// adapter must have is required above; anything asked for here is one
+        /// feature, and a version without it keeps all the others rather than
+        /// losing the adapter whole.
+        /// </summary>
+        public MappedClass? FindClass(string official) =>
+            _classes.TryGetValue(official, out var mapping) ? mapping : null;
+
+        private static List<Tsrg2Row> ReadTsrg2(string path)
+        {
+            var rows = new List<Tsrg2Row>();
+            Tsrg2Row? current = null;
             var first = true;
             foreach (var line in File.ReadLines(path))
             {
@@ -550,73 +804,120 @@ internal sealed class IdentityAdapterMappingService
                 if (line[0] != '\t')
                 {
                     var classParts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    current = classParts.Length >= 2 && requiredClasses.Contains(classParts[1])
-                        ? new Tsrg2Class(classParts[0], classParts[1])
+                    current = classParts.Length >= 2 && Required.Contains(classParts[1])
+                        ? new Tsrg2Row(classParts[0], classParts[1])
                         : null;
-                    if (current is not null) classes[current.RightName] = current;
+                    if (current is not null) rows.Add(current);
                     continue;
                 }
                 if (current is null || line.StartsWith("\t\t", StringComparison.Ordinal)) continue;
                 var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length == 2)
                 {
-                    current.Fields[parts[1]] = parts[0];
+                    current.Fields.Add(new Tsrg2Field(parts[0], parts[1]));
                 }
                 else if (parts.Length >= 3 && parts[1].StartsWith('('))
                 {
                     current.Methods.Add(new Tsrg2Method(parts[0], parts[1], parts[2]));
                 }
             }
-            return new Tsrg2Mappings(classes);
-        }
-
-        public Tsrg2Class RequireClass(string rightName)
-        {
-            return _classes.TryGetValue(rightName, out var mapping)
-                ? mapping
-                : throw new InvalidDataException($"Required identity mapping class is missing: {rightName}");
+            return rows;
         }
 
         /// <summary>
-        /// A class this build would use if the game has it. Everything the
-        /// adapter must have is required above; anything asked for here is one
-        /// feature, and a version without it keeps all the others rather than
-        /// losing the adapter whole.
+        /// Mojang's own mappings, as published beside every version: a class
+        /// line "net.minecraft.Foo -&gt; abc:" and, indented under it, members
+        /// written "12:15:int bar(float) -&gt; a". The line numbers in front are
+        /// dropped; the return type is not, because an obfuscator gives two
+        /// methods the same name and different return types and one of the two
+        /// is usually the bridge.
         /// </summary>
-        public Tsrg2Class? FindClass(string rightName) =>
-            _classes.TryGetValue(rightName, out var mapping) ? mapping : null;
-    }
-
-    private sealed class Tsrg2Class
-    {
-        public Tsrg2Class(string leftName, string rightName)
+        private static Dictionary<string, ProguardClass> ReadProguard(string path)
         {
-            LeftName = leftName;
-            RightName = rightName;
+            var classes = new Dictionary<string, ProguardClass>(StringComparer.Ordinal);
+            ProguardClass? current = null;
+            foreach (var line in File.ReadLines(path))
+            {
+                if (line.Length == 0 || line[0] == '#') continue;
+                if (!char.IsWhiteSpace(line[0]))
+                {
+                    var arrow = line.IndexOf(" -> ", StringComparison.Ordinal);
+                    if (arrow < 0) continue;
+                    var official = line[..arrow];
+                    if (!Required.Contains(official.Replace('.', '/')))
+                    {
+                        current = null;
+                        // Kept anyway, with nothing in it: a descriptor names
+                        // classes this build never asks about, and translating
+                        // one needs their obfuscated names.
+                        classes[official] = new ProguardClass(line[(arrow + 4)..].TrimEnd(':').Replace('.', '/'));
+                        continue;
+                    }
+                    current = new ProguardClass(line[(arrow + 4)..].TrimEnd(':').Replace('.', '/'));
+                    classes[official] = current;
+                    continue;
+                }
+                if (current is null) continue;
+                var body = line.Trim();
+                var split = body.IndexOf(" -> ", StringComparison.Ordinal);
+                if (split < 0) continue;
+                var obfName = body[(split + 4)..];
+                var signature = body[..split];
+                var colon = signature.LastIndexOf(':');
+                if (colon >= 0) signature = signature[(colon + 1)..];
+                var space = signature.IndexOf(' ');
+                if (space < 0) continue;
+                var returnType = signature[..space];
+                var rest = signature[(space + 1)..];
+                var open = rest.IndexOf('(');
+                if (open < 0)
+                {
+                    current.Fields[rest] = obfName;
+                    continue;
+                }
+                var name = rest[..open];
+                var arguments = rest[(open + 1)..].TrimEnd(')');
+                var parameters = arguments.Length == 0
+                    ? []
+                    : arguments.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                current.Methods.Add(new ProguardMethod(name, obfName, returnType, parameters));
+            }
+            return classes;
         }
 
-        public string LeftName { get; }
-        public string RightName { get; }
-        public Dictionary<string, string> Fields { get; } = new(StringComparer.Ordinal);
-        public List<Tsrg2Method> Methods { get; } = [];
+        private sealed record Tsrg2Field(string LeftName, string RightName);
 
-        public string RequireField(string rightName) => Fields.TryGetValue(rightName, out var leftName)
-            ? leftName
-            : throw new InvalidDataException($"Required identity mapping field is missing: {RightName}.{rightName}");
+        private sealed record Tsrg2Method(string LeftName, string ObfDescriptor, string RightName);
 
-        public Tsrg2Method RequireMethod(string rightName, Func<string, bool> descriptorPredicate)
+        private sealed class Tsrg2Row
         {
-            return Methods.FirstOrDefault(method => method.RightName == rightName && descriptorPredicate(method.LeftDescriptor))
-                ?? throw new InvalidDataException($"Required identity mapping method is missing: {RightName}.{rightName}");
+            public Tsrg2Row(string leftName, string rightName)
+            {
+                LeftName = leftName;
+                RightName = rightName;
+            }
+
+            public string LeftName { get; }
+            public string RightName { get; }
+            public List<Tsrg2Field> Fields { get; } = [];
+            public List<Tsrg2Method> Methods { get; } = [];
         }
 
-        /// <summary>The same, for a method only one feature needs.</summary>
-        public Tsrg2Method? FindMethod(string rightName, Func<string, bool> descriptorPredicate) =>
-            Methods.FirstOrDefault(method =>
-                method.RightName == rightName && descriptorPredicate(method.LeftDescriptor));
-    }
+        private sealed class ProguardClass
+        {
+            public ProguardClass(string obfName) => ObfName = obfName;
 
-    private sealed record Tsrg2Method(string LeftName, string LeftDescriptor, string RightName);
+            public string ObfName { get; }
+            public Dictionary<string, string> Fields { get; } = new(StringComparer.Ordinal);
+            public List<ProguardMethod> Methods { get; } = [];
+        }
+
+        private sealed record ProguardMethod(
+            string Official,
+            string ObfName,
+            string ReturnType,
+            string[] Parameters);
+    }
 }
 
 internal sealed record IdentityAdapterConfiguration(
