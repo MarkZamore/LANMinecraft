@@ -20,7 +20,6 @@ internal sealed class IdentityAdapterMappingService
     private const string Component = "net/minecraft/network/chat/Component";
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
-    private const string SkinManager = "net/minecraft/client/resources/SkinManager";
     private const string ShareToLanScreen = "net/minecraft/client/gui/screens/ShareToLanScreen";
     private const string IntegratedServer = "net/minecraft/client/server/IntegratedServer";
     private const string MinecraftClient = "net/minecraft/client/Minecraft";
@@ -174,7 +173,6 @@ internal sealed class IdentityAdapterMappingService
         var component = mappings.RequireClass(Component);
         var playerInfo = mappings.RequireClass(PlayerInfo);
         var playerSkin = mappings.RequireClass(PlayerSkin);
-        var skinManager = mappings.RequireClass(SkinManager);
         var shareScreen = mappings.RequireClass(ShareToLanScreen);
         var integrated = mappings.RequireClass(IntegratedServer);
         var minecraftClient = mappings.RequireClass(MinecraftClient);
@@ -201,17 +199,6 @@ internal sealed class IdentityAdapterMappingService
         var sendCommand = clientPacketListener.RequireMethod(
             "sendCommand",
             descriptor => descriptor == "(Ljava/lang/String;)V");
-        // The door a mod uses when it wants a face this instant: it answers
-        // with the default one rather than waiting, which is right for a skin
-        // coming over the internet and wrong for one the launcher is serving
-        // from this machine.
-        var insecureSkin = skinManager.RequireMethod(
-            "getInsecureSkin",
-            descriptor => descriptor == $"(Lcom/mojang/authlib/GameProfile;)L{playerSkin.LeftName};");
-        var orLoadSkin = skinManager.RequireMethod(
-            "getOrLoad",
-            descriptor => descriptor ==
-                "(Lcom/mojang/authlib/GameProfile;)Ljava/util/concurrent/CompletableFuture;");
         var shareInit = shareScreen.RequireMethod("init", descriptor => descriptor == "()V");
         var publishServer = integrated.RequireMethod(
             "publishServer",
@@ -310,10 +297,6 @@ internal sealed class IdentityAdapterMappingService
                 "sendUnsignedCommand",
                 sendUnsignedCommand.LeftName),
             ["sendCommandMethods"] = JoinAliases("sendCommand", sendCommand.LeftName),
-            ["skinWaitEnabled"] = "true",
-            ["skinManagerClasses"] = JoinAliases(SkinManager, skinManager.LeftName),
-            ["insecureSkinMethods"] = JoinAliases("getInsecureSkin", insecureSkin.LeftName),
-            ["skinOrLoadMethods"] = JoinAliases("getOrLoad", orLoadSkin.LeftName),
             ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
             ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
             ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
@@ -361,8 +344,6 @@ internal sealed class IdentityAdapterMappingService
             playerInfo.LeftName,
             YggdrasilSessionService,
             GameProfile,
-            SkinManager,
-            skinManager.LeftName,
             ShareToLanScreen,
             shareScreen.LeftName
         };
@@ -490,8 +471,6 @@ internal sealed class IdentityAdapterMappingService
                 PlayerSkin,
                 ClientPacketListener,
                 Screen,
-                PlayerSkin,
-                SkinManager,
                 ShareToLanScreen,
                 IntegratedServer,
                 MinecraftClient,
