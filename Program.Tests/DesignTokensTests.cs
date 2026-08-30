@@ -21,7 +21,7 @@ public sealed class DesignTokensTests
     public void AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers()
     {
         var defined = TokenKeys();
-        var documented = Regex.Matches(File.ReadAllText(FindRepositoryFile("DESIGN.md")), @"`((?:Color|Brush|Font|Space|Gap|Pad|Size|Border|Radius)\.[A-Za-z0-9]+)`")
+        var documented = Regex.Matches(File.ReadAllText(FindRepositoryFile("DESIGN.md")), @"`((?:Color|Brush|Font|Space|Gap|Pad|Size|Border|Radius|Motion)\.[A-Za-z0-9]+)`")
             .Select(match => match.Groups[1].Value)
             .ToHashSet(StringComparer.Ordinal);
 

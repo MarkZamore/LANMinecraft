@@ -138,6 +138,13 @@
         <Thickness x:Key="Border.Focus">1.5</Thickness>
         <Thickness x:Key="Border.None">0</Thickness>
 
+        <!-- How long the focus ring takes to arrive, and to leave. A ring left
+             standing after a click is the pointer's business showing on a
+             screen that has moved on, and one that vanishes within the frame is
+             a flicker; a third of a second reads as the button letting go. -->
+        <Duration x:Key="Motion.FocusRise">0:0:0.08</Duration>
+        <Duration x:Key="Motion.FocusFade">0:0:0.35</Duration>
+
         <CornerRadius x:Key="Radius.Control">6</CornerRadius>
         <CornerRadius x:Key="Radius.Primary">8</CornerRadius>
         <CornerRadius x:Key="Radius.Scrollbar">4</CornerRadius>
@@ -215,17 +222,29 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Surface"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="{StaticResource Radius.Control}"
-                                Padding="{TemplateBinding Padding}"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                              RecognizesAccessKey="False"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Surface"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{StaticResource Radius.Control}"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  RecognizesAccessKey="False"/>
+                            </Border>
+                            <!-- The focus ring is drawn over the button rather than
+                                 recolouring its border, because only a thing of its
+                                 own can be faded out. -->
+                            <Border x:Name="FocusRing"
+                                    BorderBrush="{StaticResource Brush.Accent}"
+                                    BorderThickness="{StaticResource Border.Focus}"
+                                    CornerRadius="{StaticResource Radius.Control}"
+                                    Opacity="0"
+                                    IsHitTestVisible="False"
+                                    SnapsToDevicePixels="True"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceHover}"/>
@@ -234,9 +253,41 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfacePressed}"/>
                             </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.Accent}"/>
-                            </Trigger>
+                            <!-- The ring belongs to the keyboard. A click gives a
+                                 button focus all the same, so it arrives on the
+                                 press and is taken back the moment the press is
+                                 over - and it leaves the way it came rather than
+                                 being switched off. -->
+                            <EventTrigger RoutedEvent="UIElement.GotKeyboardFocus">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="1"
+                                                         Duration="{StaticResource Motion.FocusRise}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="ButtonBase.Click">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="0"
+                                                         Duration="{StaticResource Motion.FocusFade}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="UIElement.LostKeyboardFocus">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="0"
+                                                         Duration="{StaticResource Motion.FocusFade}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.SurfaceDisabled}"/>
                                 <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.BorderDisabled}"/>
@@ -264,17 +315,29 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Surface"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="{StaticResource Radius.Primary}"
-                                Padding="{TemplateBinding Padding}"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                              RecognizesAccessKey="False"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Surface"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{StaticResource Radius.Primary}"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  RecognizesAccessKey="False"/>
+                            </Border>
+                            <!-- The focus ring is drawn over the button rather than
+                                 recolouring its border, because only a thing of its
+                                 own can be faded out. -->
+                            <Border x:Name="FocusRing"
+                                    BorderBrush="{StaticResource Brush.OnAccent}"
+                                    BorderThickness="{StaticResource Border.Focus}"
+                                    CornerRadius="{StaticResource Radius.Primary}"
+                                    Opacity="0"
+                                    IsHitTestVisible="False"
+                                    SnapsToDevicePixels="True"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.AccentHover}"/>
@@ -284,9 +347,41 @@
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.AccentPressed}"/>
                                 <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.AccentPressed}"/>
                             </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource Brush.OnAccent}"/>
-                            </Trigger>
+                            <!-- The ring belongs to the keyboard. A click gives a
+                                 button focus all the same, so it arrives on the
+                                 press and is taken back the moment the press is
+                                 over - and it leaves the way it came rather than
+                                 being switched off. -->
+                            <EventTrigger RoutedEvent="UIElement.GotKeyboardFocus">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="1"
+                                                         Duration="{StaticResource Motion.FocusRise}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="ButtonBase.Click">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="0"
+                                                         Duration="{StaticResource Motion.FocusFade}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="UIElement.LostKeyboardFocus">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing"
+                                                         Storyboard.TargetProperty="Opacity"
+                                                         To="0"
+                                                         Duration="{StaticResource Motion.FocusFade}"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
                             <!-- Preparing: an ordinary surface with the progress inside -->
                             <Trigger Property="IsHitTestVisible" Value="False">
                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource Brush.Surface}"/>
