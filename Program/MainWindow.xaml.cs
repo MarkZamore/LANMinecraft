@@ -447,6 +447,12 @@ public partial class MainWindow : Window
             });
         }
 
+        // One order for the whole list. The installed builds were sorted and
+        // the ones only offered were appended after them, so the names read
+        // out of order and which build a fresh install landed on depended on
+        // the order they happen to be written down in.
+        builds = ListOrder.Builds(builds).ToList();
+
         var buildPathsMatch = _builds.Count == builds.Count &&
             _builds.Zip(builds).All(pair =>
                 string.Equals(pair.First.RelativePath, pair.Second.RelativePath, StringComparison.OrdinalIgnoreCase) &&
@@ -473,6 +479,10 @@ public partial class MainWindow : Window
                 string.Equals(build.RelativePath, preferredRelativePath, StringComparison.OrdinalIgnoreCase)) ??
             _builds.FirstOrDefault(build =>
                 string.Equals(build.RelativePath, selectedRelativePath, StringComparison.OrdinalIgnoreCase)) ??
+            // Nothing remembered: the first build there is, by name. One that
+            // is already downloaded comes before one that is only offered,
+            // because pressing Play on the second spends half an hour.
+            _builds.FirstOrDefault(build => build.IsInstalled) ??
             _builds.FirstOrDefault();
 
         _suppressBuildPersistence = true;
@@ -731,13 +741,10 @@ public partial class MainWindow : Window
         // they are really gone, the send says so.
         var cutoff = DateTimeOffset.Now - DiagnosticTargetTtl;
         var result = new List<DiagnosticLogTargetOption>();
-        foreach (var peer in _peers
-                     // Anyone online can be sent a report. Whether their build
-                     // can take it is the send's problem, and it says so out
-                     // loud - an empty list here would only leave a player who
-                     // needs help with nowhere to click.
-                     .Where(peer => peer.LastSeen >= cutoff)
-                     .OrderBy(peer => peer.DisplayName, StringComparer.CurrentCultureIgnoreCase))
+        // Anyone online can be sent a report. Whether their build can take it
+        // is the send's problem, and it says so out loud - an empty list here
+        // would only leave a player who needs help with nowhere to click.
+        foreach (var peer in ListOrder.Players(_peers.Where(peer => peer.LastSeen >= cutoff)))
         {
             result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
         }
@@ -1106,10 +1113,34 @@ public partial class MainWindow : Window
             if (!current.Contains(_peers[index].SteamId)) _peers.RemoveAt(index);
         }
 
+        SortPeersByName();
+
         OnlinePlayerComboBox.SelectedItem =
             FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
         RefreshDiagnosticsPanel();
         RefreshUi();
+    }
+
+    /// <summary>
+    /// Puts the players in the order the other list of them uses.
+    ///
+    /// The list a world is handed over from is bound straight to the
+    /// collection, so it read in whatever order Steam answered in - which
+    /// changes between refreshes - while the list a report is sent to, of the
+    /// same friends, was sorted by name. Two orders for one set of people is a
+    /// way to hand a world to the wrong one.
+    ///
+    /// Moved rather than rebuilt: clearing the collection would drop whoever
+    /// is selected.
+    /// </summary>
+    private void SortPeersByName()
+    {
+        var sorted = ListOrder.Players(_peers).ToList();
+        for (var index = 0; index < sorted.Count; index++)
+        {
+            var current = _peers.IndexOf(sorted[index]);
+            if (current != index) _peers.Move(current, index);
+        }
     }
 
     /// <summary>

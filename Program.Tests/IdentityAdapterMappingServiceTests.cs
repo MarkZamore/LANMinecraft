@@ -177,18 +177,62 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.False(properties.ContainsKey("getAllLevelsMethods"));
     }
 
+    /// <summary>
+    /// NeoForge stopped writing the merged mappings inside its 21.10 line, and
+    /// a runtime that ships none is not a runtime without an answer: since
+    /// 1.20.2 it loads the game under Mojang's own names, so Mojang's own file
+    /// is the whole of it. What comes out is what the merged file produced,
+    /// alias for alias.
+    /// </summary>
+    [Fact]
+    public void ANeoForgeRuntimeWithNoMappingsOfItsOwn_IsReadFromMojangsAlone()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateForgeFixture(GoldenMappings, DefaultJarClasses, withSrgMappings: false, neoForge: true);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("getAllLevels,K", properties["getAllLevelsMethods"]);
+        Assert.Equal("net/minecraft/server/level/ServerChunkCache,aqs", properties["chunkSourceClasses"]);
+        Assert.Equal("setViewDistance,a", properties["setChunkViewDistanceMethods"]);
+        Assert.Equal("true", properties["lanPublishEnabled"]);
+    }
+
+    /// <summary>
+    /// The same runtime under a loader that does not load Mojang's names is
+    /// left alone: guessing SRG or intermediary out of this file is not
+    /// possible, and answering with the wrong spelling is worse than not
+    /// answering.
+    /// </summary>
+    [Fact]
+    public void AFabricRuntimeWithNothingButMojangsFile_IsNotGuessedAt()
+    {
+        var (service, runtime, gameDirectory) =
+            CreateForgeFixture(GoldenMappings, DefaultJarClasses, withSrgMappings: false, neoForge: false);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("false", properties["lanPublishEnabled"]);
+        Assert.Equal("false", properties["identityHooksEnabled"]);
+    }
+
     private (IdentityAdapterMappingService Service, PreparedRuntime Runtime, string GameDirectory)
         CreateForgeFixture(
             string mergedMappings,
             IReadOnlyList<string> jarClasses,
-            bool withMojangMappings = true)
+            bool withMojangMappings = true,
+            bool withSrgMappings = true,
+            bool neoForge = false)
     {
         var (srg, proguard) = ForgeFlavoured(mergedMappings);
         var paths = new AppPaths(_root);
         var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Forge");
-        var mcpDirectory = Path.Combine(runtimeRoot, "libraries", "mcp_config");
-        Directory.CreateDirectory(mcpDirectory);
-        File.WriteAllText(Path.Combine(mcpDirectory, "mcp_config-test-mappings-merged.txt"), srg);
+        if (withSrgMappings)
+        {
+            var mcpDirectory = Path.Combine(runtimeRoot, "libraries", "mcp_config");
+            Directory.CreateDirectory(mcpDirectory);
+            File.WriteAllText(Path.Combine(mcpDirectory, "mcp_config-test-mappings-merged.txt"), srg);
+        }
         if (withMojangMappings)
         {
             var mojangDirectory = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client", "1.21.1");
@@ -215,7 +259,9 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             new PackRuntimeDescriptor(
                 1,
                 "1.21.1",
-                new PackLoaderDescriptor(PackLoaderKind.Forge, "47.3.0"),
+                new PackLoaderDescriptor(
+                    neoForge ? PackLoaderKind.NeoForge : PackLoaderKind.Forge,
+                    neoForge ? "26.1.0" : "47.3.0"),
                 "client.jar",
                 "forge-hash"));
         return (new IdentityAdapterMappingService(paths), runtime, gameDirectory);

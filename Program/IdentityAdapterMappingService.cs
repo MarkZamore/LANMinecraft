@@ -80,7 +80,16 @@ internal sealed class IdentityAdapterMappingService
         var mojangMappingPath = FindMojangMappings(runtime.RuntimeRoot);
         var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
         var intermediaryPath = mappingPath is null ? FindIntermediaryMappings(runtime) : null;
-        if (mappingPath is null && intermediaryPath is null)
+        // A NeoForge that ships neither is not a runtime without an answer: it
+        // loads the game under Mojang's own names, and Mojang's own file is
+        // enough on its own. NeoForge stopped producing the merged mappings
+        // inside the 21.10 line, so this is what a pack built next year will
+        // land on. If the guess is wrong the required classes are not found in
+        // any jar and the whole thing falls back to skins, as it does now.
+        var officialOnly = mappingPath is null && intermediaryPath is null &&
+            runtime.Descriptor.Loader.Type == PackLoaderKind.NeoForge &&
+            mojangMappingPath is not null;
+        if (mappingPath is null && intermediaryPath is null && !officialOnly)
         {
             return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no mappings this build can read");
         }
@@ -88,15 +97,16 @@ internal sealed class IdentityAdapterMappingService
         RuntimeNames mappings;
         try
         {
-            mappings = mappingPath is not null
-                ? RuntimeNames.Read(mappingPath, mojangMappingPath)
-                : RuntimeNames.ReadIntermediary(intermediaryPath!, mojangMappingPath, runtime.ClientJarPath);
+            mappings = mappingPath is not null ? RuntimeNames.Read(mappingPath, mojangMappingPath)
+                : intermediaryPath is not null
+                    ? RuntimeNames.ReadIntermediary(intermediaryPath, mojangMappingPath, runtime.ClientJarPath)
+                    : RuntimeNames.ReadOfficialOnly(mojangMappingPath!);
         }
         catch (InvalidDataException ex)
         {
             return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
         }
-        mappingPath ??= intermediaryPath!;
+        mappingPath ??= intermediaryPath ?? mojangMappingPath!;
 
         try
         {
@@ -1139,6 +1149,45 @@ internal sealed class IdentityAdapterMappingService
             private static int ReadUInt16(byte[] data, int offset) => (data[offset] << 8) | data[offset + 1];
 
             public void Dispose() => _archive?.Dispose();
+        }
+
+        /// <summary>
+        /// Mojang's file and nothing else, for a runtime that loads the game
+        /// under the names Mojang gave it.
+        /// </summary>
+        /// <remarks>
+        /// That is every NeoForge since 1.20.2, and it used to be answered by
+        /// the merged mappings its installer wrote. The installer stopped
+        /// writing them inside the 21.10 line, and there is nothing else in
+        /// such a runtime to read - but there is nothing else needed either,
+        /// because the name to load by is the name we asked for. Only the
+        /// obfuscated one has to be looked up, and that is what Mojang's file
+        /// is.
+        /// </remarks>
+        public static RuntimeNames ReadOfficialOnly(string proguardPath)
+        {
+            var proguard = ReadProguard(proguardPath);
+            var classes = new Dictionary<string, MappedClass>(StringComparer.Ordinal);
+            foreach (var (official, entry) in proguard)
+            {
+                var slashed = official.Replace('.', '/');
+                if (!Required.Contains(slashed)) continue;
+                var mapped = new MappedClass(slashed, entry.ObfName, slashed);
+                foreach (var (fieldName, obfField) in entry.Fields)
+                {
+                    mapped.Fields[fieldName] = new MappedMember(fieldName, obfField, fieldName, string.Empty);
+                }
+                foreach (var member in entry.Methods)
+                {
+                    mapped.Methods.Add(new MappedMember(
+                        member.Official,
+                        member.ObfName,
+                        member.Official,
+                        ObfDescriptorOf(member, proguard)));
+                }
+                classes[slashed] = mapped;
+            }
+            return new RuntimeNames(classes);
         }
 
         public MappedClass RequireClass(string official) => _classes.TryGetValue(official, out var mapping)
