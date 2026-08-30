@@ -131,6 +131,7 @@
         <!-- Grid columns: the label column every block shares, the memory box, the history -->
         <GridLength x:Key="Size.LabelColumn">72</GridLength>
         <GridLength x:Key="Size.NumberField">64</GridLength>
+        <GridLength x:Key="Size.EstimateColumn">56</GridLength>
         <GridLength x:Key="Size.HistoryColumn">270</GridLength>
         <Thickness x:Key="Border.Control">1</Thickness>
         <Thickness x:Key="Border.Focus">1.5</Thickness>
