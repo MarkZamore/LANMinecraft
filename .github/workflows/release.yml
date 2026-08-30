@@ -360,14 +360,6 @@ jobs:
             Invoke-Gh release upload latest @payload --clobber
             if ($LASTEXITCODE -ne 0) { throw "Release assets could not be uploaded." }
 
-            $keep = @($assets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
-            $stale = (Invoke-Gh release view latest --json assets | ConvertFrom-Json).assets |
-              Where-Object { $_.name -notin $keep }
-            foreach ($asset in $stale) {
-              Invoke-Gh release delete-asset latest $asset.name --yes
-              if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
-            }
-
             # GitHub answered 502 here once and left the release without its
             # pointer, which took the next build down with it. Invoke-Gh is what
             # keeps trying now, and it does the same for every call around this
@@ -375,6 +367,19 @@ jobs:
             $manifest = Join-Path $artifactDir 'update.json'
             Invoke-Gh release upload latest $manifest --clobber
             if ($LASTEXITCODE -ne 0) { throw "Update manifest could not be published." }
+
+            # Sweeping up comes after the pointer, not before it. The old
+            # update.json names the old patches, so removing them while it is
+            # still the live one hands a launcher that checks in that moment a
+            # file it cannot fetch; once the new pointer is up, nothing names
+            # them any more.
+            $keep = @($assets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+            $stale = (Invoke-Gh release view latest --json assets | ConvertFrom-Json).assets |
+              Where-Object { $_.name -notin $keep }
+            foreach ($asset in $stale) {
+              Invoke-Gh release delete-asset latest $asset.name --yes
+              if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
+            }
 
             Invoke-Gh release edit latest `
               --target "${{ github.sha }}" `
