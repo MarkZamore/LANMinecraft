@@ -158,9 +158,12 @@ public final class PortableLanAutoPublishHooks {
      * behaviour: the host's own distance for everybody.
      */
     private static void applyServeDistance(Object server) {
+        // requestedViewDistanceMethods is not in this list: a version without
+        // it is a version where the adapter keeps the numbers itself, and
+        // asked() knows which of the two it is looking at.
         if (!hasAll("serverLevelClasses", "chunkSourceClasses", "getAllLevelsMethods",
                     "getChunkSourceMethods", "setChunkViewDistanceMethods",
-                    "getPlayersMethods", "requestedViewDistanceMethods")) {
+                    "getPlayersMethods")) {
             return;
         }
 
@@ -177,6 +180,11 @@ public final class PortableLanAutoPublishHooks {
                     // chose, rather than making him carry a room that is not
                     // there.
                     int chunks = asked(server);
+                    // Nothing to say: the server's own number stands, which is
+                    // what the tick would have set anyway.
+                    if (chunks <= 0) {
+                        return;
+                    }
                     for (Object level : levels) {
                         Object source = PortableIdentityReflection.invoke(
                             level,
@@ -250,6 +258,17 @@ public final class PortableLanAutoPublishHooks {
             playerList,
             aliases("getPlayersMethods", "getPlayers", "t"));
         int wanted = 2;
+        // Before 1.20.2 the server does not remember what anybody asked for,
+        // and the adapter wrote it down itself as it arrived. There is no
+        // method to call on those versions, so the note is what there is.
+        if (!hasAll("requestedViewDistanceMethods")) {
+            int largest = PortablePerPlayerChunksHooks.largestAsked(
+                players instanceof Iterable<?> present ? present : null);
+            // Nobody has said anything yet, which is not the same as everybody
+            // asking for nothing. Answering with the floor here would serve the
+            // whole world at two chunks until somebody's settings arrived.
+            return largest == 0 ? 0 : Math.min(Math.max(wanted, largest), SERVE_DISTANCE_LIMIT);
+        }
         if (players instanceof Iterable<?> everyone) {
             for (Object player : everyone) {
                 Object distance = PortableIdentityReflection.invoke(
@@ -268,12 +287,11 @@ public final class PortableLanAutoPublishHooks {
      *
      * A client is sent only what it was told to expect: ClientChunkCache drops
      * a chunk outside the radius it last heard, writing "Ignoring chunk since
-     * it's not in the view range" to its own log and nothing to the screen.
-     * That number is announced by PlayerList.setViewDistance, which this code
+     * it's not in the view range" to its log and nothing to the screen. That
+     * number is announced by PlayerList.setViewDistance, which this code
      * deliberately does not call - the integrated server would undo it on the
-     * next tick - so without this the world was served further and every guest
-     * threw the difference away, which is the whole feature quietly not
-     * happening.
+     * next tick - so without this the world was served further and every chunk
+     * past the host's own number was thrown away by the guest who asked for it.
      *
      * Failing here is worth saying out loud and worth nothing else: the world
      * is open either way.
