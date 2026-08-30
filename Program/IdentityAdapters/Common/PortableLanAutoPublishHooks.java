@@ -64,7 +64,7 @@ public final class PortableLanAutoPublishHooks {
                 // did: nothing visible. A menu that keeps its "open to LAN"
                 // button after the world is open would otherwise walk a player
                 // into a screen that cannot change anything.
-                closeScreen(minecraftType, screenType, loader);
+                closeScreenSoon(minecraftType, screenType);
                 return true;
             }
 
@@ -100,7 +100,7 @@ public final class PortableLanAutoPublishHooks {
             }
 
             try {
-                closeScreen(minecraftType, screenType, loader);
+                closeScreenSoon(minecraftType, screenType);
                 Object message = PortableIdentityReflection.invokeStatic(
                     publishCommandType,
                     new Class<?>[] { int.class },
@@ -135,19 +135,38 @@ public final class PortableLanAutoPublishHooks {
         }
     }
 
-    /** Puts the pause menu away, which is what the vanilla screen does when it closes. */
-    private static void closeScreen(Class<?> minecraftType, Class<?> screenType, ClassLoader loader)
+    /**
+     * Puts the screen away, which is what the vanilla one does when it closes -
+     * but not this instant. The screen is in the middle of being built, and
+     * mods look at what it built as soon as it is done; closing it out from
+     * under them is how the game went down. The client is an Executor, so the
+     * close waits in its queue and runs at the top of the next frame, before
+     * anything is drawn - the screen is put away without ever being seen.
+     */
+    private static void closeScreenSoon(Class<?> minecraftType, Class<?> screenType)
         throws ReflectiveOperationException {
         Object minecraft = PortableIdentityReflection.invokeStatic(
             minecraftType,
             new Class<?>[0],
             new Object[0],
             aliases("minecraftGetInstanceMethods", "getInstance", "Q"));
-        PortableIdentityReflection.invokeDeclared(
-            minecraft,
-            new Class<?>[] { screenType },
-            new Object[] { null },
-            aliases("setScreenMethods", "setScreen", "a"));
+        Runnable close = () -> {
+            try {
+                PortableIdentityReflection.invokeDeclared(
+                    minecraft,
+                    new Class<?>[] { screenType },
+                    new Object[] { null },
+                    aliases("setScreenMethods", "setScreen", "a"));
+            } catch (Throwable exception) {
+                System.out.println(
+                    "[PortableIdentity] LAN share screen could not be closed: " + exception);
+            }
+        };
+        if (minecraft instanceof java.util.concurrent.Executor client) {
+            client.execute(close);
+        } else {
+            close.run();
+        }
     }
 
     private static Class<?> loadClass(ClassLoader loader, String... names) throws ClassNotFoundException {

@@ -5,12 +5,10 @@ import java.security.ProtectionDomain;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
-import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
-import org.objectweb.asm.tree.JumpInsnNode;
-import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.VarInsnNode;
@@ -41,20 +39,30 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
                 continue;
             }
 
-            LabelNode continueLabel = new LabelNode();
-            InsnList prefix = new InsnList();
-            prefix.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            prefix.add(new MethodInsnNode(
+            // The screen builds itself first and the publish comes after it,
+            // rather than instead of it. Mods are handed the finished screen
+            // the moment init returns and they read the buttons it made: LAN
+            // Server Properties looks for the start button by name and dies on
+            // the null when it is not there, which is what a skipped body left
+            // behind - the world opened and the game came down with it.
+            AbstractInsnNode exit = method.instructions.getLast();
+            while (exit != null && exit.getOpcode() != Opcodes.RETURN) {
+                exit = exit.getPrevious();
+            }
+            if (exit == null) {
+                continue;
+            }
+
+            InsnList publish = new InsnList();
+            publish.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            publish.add(new MethodInsnNode(
                 Opcodes.INVOKESTATIC,
                 HOOKS,
                 "autoPublish",
                 "(Ljava/lang/Object;)Z",
                 false));
-            prefix.add(new JumpInsnNode(Opcodes.IFEQ, continueLabel));
-            prefix.add(new InsnNode(Opcodes.RETURN));
-            prefix.add(continueLabel);
-            prefix.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
-            method.instructions.insert(prefix);
+            publish.add(new InsnNode(Opcodes.POP));
+            method.instructions.insertBefore(exit, publish);
             patched = true;
         }
 
