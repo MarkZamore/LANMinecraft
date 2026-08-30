@@ -34,6 +34,9 @@ internal sealed class IdentityAdapterMappingService
     private const string ServerLevel = "net/minecraft/server/level/ServerLevel";
     private const string ServerChunkCache = "net/minecraft/server/level/ServerChunkCache";
     private const string ServerPlayer = "net/minecraft/server/level/ServerPlayer";
+    private const string NetworkPacket = "net/minecraft/network/protocol/Packet";
+    private const string ChunkRadiusPacket =
+        "net/minecraft/network/protocol/game/ClientboundSetChunkCacheRadiusPacket";
     // The rule about which hosts a skin may come from moved once and was
     // renamed once across the eighteen published authlib releases, and these
     // are the only three forms it has ever taken: isWhitelistedDomain on the
@@ -391,8 +394,24 @@ internal sealed class IdentityAdapterMappingService
         var requestedViewDistance = serverPlayer.FindMethod(
             "requestedViewDistance",
             descriptor => descriptor == "()I");
+        // And the telling of it, which is the half that was missing. A client
+        // is sent only what it was told to expect: ClientChunkCache drops a
+        // chunk outside the radius it last heard, writing "Ignoring chunk since
+        // it's not in the view range" to its own log and nothing to the screen.
+        // That number is announced by PlayerList.setViewDistance, which this
+        // deliberately does not call - the integrated server would undo it on
+        // the next tick - so the announcement has to be made separately, or the
+        // world is served further and every guest throws the difference away.
+        var networkPacket = mappings.FindClass(NetworkPacket);
+        var radiusPacket = mappings.FindClass(ChunkRadiusPacket);
+        var broadcastAll = networkPacket is null
+            ? null
+            : playerList.FindMethod(
+                "broadcastAll",
+                descriptor => descriptor == $"(L{networkPacket.ObfName};)V");
         if (allLevels is null || chunkSource is null || chunkViewDistance is null ||
-            players is null || requestedViewDistance is null)
+            players is null || requestedViewDistance is null ||
+            networkPacket is null || radiusPacket is null || broadcastAll is null)
         {
             return;
         }
@@ -403,6 +422,9 @@ internal sealed class IdentityAdapterMappingService
         properties["getChunkSourceMethods"] = JoinAliases(chunkSource);
         properties["setChunkViewDistanceMethods"] = JoinAliases(chunkViewDistance);
         properties["getPlayersMethods"] = JoinAliases(players);
+        properties["networkPacketClasses"] = JoinDottedAliases(networkPacket);
+        properties["chunkRadiusPacketClasses"] = JoinDottedAliases(radiusPacket);
+        properties["broadcastAllMethods"] = JoinAliases(broadcastAll);
         properties["requestedViewDistanceMethods"] = JoinAliases(requestedViewDistance);
     }
 
@@ -791,6 +813,8 @@ internal sealed class IdentityAdapterMappingService
             ServerLevel,
             ServerChunkCache,
             ServerPlayer,
+            NetworkPacket,
+            ChunkRadiusPacket,
             ShareToLanScreen,
             IntegratedServer,
             MinecraftClient,

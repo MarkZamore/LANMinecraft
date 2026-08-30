@@ -42,6 +42,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\te ()Z isMemoryConnection",
         "aur net/minecraft/server/players/PlayerList",
         "\tt ()Ljava/util/List; getPlayers",
+        "\ta (Lzg;)V broadcastAll",
         "\ta (Ljava/util/UUID;)Laqv; getPlayer",
         "wz net/minecraft/network/chat/Component",
         "\tb (Ljava/lang/String;)Lxn; literal",
@@ -109,7 +110,9 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "ans net/minecraft/server/commands/PublishCommand",
         "\ta (I)Lxn; getSuccessMessage",
         "erl net/minecraft/world/level/storage/WorldData",
-        "\tm ()Z isAllowCommands"
+        "\tm ()Z isAllowCommands",
+        "zg net/minecraft/network/protocol/Packet",
+        "aew net/minecraft/network/protocol/game/ClientboundSetChunkCacheRadiusPacket"
     });
 
     private static readonly string[] DefaultJarClasses =
