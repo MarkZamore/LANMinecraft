@@ -65,6 +65,9 @@ public partial class MainWindow : Window
     private bool _suppressTextPersistence;
     private bool _suppressBuildPersistence;
     private bool _suppressMemoryTextChanged;
+    private DispatcherTimer? _memoryEstimateWait;
+    private int _memoryEstimateWaitStep;
+    private int _packMemoryGeneration;
     /// <summary>False on every launch: the column opens on the assistant.</summary>
     private bool _sidePanelShowsNews;
     private bool _bugReportSending;
@@ -2491,10 +2494,58 @@ public partial class MainWindow : Window
     {
         if (_settings is null || _settingsService is null) return;
 
-        _settingsService.MeasurePack(_settings.ClientRelativePath);
-        _settingsService.ApplyPackMemory(_settings);
-        RefreshMemoryText();
-        RefreshSkinHint();
+        // Weighing a pack walks every jar in it - nine hundred of them on the
+        // largest build here - and that is a second of disk on a cold cache. It
+        // used to happen on the click that chose the build, which froze the
+        // window mid-press: nothing moved, and the number it was working out is
+        // the one thing on screen that could have said why. So the estimate says
+        // it is thinking, and the walk happens off this thread.
+        var wanted = _settings.ClientRelativePath;
+        var generation = ++_packMemoryGeneration;
+        StartMemoryEstimateWait();
+        var service = _settingsService;
+        var settings = _settings;
+        _ = Task.Run(() => service.MeasurePack(wanted)).ContinueWith(
+            _ =>
+            {
+                // A player who clicks through three builds gets three walks, and
+                // only the last one is about the build in front of them.
+                if (generation != _packMemoryGeneration) return;
+                StopMemoryEstimateWait();
+                service.ApplyPackMemory(settings);
+                RefreshMemoryText();
+                RefreshSkinHint();
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    /// <summary>
+    /// While the pack is being weighed the estimate is a moving ellipsis rather
+    /// than a stale number: the last pack's answer standing under a new build's
+    /// name is worse than no answer at all.
+    /// </summary>
+    private void StartMemoryEstimateWait()
+    {
+        _memoryEstimateWaitStep = 0;
+        MemoryEstimateText.Text = "~ .";
+        MemoryEstimateText.ToolTip = "Лаунчер взвешивает сборку, чтобы прикинуть память.";
+        _memoryEstimateWait ??= new DispatcherTimer(
+            TimeSpan.FromMilliseconds(250),
+            DispatcherPriority.Normal,
+            (_, _) =>
+            {
+                _memoryEstimateWaitStep = (_memoryEstimateWaitStep + 1) % 3;
+                MemoryEstimateText.Text = "~ " + new string('.', _memoryEstimateWaitStep + 1);
+            },
+            Dispatcher);
+        _memoryEstimateWait.Start();
+    }
+
+    private void StopMemoryEstimateWait()
+    {
+        _memoryEstimateWait?.Stop();
     }
 
     /// <summary>
