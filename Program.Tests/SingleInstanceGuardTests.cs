@@ -1,4 +1,4 @@
-using Minecraft;
+﻿using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -10,13 +10,17 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class SingleInstanceGuardTests
 {
+    // A name of this test run's own: a real launcher is usually running on the
+    // machine these are written on, and it holds the launcher's own name.
+    private readonly string _scope = "." + Guid.NewGuid().ToString("N");
+
     [Fact]
     public void WhileOneIsHeld_AnotherCannotBeTaken()
     {
-        using var first = SingleInstanceGuard.TryAcquire();
+        using var first = SingleInstanceGuard.TryAcquire(_scope);
         Assert.NotNull(first);
 
-        var second = SingleInstanceGuard.TryAcquire();
+        var second = SingleInstanceGuard.TryAcquire(_scope);
 
         Assert.Null(second);
     }
@@ -28,11 +32,11 @@ public sealed class SingleInstanceGuardTests
     [Fact]
     public void OnceItIsGivenBack_TheNextOneStarts()
     {
-        var first = SingleInstanceGuard.TryAcquire();
+        var first = SingleInstanceGuard.TryAcquire(_scope);
         Assert.NotNull(first);
         first.Dispose();
 
-        using var second = SingleInstanceGuard.TryAcquire();
+        using var second = SingleInstanceGuard.TryAcquire(_scope);
 
         Assert.NotNull(second);
     }
@@ -45,13 +49,13 @@ public sealed class SingleInstanceGuardTests
     [Fact]
     public void TheSecondCopy_AsksTheRunningOneToComeForward()
     {
-        using var running = SingleInstanceGuard.TryAcquire();
+        using var running = SingleInstanceGuard.TryAcquire(_scope);
         Assert.NotNull(running);
         using var asked = new ManualResetEventSlim(false);
         running.AnotherInstanceStarted += () => asked.Set();
 
-        Assert.Null(SingleInstanceGuard.TryAcquire());
-        SingleInstanceGuard.AskRunningInstanceToShowItself();
+        Assert.Null(SingleInstanceGuard.TryAcquire(_scope));
+        SingleInstanceGuard.AskRunningInstanceToShowItself(_scope);
 
         Assert.True(asked.Wait(TimeSpan.FromSeconds(5)), "the running launcher was never asked to show itself");
     }
@@ -63,6 +67,6 @@ public sealed class SingleInstanceGuardTests
     [Fact]
     public void AskingWithNobodyRunning_DoesNothing()
     {
-        SingleInstanceGuard.AskRunningInstanceToShowItself();
+        SingleInstanceGuard.AskRunningInstanceToShowItself(_scope);
     }
 }
