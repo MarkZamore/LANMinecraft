@@ -427,6 +427,54 @@ public sealed class SavesFolderTests : IDisposable
         return world;
     }
 
+    /// <summary>
+    /// Deleting a world in the game empties the folder it lived in; nothing
+    /// then empties the folder.
+    /// </summary>
+    [Fact]
+    public void TheShellOfAWorldDeletedInTheGame_IsSweptUp()
+    {
+        MakeWorld("Chebupeli", "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+
+        // What the game does: the files go through the junction, and the
+        // junction goes with them. Only the shared folder is left.
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(Worlds, "Chebupeli")))
+        {
+            File.Delete(file);
+        }
+        Directory.Delete(Path.Combine(Saves, "Chebupeli"));
+
+        PackInstanceService.CleanupEmptyWorldPlaceholders(Worlds);
+
+        Assert.False(Directory.Exists(Path.Combine(Worlds, "Chebupeli")));
+    }
+
+    /// <summary>The placeholders go first, and then the world they were left in.</summary>
+    [Fact]
+    public void AShellHoldingOnlyEmptyPlaceholders_IsSweptUp()
+    {
+        var world = Path.Combine(Worlds, "New World");
+        Directory.CreateDirectory(Path.Combine(world, "datapacks"));
+        Directory.CreateDirectory(Path.Combine(world, "EnderStorage"));
+
+        PackInstanceService.CleanupEmptyWorldPlaceholders(Worlds);
+
+        Assert.False(Directory.Exists(world));
+    }
+
+    /// <summary>A world is a world while one file of it is left.</summary>
+    [Fact]
+    public void AWorldWithAnythingInIt_IsNeverSweptUp()
+    {
+        MakeWorld("Chebupeli", "LL8 Extended");
+        Directory.CreateDirectory(Path.Combine(Worlds, "Chebupeli", "datapacks"));
+
+        PackInstanceService.CleanupEmptyWorldPlaceholders(Worlds);
+
+        Assert.True(File.Exists(Path.Combine(Worlds, "Chebupeli", "level.dat")));
+    }
+
     private void MakeWorld(string name, string? build)
     {
         var world = Path.Combine(Worlds, name);
