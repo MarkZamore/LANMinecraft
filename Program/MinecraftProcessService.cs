@@ -211,10 +211,6 @@ public sealed class MinecraftProcessService
 
     /// <summary>What the log says when the heap is spent.</summary>
     private const string OutOfMemoryMarker = "OutOfMemoryError";
-    /// <summary>Below this a serve distance is not a distance; it is the game's own floor.</summary>
-    internal const int MinimumServeDistanceChunks = 2;
-    /// <summary>What one machine can be asked to generate and send for a room of friends.</summary>
-    internal const int MaximumServeDistanceChunks = 64;
     public event Action<bool>? ClientPreparingChanged;
 
     public MinecraftProcessService(
@@ -533,18 +529,6 @@ public sealed class MinecraftProcessService
         if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
         extraJvmArguments.AddRange(JavaCompatibilityArguments);
         extraJvmArguments.AddRange(identityJvmArguments);
-        // How far the world is served when it is opened to the network. The
-        // game settles this with the host's own render distance and makes it
-        // everybody's ceiling; the adapter writes the chunk map's own copy
-        // instead, so the host draws what he likes and the guests are held to
-        // this. Nothing is passed unless somebody asked for a number, and then
-        // the game keeps the arrangement it has always had.
-        if (settings.ServeDistanceChunks >= MinimumServeDistanceChunks)
-        {
-            extraJvmArguments.Add(
-                "-Dminecraft.portable.identity.serveDistance=" +
-                settings.ServeDistanceChunks.ToString(CultureInfo.InvariantCulture));
-        }
         // What the game is actually started with. A release once went out with
         // an option the JVM refuses, and the reports that came back could not
         // say which options had been applied at all - none of the five logs a

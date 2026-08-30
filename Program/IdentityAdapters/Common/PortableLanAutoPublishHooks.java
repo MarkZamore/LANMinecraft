@@ -5,6 +5,9 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 public final class PortableLanAutoPublishHooks {
+    /** The game's own maximum view distance, and now the ceiling for a shared world. */
+    private static final int SERVE_DISTANCE_CHUNKS = 32;
+
     // One publish attempt per screen instance: Screen.resize() re-runs init() on
     // the same instance and must not re-publish or discard user edits.
     private static final Map<Object, Boolean> ATTEMPTED =
@@ -155,8 +158,16 @@ public final class PortableLanAutoPublishHooks {
      * behaviour: the host's own distance for everybody.
      */
     private static void applyServeDistance(Object server) {
-        int chunks = number("serveDistance");
-        if (chunks < 2) {
+        // Thirty-two is the game's own maximum, the number a dedicated server
+        // is given by default and the highest any client's slider offers. It is
+        // the ceiling here for the same reason: nobody should be held below what
+        // the game itself allows because of a setting somebody else picked for
+        // their own screen. What each guest actually receives is still his own
+        // number, and what the host pays is the sum of those - the same bill a
+        // dedicated server hands its owner.
+        int chunks = SERVE_DISTANCE_CHUNKS;
+        if (!hasAll("serverLevelClasses", "chunkSourceClasses", "getAllLevelsMethods",
+                    "getChunkSourceMethods", "setChunkViewDistanceMethods")) {
             return;
         }
 
@@ -165,7 +176,6 @@ public final class PortableLanAutoPublishHooks {
                 server,
                 aliases("getAllLevelsMethods", "getAllLevels", "K"));
             Runnable apply = () -> {
-                int served = 0;
                 try {
                     for (Object level : levels) {
                         Object source = PortableIdentityReflection.invoke(
@@ -176,11 +186,7 @@ public final class PortableLanAutoPublishHooks {
                             new Class<?>[] { int.class },
                             new Object[] { chunks },
                             aliases("setChunkViewDistanceMethods", "setViewDistance", "a"));
-                        served++;
                     }
-                    System.out.println(
-                        "[PortableIdentity] LAN world served at " + chunks + " chunks across " + served
-                            + " dimension(s); this machine still draws its own.");
                 } catch (Throwable exception) {
                     System.out.println(
                         "[PortableIdentity] LAN serve distance could not be set: " + exception);
@@ -188,27 +194,54 @@ public final class PortableLanAutoPublishHooks {
             };
             // The chunk map belongs to the server thread, and the server is its
             // own executor.
-            if (server instanceof java.util.concurrent.Executor executor) {
-                executor.execute(apply);
-            } else {
+            if (!(server instanceof java.util.concurrent.Executor executor)) {
                 apply.run();
+                return;
             }
+            executor.execute(apply);
+            System.out.println(
+                "[PortableIdentity] LAN world served at " + chunks
+                    + " chunks; this machine still draws its own number.");
+
+            // And it is set again while the world stays open, because the
+            // integrated server writes its own figure the moment the host moves
+            // his render distance: it compares against what PlayerList holds,
+            // which is still the host's, so any change there takes the chunk map
+            // with it. Setting the same value twice costs nothing - the game
+            // compares before it acts - and the thread ends with the world.
+            Thread keeper = new Thread(() -> {
+                try {
+                    while (true) {
+                        Thread.sleep(5000L);
+                        if (!Boolean.TRUE.equals(PortableIdentityReflection.invoke(
+                            server,
+                            aliases("isPublishedMethods", "isPublished", "r")))) {
+                            return;
+                        }
+                        executor.execute(apply);
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (Throwable ignored) {
+                    // The world is going or gone; nothing here is worth a line.
+                }
+            }, "portable-serve-distance");
+            keeper.setDaemon(true);
+            keeper.start();
         } catch (Throwable exception) {
             System.out.println("[PortableIdentity] LAN serve distance unavailable: " + exception);
         }
     }
 
-    /** A number the launcher passed, or 0 where it passed none. */
-    private static int number(String propertyName) {
-        String value = System.getProperty("minecraft.portable.identity." + propertyName);
-        if (value == null || value.isBlank()) {
-            return 0;
+    /** Whether the launcher found every name this needs in the game it started. */
+    private static boolean hasAll(String... propertyNames) {
+        for (String name : propertyNames) {
+            String value = System.getProperty("minecraft.portable.identity." + name);
+            if (value == null || value.isBlank()) {
+                return false;
+            }
         }
-        try {
-            return Integer.parseInt(value.trim());
-        } catch (NumberFormatException ignored) {
-            return 0;
-        }
+        return true;
     }
 
     /**

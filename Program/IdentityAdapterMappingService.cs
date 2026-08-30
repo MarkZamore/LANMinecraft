@@ -186,8 +186,8 @@ internal sealed class IdentityAdapterMappingService
         var worldData = mappings.RequireClass(WorldData);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
-        var serverLevel = mappings.RequireClass(ServerLevel);
-        var chunkCache = mappings.RequireClass(ServerChunkCache);
+        var serverLevel = mappings.FindClass(ServerLevel);
+        var chunkCache = mappings.FindClass(ServerChunkCache);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -241,13 +241,15 @@ internal sealed class IdentityAdapterMappingService
         // ceiling for everybody; ChunkMap keeps its own copy, and writing to
         // that one instead leaves the comparison the server makes each tick
         // still true, so it never writes over it.
-        var allLevels = server.RequireMethod(
+        var allLevels = server.FindMethod(
             "getAllLevels",
             descriptor => descriptor == "()Ljava/lang/Iterable;");
-        var chunkSource = serverLevel.RequireMethod(
-            "getChunkSource",
-            descriptor => descriptor == $"()L{chunkCache.LeftName};");
-        var chunkViewDistance = chunkCache.RequireMethod(
+        var chunkSource = chunkCache is null
+            ? null
+            : serverLevel?.FindMethod(
+                "getChunkSource",
+                descriptor => descriptor == $"()L{chunkCache.LeftName};");
+        var chunkViewDistance = chunkCache?.FindMethod(
             "setViewDistance",
             descriptor => descriptor == "(I)V");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -319,11 +321,6 @@ internal sealed class IdentityAdapterMappingService
             ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
             ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
             ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
-            ["serverLevelClasses"] = JoinAliases(ServerLevel, serverLevel.LeftName),
-            ["chunkSourceClasses"] = JoinAliases(ServerChunkCache, chunkCache.LeftName),
-            ["getAllLevelsMethods"] = JoinAliases("getAllLevels", allLevels.LeftName),
-            ["getChunkSourceMethods"] = JoinAliases("getChunkSource", chunkSource.LeftName),
-            ["setChunkViewDistanceMethods"] = JoinAliases("setViewDistance", chunkViewDistance.LeftName),
             ["publishServerMethods"] = JoinAliases("publishServer", publishServer.LeftName),
             ["getDefaultGameTypeMethods"] = JoinAliases("getDefaultGameType", defaultGameType.LeftName),
             ["getWorldDataMethods"] = JoinAliases("getWorldData", getWorldData.LeftName),
@@ -357,6 +354,21 @@ internal sealed class IdentityAdapterMappingService
             ["chatComponentClasses"] = JoinAliases(ChatComponent, chatComponent.LeftName),
             ["chatAddMessageMethods"] = JoinAliases("addMessage", addMessage.LeftName)
         };
+
+        // Serving a world further than the host draws it needs three names an
+        // older Minecraft may not have under these spellings. Where any is
+        // missing the feature is absent and everything else the adapter does is
+        // untouched: a version that cannot serve further must not lose its
+        // skins over it.
+        if (serverLevel is not null && chunkCache is not null && allLevels is not null &&
+            chunkSource is not null && chunkViewDistance is not null)
+        {
+            properties["serverLevelClasses"] = JoinAliases(ServerLevel, serverLevel.LeftName);
+            properties["chunkSourceClasses"] = JoinAliases(ServerChunkCache, chunkCache.LeftName);
+            properties["getAllLevelsMethods"] = JoinAliases("getAllLevels", allLevels.LeftName);
+            properties["getChunkSourceMethods"] = JoinAliases("getChunkSource", chunkSource.LeftName);
+            properties["setChunkViewDistanceMethods"] = JoinAliases("setViewDistance", chunkViewDistance.LeftName);
+        }
 
         AddSkinProperties(properties);
 
@@ -551,6 +563,15 @@ internal sealed class IdentityAdapterMappingService
                 ? mapping
                 : throw new InvalidDataException($"Required identity mapping class is missing: {rightName}");
         }
+
+        /// <summary>
+        /// A class this build would use if the game has it. Everything the
+        /// adapter must have is required above; anything asked for here is one
+        /// feature, and a version without it keeps all the others rather than
+        /// losing the adapter whole.
+        /// </summary>
+        public Tsrg2Class? FindClass(string rightName) =>
+            _classes.TryGetValue(rightName, out var mapping) ? mapping : null;
     }
 
     private sealed class Tsrg2Class
@@ -575,6 +596,11 @@ internal sealed class IdentityAdapterMappingService
             return Methods.FirstOrDefault(method => method.RightName == rightName && descriptorPredicate(method.LeftDescriptor))
                 ?? throw new InvalidDataException($"Required identity mapping method is missing: {RightName}.{rightName}");
         }
+
+        /// <summary>The same, for a method only one feature needs.</summary>
+        public Tsrg2Method? FindMethod(string rightName, Func<string, bool> descriptorPredicate) =>
+            Methods.FirstOrDefault(method =>
+                method.RightName == rightName && descriptorPredicate(method.LeftDescriptor));
     }
 
     private sealed record Tsrg2Method(string LeftName, string LeftDescriptor, string RightName);
