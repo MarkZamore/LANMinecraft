@@ -120,9 +120,13 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             element =>
                 element.Name.LocalName == "CenteredDropDown" &&
                 (string?)element.Attribute(x + "Name") == "DiagnosticLogTargetComboBox");
+        // A field, not a label: the launcher's own line can be selected and
+        // scrolled, and looks like the box above it.
         Assert.Contains(
-            document.Descendants(presentation + "TextBlock"),
-            element => (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText");
+            document.Descendants(presentation + "TextBox"),
+            element =>
+                (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText" &&
+                (string?)element.Attribute("IsReadOnly") == "True");
         Assert.Contains(
             document.Descendants(presentation + "Button"),
             element =>
