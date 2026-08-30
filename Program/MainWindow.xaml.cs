@@ -600,7 +600,7 @@ public partial class MainWindow : Window
         // be read, not in a grey button that explains nothing.
         DiagnosticLogTargetPlaceholderText.Visibility =
             targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        DiagnosticLogStatusText.Text = _bugReportStatus;
+        ShowBugReportStatus();
     }
 
     /// <summary>
@@ -683,8 +683,23 @@ public partial class MainWindow : Window
     private void SetBugReportStatus(string message)
     {
         _bugReportStatus = message;
-        DiagnosticLogStatusText.Text = message;
+        ShowBugReportStatus();
     }
+
+    /// <summary>
+    /// The status line, or - while nothing has happened - what stands in for
+    /// it. An empty box under a filled one reads as a box that broke, so it
+    /// says the panel is fine; and when Steam is not signed in it says the one
+    /// thing there is to do about it, because that is also why the list of
+    /// people to send the report to is empty.
+    /// </summary>
+    private void ShowBugReportStatus() =>
+        DiagnosticLogStatusText.Text = _bugReportStatus.Length > 0
+            ? _bugReportStatus
+            : _steamClient?.Status.IsReady == true && IsIdentityBound
+                ? "Всё работает :)"
+                : "Включите Steam и нажмите кнопку " +
+                  "«Повторить» в нижнем правом углу экрана";
 
     internal void OpenSupportLogsDirectory()
     {
