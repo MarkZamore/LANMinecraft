@@ -41,6 +41,13 @@ public static class LogCleanupService
         catch
         {
         }
+        try
+        {
+            PackInstanceService.PruneOldConflictSnapshots(paths.PackConflicts);
+        }
+        catch
+        {
+        }
         CleanupDotNetExtractionCache();
         CleanupRenamedExtractionRoots();
     }
