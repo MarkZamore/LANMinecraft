@@ -459,6 +459,23 @@ public sealed class MinecraftProcessService
             "-Dfile.encoding=UTF-8",
             "-Djava.net.preferIPv4Stack=true",
             "-Djava.net.preferIPv6Addresses=false",
+            // Five seconds to reach a host, and then give up. Java leaves this
+            // unset, so a connection nobody answers waits on whatever the
+            // operating system allows - about twenty-one seconds on Windows -
+            // and a mod that opens a URL from the server tick freezes the world
+            // for everyone in it for that long. Server Side Horror does exactly
+            // that: it fetches a fake player's skin from api.mojang.com inside
+            // ServerPlayer.tick, and on a machine whose route there is blocked
+            // it stopped a shared world four times over, forty seconds at a
+            // stretch, until ModernFix's watchdog started dumping threads. The
+            // skin it was waiting for is not even used - the mod falls back to
+            // the default one.
+            //
+            // A handshake that has not happened in five seconds was not going
+            // to happen. The read timeout is deliberately left alone: reading
+            // is where a real download lives, and a slow one is still a
+            // download.
+            "-Dsun.net.client.defaultConnectTimeout=5000",
             $"-Djava.io.tmpdir={javaTempDir}",
             // A home of its own, inside the folder, because things reach for
             // one. e4steam unpacks the three Steam native libraries into
