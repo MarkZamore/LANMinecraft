@@ -27,11 +27,32 @@ public sealed class MinecraftProcessService
     /// copy of it - which silently took Shift+Tab away from the game, where the
     /// overlay is the whole point, because inviting a friend into a Steam
     /// session happens through it.
+    ///
+    /// And the profile a mod would write into. -Duser.home already moves
+    /// anything that asks Java where home is; these are the same question asked
+    /// of Windows instead, and until now nothing answered it: mods wrote
+    /// %LOCALAPPDATA%\.resourcefullib, %APPDATA%\.minecraft and, in one case, a
+    /// folder in %USERPROFILE% with a note inside. The folder is the whole
+    /// installation, so the profile is inside it too, laid out the way Windows
+    /// lays one out - a mod that builds %APPDATA%\.minecraft finds the shape it
+    /// expects, one directory deeper.
+    ///
+    /// This redirects; it cannot forbid. A library that asks Windows itself
+    /// through SHGetKnownFolderPath, as net.harawata.appdirs does, is answered
+    /// by the registry rather than by this, and an absolute path written into a
+    /// mod is beyond any of it.
     /// </summary>
-    internal static void ConfigureChildEnvironment(IDictionary<string, string?> environment, string javaTempDir)
+    internal static void ConfigureChildEnvironment(
+        IDictionary<string, string?> environment,
+        string javaTempDir,
+        string javaHome)
     {
         environment["TEMP"] = javaTempDir;
         environment["TMP"] = javaTempDir;
+        environment["USERPROFILE"] = javaHome;
+        environment["HOME"] = javaHome;
+        environment["APPDATA"] = Path.Combine(javaHome, "AppData", "Roaming");
+        environment["LOCALAPPDATA"] = Path.Combine(javaHome, "AppData", "Local");
         environment.Remove(SteamworksApiFacade.NoOverlayVariable);
     }
 
@@ -347,6 +368,11 @@ public sealed class MinecraftProcessService
         var javaHome = Path.Combine(_paths.Personal, "Home");
         _paths.EnsureUnderRoot(javaHome);
         Directory.CreateDirectory(javaHome);
+        // The two halves of a Windows profile, made rather than waited for: a
+        // mod that opens %APPDATA%\something without making the folder first
+        // would otherwise fail where it used to work.
+        Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Roaming"));
+        Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Local"));
         var session = MSession.CreateOfflineSession(identityContext.IdentityName);
         session.UUID = identityContext.MinecraftUuid;
         session.AccessToken = identityContext.SessionAccessToken;
@@ -562,7 +588,7 @@ public sealed class MinecraftProcessService
         // without these pipes the only trace of the failure would be an exit code.
         minecraftProcess.StartInfo.RedirectStandardOutput = true;
         minecraftProcess.StartInfo.RedirectStandardError = true;
-        ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir);
+        ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
         var startupOutput = new StartupOutputBuffer();
         startupOutput.MirrorTo(gameDir);
         minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
