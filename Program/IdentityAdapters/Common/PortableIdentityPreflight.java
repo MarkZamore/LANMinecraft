@@ -130,7 +130,15 @@ public final class PortableIdentityPreflight {
         requireMethod(chat, "chatAddMessageMethods", 1);
 
         ClassNode publishCommand = readClass(archive, alias("publishCommandClasses", mappingIndex).replace('.', '/'));
-        requireMethod(publishCommand, "publishSuccessMethods", 1);
+        // The line the game writes in chat when a world opens is wanted, not
+        // required: PublishCommand said it inline until 1.19.4, so on an older
+        // Minecraft the launcher does not name it at all. Demanding it here
+        // failed the whole preflight, and a failed preflight is no adapter -
+        // which cost All The Fabric 3 its skins and its stable UUID over a line
+        // of chat.
+        if (isConfigured("publishSuccessMethods")) {
+            requireMethod(publishCommand, "publishSuccessMethods", 1);
+        }
 
         readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
         readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
@@ -347,6 +355,12 @@ public final class PortableIdentityPreflight {
 
     private static boolean isAlias(String propertyName, String value) {
         return Arrays.asList(aliases(propertyName)).contains(value);
+    }
+
+    /** Whether the launcher named this list at all; some of them are version-dependent. */
+    private static boolean isConfigured(String propertyName) {
+        String value = System.getProperty("minecraft.portable.identity." + propertyName);
+        return value != null && !value.isBlank();
     }
 
     private static String[] aliases(String propertyName) {
