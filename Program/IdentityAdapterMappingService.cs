@@ -33,6 +33,7 @@ internal sealed class IdentityAdapterMappingService
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
     private const string ServerLevel = "net/minecraft/server/level/ServerLevel";
     private const string ServerChunkCache = "net/minecraft/server/level/ServerChunkCache";
+    private const string ServerPlayer = "net/minecraft/server/level/ServerPlayer";
     // The rule about which hosts a skin may come from moved once and was
     // renamed once across the eighteen published authlib releases, and these
     // are the only three forms it has ever taken: isWhitelistedDomain on the
@@ -188,6 +189,7 @@ internal sealed class IdentityAdapterMappingService
         var screen = mappings.RequireClass(Screen);
         var serverLevel = mappings.FindClass(ServerLevel);
         var chunkCache = mappings.FindClass(ServerChunkCache);
+        var serverPlayer = mappings.FindClass(ServerPlayer);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -252,6 +254,12 @@ internal sealed class IdentityAdapterMappingService
         var chunkViewDistance = chunkCache?.FindMethod(
             "setViewDistance",
             descriptor => descriptor == "(I)V");
+        var players = playerList.FindMethod(
+            "getPlayers",
+            descriptor => descriptor == "()Ljava/util/List;");
+        var requestedViewDistance = serverPlayer?.FindMethod(
+            "requestedViewDistance",
+            descriptor => descriptor == "()I");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -361,13 +369,17 @@ internal sealed class IdentityAdapterMappingService
         // untouched: a version that cannot serve further must not lose its
         // skins over it.
         if (serverLevel is not null && chunkCache is not null && allLevels is not null &&
-            chunkSource is not null && chunkViewDistance is not null)
+            chunkSource is not null && chunkViewDistance is not null &&
+            players is not null && requestedViewDistance is not null)
         {
             properties["serverLevelClasses"] = JoinAliases(ServerLevel, serverLevel.LeftName);
             properties["chunkSourceClasses"] = JoinAliases(ServerChunkCache, chunkCache.LeftName);
             properties["getAllLevelsMethods"] = JoinAliases("getAllLevels", allLevels.LeftName);
             properties["getChunkSourceMethods"] = JoinAliases("getChunkSource", chunkSource.LeftName);
             properties["setChunkViewDistanceMethods"] = JoinAliases("setViewDistance", chunkViewDistance.LeftName);
+            properties["getPlayersMethods"] = JoinAliases("getPlayers", players.LeftName);
+            properties["requestedViewDistanceMethods"] =
+                JoinAliases("requestedViewDistance", requestedViewDistance.LeftName);
         }
 
         AddSkinProperties(properties);
@@ -509,6 +521,7 @@ internal sealed class IdentityAdapterMappingService
                 Screen,
                 ServerLevel,
                 ServerChunkCache,
+                ServerPlayer,
                 ShareToLanScreen,
                 IntegratedServer,
                 MinecraftClient,

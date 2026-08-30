@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 public final class PortableLanAutoPublishHooks {
-    /** The game's own maximum view distance, and now the ceiling for a shared world. */
-    private static final int SERVE_DISTANCE_CHUNKS = 32;
+    /** The game's own maximum view distance, and as far as a shared world is served. */
+    private static final int SERVE_DISTANCE_LIMIT = 32;
 
     // One publish attempt per screen instance: Screen.resize() re-runs init() on
     // the same instance and must not re-publish or discard user edits.
@@ -158,16 +158,9 @@ public final class PortableLanAutoPublishHooks {
      * behaviour: the host's own distance for everybody.
      */
     private static void applyServeDistance(Object server) {
-        // Thirty-two is the game's own maximum, the number a dedicated server
-        // is given by default and the highest any client's slider offers. It is
-        // the ceiling here for the same reason: nobody should be held below what
-        // the game itself allows because of a setting somebody else picked for
-        // their own screen. What each guest actually receives is still his own
-        // number, and what the host pays is the sum of those - the same bill a
-        // dedicated server hands its owner.
-        int chunks = SERVE_DISTANCE_CHUNKS;
         if (!hasAll("serverLevelClasses", "chunkSourceClasses", "getAllLevelsMethods",
-                    "getChunkSourceMethods", "setChunkViewDistanceMethods")) {
+                    "getChunkSourceMethods", "setChunkViewDistanceMethods",
+                    "getPlayersMethods", "requestedViewDistanceMethods")) {
             return;
         }
 
@@ -177,6 +170,13 @@ public final class PortableLanAutoPublishHooks {
                 aliases("getAllLevelsMethods", "getAllLevels", "K"));
             Runnable apply = () -> {
                 try {
+                    // What somebody actually asked for. The server loads and
+                    // sends by one figure for everybody, so setting it to the
+                    // largest number anyone present wants gives each of them his
+                    // own view - and gives a host playing alone exactly what he
+                    // chose, rather than making him carry a room that is not
+                    // there.
+                    int chunks = asked(server);
                     for (Object level : levels) {
                         Object source = PortableIdentityReflection.invoke(
                             level,
@@ -200,8 +200,8 @@ public final class PortableLanAutoPublishHooks {
             }
             executor.execute(apply);
             System.out.println(
-                "[PortableIdentity] LAN world served at " + chunks
-                    + " chunks; this machine still draws its own number.");
+                "[PortableIdentity] LAN world is served as far as the furthest player asks, "
+                    + "up to " + SERVE_DISTANCE_LIMIT + " chunks.");
 
             // And it is set again while the world stays open, because the
             // integrated server writes its own figure the moment the host moves
@@ -231,6 +231,35 @@ public final class PortableLanAutoPublishHooks {
         } catch (Throwable exception) {
             System.out.println("[PortableIdentity] LAN serve distance unavailable: " + exception);
         }
+    }
+
+    /**
+     * The largest view distance anybody on this server has asked for, and never
+     * more than the game's own maximum.
+     *
+     * The server loads and sends by a single figure, so this is the honest one:
+     * with a guest on thirty-two it is thirty-two, and with nobody but the host
+     * on eight it is eight. A player who has not said yet counts for nothing.
+     */
+    private static int asked(Object server) throws ReflectiveOperationException {
+        Object playerList = PortableIdentityReflection.invoke(
+            server,
+            aliases("playerListMethods", "getPlayerList", "ah"));
+        Object players = PortableIdentityReflection.invoke(
+            playerList,
+            aliases("getPlayersMethods", "getPlayers", "t"));
+        int wanted = 2;
+        if (players instanceof Iterable<?> everyone) {
+            for (Object player : everyone) {
+                Object distance = PortableIdentityReflection.invoke(
+                    player,
+                    aliases("requestedViewDistanceMethods", "requestedViewDistance", "F"));
+                if (distance instanceof Integer value) {
+                    wanted = Math.max(wanted, value);
+                }
+            }
+        }
+        return Math.min(wanted, SERVE_DISTANCE_LIMIT);
     }
 
     /** Whether the launcher found every name this needs in the game it started. */
