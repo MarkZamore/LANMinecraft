@@ -128,6 +128,7 @@ public sealed class PackRuntimeService : IDisposable
             var cachedJava = await _javaRuntime
                 .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
                 .ConfigureAwait(false);
+            await EnsureMojangMappingsAsync(runtimeRoot, descriptor, token).ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
             return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
@@ -237,6 +238,7 @@ public sealed class PackRuntimeService : IDisposable
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");
+        await EnsureMojangMappingsAsync(runtimeRoot, descriptor, token).ConfigureAwait(false);
         return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor);
     }
 
@@ -343,6 +345,74 @@ public sealed class PackRuntimeService : IDisposable
         var temporaryPath = destinationPath + ".local-client.part";
         File.Copy(sourcePath, temporaryPath, overwrite: true);
         File.Move(temporaryPath, destinationPath, overwrite: true);
+    }
+
+    /// <summary>
+    /// Mojang's own mappings for this Minecraft, where the loader does not
+    /// bring them.
+    /// </summary>
+    /// <remarks>
+    /// Forge and NeoForge install this file themselves, beside the client jar,
+    /// because their own toolchain needs it. Fabric and Quilt install nothing
+    /// of the kind: what they ship is intermediary, which says that a class is
+    /// class_3218 and never that it is ServerLevel. Composing the two is the
+    /// only way to reach a name the launcher can ask for, so the missing half
+    /// is fetched once per runtime and left beside the libraries, exactly where
+    /// the other loaders put theirs.
+    ///
+    /// Everything about it is already on disk except the bytes: the version
+    /// manifest the game was installed from names the URL, the size and the
+    /// sha1. A failure here is not a failure to launch - it costs the hooks
+    /// that need names and nothing else, which is what a runtime without the
+    /// file has now.
+    /// </remarks>
+    private async Task EnsureMojangMappingsAsync(
+        string runtimeRoot,
+        PackRuntimeDescriptor descriptor,
+        CancellationToken token)
+    {
+        try
+        {
+            var clientLibraries = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client");
+            if (Directory.Exists(clientLibraries) &&
+                Directory.EnumerateFiles(clientLibraries, "*mappings*.txt", SearchOption.AllDirectories).Any())
+            {
+                return;
+            }
+
+            var versionJson = Path.Combine(
+                runtimeRoot, "versions", descriptor.MinecraftVersion, descriptor.MinecraftVersion + ".json");
+            if (!File.Exists(versionJson)) return;
+            var mappings = JsonNode.Parse(await File.ReadAllTextAsync(versionJson, token).ConfigureAwait(false))
+                ?["downloads"]?["client_mappings"];
+            var url = mappings?["url"]?.GetValue<string>();
+            var sha1 = mappings?["sha1"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(sha1)) return;
+
+            var destination = Path.Combine(
+                clientLibraries,
+                descriptor.MinecraftVersion,
+                $"client-{descriptor.MinecraftVersion}-mappings.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            var payload = await _httpClient.GetByteArrayAsync(url, token).ConfigureAwait(false);
+            var actual = Convert.ToHexString(SHA1.HashData(payload)).ToLowerInvariant();
+            if (!string.Equals(actual, sha1, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.Warn(
+                    $"Mojang's mappings for {descriptor.MinecraftVersion} did not match the manifest's sha1; " +
+                    "the hooks that need names are left out rather than built on the wrong file.");
+                return;
+            }
+            await File.WriteAllBytesAsync(destination, payload, token).ConfigureAwait(false);
+            _logger.Info(
+                $"Mojang's mappings for {descriptor.MinecraftVersion} were fetched for a runtime that ships none " +
+                $"({payload.Length / 1024 / 1024} MB).");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException
+                                       or UnauthorizedAccessException or TaskCanceledException)
+        {
+            _logger.Warn($"Mojang's mappings could not be fetched: {ex.Message}");
+        }
     }
 
     private static async Task<IReadOnlyCollection<string>> EnumerateRequiredFilesAsync(

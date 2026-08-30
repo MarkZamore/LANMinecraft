@@ -77,21 +77,26 @@ internal sealed class IdentityAdapterMappingService
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
+        var mojangMappingPath = FindMojangMappings(runtime.RuntimeRoot);
         var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
-        if (mappingPath is null)
+        var intermediaryPath = mappingPath is null ? FindIntermediaryMappings(runtime) : null;
+        if (mappingPath is null && intermediaryPath is null)
         {
-            return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no TSRG2 mappings");
+            return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no mappings this build can read");
         }
 
         RuntimeNames mappings;
         try
         {
-            mappings = RuntimeNames.Read(mappingPath, FindMojangMappings(runtime.RuntimeRoot));
+            mappings = mappingPath is not null
+                ? RuntimeNames.Read(mappingPath, mojangMappingPath)
+                : RuntimeNames.ReadIntermediary(intermediaryPath!, mojangMappingPath, runtime.ClientJarPath);
         }
         catch (InvalidDataException ex)
         {
             return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
         }
+        mappingPath ??= intermediaryPath!;
 
         try
         {
@@ -167,7 +172,8 @@ internal sealed class IdentityAdapterMappingService
         // The screen has to be in a jar to be patched, and the preflight is
         // told to patch every target it is given. One that is not there means
         // the hook is off rather than half on.
-        if (lanScreen is not null && targets.All(target => target.ClassName != ShareToLanScreen))
+        if (lanScreen is not null &&
+            targets.All(target => target.ClassName != ShareToLanScreen && target.ClassName != lanScreen.ObfName))
         {
             properties["lanPublishEnabled"] = "false";
         }
@@ -256,7 +262,12 @@ internal sealed class IdentityAdapterMappingService
         var getPlayerList = server.FindMethod(
             "getPlayerList",
             descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var allowCommands = worldData.FindMethod("isAllowCommands", descriptor => descriptor == "()Z");
+        // Renamed at 1.20.6 and not otherwise changed: getAllowCommands before
+        // it, isAllowCommands after. Both are asked for rather than one being
+        // guessed from the version, which would be a second thing to keep
+        // right.
+        var allowCommands = worldData.FindMethod("isAllowCommands", descriptor => descriptor == "()Z")
+            ?? worldData.FindMethod("getAllowCommands", descriptor => descriptor == "()Z");
         var availablePort = httpUtil.FindMethod("getAvailablePort", descriptor => descriptor == "()I");
         var getInstance = minecraftClient.FindMethod(
             "getInstance",
@@ -275,9 +286,10 @@ internal sealed class IdentityAdapterMappingService
         var addMessage = chatComponent.FindMethod(
             "addMessage",
             descriptor => descriptor == $"(L{component.ObfName};)V");
-        // The line the game writes in chat when a world opens is the one name
-        // here a version may genuinely lack: PublishCommand said it inline
-        // until 1.19.4.
+        // The line the game writes in chat when a world opens is wanted, not
+        // required: PublishCommand said it inline until 1.19.4, and a world
+        // that opens without a line about it has still opened. The hook's own
+        // failure here is caught and logged on the game's side.
         var publishSuccess = publishCommand.FindMethod(
             "getSuccessMessage",
             descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
@@ -285,7 +297,7 @@ internal sealed class IdentityAdapterMappingService
             getWorldData is null || isPublished is null || getPlayerList is null ||
             allowCommands is null || availablePort is null || getInstance is null ||
             singleplayerServer is null || setScreen is null || updateTitle is null ||
-            guiField is null || getChat is null || addMessage is null || publishSuccess is null)
+            guiField is null || getChat is null || addMessage is null)
         {
             return null;
         }
@@ -307,7 +319,10 @@ internal sealed class IdentityAdapterMappingService
         properties["getAvailablePortMethods"] = JoinAliases(availablePort);
         properties["gameTypeClasses"] = JoinDottedAliases(gameType);
         properties["publishCommandClasses"] = JoinDottedAliases(publishCommand);
-        properties["publishSuccessMethods"] = JoinAliases(publishSuccess);
+        if (publishSuccess is not null)
+        {
+            properties["publishSuccessMethods"] = JoinAliases(publishSuccess);
+        }
         properties["minecraftClasses"] = JoinDottedAliases(minecraftClient);
         properties["minecraftGetInstanceMethods"] = JoinAliases(getInstance);
         properties["getSingleplayerServerMethods"] = JoinAliases(singleplayerServer);
@@ -543,6 +558,27 @@ internal sealed class IdentityAdapterMappingService
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Fabric's and Quilt's mappings, which are one jar with one file in it.
+    ///
+    /// Both loaders put the same artefact on the launch classpath -
+    /// net.fabricmc:intermediary - and both remap the game to that namespace,
+    /// so there is no loader-specific branch here. What is in it is obfuscated
+    /// to intermediary and nothing else: it says a class is class_3218 and
+    /// never that it is ServerLevel, which is why Mojang's own file has to be
+    /// beside it.
+    /// </summary>
+    private static string? FindIntermediaryMappings(PreparedRuntime runtime)
+    {
+        var libraries = Path.Combine(runtime.RuntimeRoot, "libraries", "net", "fabricmc", "intermediary");
+        if (!Directory.Exists(libraries)) return null;
+        var wanted = $"intermediary-{runtime.Descriptor.MinecraftVersion}.jar";
+        return Directory.EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories)
+            .OrderByDescending(path => string.Equals(
+                Path.GetFileName(path), wanted, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
     }
 
     private static string? FindTsrg2Mappings(string runtimeRoot)
@@ -886,6 +922,223 @@ internal sealed class IdentityAdapterMappingService
                     : javaType.Replace('.', '/')) + ";"
             };
             return new string('[', arrays) + core;
+        }
+
+        /// <summary>
+        /// The Fabric and Quilt shape: obfuscated to intermediary in the
+        /// loader's own jar, official to obfuscated in Mojang's, joined on the
+        /// obfuscated name and descriptor.
+        /// </summary>
+        /// <remarks>
+        /// Two things here are not in the other readers. A class Mojang never
+        /// obfuscated has no line at all in the intermediary file - the
+        /// remapper leaves it alone - so its absence means the name is already
+        /// right rather than missing. And intermediary names a method once, at
+        /// the class that declares it: an override carries the same name and no
+        /// line of its own, so a miss on the owner is answered by asking its
+        /// superclass, which is read out of the jar Mojang ships.
+        /// </remarks>
+        public static RuntimeNames ReadIntermediary(
+            string intermediaryJarPath,
+            string? proguardPath,
+            string clientJarPath)
+        {
+            if (proguardPath is null)
+            {
+                throw new InvalidDataException(
+                    "the runtime names the game in intermediary and Mojang's own mappings, " +
+                    "which say what those names stand for, are not beside them");
+            }
+
+            var tiny = ReadTinyV1(intermediaryJarPath);
+            var proguard = ReadProguard(proguardPath);
+            using var hierarchy = new JarHierarchy(clientJarPath);
+            var classes = new Dictionary<string, MappedClass>(StringComparer.Ordinal);
+            foreach (var (official, entry) in proguard)
+            {
+                var slashed = official.Replace('.', '/');
+                if (!Required.Contains(slashed)) continue;
+                // No line means Mojang never obfuscated it, so it is loaded
+                // under the name it already has.
+                var runtimeName = tiny.Classes.GetValueOrDefault(entry.ObfName, entry.ObfName);
+                var mapped = new MappedClass(slashed, entry.ObfName, runtimeName);
+                foreach (var (fieldName, obfField) in entry.Fields)
+                {
+                    mapped.Fields[fieldName] = new MappedMember(
+                        fieldName,
+                        obfField,
+                        tiny.Fields.GetValueOrDefault(TinyKey(entry.ObfName, obfField), obfField),
+                        string.Empty);
+                }
+                foreach (var member in entry.Methods)
+                {
+                    var descriptor = ObfDescriptorOf(member, proguard);
+                    var name = member.ObfName;
+                    var runtimeMember = name;
+                    for (var owner = entry.ObfName; owner is not null; owner = hierarchy.SuperOf(owner))
+                    {
+                        if (tiny.Methods.TryGetValue(TinyKey(owner, name, descriptor), out var found))
+                        {
+                            runtimeMember = found;
+                            break;
+                        }
+                    }
+                    mapped.Methods.Add(new MappedMember(member.Official, name, runtimeMember, descriptor));
+                }
+                classes[slashed] = mapped;
+            }
+            return new RuntimeNames(classes);
+        }
+
+        private static string TinyKey(string owner, string name) => owner + " " + name;
+
+        private static string TinyKey(string owner, string name, string descriptor) =>
+            owner + " " + descriptor + " " + name;
+
+        /// <summary>
+        /// mappings/mappings.tiny, which opens "v1 official intermediary" and
+        /// then says CLASS, FIELD or METHOD on every line, tab separated. The
+        /// descriptors in it are obfuscated, which is what makes it joinable
+        /// with Mojang's file at all.
+        /// </summary>
+        private static TinyMappings ReadTinyV1(string jarPath)
+        {
+            using var archive = ZipFile.OpenRead(jarPath);
+            var entry = archive.GetEntry("mappings/mappings.tiny")
+                ?? throw new InvalidDataException("The intermediary jar carries no mappings.");
+            using var reader = new StreamReader(entry.Open());
+            var header = reader.ReadLine();
+            if (header is null || !header.StartsWith("v1\t", StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("Intermediary mappings are not tiny v1.");
+            }
+
+            var tiny = new TinyMappings();
+            for (var line = reader.ReadLine(); line is not null; line = reader.ReadLine())
+            {
+                var parts = line.Split('\t');
+                switch (parts[0])
+                {
+                    case "CLASS" when parts.Length >= 3:
+                        tiny.Classes[parts[1]] = parts[2];
+                        break;
+                    case "FIELD" when parts.Length >= 5:
+                        tiny.Fields[TinyKey(parts[1], parts[3])] = parts[4];
+                        break;
+                    case "METHOD" when parts.Length >= 5:
+                        tiny.Methods[TinyKey(parts[1], parts[3], parts[2])] = parts[4];
+                        break;
+                }
+            }
+            return tiny;
+        }
+
+        private sealed class TinyMappings
+        {
+            public Dictionary<string, string> Classes { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, string> Fields { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, string> Methods { get; } = new(StringComparer.Ordinal);
+        }
+
+        /// <summary>
+        /// Who a class extends, read out of the jar rather than guessed.
+        ///
+        /// Only the two words at the top of a class file are wanted - its own
+        /// name and its superclass - so the constant pool is walked far enough
+        /// to reach them and no further. A class that is not in the jar, or one
+        /// that cannot be read, ends the walk rather than failing it.
+        /// </summary>
+        private sealed class JarHierarchy : IDisposable
+        {
+            private readonly ZipArchive? _archive;
+            private readonly Dictionary<string, string?> _supers = new(StringComparer.Ordinal);
+
+            public JarHierarchy(string jarPath)
+            {
+                try
+                {
+                    _archive = ZipFile.OpenRead(jarPath);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                {
+                    _archive = null;
+                }
+            }
+
+            public string? SuperOf(string className)
+            {
+                if (_supers.TryGetValue(className, out var cached)) return cached;
+                var found = ReadSuper(className);
+                _supers[className] = found;
+                return found;
+            }
+
+            private string? ReadSuper(string className)
+            {
+                if (_archive?.GetEntry(className + ".class") is not { } entry) return null;
+                try
+                {
+                    using var stream = entry.Open();
+                    using var memory = new MemoryStream();
+                    stream.CopyTo(memory);
+                    return SuperNameOf(memory.ToArray());
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or IndexOutOfRangeException)
+                {
+                    return null;
+                }
+            }
+
+            private static string? SuperNameOf(byte[] data)
+            {
+                var offset = 8;
+                var count = ReadUInt16(data, offset);
+                offset += 2;
+                var utf8 = new Dictionary<int, string>();
+                var classes = new Dictionary<int, int>();
+                for (var index = 1; index < count; index++)
+                {
+                    var tag = data[offset++];
+                    switch (tag)
+                    {
+                        case 1:
+                            var length = ReadUInt16(data, offset);
+                            utf8[index] = System.Text.Encoding.UTF8.GetString(data, offset + 2, length);
+                            offset += 2 + length;
+                            break;
+                        case 7:
+                            classes[index] = ReadUInt16(data, offset);
+                            offset += 2;
+                            break;
+                        case 8:
+                        case 16:
+                        case 19:
+                        case 20:
+                            offset += 2;
+                            break;
+                        case 15:
+                            offset += 3;
+                            break;
+                        case 5:
+                        case 6:
+                            offset += 8;
+                            index++;
+                            break;
+                        default:
+                            offset += 4;
+                            break;
+                    }
+                }
+                // access_flags, this_class, super_class
+                var superIndex = ReadUInt16(data, offset + 4);
+                return superIndex != 0 && classes.TryGetValue(superIndex, out var nameIndex)
+                    ? utf8.GetValueOrDefault(nameIndex)
+                    : null;
+            }
+
+            private static int ReadUInt16(byte[] data, int offset) => (data[offset] << 8) | data[offset + 1];
+
+            public void Dispose() => _archive?.Dispose();
         }
 
         public MappedClass RequireClass(string official) => _classes.TryGetValue(official, out var mapping)
