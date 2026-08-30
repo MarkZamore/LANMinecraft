@@ -278,6 +278,8 @@
                         <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Статус" Style="{StaticResource LabelTextStyle}"
+                               VerticalAlignment="Top" Margin="{StaticResource Gap.Above2}"/>
                     <TextBox Grid.Column="1" x:Name="DiagnosticLogStatusText"
                              Height="{StaticResource Size.StatusArea}"
                              Padding="{StaticResource Pad.Text}"
