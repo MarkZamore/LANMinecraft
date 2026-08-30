@@ -242,7 +242,16 @@ public final class PortableSkinProfiles {
 
     private static String createTextureJson(UUID id, String name, SkinEntry entry) {
         String metadata = "slim".equals(entry.model()) ? ",\"metadata\":{\"model\":\"slim\"}" : "";
-        return "{\"timestamp\":" + System.currentTimeMillis() +
+        // The registry's own time, not the clock's. SkinManager keys its cache
+        // on this very text, so a clock made a new key on every read: the cache
+        // was missed every time, and getInsecureSkin - which answers with the
+        // default face rather than wait - had nothing warm to find, ever. That
+        // is the door Yes Steve Model's Steve and Alex come through, which is
+        // why their skin went missing while the plain player kept his: the
+        // vanilla path asks once and holds on to the answer. The registry's
+        // time changes when a player picks a different skin, which is exactly
+        // when a cached face has gone stale.
+        return "{\"timestamp\":" + Math.max(0L, registryModified) +
             ",\"profileId\":\"" + id.toString().replace("-", "") +
             "\",\"profileName\":\"" + escapeJson(name == null ? "" : name) +
             "\",\"textures\":{\"SKIN\":{\"url\":\"" + escapeJson(entry.url()) + "\"" + metadata + "}}}";
