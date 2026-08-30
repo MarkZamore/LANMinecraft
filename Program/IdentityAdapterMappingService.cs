@@ -31,6 +31,8 @@ internal sealed class IdentityAdapterMappingService
     private const string WorldData = "net/minecraft/world/level/storage/WorldData";
     private const string ClientPacketListener = "net/minecraft/client/multiplayer/ClientPacketListener";
     private const string Screen = "net/minecraft/client/gui/screens/Screen";
+    private const string ServerLevel = "net/minecraft/server/level/ServerLevel";
+    private const string ServerChunkCache = "net/minecraft/server/level/ServerChunkCache";
     // The rule about which hosts a skin may come from moved once and was
     // renamed once across the eighteen published authlib releases, and these
     // are the only three forms it has ever taken: isWhitelistedDomain on the
@@ -184,6 +186,8 @@ internal sealed class IdentityAdapterMappingService
         var worldData = mappings.RequireClass(WorldData);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
+        var serverLevel = mappings.RequireClass(ServerLevel);
+        var chunkCache = mappings.RequireClass(ServerChunkCache);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.LeftName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -231,6 +235,21 @@ internal sealed class IdentityAdapterMappingService
         var publishSuccess = publishCommand.RequireMethod(
             "getSuccessMessage",
             descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
+        // How far a world is served, which is not how far the host draws.
+        // The integrated server copies the host's render distance into
+        // PlayerList.setViewDistance every tick, and that number is then the
+        // ceiling for everybody; ChunkMap keeps its own copy, and writing to
+        // that one instead leaves the comparison the server makes each tick
+        // still true, so it never writes over it.
+        var allLevels = server.RequireMethod(
+            "getAllLevels",
+            descriptor => descriptor == "()Ljava/lang/Iterable;");
+        var chunkSource = serverLevel.RequireMethod(
+            "getChunkSource",
+            descriptor => descriptor == $"()L{chunkCache.LeftName};");
+        var chunkViewDistance = chunkCache.RequireMethod(
+            "setViewDistance",
+            descriptor => descriptor == "(I)V");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(LoginListener, listener.LeftName),
@@ -300,6 +319,11 @@ internal sealed class IdentityAdapterMappingService
             ["lanShareScreenClasses"] = JoinAliases(ShareToLanScreen, shareScreen.LeftName),
             ["lanShareInitMethods"] = JoinAliases("init", shareInit.LeftName),
             ["integratedServerClasses"] = JoinAliases(IntegratedServer, integrated.LeftName),
+            ["serverLevelClasses"] = JoinAliases(ServerLevel, serverLevel.LeftName),
+            ["chunkSourceClasses"] = JoinAliases(ServerChunkCache, chunkCache.LeftName),
+            ["getAllLevelsMethods"] = JoinAliases("getAllLevels", allLevels.LeftName),
+            ["getChunkSourceMethods"] = JoinAliases("getChunkSource", chunkSource.LeftName),
+            ["setChunkViewDistanceMethods"] = JoinAliases("setViewDistance", chunkViewDistance.LeftName),
             ["publishServerMethods"] = JoinAliases("publishServer", publishServer.LeftName),
             ["getDefaultGameTypeMethods"] = JoinAliases("getDefaultGameType", defaultGameType.LeftName),
             ["getWorldDataMethods"] = JoinAliases("getWorldData", getWorldData.LeftName),
@@ -471,6 +495,8 @@ internal sealed class IdentityAdapterMappingService
                 PlayerSkin,
                 ClientPacketListener,
                 Screen,
+                ServerLevel,
+                ServerChunkCache,
                 ShareToLanScreen,
                 IntegratedServer,
                 MinecraftClient,

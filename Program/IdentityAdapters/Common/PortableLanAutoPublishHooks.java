@@ -127,11 +127,87 @@ public final class PortableLanAutoPublishHooks {
                     "[PortableIdentity] LAN world published on port " + port +
                     " but screen cleanup failed: " + exception);
             }
+            applyServeDistance(server);
             System.out.println("[PortableIdentity] LAN world auto-published on port " + port + ".");
             return true;
         } catch (Throwable exception) {
             System.out.println("[PortableIdentity] LAN auto-publish unavailable: " + exception);
             return false;
+        }
+    }
+
+    /**
+     * How far the world is served, which is a different question from how far
+     * the host draws it.
+     *
+     * The integrated server settles both with one number: every tick it reads
+     * the host's own render distance and, when it differs from what PlayerList
+     * holds, calls setViewDistance with it. That number is then the ceiling for
+     * every player - each of them still asks for less if they want, but nobody
+     * can ask for more, so a host who draws twelve chunks serves twelve.
+     *
+     * ChunkMap keeps its own copy of the figure, and it is that copy the server
+     * actually sends from. Writing to it directly leaves PlayerList holding the
+     * host's number, so the comparison the server makes each tick stays true and
+     * it never writes over what was set here.
+     *
+     * Left alone unless the launcher passes a number, which is the old
+     * behaviour: the host's own distance for everybody.
+     */
+    private static void applyServeDistance(Object server) {
+        int chunks = number("serveDistance");
+        if (chunks < 2) {
+            return;
+        }
+
+        try {
+            Iterable<?> levels = (Iterable<?>) PortableIdentityReflection.invoke(
+                server,
+                aliases("getAllLevelsMethods", "getAllLevels", "K"));
+            Runnable apply = () -> {
+                int served = 0;
+                try {
+                    for (Object level : levels) {
+                        Object source = PortableIdentityReflection.invoke(
+                            level,
+                            aliases("getChunkSourceMethods", "getChunkSource", "l"));
+                        PortableIdentityReflection.invokeDeclared(
+                            source,
+                            new Class<?>[] { int.class },
+                            new Object[] { chunks },
+                            aliases("setChunkViewDistanceMethods", "setViewDistance", "a"));
+                        served++;
+                    }
+                    System.out.println(
+                        "[PortableIdentity] LAN world served at " + chunks + " chunks across " + served
+                            + " dimension(s); this machine still draws its own.");
+                } catch (Throwable exception) {
+                    System.out.println(
+                        "[PortableIdentity] LAN serve distance could not be set: " + exception);
+                }
+            };
+            // The chunk map belongs to the server thread, and the server is its
+            // own executor.
+            if (server instanceof java.util.concurrent.Executor executor) {
+                executor.execute(apply);
+            } else {
+                apply.run();
+            }
+        } catch (Throwable exception) {
+            System.out.println("[PortableIdentity] LAN serve distance unavailable: " + exception);
+        }
+    }
+
+    /** A number the launcher passed, or 0 where it passed none. */
+    private static int number(String propertyName) {
+        String value = System.getProperty("minecraft.portable.identity." + propertyName);
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException ignored) {
+            return 0;
         }
     }
 

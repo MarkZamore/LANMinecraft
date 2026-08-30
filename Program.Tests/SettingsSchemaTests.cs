@@ -25,6 +25,36 @@ public sealed class SettingsSchemaTests : IDisposable
     /// hand went straight through to -Xmx, and the two disagreed about the very
     /// same setting.
     /// </summary>
+    /// <summary>
+    /// How far a world is served when it is opened to the network. Zero is the
+    /// game's own arrangement - the host's own render distance is everybody's
+    /// ceiling - and any other number is held between the game's floor and what
+    /// one machine can be asked to generate for a room of friends.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-8, 0)]
+    [InlineData(1, MinecraftProcessService.MinimumServeDistanceChunks)]
+    [InlineData(32, 32)]
+    [InlineData(4096, MinecraftProcessService.MaximumServeDistanceChunks)]
+    public void AServeDistance_IsHeldToWhatOneMachineCanSend(int written, int expected)
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        File.WriteAllText(paths.SettingsFile, $$"""
+        {
+          "playerName": "MarkZamore",
+          "memorySettingIsTheHeap": true,
+          "serveDistanceChunks": {{written}},
+          "clientRelativePath": "E10"
+        }
+        """);
+
+        var settings = new SettingsService(paths).Load();
+
+        Assert.Equal(expected, settings.ServeDistanceChunks);
+    }
+
     [Fact]
     public void AMemoryNumberBiggerThanTheMachine_IsCutToWhatTheMachineAllows()
     {
