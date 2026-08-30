@@ -34,6 +34,14 @@ internal sealed class IdentityAdapterMappingService
     private const string ServerLevel = "net/minecraft/server/level/ServerLevel";
     private const string ServerChunkCache = "net/minecraft/server/level/ServerChunkCache";
     private const string ServerPlayer = "net/minecraft/server/level/ServerPlayer";
+    private const string ChunkMap = "net/minecraft/server/level/ChunkMap";
+    private const string TrackedEntity = "net/minecraft/server/level/ChunkMap$TrackedEntity";
+    private const string ClientInformationPacket =
+        "net/minecraft/network/protocol/game/ServerboundClientInformationPacket";
+    private const string Entity = "net/minecraft/world/entity/Entity";
+    private const string ChunkPos = "net/minecraft/world/level/ChunkPos";
+    private const string LevelChunk = "net/minecraft/world/level/chunk/LevelChunk";
+    private const string ChunkAccess = "net/minecraft/world/level/chunk/ChunkAccess";
     private const string NetworkPacket = "net/minecraft/network/protocol/Packet";
     private const string ChunkRadiusPacket =
         "net/minecraft/network/protocol/game/ClientboundSetChunkCacheRadiusPacket";
@@ -138,6 +146,8 @@ internal sealed class IdentityAdapterMappingService
         string? mappingPath = null)
     {
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
+        var perPlayerProperties = new Dictionary<string, string>(StringComparer.Ordinal);
+        var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
             { YggdrasilSessionService, TextureUrlChecker, GameProfile };
         if (lanScreen is not null)
@@ -146,6 +156,7 @@ internal sealed class IdentityAdapterMappingService
             wanted.Add(lanScreen.ObfName);
         }
 
+        if (perPlayerChunks) AddPerPlayerChunkTargets(mappings, wanted);
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
@@ -182,6 +193,7 @@ internal sealed class IdentityAdapterMappingService
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
         };
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
+        foreach (var pair in perPlayerProperties) properties[pair.Key] = pair.Value;
         // The screen has to be in a jar to be patched, and the preflight is
         // told to patch every target it is given. One that is not there means
         // the hook is off rather than half on.
@@ -352,6 +364,176 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>
+    /// Giving each guest the chunks he asked for on a Minecraft that does not
+    /// know how.
+    /// </summary>
+    /// <remarks>
+    /// From 1.20.2 the game does this itself: ChunkMap keeps a server-wide
+    /// distance and hands each player min(his own, the server's), so raising
+    /// the server's number is the whole feature. Before that there is one
+    /// number for everybody - raising it raises it for every guest, including
+    /// the one who set his slider to four and meant it.
+    ///
+    /// What is patched is the reading of that number, not the decisions made
+    /// from it. ChunkMap.updatePlayerStatus and ChunkMap.move both take the
+    /// player they are working on and then read this.viewDistance several
+    /// times to work out which chunks he should have and which he had before;
+    /// every one of those reads becomes "the smaller of the server's number and
+    /// what this player asked for". The game's own arithmetic is left exactly
+    /// as it is, which is the point: the two answers stay consistent with each
+    /// other, so a chunk that is no longer his is unloaded through the same
+    /// branch that unloads one he walked away from, and nothing is sent that
+    /// was not asked for.
+    ///
+    /// The number each player asked for is not kept by the server on those
+    /// versions, so it is taken as it arrives in ServerPlayer.updateOptions.
+    ///
+    /// Only ever installed where the game cannot do it: a version that has
+    /// ServerPlayer.requestedViewDistance is a version that already does, and
+    /// Mojang renamed the field to serverViewDistance in the same release.
+    /// </remarks>
+    private static bool AddPerPlayerChunksProperties(
+        RuntimeNames? mappings,
+        Dictionary<string, string> properties)
+    {
+        properties["perPlayerChunksEnabled"] = "false";
+        // Named even when off: the preflight asks for these two by name before
+        // it looks at anything else.
+        properties["chunkMapClasses"] = ChunkMap;
+        properties["serverPlayerClasses"] = ServerPlayer;
+        properties["trackedEntityClasses"] = TrackedEntity;
+        if (mappings is null) return false;
+
+        var serverPlayer = mappings.FindClass(ServerPlayer);
+        var chunkMap = mappings.FindClass(ChunkMap);
+        var packet = mappings.FindClass(ClientInformationPacket);
+        var entity = mappings.FindClass(Entity);
+        var chunkPos = mappings.FindClass(ChunkPos);
+        var levelChunk = mappings.FindClass(LevelChunk);
+        var chunkAccess = mappings.FindClass(ChunkAccess);
+        if (serverPlayer is null || chunkMap is null || packet is null || entity is null ||
+            chunkPos is null || levelChunk is null || chunkAccess is null)
+        {
+            return false;
+        }
+
+        // The game's own, and nothing to do.
+        if (serverPlayer.FindMethod("requestedViewDistance", descriptor => descriptor == "()I") is not null)
+        {
+            return false;
+        }
+
+        var obfPlayer = $"(L{serverPlayer.ObfName};";
+        var runtimePlayer = $"(L{serverPlayer.RuntimeName};";
+        var updatePlayerStatus = chunkMap.FindMethod(
+            "updatePlayerStatus",
+            descriptor => descriptor == obfPlayer + "Z)V");
+        var movePlayer = chunkMap.FindMethod("move", descriptor => descriptor == obfPlayer + ")V");
+        var viewDistance = chunkMap.FindField("viewDistance");
+        var updateOptions = serverPlayer.FindMethod(
+            "updateOptions",
+            descriptor => descriptor == $"(L{packet.ObfName};)V");
+        // The packet only became a record at 1.18; before that the accessor is
+        // spelled the old way and means the same thing.
+        var clientViewDistance = packet.FindMethod("viewDistance", descriptor => descriptor == "()I")
+            ?? packet.FindMethod("getViewDistance", descriptor => descriptor == "()I");
+        var playerUuid = entity.FindMethod("getUUID", descriptor => descriptor == "()Ljava/util/UUID;");
+        // The one path that does not go through either of those two: a chunk
+        // that has finished loading is offered to everybody the server's radius
+        // reaches, and the player it is being offered to is a loop variable
+        // there rather than an argument, so the number cannot be narrowed where
+        // it is read. It is narrowed at the delivery instead.
+        var playerLoadedChunk = chunkMap.FindMethod(
+            "playerLoadedChunk",
+            descriptor => descriptor.StartsWith(obfPlayer, StringComparison.Ordinal) &&
+                descriptor.EndsWith($"L{levelChunk.ObfName};)V", StringComparison.Ordinal));
+        var chunkGetPos = chunkAccess.FindMethod(
+            "getPos",
+            descriptor => descriptor == $"()L{chunkPos.ObfName};");
+        var chunkPosition = entity.FindMethod(
+            "chunkPosition",
+            descriptor => descriptor == $"()L{chunkPos.ObfName};");
+        var chunkPosX = chunkPos.FindField("x");
+        var chunkPosZ = chunkPos.FindField("z");
+        // The way back from a player to the map that tracks him, so that a
+        // player who changes his mind can be re-tracked at the new number
+        // rather than waiting to walk into it.
+        var serverLevel = mappings.FindClass(ServerLevel);
+        var chunkCache = mappings.FindClass(ServerChunkCache);
+        // Renamed at 1.20.1 and not otherwise changed: getLevel before it,
+        // serverLevel after. On the older spelling there are two of them and
+        // only one answers with a ServerLevel, which is what the descriptor
+        // picks out.
+        var playerLevel = serverLevel is null
+            ? null
+            : serverPlayer.FindMethod("serverLevel", descriptor => descriptor == $"()L{serverLevel.ObfName};")
+                ?? serverPlayer.FindMethod("getLevel", descriptor => descriptor == $"()L{serverLevel.ObfName};");
+        var chunkMapField = chunkCache?.FindField("chunkMap");
+        // Entities are tracked by their own distance, capped by the server's -
+        // "as far as this entity carries, but never past the world we send".
+        // The cap is the same number, reached from an inner class through the
+        // map's own instance, so it narrows the same way and a guest stops
+        // being told about mobs standing where he has no ground.
+        var trackedEntity = mappings.FindClass(TrackedEntity);
+        var updatePlayer = trackedEntity?.FindMethod(
+            "updatePlayer",
+            descriptor => descriptor == obfPlayer + ")V");
+        if (updatePlayerStatus is null || movePlayer is null || viewDistance is null ||
+            updateOptions is null || clientViewDistance is null || playerUuid is null ||
+            playerLoadedChunk is null || chunkGetPos is null || chunkPosition is null ||
+            chunkPosX is null || chunkPosZ is null ||
+            playerLevel is null || chunkMapField is null ||
+            trackedEntity is null || updatePlayer is null)
+        {
+            return false;
+        }
+
+        properties["perPlayerChunksEnabled"] = "true";
+        properties["chunkMapClasses"] = JoinAliases(chunkMap);
+        properties["serverPlayerClasses"] = JoinAliases(serverPlayer);
+        properties["updatePlayerStatusMethods"] = JoinAliases(updatePlayerStatus);
+        // A name alone does not say which method: an obfuscated ServerPlayer
+        // has twenty-two one-argument void methods called "a". The descriptor
+        // is what tells them apart, in the same two spellings as everything
+        // else - what this runtime loads, and what the vanilla jar holds.
+        properties["updatePlayerStatusDescriptors"] =
+            JoinAliases(runtimePlayer + "Z)V", obfPlayer + "Z)V");
+        properties["movePlayerMethods"] = JoinAliases(movePlayer);
+        properties["movePlayerDescriptors"] = JoinAliases(runtimePlayer + ")V", obfPlayer + ")V");
+        properties["chunkViewDistanceFields"] = JoinAliases(viewDistance);
+        properties["updateOptionsMethods"] = JoinAliases(updateOptions);
+        properties["updateOptionsDescriptors"] = JoinAliases(
+            $"(L{packet.RuntimeName};)V",
+            $"(L{packet.ObfName};)V");
+        properties["clientViewDistanceMethods"] = JoinAliases(clientViewDistance);
+        properties["playerUuidMethods"] = JoinAliases(playerUuid);
+        properties["levelChunkClasses"] = JoinAliases(levelChunk);
+        properties["playerLoadedChunkMethods"] = JoinAliases(playerLoadedChunk);
+        properties["chunkGetPosMethods"] = JoinAliases(chunkGetPos);
+        properties["chunkPositionMethods"] = JoinAliases(chunkPosition);
+        properties["chunkPosXFields"] = JoinAliases(chunkPosX);
+        properties["chunkPosZFields"] = JoinAliases(chunkPosZ);
+        properties["serverLevelMethods"] = JoinAliases(playerLevel);
+        properties["chunkMapFields"] = JoinAliases(chunkMapField);
+        properties["trackedEntityClasses"] = JoinAliases(trackedEntity);
+        properties["updatePlayerMethods"] = JoinAliases(updatePlayer);
+        properties["updatePlayerDescriptors"] = JoinAliases(runtimePlayer + ")V", obfPlayer + ")V");
+        return true;
+    }
+
+    /// <summary>The two classes the per-player chunk hook rewrites.</summary>
+    private static void AddPerPlayerChunkTargets(RuntimeNames? mappings, HashSet<string> targets)
+    {
+        foreach (var official in new[] { ChunkMap, ServerPlayer, TrackedEntity })
+        {
+            var mapped = mappings?.FindClass(official);
+            if (mapped is null) continue;
+            targets.Add(mapped.RuntimeName);
+            targets.Add(mapped.ObfName);
+        }
+    }
+
+    /// <summary>
     /// Serving a world further than the host draws it, which needs names an
     /// older Minecraft may not have under these spellings - ServerPlayer only
     /// began to remember what a client asked for in 1.20.2. Where any is
@@ -394,14 +576,13 @@ internal sealed class IdentityAdapterMappingService
         var requestedViewDistance = serverPlayer.FindMethod(
             "requestedViewDistance",
             descriptor => descriptor == "()I");
-        // And the telling of it, which is the half that was missing. A client
-        // is sent only what it was told to expect: ClientChunkCache drops a
-        // chunk outside the radius it last heard, writing "Ignoring chunk since
-        // it's not in the view range" to its own log and nothing to the screen.
-        // That number is announced by PlayerList.setViewDistance, which this
-        // deliberately does not call - the integrated server would undo it on
-        // the next tick - so the announcement has to be made separately, or the
-        // world is served further and every guest throws the difference away.
+        // And the telling of it. The server sends a client only what that
+        // client was told to expect: ClientChunkCache drops a chunk outside the
+        // radius it last heard, with "Ignoring chunk since it's not in the view
+        // range" in the log and nothing on the screen. The number is announced
+        // by PlayerList.setViewDistance, which this deliberately does not call
+        // - calling it would be undone by the next tick - so the announcement
+        // has to be made here instead.
         var networkPacket = mappings.FindClass(NetworkPacket);
         var radiusPacket = mappings.FindClass(ChunkRadiusPacket);
         var broadcastAll = networkPacket is null
@@ -409,9 +590,17 @@ internal sealed class IdentityAdapterMappingService
             : playerList.FindMethod(
                 "broadcastAll",
                 descriptor => descriptor == $"(L{networkPacket.ObfName};)V");
-        if (allLevels is null || chunkSource is null || chunkViewDistance is null ||
-            players is null || requestedViewDistance is null ||
+        if (allLevels is null || chunkSource is null || chunkViewDistance is null || players is null ||
             networkPacket is null || radiusPacket is null || broadcastAll is null)
+        {
+            return;
+        }
+
+        // What each player asked for. From 1.20.2 the server remembers it; on
+        // everything older the adapter has to hear it said and write it down,
+        // and if it cannot do that either then serving further would serve
+        // further to everybody, which is not what was asked for.
+        if (requestedViewDistance is null && properties.GetValueOrDefault("perPlayerChunksEnabled") != "true")
         {
             return;
         }
@@ -425,7 +614,10 @@ internal sealed class IdentityAdapterMappingService
         properties["networkPacketClasses"] = JoinDottedAliases(networkPacket);
         properties["chunkRadiusPacketClasses"] = JoinDottedAliases(radiusPacket);
         properties["broadcastAllMethods"] = JoinAliases(broadcastAll);
-        properties["requestedViewDistanceMethods"] = JoinAliases(requestedViewDistance);
+        if (requestedViewDistance is not null)
+        {
+            properties["requestedViewDistanceMethods"] = JoinAliases(requestedViewDistance);
+        }
     }
 
     private IdentityAdapterConfiguration BuildEverything(
@@ -524,6 +716,7 @@ internal sealed class IdentityAdapterMappingService
         // Minecraft that cannot have those may still have these.
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
+        var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
         AddServeDistanceProperties(mappings, properties);
 
         AddSkinProperties(properties);
@@ -542,6 +735,7 @@ internal sealed class IdentityAdapterMappingService
             requiredTargets.Add(ShareToLanScreen);
             requiredTargets.Add(lanScreen.ObfName);
         }
+        if (perPlayerChunks) AddPerPlayerChunkTargets(mappings, requiredTargets);
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
         // same rule on the session service instead.
@@ -813,6 +1007,13 @@ internal sealed class IdentityAdapterMappingService
             ServerLevel,
             ServerChunkCache,
             ServerPlayer,
+            ChunkMap,
+            TrackedEntity,
+            ClientInformationPacket,
+            Entity,
+            ChunkPos,
+            LevelChunk,
+            ChunkAccess,
             NetworkPacket,
             ChunkRadiusPacket,
             ShareToLanScreen,
@@ -1009,7 +1210,13 @@ internal sealed class IdentityAdapterMappingService
                     var descriptor = ObfDescriptorOf(member, proguard);
                     var name = member.ObfName;
                     var runtimeMember = name;
-                    for (var owner = entry.ObfName; owner is not null; owner = hierarchy.SuperOf(owner))
+                    // Up the whole hierarchy, interfaces included: intermediary
+                    // names a method once, at whatever declares it, and plenty
+                    // of what a ServerPlayer answers is declared on an
+                    // interface rather than on a class above it. getUUID is one
+                    // of those, and looking only at superclasses left it
+                    // obfuscated.
+                    foreach (var owner in hierarchy.SupertypesOf(entry.ObfName))
                     {
                         if (tiny.Methods.TryGetValue(TinyKey(owner, name, descriptor), out var found))
                         {
@@ -1075,17 +1282,19 @@ internal sealed class IdentityAdapterMappingService
         }
 
         /// <summary>
-        /// Who a class extends, read out of the jar rather than guessed.
+        /// What a class is, all the way up: itself, what it extends and what it
+        /// implements, and the same again for each of those.
         ///
-        /// Only the two words at the top of a class file are wanted - its own
-        /// name and its superclass - so the constant pool is walked far enough
-        /// to reach them and no further. A class that is not in the jar, or one
-        /// that cannot be read, ends the walk rather than failing it.
+        /// Only the top of a class file is wanted - its own name, its
+        /// superclass and its interfaces - so the constant pool is walked far
+        /// enough to reach them and no further. A class that is not in the jar,
+        /// or one that cannot be read, ends that branch of the walk rather than
+        /// failing it.
         /// </summary>
         private sealed class JarHierarchy : IDisposable
         {
             private readonly ZipArchive? _archive;
-            private readonly Dictionary<string, string?> _supers = new(StringComparer.Ordinal);
+            private readonly Dictionary<string, IReadOnlyList<string>> _supers = new(StringComparer.Ordinal);
 
             public JarHierarchy(string jarPath)
             {
@@ -1099,31 +1308,49 @@ internal sealed class IdentityAdapterMappingService
                 }
             }
 
-            public string? SuperOf(string className)
+            /// <summary>The class itself and everything above it, nearest first.</summary>
+            public IEnumerable<string> SupertypesOf(string className)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var queue = new Queue<string>();
+                queue.Enqueue(className);
+                while (queue.Count > 0)
+                {
+                    var current = queue.Dequeue();
+                    if (!seen.Add(current)) continue;
+                    yield return current;
+                    foreach (var parent in SupertypesRead(current))
+                    {
+                        if (!seen.Contains(parent)) queue.Enqueue(parent);
+                    }
+                }
+            }
+
+            private IReadOnlyList<string> SupertypesRead(string className)
             {
                 if (_supers.TryGetValue(className, out var cached)) return cached;
-                var found = ReadSuper(className);
+                var found = ReadSupertypes(className);
                 _supers[className] = found;
                 return found;
             }
 
-            private string? ReadSuper(string className)
+            private IReadOnlyList<string> ReadSupertypes(string className)
             {
-                if (_archive?.GetEntry(className + ".class") is not { } entry) return null;
+                if (_archive?.GetEntry(className + ".class") is not { } entry) return [];
                 try
                 {
                     using var stream = entry.Open();
                     using var memory = new MemoryStream();
                     stream.CopyTo(memory);
-                    return SuperNameOf(memory.ToArray());
+                    return SupertypeNamesOf(memory.ToArray());
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or IndexOutOfRangeException)
                 {
-                    return null;
+                    return [];
                 }
             }
 
-            private static string? SuperNameOf(byte[] data)
+            private static IReadOnlyList<string> SupertypeNamesOf(byte[] data)
             {
                 var offset = 8;
                 var count = ReadUInt16(data, offset);
@@ -1163,11 +1390,23 @@ internal sealed class IdentityAdapterMappingService
                             break;
                     }
                 }
-                // access_flags, this_class, super_class
-                var superIndex = ReadUInt16(data, offset + 4);
-                return superIndex != 0 && classes.TryGetValue(superIndex, out var nameIndex)
-                    ? utf8.GetValueOrDefault(nameIndex)
-                    : null;
+                // access_flags, this_class, super_class, then the interfaces.
+                var names = new List<string>();
+                void Take(int index)
+                {
+                    if (index != 0 && classes.TryGetValue(index, out var nameIndex) &&
+                        utf8.GetValueOrDefault(nameIndex) is { } name)
+                    {
+                        names.Add(name);
+                    }
+                }
+                Take(ReadUInt16(data, offset + 4));
+                var interfaces = ReadUInt16(data, offset + 6);
+                for (var index = 0; index < interfaces; index++)
+                {
+                    Take(ReadUInt16(data, offset + 8 + (index * 2)));
+                }
+                return names;
             }
 
             private static int ReadUInt16(byte[] data, int offset) => (data[offset] << 8) | data[offset + 1];

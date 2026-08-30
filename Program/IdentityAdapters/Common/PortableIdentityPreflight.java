@@ -37,6 +37,10 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableXaeroWaypointTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (isAlias("chunkMapClasses", className) ||
+                isAlias("serverPlayerClasses", className) ||
+                isAlias("trackedEntityClasses", className)) {
+                transformer = new PortablePerPlayerChunksTransformer();
             } else {
                 transformer = new PortableIdentityTransformer();
             }
@@ -61,6 +65,10 @@ public final class PortableIdentityPreflight {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (isAlias("chunkMapClasses", className) ||
+                isAlias("serverPlayerClasses", className) ||
+                isAlias("trackedEntityClasses", className)) {
+                verifyPerPlayerChunkTargets(className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
                 !isAlias("textureUrlCheckerClasses", className) &&
                 !isAlias("gameProfileClasses", className)) {
@@ -291,6 +299,39 @@ public final class PortableIdentityPreflight {
         if (!input.equals(actual)) {
             throw new IllegalStateException(
                 "Xaero waypoint command escaped fail-closed validation: '" + input + "'.");
+        }
+    }
+
+    /**
+     * At least one hook in the class that was asked about, and none is the
+     * failure worth catching: a patch that quietly did nothing would leave the
+     * world served to the furthest asker and every other guest carrying it.
+     *
+     * The count is not pinned because it cannot be. ChunkMap reads its view
+     * distance four times (1.17) or five (1.18 onward) in updatePlayerStatus,
+     * and sixteen, eighteen or five times in move depending on the version -
+     * every one of those reads becomes a call - plus one more at the delivery;
+     * ServerPlayer gets exactly one. What the check is for is the case that
+     * would be silent: a patch that matched nothing and left the world served
+     * to the furthest asker with everyone else carrying it.
+     */
+    private static void verifyPerPlayerChunkTargets(String className, byte[] transformed) throws Exception {
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hookCalls = 0;
+        for (MethodNode method : patched.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortablePerPlayerChunksHooks")) {
+                    hookCalls++;
+                }
+            }
+        }
+        if (hookCalls == 0) {
+            throw new IllegalStateException(
+                "Per-player chunk transformer inserted no hooks into " + className + ".");
         }
     }
 

@@ -186,6 +186,7 @@ try {
         "PortableIdentityReflection",
         "PortableSkinProfiles",
         "PortableLanAutoPublishHooks",
+        "PortablePerPlayerChunksHooks",
         "PortableXaeroWaypointHooks")
     $hookDirectory = Join-Path $classes "minecraft\portable\identity"
     $hookTarget = Join-Path $hooksClasses "minecraft\portable\identity"
