@@ -142,7 +142,7 @@
                      the number the launcher would put in the field above. -->
                 <Grid Grid.Row="1" Grid.Column="1" Margin="{StaticResource Gap.Left2Above2}">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="{StaticResource Size.EstimateColumn}"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" x:Name="MemoryEstimateText"
