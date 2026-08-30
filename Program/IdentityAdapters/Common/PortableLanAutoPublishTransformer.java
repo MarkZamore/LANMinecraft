@@ -25,6 +25,14 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         Class<?> classBeingRedefined,
         ProtectionDomain protectionDomain,
         byte[] classfileBuffer) {
+        // The class list is named even when the hook is off, because the
+        // preflight asks for it by name before it looks at anything else. What
+        // decides whether anything is patched is this flag: a Minecraft missing
+        // one of the names the hook reaches for keeps its skins and its UUID
+        // and simply does not get the one-press publish.
+        if (!"true".equals(property("lanPublishEnabled", "false"))) {
+            return null;
+        }
         if (!contains(property("lanShareScreenClasses", ""), className)) {
             return null;
         }
