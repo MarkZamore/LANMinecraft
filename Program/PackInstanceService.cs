@@ -124,7 +124,6 @@ public sealed class PackInstanceService : IDisposable
     internal static void CleanupDisposableInstancePlaceholders(string gameDir)
     {
         DeleteDefaultOnlyXaeroData(gameDir);
-        PruneEmptyDirectories(gameDir);
     }
 
     private static void DeleteDefaultOnlyXaeroData(string gameDir)
@@ -170,23 +169,30 @@ public sealed class PackInstanceService : IDisposable
         return true;
     }
 
-    private static void PruneEmptyDirectories(string root)
-    {
-        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly).ToArray())
-        {
-            PruneEmptyDirectoryTree(directory);
-        }
-    }
 
-    private static void PruneEmptyDirectoryTree(string directory)
+    /// <summary>
+    /// Folders a mod makes once and never makes again.
+    ///
+    /// KubeJS creates kubejs/assets on its first run and from then on only
+    /// reads it: ClientAssetPacks asks File.listFiles what is inside, and that
+    /// answers null rather than empty when the folder is not there, straight
+    /// into Objects.requireNonNull. The player gets a red "KubeJS client script
+    /// errors" screen at every start.
+    ///
+    /// This build's kubejs/assets is empty - there is nothing to generate - so
+    /// git cannot carry it and the tidying below used to delete it for being
+    /// empty. The tidying no longer does; this puts the folder back where it
+    /// has already been taken.
+    /// </summary>
+    private static void RestoreModOwnedDirectories(string gameDir)
     {
-        var info = new DirectoryInfo(directory);
-        if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return;
-        foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly).ToArray())
+        var kubejs = Path.Combine(gameDir, "kubejs");
+        if (!Directory.Exists(kubejs)) return;
+        foreach (var name in new[] { "assets", "data" })
         {
-            PruneEmptyDirectoryTree(child);
+            var path = Path.Combine(kubejs, name);
+            if (!Directory.Exists(path)) Directory.CreateDirectory(path);
         }
-        if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
     }
 
     private PackInstanceContext PrepareCore(string packRelativePath, CancellationToken token)
@@ -214,6 +220,7 @@ public sealed class PackInstanceService : IDisposable
         EnsureMods(packDir, gameDir, state, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, token);
         SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
+        RestoreModOwnedDirectories(gameDir);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, StateJsonOptions));
