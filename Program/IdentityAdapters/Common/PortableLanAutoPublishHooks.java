@@ -58,7 +58,14 @@ public final class PortableLanAutoPublishHooks {
             if (Boolean.TRUE.equals(PortableIdentityReflection.invoke(
                 server,
                 aliases("isPublishedMethods", "isPublished", "r")))) {
-                return false;
+                // Already open. The settings screen has nothing left to offer -
+                // the port is taken and the access mode belongs to the mod that
+                // carries the session - so the press does what the first one
+                // did: nothing visible. A menu that keeps its "open to LAN"
+                // button after the world is open would otherwise walk a player
+                // into a screen that cannot change anything.
+                closeScreen(minecraftType, screenType, loader);
+                return true;
             }
 
             // The values the vanilla screen would pre-select: the world's own
@@ -93,11 +100,7 @@ public final class PortableLanAutoPublishHooks {
             }
 
             try {
-                PortableIdentityReflection.invokeDeclared(
-                    minecraft,
-                    new Class<?>[] { screenType },
-                    new Object[] { null },
-                    aliases("setScreenMethods", "setScreen", "a"));
+                closeScreen(minecraftType, screenType, loader);
                 Object message = PortableIdentityReflection.invokeStatic(
                     publishCommandType,
                     new Class<?>[] { int.class },
@@ -130,6 +133,21 @@ public final class PortableLanAutoPublishHooks {
             System.out.println("[PortableIdentity] LAN auto-publish unavailable: " + exception);
             return false;
         }
+    }
+
+    /** Puts the pause menu away, which is what the vanilla screen does when it closes. */
+    private static void closeScreen(Class<?> minecraftType, Class<?> screenType, ClassLoader loader)
+        throws ReflectiveOperationException {
+        Object minecraft = PortableIdentityReflection.invokeStatic(
+            minecraftType,
+            new Class<?>[0],
+            new Object[0],
+            aliases("minecraftGetInstanceMethods", "getInstance", "Q"));
+        PortableIdentityReflection.invokeDeclared(
+            minecraft,
+            new Class<?>[] { screenType },
+            new Object[] { null },
+            aliases("setScreenMethods", "setScreen", "a"));
     }
 
     private static Class<?> loadClass(ClassLoader loader, String... names) throws ClassNotFoundException {

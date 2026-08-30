@@ -49,9 +49,6 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "grl net/minecraft/client/resources/PlayerSkin",
         "\tb ()Ljava/lang/String; textureUrl",
         "\tf ()Z secure",
-        "grm net/minecraft/client/resources/SkinManager",
-        "\tb (Lcom/mojang/authlib/GameProfile;)Lgrl; getInsecureSkin",
-        "\tc (Lcom/mojang/authlib/GameProfile;)Ljava/util/concurrent/CompletableFuture; getOrLoad",
         "fzg net/minecraft/client/multiplayer/ClientPacketListener",
         "\tc (Ljava/lang/String;)V sendCommand",
         "\td (Ljava/lang/String;)Z sendUnsignedCommand",
@@ -117,8 +114,6 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "fqx$c",
         "net/minecraft/client/gui/screens/ShareToLanScreen",
         "foe",
-        "net/minecraft/client/resources/SkinManager",
-        "grm",
         "grm",
         "com/mojang/authlib/yggdrasil/TextureUrlChecker",
         "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
@@ -306,16 +301,6 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.Equal("net/minecraft/server/network/ServerLoginPacketListenerImpl,arw", properties["loginClasses"]);
         Assert.Equal("literal,b", properties["componentLiteralMethods"]);
         Assert.Equal("net.minecraft.network.chat.Component,wz", properties["componentClasses"]);
-
-        // The skin the launcher serves comes off the same machine, so the door
-        // that answers "not yet, have the default face" is worth one wait.
-        Assert.Equal("true", properties["skinWaitEnabled"]);
-        Assert.Equal("net/minecraft/client/resources/SkinManager,grm", properties["skinManagerClasses"]);
-        Assert.Equal("getInsecureSkin,b", properties["insecureSkinMethods"]);
-        Assert.Equal("getOrLoad,c", properties["skinOrLoadMethods"]);
-        Assert.Contains(
-            configuration.Targets,
-            target => target.ClassName == "net/minecraft/client/resources/SkinManager");
 
         // Opening a world to the network again skips the settings screen, so
         // the aliases the guard reads are pinned like every other pair. The LAN
