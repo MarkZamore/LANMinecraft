@@ -187,6 +187,7 @@ public final class PortableLanAutoPublishHooks {
                             new Object[] { chunks },
                             aliases("setChunkViewDistanceMethods", "setViewDistance", "a"));
                     }
+                    announceServeDistance(server, chunks);
                 } catch (Throwable exception) {
                     System.out.println(
                         "[PortableIdentity] LAN serve distance could not be set: " + exception);
@@ -260,6 +261,49 @@ public final class PortableLanAutoPublishHooks {
             }
         }
         return Math.min(wanted, SERVE_DISTANCE_LIMIT);
+    }
+
+    /**
+     * Tells every client how far the world is now served.
+     *
+     * A client is sent only what it was told to expect: ClientChunkCache drops
+     * a chunk outside the radius it last heard, writing "Ignoring chunk since
+     * it's not in the view range" to its own log and nothing to the screen.
+     * That number is announced by PlayerList.setViewDistance, which this code
+     * deliberately does not call - the integrated server would undo it on the
+     * next tick - so without this the world was served further and every guest
+     * threw the difference away, which is the whole feature quietly not
+     * happening.
+     *
+     * Failing here is worth saying out loud and worth nothing else: the world
+     * is open either way.
+     */
+    private static void announceServeDistance(Object server, int chunks) {
+        try {
+            ClassLoader loader = server.getClass().getClassLoader();
+            Class<?> radiusPacket = loadClass(
+                loader,
+                aliases(
+                    "chunkRadiusPacketClasses",
+                    "net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket",
+                    "aew"));
+            Class<?> packetType = loadClass(
+                loader,
+                aliases("networkPacketClasses", "net.minecraft.network.protocol.Packet", "zg"));
+            Object packet = radiusPacket.getDeclaredConstructor(int.class).newInstance(chunks);
+            Object playerList = PortableIdentityReflection.invoke(
+                server,
+                aliases("playerListMethods", "getPlayerList", "ah"));
+            PortableIdentityReflection.invokeDeclared(
+                playerList,
+                new Class<?>[] { packetType },
+                new Object[] { packet },
+                aliases("broadcastAllMethods", "broadcastAll", "a"));
+        } catch (Throwable exception) {
+            System.out.println(
+                "[PortableIdentity] LAN serve distance was set but not announced, so guests will " +
+                "drop what they were not told to expect: " + exception);
+        }
     }
 
     /** Whether the launcher found every name this needs in the game it started. */
