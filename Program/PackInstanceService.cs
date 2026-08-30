@@ -306,9 +306,18 @@ public sealed class PackInstanceService : IDisposable
                     CopySourceFile(sourcePath, destination);
                     continue;
                 }
-                if (HashesEqual(HashFile(destination), source.Sha256)) continue;
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
-                PreserveLocalFile(destination, conflictRoot, relative);
+                var localHash = HashFile(destination);
+                if (HashesEqual(localHash, source.Sha256)) continue;
+                // Unless a copy of exactly these bytes is already kept. A path
+                // is on the owned list precisely because the game rewrites it,
+                // so the same rewrite arrives at every update, and the
+                // twenty-third identical copy of it preserves nothing the first
+                // one does not - it only buries the copies that matter.
+                if (!IsAlreadyPreserved(packRelativePath, relative, localHash))
+                {
+                    conflictRoot ??= CreateConflictRoot(packRelativePath);
+                    PreserveLocalFile(destination, conflictRoot, relative);
+                }
                 CopySourceFile(sourcePath, destination);
                 ownedWrites++;
                 continue;
@@ -387,7 +396,9 @@ public sealed class PackInstanceService : IDisposable
         {
             _logger.Info(
                 $"{ownedWrites} file(s) the pack owns were rewritten from it; " +
-                $"what was there is in {conflictRoot}");
+                (conflictRoot is null
+                    ? "what was there is already kept from an earlier update"
+                    : $"what was there is in {conflictRoot}"));
         }
         if (conflictCount > 0)
         {
@@ -691,6 +702,71 @@ public sealed class PackInstanceService : IDisposable
         }
 
         return new InstanceState { PackRelativePath = packRelativePath };
+    }
+
+    /// <summary>
+    /// How many of a pack's conflict snapshots are kept.
+    ///
+    /// One is made per update that had anything to set aside, and nothing ever
+    /// reads them back - they are there for the day somebody goes looking for a
+    /// setting an update took away. Five updates is as far as that day ever
+    /// reaches, and the alternative is a folder that only grows: thirty-one
+    /// snapshots of one pack on the machine this was written for, and
+    /// twenty-nine of them the same config a mod rewrites at every start.
+    /// </summary>
+    internal const int KeptConflictSnapshots = 5;
+
+    /// <summary>Drops all but the newest snapshots of each pack's conflicts.</summary>
+    internal static void PruneOldConflictSnapshots(string conflictsRoot)
+    {
+        if (!Directory.Exists(conflictsRoot)) return;
+        foreach (var pack in Directory.EnumerateDirectories(conflictsRoot, "*", SearchOption.TopDirectoryOnly))
+        {
+            // A snapshot is named for the moment it was made, yyyyMMdd-HHmmss
+            // and ticks, so newest first by name is newest first by clock.
+            var older = Directory.EnumerateDirectories(pack, "*", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+                .Skip(KeptConflictSnapshots)
+                .ToArray();
+            foreach (var snapshot in older)
+            {
+                try
+                {
+                    Directory.Delete(snapshot, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(pack).Any()) Directory.Delete(pack);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>Whether a copy of exactly these bytes is already kept for this path.</summary>
+    private bool IsAlreadyPreserved(string packRelativePath, string relative, string hash)
+    {
+        var root = Path.Combine(_paths.PackConflicts, SafePackName(packRelativePath));
+        if (!Directory.Exists(root)) return false;
+        var name = relative.Replace('/', Path.DirectorySeparatorChar) + ".user-file";
+        foreach (var snapshot in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        {
+            var candidate = Path.Combine(snapshot, name);
+            if (!File.Exists(candidate)) continue;
+            try
+            {
+                if (HashesEqual(HashFile(candidate), hash)) return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+        return false;
     }
 
     private string CreateConflictRoot(string packRelativePath)
