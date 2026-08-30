@@ -41,6 +41,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "vt net/minecraft/network/Connection",
         "\te ()Z isMemoryConnection",
         "aur net/minecraft/server/players/PlayerList",
+        "\tt ()Ljava/util/List; getPlayers",
         "\ta (Ljava/util/UUID;)Laqv; getPlayer",
         "wz net/minecraft/network/chat/Component",
         "\tb (Ljava/lang/String;)Lxn; literal",
@@ -58,6 +59,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\tl ()Laqs; getChunkSource",
         "aqs net/minecraft/server/level/ServerChunkCache",
         "\ta (I)V setViewDistance",
+        "aqv net/minecraft/server/level/ServerPlayer",
+        "\tF ()I requestedViewDistance",
         "foe net/minecraft/client/gui/screens/ShareToLanScreen",
         "\taT_ ()V init",
         "guo net/minecraft/client/server/IntegratedServer",
@@ -321,6 +324,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.Equal("getAllLevels,K", properties["getAllLevelsMethods"]);
         Assert.Equal("getChunkSource,l", properties["getChunkSourceMethods"]);
         Assert.Equal("setViewDistance,a", properties["setChunkViewDistanceMethods"]);
+        Assert.Equal("getPlayers,t", properties["getPlayersMethods"]);
+        Assert.Equal("requestedViewDistance,F", properties["requestedViewDistanceMethods"]);
         Assert.Equal("publishServer,a", properties["publishServerMethods"]);
         Assert.Equal("isPublished,r", properties["isPublishedMethods"]);
         Assert.Equal("getDefaultGameType,u_", properties["getDefaultGameTypeMethods"]);
