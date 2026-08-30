@@ -2529,7 +2529,7 @@ public partial class MainWindow : Window
     private void StartMemoryEstimateWait()
     {
         _memoryEstimateWaitStep = 0;
-        MemoryEstimateText.Text = "~ .";
+        MemoryEstimateText.Text = "от .";
         MemoryEstimateText.ToolTip = "Лаунчер взвешивает сборку, чтобы прикинуть память.";
         _memoryEstimateWait ??= new DispatcherTimer(
             TimeSpan.FromMilliseconds(250),
@@ -2537,7 +2537,7 @@ public partial class MainWindow : Window
             (_, _) =>
             {
                 _memoryEstimateWaitStep = (_memoryEstimateWaitStep + 1) % 3;
-                MemoryEstimateText.Text = "~ " + new string('.', _memoryEstimateWaitStep + 1);
+                MemoryEstimateText.Text = "от " + new string('.', _memoryEstimateWaitStep + 1);
             },
             Dispatcher);
         _memoryEstimateWait.Start();
@@ -2624,7 +2624,7 @@ public partial class MainWindow : Window
     {
         var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
             PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
-        MemoryEstimateText.Text = $"~ {estimateGb} ГБ";
+        MemoryEstimateText.Text = $"от {estimateGb} ГБ";
         MemoryEstimateText.ToolTip =
             $"Оценка: столько памяти лаунчер советует этой сборке - {estimateGb} ГБ кучи. " +
             "Число в поле рядом ваше и остаётся вашим.";

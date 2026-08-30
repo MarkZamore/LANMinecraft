@@ -104,17 +104,31 @@ public sealed class SingleInstanceGuard : IDisposable
 
     private void Listen()
     {
-        var wait = new[] { _signal, _stopping.Token.WaitHandle };
-        while (!_stopping.IsCancellationRequested)
+        try
         {
-            if (WaitHandle.WaitAny(wait) != 0) return;
-            AnotherInstanceStarted?.Invoke();
+            var wait = new[] { _signal, _stopping.Token.WaitHandle };
+            while (!_stopping.IsCancellationRequested)
+            {
+                if (WaitHandle.WaitAny(wait) != 0) return;
+                AnotherInstanceStarted?.Invoke();
+            }
+        }
+        catch (Exception exception) when (
+            exception is ObjectDisposedException or AbandonedMutexException or OperationCanceledException)
+        {
+            // The guard was given back while this thread was waiting on it. An
+            // unhandled exception here would take the process with it, and this
+            // thread exists only to pass on a request that no longer matters.
         }
     }
 
     public void Dispose()
     {
         _stopping.Cancel();
+        // Wait for the listener to leave the handles before they are closed:
+        // waiting on a disposed handle throws on a thread nobody catches, and
+        // that ends the process rather than the guard.
+        _listener.Join(TimeSpan.FromSeconds(1));
         // Closing the handle is what hands the guard back: the kernel keeps the
         // object alive only while somebody holds one.
         _mutex.Dispose();
