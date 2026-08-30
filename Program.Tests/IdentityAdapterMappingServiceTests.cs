@@ -34,6 +34,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\te ()Ljava/util/UUID; profileId",
         "net/minecraft/server/MinecraftServer net/minecraft/server/MinecraftServer",
         "\tah ()Laur; getPlayerList",
+        "\tK ()Ljava/lang/Iterable; getAllLevels",
         "\tbb ()Lerl; getWorldData",
         "\tr ()Z isPublished",
         "\tu_ ()Ldct; getDefaultGameType",
@@ -53,6 +54,10 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "\tc (Ljava/lang/String;)V sendCommand",
         "\td (Ljava/lang/String;)Z sendUnsignedCommand",
         "fod net/minecraft/client/gui/screens/Screen",
+        "aqu net/minecraft/server/level/ServerLevel",
+        "\tl ()Laqs; getChunkSource",
+        "aqs net/minecraft/server/level/ServerChunkCache",
+        "\ta (I)V setViewDistance",
         "foe net/minecraft/client/gui/screens/ShareToLanScreen",
         "\taT_ ()V init",
         "guo net/minecraft/client/server/IntegratedServer",
@@ -308,6 +313,14 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.Equal("net/minecraft/client/gui/screens/ShareToLanScreen,foe", properties["lanShareScreenClasses"]);
         Assert.Equal("init,aT_", properties["lanShareInitMethods"]);
         Assert.Equal("net/minecraft/client/server/IntegratedServer,guo", properties["integratedServerClasses"]);
+
+        // How far the world is served, which the host sets apart from how far
+        // it draws: the chunk map holds the figure the server sends from.
+        Assert.Equal("net/minecraft/server/level/ServerLevel,aqu", properties["serverLevelClasses"]);
+        Assert.Equal("net/minecraft/server/level/ServerChunkCache,aqs", properties["chunkSourceClasses"]);
+        Assert.Equal("getAllLevels,K", properties["getAllLevelsMethods"]);
+        Assert.Equal("getChunkSource,l", properties["getChunkSourceMethods"]);
+        Assert.Equal("setViewDistance,a", properties["setChunkViewDistanceMethods"]);
         Assert.Equal("publishServer,a", properties["publishServerMethods"]);
         Assert.Equal("isPublished,r", properties["isPublishedMethods"]);
         Assert.Equal("getDefaultGameType,u_", properties["getDefaultGameTypeMethods"]);
