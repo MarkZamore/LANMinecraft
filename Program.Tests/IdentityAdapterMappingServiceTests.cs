@@ -478,11 +478,49 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.Contains(
             configuration.Targets,
             target => target.ClassName == "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService");
+        // And it keeps everything else the mappings do describe. A world is
+        // opened to the network the same way it has been since 1.17, and the
+        // hook that does it never touches PlayerSkin.
+        Assert.Equal("true", configuration.Properties["lanPublishEnabled"]);
+        Assert.Contains(
+            configuration.Targets,
+            target => target.ClassName == "net/minecraft/client/gui/screens/ShareToLanScreen");
+        Assert.Equal(
+            "net/minecraft/server/level/ServerChunkCache,aqs",
+            configuration.Properties["chunkSourceClasses"]);
+    }
+
+    /// <summary>
+    /// A Minecraft old enough to lack the per-player view distance keeps the
+    /// publish and loses only the serving. ServerPlayer.requestedViewDistance
+    /// arrived in 1.20.2 with the tracking that makes it mean anything.
+    /// </summary>
+    [Fact]
+    public void AMinecraftWithNoPerPlayerViewDistance_StillOpensToTheNetwork()
+    {
+        var older = string.Join(
+            '\n',
+            GoldenMappings.Split('\n')
+                .Where(line => !line.Contains("requestedViewDistance", StringComparison.Ordinal)));
+        var (service, runtime, gameDirectory) = CreateFixture(older, DefaultJarClasses);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("true", properties["lanPublishEnabled"]);
+        Assert.False(properties.ContainsKey("requestedViewDistanceMethods"));
+        Assert.False(properties.ContainsKey("setChunkViewDistanceMethods"));
     }
 
     /// <summary>
     /// The preflight refuses to run on a missing alias list, so every list it
     /// asks about is named even when the hooks behind it are switched off.
+    ///
+    /// This list is the preflight's own, and it grew: when the one-press
+    /// publish came back it began asking for the LAN screen's classes before
+    /// looking at anything else, and nothing here noticed. A pack with no
+    /// mappings then failed the preflight over a list it had no use for and
+    /// started with no adapter at all - losing the skins, which need no
+    /// mappings, to the absence of some.
     /// </summary>
     [Fact]
     public void ASkinOnlyConfiguration_StillNamesEveryListThePreflightAsksFor()
@@ -495,11 +533,13 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         foreach (var required in new[]
                  {
                      "loginClasses", "playerInfoClasses", "textureUrlCheckerClasses",
-                     "ftbTeleportClasses", "solarFluxPackClasses", "xaeroWaypointTeleportClasses"
+                     "ftbTeleportClasses", "solarFluxPackClasses", "xaeroWaypointTeleportClasses",
+                     "lanShareScreenClasses", "gameProfileClasses"
                  })
         {
             Assert.False(string.IsNullOrWhiteSpace(properties.GetValueOrDefault(required)), required);
         }
+        Assert.Equal("false", properties["lanPublishEnabled"]);
     }
 
     /// <summary>

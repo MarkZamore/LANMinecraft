@@ -83,15 +83,29 @@ internal sealed class IdentityAdapterMappingService
             return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no TSRG2 mappings");
         }
 
+        RuntimeNames mappings;
         try
         {
-            return BuildEverything(runtime, gameDirectory, mappingPath, FindMojangMappings(runtime.RuntimeRoot));
+            mappings = RuntimeNames.Read(mappingPath, FindMojangMappings(runtime.RuntimeRoot));
+        }
+        catch (InvalidDataException ex)
+        {
+            return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
+        }
+
+        try
+        {
+            return BuildEverything(runtime, gameDirectory, mappingPath, mappings);
         }
         catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
         {
             // A Minecraft the UUID hooks do not fit is still a Minecraft whose
-            // skins work, so the reason is carried forward rather than thrown.
-            return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
+            // skins work, and may well be one whose world can still be opened
+            // to the network in one press: the classes that hook reaches for
+            // are older than the ones that settle a UUID at the door. So the
+            // reason is carried forward and every other feature asked for
+            // again, one at a time.
+            return BuildSkinsOnly(runtime, gameDirectory, ex.Message, mappings, mappingPath);
         }
     }
 
@@ -101,12 +115,20 @@ internal sealed class IdentityAdapterMappingService
     private IdentityAdapterConfiguration BuildSkinsOnly(
         PreparedRuntime runtime,
         string gameDirectory,
-        string whyNotEverything)
+        string whyNotEverything,
+        RuntimeNames? mappings = null,
+        string? mappingPath = null)
     {
-        var targets = FindRuntimeTargets(
-            runtime,
-            gameDirectory,
-            new HashSet<string>(StringComparer.Ordinal) { YggdrasilSessionService, TextureUrlChecker, GameProfile });
+        var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
+        var wanted = new HashSet<string>(StringComparer.Ordinal)
+            { YggdrasilSessionService, TextureUrlChecker, GameProfile };
+        if (lanScreen is not null)
+        {
+            wanted.Add(ShareToLanScreen);
+            wanted.Add(lanScreen.ObfName);
+        }
+
+        var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
         // and without it there is nothing to patch at all.
@@ -141,11 +163,22 @@ internal sealed class IdentityAdapterMappingService
             ["solarFluxPackClasses"] = SolarFluxResourcePack,
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
         };
+        foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
+        // The screen has to be in a jar to be patched, and the preflight is
+        // told to patch every target it is given. One that is not there means
+        // the hook is off rather than half on.
+        if (lanScreen is not null && targets.All(target => target.ClassName != ShareToLanScreen))
+        {
+            properties["lanPublishEnabled"] = "false";
+        }
+        AddServeDistanceProperties(mappings, properties);
         AddSkinProperties(properties);
         // There is no mapping file behind this configuration, and the cache
         // above still wants a file to notice changing. authlib is the file it
-        // was actually derived from, so authlib is what it watches.
-        return new IdentityAdapterConfiguration(sessionService.JarPath, properties, targets);
+        // was actually derived from, so authlib is what it watches - unless
+        // there were mappings after all and only the UUID hooks did not fit,
+        // in which case the file they came from is what changes.
+        return new IdentityAdapterConfiguration(mappingPath ?? sessionService.JarPath, properties, targets);
     }
 
     /// <summary>The part that is the same however the rest turns out.</summary>
@@ -162,13 +195,198 @@ internal sealed class IdentityAdapterMappingService
         properties["gameProfileClasses"] = GameProfile;
     }
 
+    /// <summary>
+    /// The one-press publish, and every name the hook reaches for once a world
+    /// is open.
+    ///
+    /// Asked for separately because it is older than the hooks that settle a
+    /// UUID at the door: those need startClientVerification, which is 1.20.2,
+    /// while a world has been opened to the network the same way since 1.17. A
+    /// Minecraft that has all of these gets the hook whether or not it has the
+    /// others - and one missing any single name gets none of it, rather than a
+    /// hook that half works.
+    /// </summary>
+    /// <returns>The screen to patch, or null where the hook cannot be had.</returns>
+    private static MappedClass? AddLanPublishProperties(
+        RuntimeNames? mappings,
+        out Dictionary<string, string> properties)
+    {
+        // Named even when switched off: the preflight asks for this list by
+        // name before it looks at anything else, and its absence is why a pack
+        // with no mappings at all has been losing its skins too.
+        properties = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["lanPublishEnabled"] = "false",
+            ["lanShareScreenClasses"] = ShareToLanScreen
+        };
+        if (mappings is null) return null;
+
+        var shareScreen = mappings.FindClass(ShareToLanScreen);
+        var integrated = mappings.FindClass(IntegratedServer);
+        var minecraftClient = mappings.FindClass(MinecraftClient);
+        var gui = mappings.FindClass(Gui);
+        var chatComponent = mappings.FindClass(ChatComponent);
+        var httpUtil = mappings.FindClass(HttpUtil);
+        var gameType = mappings.FindClass(GameType);
+        var publishCommand = mappings.FindClass(PublishCommand);
+        var worldData = mappings.FindClass(WorldData);
+        var screen = mappings.FindClass(Screen);
+        var component = mappings.FindClass(Component);
+        var server = mappings.FindClass(MinecraftServer);
+        var playerList = mappings.FindClass(PlayerList);
+        if (shareScreen is null || integrated is null || minecraftClient is null || gui is null ||
+            chatComponent is null || httpUtil is null || gameType is null || publishCommand is null ||
+            worldData is null || screen is null || component is null || server is null ||
+            playerList is null)
+        {
+            return null;
+        }
+
+        var shareInit = shareScreen.FindMethod("init", descriptor => descriptor == "()V");
+        var publishServer = integrated.FindMethod(
+            "publishServer",
+            descriptor => descriptor.EndsWith("ZI)Z", StringComparison.Ordinal));
+        var defaultGameType = server.FindMethod(
+            "getDefaultGameType",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var getWorldData = server.FindMethod(
+            "getWorldData",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var isPublished = server.FindMethod("isPublished", descriptor => descriptor == "()Z");
+        var getPlayerList = server.FindMethod(
+            "getPlayerList",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var allowCommands = worldData.FindMethod("isAllowCommands", descriptor => descriptor == "()Z");
+        var availablePort = httpUtil.FindMethod("getAvailablePort", descriptor => descriptor == "()I");
+        var getInstance = minecraftClient.FindMethod(
+            "getInstance",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var singleplayerServer = minecraftClient.FindMethod(
+            "getSingleplayerServer",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var setScreen = minecraftClient.FindMethod(
+            "setScreen",
+            descriptor => descriptor == $"(L{screen.ObfName};)V");
+        var updateTitle = minecraftClient.FindMethod("updateTitle", descriptor => descriptor == "()V");
+        var guiField = minecraftClient.FindField("gui");
+        var getChat = gui.FindMethod(
+            "getChat",
+            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
+        var addMessage = chatComponent.FindMethod(
+            "addMessage",
+            descriptor => descriptor == $"(L{component.ObfName};)V");
+        // The line the game writes in chat when a world opens is the one name
+        // here a version may genuinely lack: PublishCommand said it inline
+        // until 1.19.4.
+        var publishSuccess = publishCommand.FindMethod(
+            "getSuccessMessage",
+            descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
+        if (shareInit is null || publishServer is null || defaultGameType is null ||
+            getWorldData is null || isPublished is null || getPlayerList is null ||
+            allowCommands is null || availablePort is null || getInstance is null ||
+            singleplayerServer is null || setScreen is null || updateTitle is null ||
+            guiField is null || getChat is null || addMessage is null || publishSuccess is null)
+        {
+            return null;
+        }
+
+        properties["lanPublishEnabled"] = "true";
+        properties["lanShareScreenClasses"] = JoinAliases(shareScreen);
+        properties["lanShareInitMethods"] = JoinAliases(shareInit);
+        properties["integratedServerClasses"] = JoinAliases(integrated);
+        properties["publishServerMethods"] = JoinAliases(publishServer);
+        properties["serverClasses"] = JoinAliases(server);
+        properties["playerListClasses"] = JoinAliases(playerList);
+        properties["playerListMethods"] = JoinAliases(getPlayerList);
+        properties["getDefaultGameTypeMethods"] = JoinAliases(defaultGameType);
+        properties["getWorldDataMethods"] = JoinAliases(getWorldData);
+        properties["isPublishedMethods"] = JoinAliases(isPublished);
+        properties["worldDataClasses"] = JoinAliases(worldData);
+        properties["isAllowCommandsMethods"] = JoinAliases(allowCommands);
+        properties["httpUtilClasses"] = JoinDottedAliases(httpUtil);
+        properties["getAvailablePortMethods"] = JoinAliases(availablePort);
+        properties["gameTypeClasses"] = JoinDottedAliases(gameType);
+        properties["publishCommandClasses"] = JoinDottedAliases(publishCommand);
+        properties["publishSuccessMethods"] = JoinAliases(publishSuccess);
+        properties["minecraftClasses"] = JoinDottedAliases(minecraftClient);
+        properties["minecraftGetInstanceMethods"] = JoinAliases(getInstance);
+        properties["getSingleplayerServerMethods"] = JoinAliases(singleplayerServer);
+        properties["setScreenMethods"] = JoinAliases(setScreen);
+        properties["updateTitleMethods"] = JoinAliases(updateTitle);
+        properties["minecraftGuiFields"] = JoinAliases(guiField);
+        properties["screenClasses"] = JoinDottedAliases(screen);
+        properties["componentClasses"] = JoinDottedAliases(component);
+        properties["guiClasses"] = JoinAliases(gui);
+        properties["guiChatMethods"] = JoinAliases(getChat);
+        properties["chatComponentClasses"] = JoinAliases(chatComponent);
+        properties["chatAddMessageMethods"] = JoinAliases(addMessage);
+        return shareScreen;
+    }
+
+    /// <summary>
+    /// Serving a world further than the host draws it, which needs names an
+    /// older Minecraft may not have under these spellings - ServerPlayer only
+    /// began to remember what a client asked for in 1.20.2. Where any is
+    /// missing the feature is absent and everything else is untouched: a
+    /// version that cannot serve further must not lose its skins over it.
+    /// </summary>
+    private static void AddServeDistanceProperties(
+        RuntimeNames? mappings,
+        Dictionary<string, string> properties)
+    {
+        if (mappings is null) return;
+        var serverLevel = mappings.FindClass(ServerLevel);
+        var chunkCache = mappings.FindClass(ServerChunkCache);
+        var serverPlayer = mappings.FindClass(ServerPlayer);
+        var server = mappings.FindClass(MinecraftServer);
+        var playerList = mappings.FindClass(PlayerList);
+        if (serverLevel is null || chunkCache is null || serverPlayer is null ||
+            server is null || playerList is null)
+        {
+            return;
+        }
+
+        // The integrated server copies the host's render distance into
+        // PlayerList.setViewDistance every tick, and that number is then the
+        // ceiling for everybody; ChunkMap keeps its own copy, and writing to
+        // that one instead leaves the comparison the server makes each tick
+        // still true, so it never writes over it.
+        var allLevels = server.FindMethod(
+            "getAllLevels",
+            descriptor => descriptor == "()Ljava/lang/Iterable;");
+        var chunkSource = serverLevel.FindMethod(
+            "getChunkSource",
+            descriptor => descriptor == $"()L{chunkCache.ObfName};");
+        var chunkViewDistance = chunkCache.FindMethod(
+            "setViewDistance",
+            descriptor => descriptor == "(I)V");
+        var players = playerList.FindMethod(
+            "getPlayers",
+            descriptor => descriptor == "()Ljava/util/List;");
+        var requestedViewDistance = serverPlayer.FindMethod(
+            "requestedViewDistance",
+            descriptor => descriptor == "()I");
+        if (allLevels is null || chunkSource is null || chunkViewDistance is null ||
+            players is null || requestedViewDistance is null)
+        {
+            return;
+        }
+
+        properties["serverLevelClasses"] = JoinAliases(serverLevel);
+        properties["chunkSourceClasses"] = JoinAliases(chunkCache);
+        properties["getAllLevelsMethods"] = JoinAliases(allLevels);
+        properties["getChunkSourceMethods"] = JoinAliases(chunkSource);
+        properties["setChunkViewDistanceMethods"] = JoinAliases(chunkViewDistance);
+        properties["getPlayersMethods"] = JoinAliases(players);
+        properties["requestedViewDistanceMethods"] = JoinAliases(requestedViewDistance);
+    }
+
     private IdentityAdapterConfiguration BuildEverything(
         PreparedRuntime runtime,
         string gameDirectory,
         string mappingPath,
-        string? mojangMappingPath)
+        RuntimeNames mappings)
     {
-        var mappings = RuntimeNames.Read(mappingPath, mojangMappingPath);
         var listener = mappings.RequireClass(LoginListener);
         var packet = mappings.RequireClass(HelloPacket);
         var server = mappings.RequireClass(MinecraftServer);
@@ -177,20 +395,8 @@ internal sealed class IdentityAdapterMappingService
         var component = mappings.RequireClass(Component);
         var playerInfo = mappings.RequireClass(PlayerInfo);
         var playerSkin = mappings.RequireClass(PlayerSkin);
-        var shareScreen = mappings.RequireClass(ShareToLanScreen);
-        var integrated = mappings.RequireClass(IntegratedServer);
-        var minecraftClient = mappings.RequireClass(MinecraftClient);
-        var gui = mappings.RequireClass(Gui);
-        var chatComponent = mappings.RequireClass(ChatComponent);
-        var httpUtil = mappings.RequireClass(HttpUtil);
-        var gameType = mappings.RequireClass(GameType);
-        var publishCommand = mappings.RequireClass(PublishCommand);
-        var worldData = mappings.RequireClass(WorldData);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
-        var serverLevel = mappings.FindClass(ServerLevel);
-        var chunkCache = mappings.FindClass(ServerChunkCache);
-        var serverPlayer = mappings.FindClass(ServerPlayer);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.ObfName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
@@ -206,61 +412,6 @@ internal sealed class IdentityAdapterMappingService
         var sendCommand = clientPacketListener.RequireMethod(
             "sendCommand",
             descriptor => descriptor == "(Ljava/lang/String;)V");
-        var shareInit = shareScreen.RequireMethod("init", descriptor => descriptor == "()V");
-        var publishServer = integrated.RequireMethod(
-            "publishServer",
-            descriptor => descriptor.EndsWith("ZI)Z", StringComparison.Ordinal));
-        var defaultGameType = server.RequireMethod(
-            "getDefaultGameType",
-            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var getWorldData = server.RequireMethod(
-            "getWorldData",
-            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var isPublished = server.RequireMethod("isPublished", descriptor => descriptor == "()Z");
-        var allowCommands = worldData.RequireMethod("isAllowCommands", descriptor => descriptor == "()Z");
-        var availablePort = httpUtil.RequireMethod("getAvailablePort", descriptor => descriptor == "()I");
-        var getInstance = minecraftClient.RequireMethod(
-            "getInstance",
-            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var singleplayerServer = minecraftClient.RequireMethod(
-            "getSingleplayerServer",
-            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var setScreen = minecraftClient.RequireMethod(
-            "setScreen",
-            descriptor => descriptor == $"(L{screen.ObfName};)V");
-        var updateTitle = minecraftClient.RequireMethod("updateTitle", descriptor => descriptor == "()V");
-        var getChat = gui.RequireMethod(
-            "getChat",
-            descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
-        var addMessage = chatComponent.RequireMethod(
-            "addMessage",
-            descriptor => descriptor == $"(L{component.ObfName};)V");
-        var publishSuccess = publishCommand.RequireMethod(
-            "getSuccessMessage",
-            descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
-        // How far a world is served, which is not how far the host draws.
-        // The integrated server copies the host's render distance into
-        // PlayerList.setViewDistance every tick, and that number is then the
-        // ceiling for everybody; ChunkMap keeps its own copy, and writing to
-        // that one instead leaves the comparison the server makes each tick
-        // still true, so it never writes over it.
-        var allLevels = server.FindMethod(
-            "getAllLevels",
-            descriptor => descriptor == "()Ljava/lang/Iterable;");
-        var chunkSource = chunkCache is null
-            ? null
-            : serverLevel?.FindMethod(
-                "getChunkSource",
-                descriptor => descriptor == $"()L{chunkCache.ObfName};");
-        var chunkViewDistance = chunkCache?.FindMethod(
-            "setViewDistance",
-            descriptor => descriptor == "(I)V");
-        var players = playerList.FindMethod(
-            "getPlayers",
-            descriptor => descriptor == "()Ljava/util/List;");
-        var requestedViewDistance = serverPlayer?.FindMethod(
-            "requestedViewDistance",
-            descriptor => descriptor == "()I");
         var properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["loginClasses"] = JoinAliases(listener),
@@ -319,51 +470,14 @@ internal sealed class IdentityAdapterMappingService
             ["clientPacketListenerClasses"] = JoinAliases(clientPacketListener),
             ["sendUnsignedCommandMethods"] = JoinAliases(sendUnsignedCommand),
             ["sendCommandMethods"] = JoinAliases(sendCommand),
-            ["lanShareScreenClasses"] = JoinAliases(shareScreen),
-            ["lanShareInitMethods"] = JoinAliases(shareInit),
-            ["integratedServerClasses"] = JoinAliases(integrated),
-            ["publishServerMethods"] = JoinAliases(publishServer),
-            ["getDefaultGameTypeMethods"] = JoinAliases(defaultGameType),
-            ["getWorldDataMethods"] = JoinAliases(getWorldData),
-            ["isPublishedMethods"] = JoinAliases(isPublished),
-            ["worldDataClasses"] = JoinAliases(worldData),
-            ["isAllowCommandsMethods"] = JoinAliases(allowCommands),
-            ["httpUtilClasses"] = JoinDottedAliases(httpUtil),
-            ["getAvailablePortMethods"] = JoinAliases(availablePort),
-            ["gameTypeClasses"] = JoinDottedAliases(gameType),
-            ["publishCommandClasses"] = JoinDottedAliases(publishCommand),
-            ["publishSuccessMethods"] = JoinAliases(publishSuccess),
-            ["minecraftClasses"] = JoinDottedAliases(minecraftClient),
-            ["minecraftGetInstanceMethods"] = JoinAliases(getInstance),
-            ["getSingleplayerServerMethods"] = JoinAliases(singleplayerServer),
-            ["setScreenMethods"] = JoinAliases(setScreen),
-            ["updateTitleMethods"] = JoinAliases(updateTitle),
-            ["minecraftGuiFields"] = JoinAliases(minecraftClient.RequireField("gui")),
-            ["screenClasses"] = JoinDottedAliases(screen),
-            ["guiClasses"] = JoinAliases(gui),
-            ["guiChatMethods"] = JoinAliases(getChat),
-            ["chatComponentClasses"] = JoinAliases(chatComponent),
-            ["chatAddMessageMethods"] = JoinAliases(addMessage)
+            ["screenClasses"] = JoinDottedAliases(screen)
         };
-
-        // Serving a world further than the host draws it needs three names an
-        // older Minecraft may not have under these spellings. Where any is
-        // missing the feature is absent and everything else the adapter does is
-        // untouched: a version that cannot serve further must not lose its
-        // skins over it.
-        if (serverLevel is not null && chunkCache is not null && allLevels is not null &&
-            chunkSource is not null && chunkViewDistance is not null &&
-            players is not null && requestedViewDistance is not null)
-        {
-            properties["serverLevelClasses"] = JoinAliases(serverLevel);
-            properties["chunkSourceClasses"] = JoinAliases(chunkCache);
-            properties["getAllLevelsMethods"] = JoinAliases(allLevels);
-            properties["getChunkSourceMethods"] = JoinAliases(chunkSource);
-            properties["setChunkViewDistanceMethods"] = JoinAliases(chunkViewDistance);
-            properties["getPlayersMethods"] = JoinAliases(players);
-            properties["requestedViewDistanceMethods"] =
-                JoinAliases(requestedViewDistance);
-        }
+        // The one-press publish and the serve distance are asked for
+        // separately, because they are older than the hooks above and a
+        // Minecraft that cannot have those may still have these.
+        var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
+        foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
+        AddServeDistanceProperties(mappings, properties);
 
         AddSkinProperties(properties);
 
@@ -374,10 +488,13 @@ internal sealed class IdentityAdapterMappingService
             PlayerInfo,
             playerInfo.ObfName,
             YggdrasilSessionService,
-            GameProfile,
-            ShareToLanScreen,
-            shareScreen.ObfName
+            GameProfile
         };
+        if (lanScreen is not null)
+        {
+            requiredTargets.Add(ShareToLanScreen);
+            requiredTargets.Add(lanScreen.ObfName);
+        }
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
         // same rule on the session service instead.
