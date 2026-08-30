@@ -48,7 +48,14 @@ public sealed class SingleInstanceGuard : IDisposable
     /// <summary>
     /// Takes the guard, or hands back null when a launcher is already running.
     /// </summary>
-    public static SingleInstanceGuard? TryAcquire()
+    public static SingleInstanceGuard? TryAcquire() => TryAcquire("");
+
+    /// <summary>
+    /// The same guard under a name of its own. Only the tests use this: they
+    /// have to be able to take a guard while a real launcher is running on the
+    /// same machine, which is most of the time on the machine it is written on.
+    /// </summary>
+    internal static SingleInstanceGuard? TryAcquire(string scope)
     {
         // The kernel decides who created the object, and exactly one caller is
         // told it did - which is the whole test, and it costs no ownership and
@@ -58,10 +65,10 @@ public sealed class SingleInstanceGuard : IDisposable
         var deadline = DateTime.UtcNow + RestartGrace;
         while (true)
         {
-            var mutex = new Mutex(false, MutexName, out var createdNew);
+            var mutex = new Mutex(false, MutexName + scope, out var createdNew);
             if (createdNew)
             {
-                var signal = new EventWaitHandle(false, EventResetMode.AutoReset, SignalName);
+                var signal = new EventWaitHandle(false, EventResetMode.AutoReset, SignalName + scope);
                 return new SingleInstanceGuard(mutex, signal);
             }
 
@@ -75,11 +82,14 @@ public sealed class SingleInstanceGuard : IDisposable
     /// Asks the launcher that is already running to come forward. Silent when
     /// there is nothing listening: the caller is about to exit either way.
     /// </summary>
-    public static void AskRunningInstanceToShowItself()
+    public static void AskRunningInstanceToShowItself() => AskRunningInstanceToShowItself("");
+
+    /// <summary>The same request, under a name of its own; see the note above.</summary>
+    internal static void AskRunningInstanceToShowItself(string scope)
     {
         try
         {
-            if (EventWaitHandle.TryOpenExisting(SignalName, out var signal))
+            if (EventWaitHandle.TryOpenExisting(SignalName + scope, out var signal))
             {
                 using (signal)
                 {

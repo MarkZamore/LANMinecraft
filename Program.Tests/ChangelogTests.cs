@@ -48,11 +48,52 @@ public sealed class ChangelogTests
         if (!TryCountCommits(out var commits)) return;
 
         var newest = ChangelogService.Load()[0].Version;
+        // Two numbers reach a player - the one in the window, which is the
+        // commit count the build was made from, and the one at the top of "Что
+        // нового" - and they have to be the same number. They stopped being it
+        // when two sections went out in one commit: after that the newest
+        // section was one ahead of every release for good, and the old rule
+        // here, which allowed count + 1 unconditionally, could not see it.
+        //
+        // count + 1 is right only while the commit carrying that section has
+        // not been made. On a clean tree - which is every build - the newest
+        // section IS the release.
+        var pending = HasUncommittedChanges();
         Assert.True(
-            newest == commits || newest == commits + 1,
-            $"the changelog's newest version is {newest} and main has {commits} commits; " +
-            $"a commit needs its own '## {commits + 1}' section before it is made, " +
-            "or the build will refuse to publish it");
+            newest == commits || (pending && newest == commits + 1),
+            $"the changelog's newest version is {newest} and main has {commits} commits" +
+            (pending
+                ? $"; a commit needs its own '## {commits + 1}' section before it is made"
+                : "; a clean checkout must have one section per commit, and the newest is the release") +
+            ", or the window and the version list will show different numbers");
+    }
+
+    /// <summary>Whether anything is edited but not yet committed.</summary>
+    private static bool HasUncommittedChanges()
+    {
+        try
+        {
+            using var git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "status --porcelain",
+                WorkingDirectory = AppContext.BaseDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (git is null) return true;
+            var output = git.StandardOutput.ReadToEnd();
+            if (!git.WaitForExit(15_000)) return true;
+            return git.ExitCode != 0 || output.Trim().Length > 0;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            // No git here: treat it as pending rather than failing a build that
+            // has no way to answer.
+            return true;
+        }
     }
 
     /// <summary>How many commits lead here, when this is a git checkout at all.</summary>
