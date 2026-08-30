@@ -118,6 +118,26 @@ public sealed class PackInstanceService : IDisposable
                     Directory.Delete(path, recursive: true);
                 }
             }
+
+            // And the shell a world leaves when it is deleted from inside the
+            // game. The game deletes a world through the junction standing in
+            // this build's saves folder: the files go, the junction goes, and
+            // the folder they pointed at stays behind holding a name and
+            // nothing else. It is not a world by this launcher's own test -
+            // that is a level.dat - so it is never listed and can never be
+            // opened, and yet it is linked into every build at every launch and
+            // holds its name against the next world that wants it. A folder
+            // with no file anywhere beneath it has nothing in it to lose.
+            if (SavesFolderService.IsEmptyDirectory(world))
+            {
+                try
+                {
+                    Directory.Delete(world, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
         }
     }
 
