@@ -280,16 +280,6 @@ public sealed class SettingsService
         }
         settings.MemoryByPack = byPack;
 
-        // A serve distance out of range is a number nobody typed in the window:
-        // zero is the game's own arrangement, and the ceiling is what one
-        // machine can be asked to generate for a room of friends.
-        settings.ServeDistanceChunks = settings.ServeDistanceChunks <= 0
-            ? 0
-            : Math.Clamp(
-                settings.ServeDistanceChunks,
-                MinecraftProcessService.MinimumServeDistanceChunks,
-                MinecraftProcessService.MaximumServeDistanceChunks);
-
         settings.SkinPath = settings.SkinPath?.Trim() ?? "";
         settings.SelectedWorldRelativePath = settings.SelectedWorldRelativePath?.Trim() ?? "";
 

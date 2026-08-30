@@ -34,22 +34,6 @@ public sealed class AppSettings
     public int MaxHeapGb { get; set; } = MemorySizingService.MaxRecommendedHeapGb / 2;
 
     /// <summary>
-    /// How far a world opened to the network is served, in chunks, apart from
-    /// how far this machine draws it. Zero leaves the game's own arrangement,
-    /// where the two are one number: the integrated server copies the host's
-    /// render distance into the ceiling every player is held to, so a host who
-    /// draws twelve chunks serves twelve, however much his guests ask for.
-    ///
-    /// Set, it is the ceiling instead. Every guest still chooses his own
-    /// distance under it - a guest on eight is sent 289 chunks where one on
-    /// thirty-two is sent 4225 - and the host keeps drawing whatever he likes.
-    /// The work of generating and sending the difference is his, which is the
-    /// whole of the cost and the reason this is a number and not a switch.
-    /// </summary>
-    [JsonPropertyName("serveDistanceChunks")]
-    public int ServeDistanceChunks { get; set; }
-
-    /// <summary>
     /// Absent from a settings file written while this number meant the whole of
     /// the game. The launcher reads it once, converts, and never asks again.
     /// </summary>
