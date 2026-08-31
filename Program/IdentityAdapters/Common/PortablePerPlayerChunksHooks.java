@@ -96,14 +96,25 @@ public final class PortablePerPlayerChunksHooks {
     private PortablePerPlayerChunksHooks() {
     }
 
-    /** Called where the server is told how far to serve, before it stores it. */
+    /**
+     * Called where the server is told how far to serve, before it stores it.
+     *
+     * This one is not allowed to throw. It is the head of a method the game
+     * calls from ChunkMap's own constructor, so anything that escapes here
+     * takes the world down with it before it has finished loading - and the
+     * whole point of the hook is a number that only makes the answer nicer.
+     */
     public static void observeServerDistance(int requested) {
         lastRequested = requested;
-        // A host moving his own slider narrows the world for everybody, and
-        // until this the launcher only noticed on its next five second look.
-        // Nothing is done here beyond saying so: this runs on the tick thread,
-        // inside the setter, before the field it is about to write.
-        PortableLanAutoPublishHooks.serverDistanceChanged(requested);
+        try {
+            // A host moving his own slider narrows the world for everybody, and
+            // until this the launcher only noticed on its next five second
+            // look. Nothing is done there beyond saying so: this runs on the
+            // tick thread, inside the setter, before the field it will write.
+            PortableLanAutoPublishHooks.serverDistanceChanged(requested);
+        } catch (Throwable exception) {
+            // Then the keeper finds out on its own clock, as it always did.
+        }
     }
 
     /** Called where the server takes a client's settings, before it reads them. */

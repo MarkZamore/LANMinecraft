@@ -164,7 +164,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
             _logger.Info(
                 $"Portable UUID adapter verified for {runtime.Descriptor.MinecraftVersion} " +
-                $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}.");
+                $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}. " +
+                $"In the game: {DescribeGameFeatures(state.Properties)}.");
             return CreateJvmArguments(adapterPath, state.Properties);
         }
         finally
@@ -172,6 +173,28 @@ public sealed class PortableIdentityAdapterService : IDisposable
             _gate.Release();
         }
     }
+
+    /// <summary>
+    /// Which of the game-side patches this runtime actually got.
+    ///
+    /// Every one of them turns itself off where the names it needs are missing,
+    /// which is the right way round - but until this there was no way to tell,
+    /// from a player's report, a pack where a feature is absent from one where
+    /// it is present and behaving badly. An evening was spent guessing which of
+    /// the two a guest's stuttering world was.
+    /// </summary>
+    private static string DescribeGameFeatures(IReadOnlyDictionary<string, string> properties)
+    {
+        var present = new List<string>();
+        if (Says(properties, "lanPublishEnabled")) present.Add("one-press LAN");
+        if (properties.ContainsKey("setChunkViewDistanceMethods")) present.Add("serve distance");
+        if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
+        return present.Count == 0 ? "nothing beyond skins and the UUID" : string.Join(", ", present);
+    }
+
+    private static bool Says(IReadOnlyDictionary<string, string> properties, string name) =>
+        properties.TryGetValue(name, out var value) &&
+        string.Equals(value, "true", StringComparison.Ordinal);
 
     private string ExtractAdapter(string directory)
     {
