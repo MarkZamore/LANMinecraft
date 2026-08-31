@@ -93,6 +93,15 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static volatile int lastRequested;
 
+    /**
+     * The last number the server's own field actually gave up, and whether the
+     * failure to read it has been mentioned. Said once: this sits inside the
+     * loops that decide chunks, and a line per chunk would bury the log it is
+     * meant to explain.
+     */
+    private static volatile int lastGoodRadius;
+    private static volatile boolean complainedAboutRadius;
+
     private PortablePerPlayerChunksHooks() {
     }
 
@@ -297,10 +306,20 @@ public final class PortablePerPlayerChunksHooks {
      */
     public static int radiusFor(Object chunkMap, Object player) {
         int server = serverRadius(chunkMap);
+        // Never a number the game cannot work with. What this answers replaces
+        // a field read, and the game does arithmetic on it at once: loop bounds
+        // for which chunks a player holds, and (n - 1) * 16 for how far he is
+        // told about entities. A negative here is not "leave it alone", which
+        // is what this used to believe - it is a player standing in an empty
+        // world whose every entity flickers out of tracking and back, jumping
+        // as it returns. Where the server's own number cannot be had, the last
+        // one that could is the honest answer; before there has ever been one,
+        // the game's own floor is.
         if (server <= 0) {
-            return server;
+            return lastGoodRadius > 0 ? lastGoodRadius : SMALLEST + 1;
         }
-        return effective(server, askedFor(player));
+        int answer = effective(server, askedFor(player));
+        return answer > 0 ? answer : server;
     }
 
     /**
@@ -459,8 +478,18 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static int serverRadius(Object chunkMap) {
         try {
-            return CHUNK_VIEW_DISTANCE.field(chunkMap).getInt(chunkMap);
+            int read = CHUNK_VIEW_DISTANCE.field(chunkMap).getInt(chunkMap);
+            if (read > 0) {
+                lastGoodRadius = read;
+            }
+            return read;
         } catch (Throwable exception) {
+            if (!complainedAboutRadius) {
+                complainedAboutRadius = true;
+                System.out.println(
+                    "[PortableIdentity] the server's view distance could not be read, so every player is "
+                        + "served the last number that could be: " + exception);
+            }
             return -1;
         }
     }
