@@ -839,11 +839,11 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     {
         var safeWorldName = GetSafeWorldName(worldName);
         // Straight into the folder of the build it came from, which the world
-        // carries with it. A world with no build named goes to the common
-        // folder: no build will list it, and that is the safe answer - opening
-        // one under mods it does not know is how its blocks are lost. Landing
-        // it in the right place now rather than letting the next launch move it
-        // means it is where the player looks the moment it arrives.
+        // carries with it. One naming no build stays in the root of Worlds: no
+        // build will list it, and that is the safe answer, because opening a
+        // world under mods it does not know is how its blocks are lost.
+        // Landing it in the right place now rather than letting the next launch
+        // move it means it is where the player looks the moment it arrives.
         var build = new WorldMetadataService().Read(extractedWorldPath)?.BuildRelativePath;
         var destinationRoot = WorldLocations.ForBuild(_paths.Worlds, build ?? "");
         var worldDir = GetAvailableWorldDirectory(safeWorldName, destinationRoot);

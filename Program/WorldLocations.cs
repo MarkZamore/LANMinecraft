@@ -27,21 +27,22 @@ namespace Minecraft;
 public static class WorldLocations
 {
     /// <summary>
-    /// Where a world goes when it does not say which build it belongs to.
-    ///
-    /// No build lists it, which is the point: opening a world under mods it
-    /// does not know is how its blocks are lost. It is still in Worlds, so the
-    /// launcher lists it and it can be handed on, and the moment something
-    /// stamps it with a build it moves in beside that build's own.
+    /// The folder holding one build's worlds, or Worlds itself for a world
+    /// that names no build.
     /// </summary>
-    public const string CommonFolderName = "Общие";
-
-    /// <summary>The folder holding one build's worlds.</summary>
+    /// <remarks>
+    /// A world nobody has stamped lies in the root, beside the build folders
+    /// rather than inside one. No build's saves points there, which is the
+    /// point: opening a world under mods it does not know is how the blocks of
+    /// every missing mod are lost. The launcher still lists it, so it can be
+    /// handed on or played somewhere that will stamp it, and the moment it is
+    /// stamped it moves in beside that build's own.
+    /// </remarks>
     public static string ForBuild(string worldsRoot, string buildRelativePath)
     {
         ArgumentNullException.ThrowIfNull(worldsRoot);
         var name = (buildRelativePath ?? string.Empty).Trim().Trim('\\', '/');
-        if (name.Length == 0) name = CommonFolderName;
+        if (name.Length == 0) return worldsRoot;
         foreach (var invalid in Path.GetInvalidFileNameChars())
         {
             name = name.Replace(invalid, '_');
@@ -85,10 +86,10 @@ public static class WorldLocations
     /// they belong to, and returns how many moved.
     /// </summary>
     /// <remarks>
-    /// A world that says nowhere which build it belongs to goes to the common
-    /// folder rather than into a build: no build lists it, so nothing opens it
-    /// under mods it does not know, which is how a world's blocks are lost. It
-    /// stays listed and transferable, and it is named in the log.
+    /// A world that says nowhere which build it belongs to stays in the root of
+    /// Worlds: no build lists it, so nothing opens it under mods it does not
+    /// know, which is how a world's blocks are lost. It stays listed and
+    /// transferable, and it is named in the log.
     ///
     /// Nothing is ever deleted here, and a name already taken in the
     /// destination stops that one world rather than the whole migration.
@@ -107,6 +108,7 @@ public static class WorldLocations
             if (string.IsNullOrWhiteSpace(build))
             {
                 orphans.Add(Path.GetFileName(world));
+                continue;
             }
 
             var destination = Path.Combine(ForBuild(worldsRoot, build), Path.GetFileName(world));
@@ -125,9 +127,7 @@ public static class WorldLocations
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                logger?.Warn(
-                    $"World {Path.GetFileName(world)} could not be moved into " +
-                    $"{(string.IsNullOrWhiteSpace(build) ? CommonFolderName : build)}: {ex.Message}");
+                logger?.Warn($"World {Path.GetFileName(world)} could not be moved into {build}: {ex.Message}");
             }
         }
 
@@ -138,8 +138,8 @@ public static class WorldLocations
         if (orphans.Count > 0)
         {
             logger?.Warn(
-                $"These worlds say nowhere which build they belong to, so they went to {CommonFolderName} " +
-                $"and no build will list them until something stamps them: {string.Join(", ", orphans)}.");
+                "These worlds say nowhere which build they belong to, so they stay in the Worlds folder " +
+                $"itself and no build will list them until something stamps them: {string.Join(", ", orphans)}.");
         }
         return moved;
     }

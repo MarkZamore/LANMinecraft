@@ -91,24 +91,25 @@ public sealed class SavesFolderTests : IDisposable
     }
 
     /// <summary>
-    /// A world that says nowhere which build made it goes to the common folder,
-    /// not into a build. Putting it under mods it does not know would strip out
-    /// every block those mods lack, and no guess is worth that.
+    /// A world that says nowhere which build made it stays in the root of
+    /// Worlds, beside the build folders rather than inside one. Putting it
+    /// under mods it does not know would strip out every block those mods
+    /// lack, and no guess is worth that.
     /// </summary>
     [Fact]
-    public void AWorldNobodyStamped_GoesToTheCommonFolder()
+    public void AWorldNobodyStamped_StaysInTheRoot()
     {
         MakeFlatWorld("hand-dropped", build: null);
 
         new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
 
-        var common = Path.Combine(Worlds, WorldLocations.CommonFolderName, "hand-dropped");
-        Assert.True(File.Exists(Path.Combine(common, "level.dat")));
+        var loose = Path.Combine(Worlds, "hand-dropped");
+        Assert.True(File.Exists(Path.Combine(loose, "level.dat")));
         // No build lists it, and the launcher still does - so it can be handed
         // on, or played somewhere that will stamp it.
         Assert.False(Directory.Exists(Path.Combine(Saves, "hand-dropped")));
         Assert.Contains(
-            Path.GetFullPath(common),
+            Path.GetFullPath(loose),
             WorldLocations.Enumerate(Worlds).Select(Path.GetFullPath));
     }
 
