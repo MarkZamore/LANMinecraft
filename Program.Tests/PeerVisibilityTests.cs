@@ -67,14 +67,76 @@ public sealed class PeerVisibilityTests
 
         await using var client = new SteamClientService(api);
         await client.StartAsync(CancellationToken.None);
-        var directory = new SteamPeerDirectory(client);
+        var at = DateTimeOffset.UnixEpoch;
+        var directory = new SteamPeerDirectory(client, clock: () => at);
 
+        // Asking Steam for their keys is not the same as being answered, so
+        // nothing is concluded on the first look.
+        directory.Refresh();
+        Assert.Empty(directory.Peers);
+
+        // Once Steam has had its chance and still says nothing, they are in
+        // something else that borrows the same app id.
+        at = at.AddSeconds(30);
         directory.Refresh();
 
         var peer = Assert.Single(directory.Peers);
         Assert.True(peer.IsOutsideLauncher);
         Assert.Equal("anuvenn", peer.PersonaName);
         Assert.False(peer.IsMinecraftRunning);
+    }
+
+    /// <summary>
+    /// And somebody already known to be in the launcher is never demoted to it.
+    /// Steam serves a friend's keys on its own schedule and a read that comes
+    /// back empty is ordinary; announcing "in another game" on one such read
+    /// would flicker for everybody, permanently.
+    /// </summary>
+    [Fact]
+    public async Task AFriendAlreadyInTheLauncher_IsNotCalledElsewhereOnAnEmptyRead()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
+        foreach (var (key, value) in SteamPresenceCodec.Encode(Presence()))
+        {
+            api.FriendPresence[(FriendSteamId, key)] = value;
+        }
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var at = DateTimeOffset.UnixEpoch;
+        var directory = new SteamPeerDirectory(client, clock: () => at);
+
+        directory.Refresh();
+        Assert.False(Assert.Single(directory.Peers).IsOutsideLauncher);
+
+        // Steam simply stops serving the keys for a while, as it does.
+        api.FriendPresence.Clear();
+        at = at.AddSeconds(30);
+        directory.Refresh();
+
+        var peer = Assert.Single(directory.Peers);
+        Assert.False(peer.IsOutsideLauncher);
+        Assert.Equal("anuvenn", peer.PlayerName);
+    }
+
+    private static SteamPeerPresence Presence()
+    {
+        Assert.True(SteamId64.TryFrom(FriendSteamId, out var peer));
+        return new SteamPeerPresence
+        {
+            SteamId = peer,
+            PersonaName = "anuvenn",
+            ProtocolVersion = SteamPresenceCodec.ProtocolVersion,
+            PlayerName = "anuvenn",
+            State = SteamPresenceCodec.StateIdle
+        };
     }
 
     /// <summary>
