@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -240,6 +241,7 @@ public sealed class PackInstanceService : IDisposable
         EnsureMods(packDir, gameDir, state, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, token);
         SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
+        CapDrawDistances(gameDir);
         RestoreModOwnedDirectories(gameDir);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
@@ -593,6 +595,112 @@ public sealed class PackInstanceService : IDisposable
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// How far a world is served, and so how far anyone can be shown one.
+    /// </summary>
+    /// <remarks>
+    /// This has to agree with SERVE_DISTANCE_LIMIT in PortableLanAutoPublishHooks,
+    /// and a test holds the two together. The number is what it is because a
+    /// view of thirty-two chunks is something over a hundred megabytes, a Steam
+    /// relay carries about four and a half a second, and a client hangs up on a
+    /// server that has sent it nothing for thirty.
+    /// </remarks>
+    internal const int FurthestChunks = 16;
+
+    private static readonly string[] DistanceOptions = ["renderDistance", "simulationDistance"];
+
+    /// <summary>
+    /// The shadow map is drawn from the sun, over its own distance, and costs a
+    /// second pass over everything inside it. Serving no further than sixteen
+    /// makes anything beyond that a shadow cast by ground the player was never
+    /// sent. Iris keeps it in a properties file of its own, by an equals sign
+    /// rather than a colon.
+    /// </summary>
+    private static readonly string[] ShadowOptions = ["maxShadowRenderDistance"];
+
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
+
+    /// <summary>
+    /// Brings the game's own sliders down to what the launcher will serve.
+    ///
+    /// The server already refuses to serve further, and a client draws the
+    /// smaller of its own number and the server's - so without this the setting
+    /// reads thirty-two, the world shows sixteen, and the player is left to
+    /// decide which of the two is broken. Writing it into the file is the only
+    /// way the limit becomes something he can see: the settings screen shows
+    /// his own number and nothing else, and what the server allows is known
+    /// only to the renderer.
+    /// </summary>
+    private void CapDrawDistances(string gameDir)
+    {
+        var optionsPath = Path.Combine(gameDir, "options.txt");
+        try
+        {
+            var changed = CapFile(optionsPath, ':', DistanceOptions)
+                + CapFile(Path.Combine(gameDir, "config", "iris.properties"), '=', ShadowOptions);
+            if (changed == 0) return;
+            _logger?.Info(
+                $"Brought {changed} distance setting(s) down to {FurthestChunks} chunks, which is as far "
+                    + "as a world is ever served.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn($"The game's distance settings could not be capped: {ex.Message}");
+        }
+    }
+
+    /// <summary>Caps one file in place, and answers how many lines it changed.</summary>
+    private static int CapFile(string path, char separator, string[] keys)
+    {
+        if (!File.Exists(path)) return 0;
+        var (capped, changed) = Cap(File.ReadAllText(path, Utf8NoBom), separator, keys);
+        if (changed > 0) AtomicFile.WriteAllText(path, capped, Utf8NoBom);
+        return changed;
+    }
+
+    /// <summary>The game's own settings file, where a setting is name:value.</summary>
+    internal static (string Text, int Changed) CapDistances(string options) =>
+        Cap(options, ':', DistanceOptions);
+
+    /// <summary>Iris's settings file, where a setting is name=value.</summary>
+    internal static (string Text, int Changed) CapShadowDistance(string properties) =>
+        Cap(properties, '=', ShadowOptions);
+
+    /// <summary>
+    /// The text with any distance above the cap brought down to it. Every other
+    /// line, and the way the lines end, is left as it was.
+    /// </summary>
+    private static (string Text, int Changed) Cap(string options, char separator, string[] keys)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var lines = options.Split('\n');
+        var changed = 0;
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var line = lines[index].TrimEnd('\r');
+            var colon = line.IndexOf(separator);
+            if (colon <= 0) continue;
+            var key = line[..colon];
+            if (!keys.Contains(key, StringComparer.Ordinal)) continue;
+            if (!int.TryParse(
+                    line[(colon + 1)..],
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var value)
+                || value <= FurthestChunks)
+            {
+                continue;
+            }
+
+            lines[index] = key + separator + FurthestChunks.ToString(CultureInfo.InvariantCulture);
+            changed++;
+        }
+
+        if (changed == 0) return (options, 0);
+        return (string.Join(newline, lines.Select(line => line.TrimEnd('\r'))), changed);
     }
 
     private static void SanitizeInstanceForLocalPlay(string gameDir, string buildName)
