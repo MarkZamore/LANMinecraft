@@ -8,6 +8,7 @@ import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -172,6 +173,29 @@ public final class PortablePerPlayerChunksHooks {
         readUuid(System.getProperty("minecraft.portable.identity.localPlayer", ""));
 
     /** The thread inside the pump, whose own re-offers go straight through. */
+    /**
+     * What the hold did for each player since the last report.
+     *
+     * Kept apart from the queue rather than inside it, because the queue is
+     * dropped the moment it empties - which is most of the time, and is exactly
+     * when the numbers are worth reading. Four counts: offered to this seam,
+     * held back, handed over later, dropped because he no longer wanted it.
+     *
+     * Written on the server thread only, which is where every one of the three
+     * hooks runs, so a plain array is enough.
+     */
+    private static final Map<UUID, long[]> TALLY = new ConcurrentHashMap<>();
+    private static final int OFFERED = 0;
+    private static final int HELD_BACK = 1;
+    private static final int HANDED_OVER = 2;
+    private static final int DROPPED = 3;
+
+    /** Said once per player, and it is the answer to "is this doing anything". */
+    private static final Set<UUID> ANNOUNCED = ConcurrentHashMap.newKeySet();
+
+    private static final long REPORT_EVERY_NANOS = 60_000_000_000L;
+    private static volatile long lastReport;
+
     private static volatile Thread pumping;
 
     /** Set where the pump cannot work at all, after which nothing is held. */
@@ -533,6 +557,8 @@ public final class PortablePerPlayerChunksHooks {
             if (who == null || who.equals(LOCAL_PLAYER)) {
                 return true;
             }
+            long[] tally = TALLY.computeIfAbsent(who, key -> new long[4]);
+            tally[OFFERED]++;
             // Found before the first chunk is ever held, never at the first
             // send. A hook that takes a chunk it cannot later hand back is the
             // hole-in-the-world bug wearing a different coat.
@@ -564,6 +590,10 @@ public final class PortablePerPlayerChunksHooks {
                     return false;
                 }
                 pending.queue.addLast(new Held(position, chunk, spare));
+                tally[HELD_BACK]++;
+            }
+            if (ANNOUNCED.add(who)) {
+                System.out.println("[PortableIdentity] chunks are being paced for " + who + ".");
             }
             return false;
         } catch (Throwable exception) {
@@ -580,7 +610,13 @@ public final class PortablePerPlayerChunksHooks {
      * any of that.
      */
     public static void deliverHeld(Object chunkMap) {
-        if (!PACING || broken || HELD.isEmpty()) {
+        if (!PACING || broken) {
+            return;
+        }
+        if (HELD.isEmpty()) {
+            // Still worth a look at the clock: a guest who has caught up leaves
+            // nothing in the hold, and that is the minute worth reporting.
+            report();
             return;
         }
         Thread previous = pumping;
@@ -588,11 +624,13 @@ public final class PortablePerPlayerChunksHooks {
         try {
             for (Iterator<Map.Entry<UUID, Pending>> entries = HELD.entrySet().iterator();
                  entries.hasNext();) {
-                Pending pending = entries.next().getValue();
+                Map.Entry<UUID, Pending> entry = entries.next();
+                Pending pending = entry.getValue();
                 // Players of another level wait for that level to tick.
                 if (pending.map != chunkMap) {
                     continue;
                 }
+                long[] tally = TALLY.computeIfAbsent(entry.getKey(), key -> new long[4]);
                 synchronized (pending) {
                     int budget = CHUNKS_PER_TICK;
                     while (budget > 0 && !pending.queue.isEmpty()) {
@@ -601,6 +639,7 @@ public final class PortablePerPlayerChunksHooks {
                         // it over now would leave a chunk on his client that
                         // nothing will ever tell him to drop again.
                         if (!pending.live.remove(held.position)) {
+                            tally[DROPPED]++;
                             continue;
                         }
                         // Or he walked away from it. The same refusal the offer
@@ -608,11 +647,13 @@ public final class PortablePerPlayerChunksHooks {
                         // way: walking back flips the game own test and offers
                         // it again.
                         if (!shouldSend(chunkMap, pending.player, held.chunk)) {
+                            tally[DROPPED]++;
                             continue;
                         }
                         if (!hand(chunkMap, pending.player, held)) {
                             return;
                         }
+                        tally[HANDED_OVER]++;
                         budget--;
                     }
                     if (pending.queue.isEmpty()) {
@@ -627,6 +668,56 @@ public final class PortablePerPlayerChunksHooks {
             System.out.println("[PortableIdentity] chunks are no longer paced: " + exception);
         } finally {
             pumping = previous;
+        }
+        report();
+    }
+
+    /**
+     * One line a minute saying what the hold actually did, and nothing at all
+     * while it is doing nothing.
+     *
+     * Written because the seams were silent when they worked, so a session
+     * where a guest still stuttered could not say whether the pacing was
+     * holding anything or standing idle. Counts rather than bytes: a chunk of
+     * a modded world is tens of kilobytes and the number of them is the thing
+     * the budget is written in.
+     */
+    private static void report() {
+        long now = System.nanoTime();
+        long since = lastReport;
+        if (since != 0 && now - since < REPORT_EVERY_NANOS) {
+            return;
+        }
+        lastReport = now;
+        if (since == 0 || TALLY.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<UUID, long[]> entry : TALLY.entrySet()) {
+            long[] tally = entry.getValue();
+            long offered = tally[OFFERED];
+            long held = tally[HELD_BACK];
+            long handed = tally[HANDED_OVER];
+            long dropped = tally[DROPPED];
+            tally[OFFERED] = 0;
+            tally[HELD_BACK] = 0;
+            tally[HANDED_OVER] = 0;
+            tally[DROPPED] = 0;
+            if (offered == 0 && held == 0 && handed == 0 && dropped == 0) {
+                continue;
+            }
+            Pending pending = HELD.get(entry.getKey());
+            int waiting;
+            if (pending == null) {
+                waiting = 0;
+            } else {
+                synchronized (pending) {
+                    waiting = pending.queue.size();
+                }
+            }
+            System.out.println(
+                "[PortableIdentity] paced chunks for " + entry.getKey() + " this minute: offered "
+                    + offered + ", held " + held + ", handed over " + handed + ", dropped "
+                    + dropped + ", still waiting " + waiting + ".");
         }
     }
 
