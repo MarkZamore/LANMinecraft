@@ -83,6 +83,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _minecraftUuid = "";
     private string _packHash = "";
     private string _packName = "";
+    private int _release;
     private bool _isOutsideLauncher;
     private string _localPackHash = "";
     private bool _isMinecraftRunning;
@@ -136,6 +137,13 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     {
         get => _packName;
         set { if (Set(ref _packName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    /// <summary>Which release of the launcher put them there, or 0 if unsaid.</summary>
+    public int Release
+    {
+        get => _release;
+        set { if (Set(ref _release, value)) OnPropertyChanged(nameof(DisplayName)); }
     }
 
     /// <summary>In Minecraft, but not through this launcher.</summary>
@@ -283,13 +291,26 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     {
         get
         {
-            if (IsOutsideLauncher) return "В другой игре";
+            // Somebody who closed the launcher and kept playing is still in
+            // the build he was in, on the launcher that put him there. Saying
+            // "in another game" would take away both, and neither stopped
+            // being true - only his answering did.
+            if (IsOutsideLauncher)
+            {
+                return string.IsNullOrWhiteSpace(PackName)
+                    ? On("В другой игре")
+                    : On(PackName.Trim());
+            }
             if (!IsPresenceKnown) return "на связи, данные Steam недоступны";
-            if (!IsCompatible) return "нужно обновить лаунчер";
-            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return PackName.Trim();
-            return "В лаунчере";
+            if (!IsCompatible) return On("нужно обновить лаунчер");
+            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return On(PackName.Trim());
+            return Release > 0 ? $"В лаунчере {Release}" : "В лаунчере";
         }
     }
+
+    /// <summary>"…, on 312", where the number is known and not otherwise.</summary>
+    private string On(string what) =>
+        Release > 0 ? $"{what} на {Release}" : what;
 
     public string DisplayName => $"{PeerName} - {StatusText}";
 
@@ -319,6 +340,10 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         MinecraftUuid = presence.MinecraftUuid;
         PackHash = presence.PackHash;
         PackName = presence.PackName;
+        // Never unlearnt: a player who stops answering has not gone back to an
+        // older launcher, and the number is what tells the pair of them which
+        // side has to update.
+        if (presence.Release > 0) Release = presence.Release;
         IsOutsideLauncher = presence.IsOutsideLauncher;
         LocalPackHash = localPackHash;
         IsMinecraftRunning = presence.IsMinecraftRunning;

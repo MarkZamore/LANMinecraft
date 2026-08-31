@@ -56,9 +56,9 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     {
         var peer = NewPeer();
 
-        peer.Apply(Presence() with { PlayerName = "anuvenn", PersonaName = "Anu" }, "pack-hash");
-        Assert.Equal("В лаунчере", peer.StatusText);
-        Assert.Equal("anuvenn (Anu) - В лаунчере", peer.DisplayName);
+        peer.Apply(Presence() with { PlayerName = "anuvenn", PersonaName = "Anu", Release = 312 }, "pack-hash");
+        Assert.Equal("В лаунчере 312", peer.StatusText);
+        Assert.Equal("anuvenn (Anu) - В лаунчере 312", peer.DisplayName);
 
         // In a build: the folder is its name, and it is only worth saying once
         // the game is actually up.
@@ -68,17 +68,56 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
                 PlayerName = "anuvenn",
                 PersonaName = "Anu",
                 PackName = "All The Fabric 3",
+                Release = 312,
                 State = SteamPresenceCodec.StateInGame
             },
             "pack-hash");
-        Assert.Equal("All The Fabric 3", peer.StatusText);
+        Assert.Equal("All The Fabric 3 на 312", peer.StatusText);
 
-        // A launcher older than this field names no build, and is still in the
-        // launcher rather than nowhere.
-        peer.Apply(
+        // A launcher older than these fields names neither, and is still in the
+        // launcher rather than nowhere. A peer of its own, because a number
+        // once heard is never unlearnt - see the test below for why.
+        var older = NewPeer();
+        older.Apply(
             Presence() with { PlayerName = "anuvenn", State = SteamPresenceCodec.StateInGame },
             "pack-hash");
-        Assert.Equal("В лаунчере", peer.StatusText);
+        Assert.Equal("В лаунчере", older.StatusText);
+    }
+
+    /// <summary>
+    /// Closing the launcher and carrying on playing does not move a player to
+    /// another game, and does not take the launcher's number off them. Neither
+    /// stopped being true; only their answering did.
+    /// </summary>
+    [Fact]
+    public void PeerViewModel_KeepsTheBuildAndTheNumberWhenTheLauncherGoes()
+    {
+        var peer = NewPeer();
+        peer.Apply(
+            Presence() with
+            {
+                PlayerName = "anuvenn",
+                PackName = "LL8 Extended",
+                Release = 312,
+                State = SteamPresenceCodec.StateInGame
+            },
+            "pack-hash");
+        Assert.Equal("LL8 Extended на 312", peer.StatusText);
+
+        // The launcher is gone; the directory hands back what they last said.
+        peer.Apply(
+            new SteamPeerPresence
+            {
+                SteamId = peer.SteamId,
+                PersonaName = "Anu",
+                IsOutsideLauncher = true,
+                PackName = "LL8 Extended",
+                Release = 312
+            },
+            "pack-hash");
+
+        Assert.Equal("LL8 Extended на 312", peer.StatusText);
+        Assert.False(peer.IsCompatible);
     }
 
     /// <summary>

@@ -66,6 +66,18 @@ public sealed class SteamPeerDirectory(
 
     private static readonly TimeSpan OutsideGrace = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// The last build and release each player published, kept after they stop
+    /// publishing anything.
+    /// </summary>
+    /// <remarks>
+    /// Somebody who closes the launcher and keeps playing stops answering, but
+    /// has not changed which build he is in or which launcher put him there.
+    /// Dropping to "in another game" the moment the keys go would take away the
+    /// two things the list is read for, and neither of them stopped being true.
+    /// </remarks>
+    private readonly Dictionary<ulong, (string PackName, int Release)> _lastTold = [];
+
     public event EventHandler<IReadOnlyList<SteamPeerPresence>>? PeersChanged;
 
     /// <summary>
@@ -82,6 +94,20 @@ public sealed class SteamPeerDirectory(
     /// Their launcher says goodbye on the way out, and that clears them at
     /// once, so the honest case is not slowed by this.
     /// </remarks>
+    /// <summary>A player in the shared app who is not answering, told by what he last said.</summary>
+    private SteamPeerPresence Elsewhere(SteamId64 peerId, SteamFriendInfo friend)
+    {
+        _lastTold.TryGetValue(friend.SteamId64, out var told);
+        return new SteamPeerPresence
+        {
+            SteamId = peerId,
+            PersonaName = friend.PersonaName,
+            IsOutsideLauncher = true,
+            PackName = told.PackName ?? "",
+            Release = told.Release
+        };
+    }
+
     private bool IsElsewhere(SteamFriendInfo friend, DateTimeOffset now)
     {
         if (!friend.IsInSharedApp) return false;
@@ -232,13 +258,13 @@ public sealed class SteamPeerDirectory(
             // They are listed rather than hidden because "not in the list at
             // all" is what a player reads as offline, and then asks why a world
             // cannot be sent to somebody they can plainly see playing.
+            if (presence is not null &&
+                (presence.Release > 0 || presence.PackName.Length > 0))
+            {
+                _lastTold[friend.SteamId64] = (presence.PackName, presence.Release);
+            }
             presence ??= IsElsewhere(friend, now)
-                ? new SteamPeerPresence
-                {
-                    SteamId = peerId,
-                    PersonaName = friend.PersonaName,
-                    IsOutsideLauncher = true
-                }
+                ? Elsewhere(peerId, friend)
                 : null;
             if (presence is null) continue;
 
