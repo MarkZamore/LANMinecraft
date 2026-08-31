@@ -210,6 +210,26 @@ public final class PortablePerPlayerChunksHooks {
     private static volatile int lastServerRadius;
     private static volatile long serverRadiusMoves;
 
+    /**
+     * How long the server actually takes between ticks.
+     *
+     * The pump is called from the map's own tick, once per tick, so the gap
+     * between two calls is the tick. Fifty milliseconds is the whole budget; a
+     * server spending three times that answers a guest three times late, and
+     * everything he does - eating, hitting, opening a chest - arrives back
+     * that much later. Minecraft says nothing about this until it is two
+     * whole seconds behind, which is far past the point a player notices.
+     *
+     * One level only: a world has three of them and each ticks its own map,
+     * so measuring every call would measure thirds of a tick. Whichever map
+     * arrives first is the one followed.
+     */
+    private static volatile Object tickedMap;
+    private static volatile long lastTickAt;
+    private static volatile long tickCount;
+    private static volatile long tickNanosTotal;
+    private static volatile long tickNanosWorst;
+
     private static final long REPORT_EVERY_NANOS = 60_000_000_000L;
     private static volatile long lastReport;
 
@@ -637,6 +657,7 @@ public final class PortablePerPlayerChunksHooks {
         if (!PACING || broken) {
             return;
         }
+        measureTick(chunkMap);
         if (HELD.isEmpty()) {
             // Still worth a look at the clock: a guest who has caught up leaves
             // nothing in the hold, and that is the minute worth reporting.
@@ -696,6 +717,33 @@ public final class PortablePerPlayerChunksHooks {
         report();
     }
 
+    /** The gap since this level last ticked, kept for the minute report. */
+    private static void measureTick(Object chunkMap) {
+        Object followed = tickedMap;
+        if (followed == null) {
+            tickedMap = chunkMap;
+            lastTickAt = System.nanoTime();
+            return;
+        }
+        if (followed != chunkMap) {
+            return;
+        }
+        long now = System.nanoTime();
+        long since = now - lastTickAt;
+        lastTickAt = now;
+        // A gap longer than a few seconds is the world being loaded or the
+        // game being paused, not a tick; counting it would drown the number
+        // this is for.
+        if (since <= 0 || since > 5_000_000_000L) {
+            return;
+        }
+        tickCount++;
+        tickNanosTotal += since;
+        if (since > tickNanosWorst) {
+            tickNanosWorst = since;
+        }
+    }
+
     /**
      * One line a minute saying what the hold actually did, and nothing at all
      * while it is doing nothing.
@@ -715,6 +763,18 @@ public final class PortablePerPlayerChunksHooks {
         lastReport = now;
         long moves = serverRadiusMoves;
         serverRadiusMoves = 0;
+        long ticks = tickCount;
+        long ticksTotal = tickNanosTotal;
+        long ticksWorst = tickNanosWorst;
+        tickCount = 0;
+        tickNanosTotal = 0;
+        tickNanosWorst = 0;
+        if (since != 0 && ticks > 0) {
+            System.out.println(
+                "[PortableIdentity] server tick this minute: " + ticks + " ticks, "
+                    + (ticksTotal / ticks / 1_000_000L) + " ms on average, worst "
+                    + (ticksWorst / 1_000_000L) + " ms.");
+        }
         if (since == 0 || TALLY.isEmpty()) {
             return;
         }
