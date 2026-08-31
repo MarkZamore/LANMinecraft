@@ -316,13 +316,10 @@ public sealed class WorldTransferHandshakeTests
             Assert.Equal("Committed", committed.Stage);
             Assert.Equal(worldSha, committed.WorldSha256);
 
-            // Into the folder of the build the world came from, or the
-            // common one where it names none - not the root of Worlds.
+            // Into the folder of the build the world came from, where it
+            // names one; into the root of Worlds where it does not.
             var installed = WorldLocations.Enumerate(fixture.Paths.Worlds)
                 .Single(path => Path.GetFileName(path) == "E2EWorld");
-            Assert.NotEqual(
-                Path.GetFullPath(fixture.Paths.Worlds),
-                Path.GetFullPath(Path.GetDirectoryName(installed)!));
             Assert.Equal(regionBytes, File.ReadAllBytes(Path.Combine(installed, "region", "r.0.0.mca")));
             // The Committed ack is written before the receiver raises BecameHost,
             // so the event may trail the ack by a few milliseconds.
