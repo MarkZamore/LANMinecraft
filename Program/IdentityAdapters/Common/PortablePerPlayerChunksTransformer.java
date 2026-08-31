@@ -55,6 +55,11 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         // number behind PlayerList's back and would otherwise not hear the host
         // move his own slider until its next look round.
         boolean perPlayer = "true".equals(property("perPlayerChunksEnabled", "false"));
+        // Held chunks are handed over by calling the delivery again, so pacing
+        // can only be asked for where the delivery is already being decided.
+        // Its own flag rather than a fold into the one above: where the game
+        // paces itself, the narrowing above still goes in and this does not.
+        boolean pacing = perPlayer && "true".equals(property("chunkPacingEnabled", "false"));
         boolean chunkMap = contains(property("chunkMapClasses", ""), className);
         boolean serverPlayer = perPlayer && contains(property("serverPlayerClasses", ""), className);
         boolean trackedEntity = perPlayer && contains(property("trackedEntityClasses", ""), className);
@@ -83,7 +88,15 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
                 // standing where he has no ground.
                 patched += askThePlayerInstead(property("chunkMapClasses", ""), method);
             } else if (perPlayer && chunkMap && isDelivery(method)) {
-                onlyIfHeAskedForIt(method);
+                onlyIfHeAskedForIt(method, pacing);
+                patched++;
+            } else if (pacing && chunkMap &&
+                matches(method, "chunkMapTickMethods", "chunkMapTickDescriptors")) {
+                handOverWhatIsWaiting(method);
+                patched++;
+            } else if (pacing && serverPlayer &&
+                matches(method, "untrackChunkMethods", "untrackChunkDescriptors")) {
+                forgetWhatIsWaiting(method);
                 patched++;
             } else if (chunkMap &&
                 matches(method, "chunkSetViewDistanceMethods", "chunkSetViewDistanceDescriptors")) {
@@ -196,17 +209,22 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
      * narrowed here instead, at the delivery, where the player is the first
      * argument and the chunk the third.
      */
-    private static void onlyIfHeAskedForIt(MethodNode method) {
+    private static void onlyIfHeAskedForIt(MethodNode method, boolean pacing) {
         LabelNode hand = new LabelNode();
         InsnList head = new InsnList();
         head.add(new VarInsnNode(Opcodes.ALOAD, 0));
         head.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        if (pacing) {
+            head.add(new VarInsnNode(Opcodes.ALOAD, 2));
+        }
         head.add(new VarInsnNode(Opcodes.ALOAD, 3));
         head.add(new MethodInsnNode(
             Opcodes.INVOKESTATIC,
             HOOKS,
-            "shouldSend",
-            "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z",
+            pacing ? "admit" : "shouldSend",
+            pacing
+                ? "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z"
+                : "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Z",
             false));
         head.add(new JumpInsnNode(Opcodes.IFNE, hand));
         head.add(new InsnNode(Opcodes.RETURN));
@@ -215,6 +233,47 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         // which is what F_SAME says. Without it the class carries a jump to a
         // label no frame describes and will not verify.
         head.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+        method.instructions.insert(head);
+    }
+
+    /**
+     * "hand over a few of the chunks that were held", at the top of the tick
+     * the map already runs once per tick.
+     *
+     * A straight call with the map itself: nothing is put on the stack that is
+     * not taken off again, no branch is added, and no frame changes - so the
+     * method verifies exactly as it did.
+     */
+    private static void handOverWhatIsWaiting(MethodNode method) {
+        InsnList head = new InsnList();
+        head.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        head.add(new MethodInsnNode(
+            Opcodes.INVOKESTATIC,
+            HOOKS,
+            "deliverHeld",
+            "(Ljava/lang/Object;)V",
+            false));
+        method.instructions.insert(head);
+    }
+
+    /**
+     * "he is being told to forget this chunk, so do not hand it to him after
+     * all", in front of the telling.
+     *
+     * Without this a chunk held at the moment the server drops it would arrive
+     * afterwards, and the client would keep it forever: the one message that
+     * would have made it let go has already been sent.
+     */
+    private static void forgetWhatIsWaiting(MethodNode method) {
+        InsnList head = new InsnList();
+        head.add(new VarInsnNode(Opcodes.ALOAD, 0));
+        head.add(new VarInsnNode(Opcodes.ALOAD, 1));
+        head.add(new MethodInsnNode(
+            Opcodes.INVOKESTATIC,
+            HOOKS,
+            "cancelHeld",
+            "(Ljava/lang/Object;Ljava/lang/Object;)V",
+            false));
         method.instructions.insert(head);
     }
 

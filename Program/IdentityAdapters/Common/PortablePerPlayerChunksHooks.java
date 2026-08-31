@@ -1,7 +1,12 @@
 package minecraft.portable.identity;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayDeque;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -101,6 +106,80 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static volatile int lastGoodRadius;
     private static volatile boolean complainedAboutRadius;
+
+    /**
+     * What each player has been offered and not yet handed.
+     *
+     * From 1.20.2 the game paces this itself and none of this is installed.
+     * Before that the server writes chunks to a connection as fast as it can,
+     * and everything else on that connection waits behind them: the guest's
+     * own actions going out, the server's answers coming back. That is eating
+     * that plays and never finishes, a blow that lands late, and a guest
+     * thrown back by "moved too quickly" - his client stalled on a burst of
+     * chunks and then reported one long step.
+     *
+     * Keyed by who the player is, for the same reason ASKED is: the game
+     * builds a new ServerPlayer at every respawn and every portal.
+     */
+    private static final Map<UUID, Pending> HELD = new ConcurrentHashMap<>();
+
+    /**
+     * How many chunks one player may be handed in one tick.
+     *
+     * The number is the link, not the machine. This launcher measures about
+     * four and a half megabytes a second across a Steam relay, and the packs
+     * it runs cost something like twenty-four kilobytes a chunk. Eight a tick
+     * is a hundred and sixty a second, near four megabytes - under the link,
+     * with about a seventh left over for everything that is not ground, which
+     * is the entire point of the exercise.
+     *
+     * A full view at the launcher's own ceiling of sixteen is 33 by 33, which
+     * is 1089 chunks and under seven seconds at this rate; a view of eight is
+     * 289 and under two. Both are far inside the thirty seconds a client waits
+     * before it decides the server is gone. Vanilla starts at nine and then
+     * adapts, because its client says how fast it is keeping up; this cannot
+     * ask, so it errs the other way.
+     */
+    private static final int CHUNKS_PER_TICK = 8;
+
+    /**
+     * How deep a hold may get before the pacing gives way and the game sends
+     * as it always did. Twice a full view at the serve ceiling, so a single
+     * arrival can never reach it - the one moment the feature exists for.
+     * Reaching it means handing over at once, never dropping: a chunk this
+     * hook drops is a hole in a world that heals only when its owner changes
+     * his render distance.
+     */
+    private static final int HOLD_LIMIT = 2048;
+
+    /** Whether the launcher found the names the pacing needs. */
+    private static final boolean PACING =
+        "true".equals(System.getProperty("minecraft.portable.identity.chunkPacingEnabled"));
+
+    /**
+     * The player whose client is in this very process. He is never paced: his
+     * chunks cross no wire, so holding them back would cost him seconds of
+     * trickle on every world load and buy nobody anything.
+     */
+    /**
+     * The player sitting at this machine, or null when nobody said.
+     *
+     * Held as a UUID rather than as text because it is compared once per chunk
+     * offered: two longs against two longs, with nothing built to do it. The
+     * launcher writes the dashed spelling and this reads either.
+     */
+    private static final UUID LOCAL_PLAYER =
+        readUuid(System.getProperty("minecraft.portable.identity.localPlayer", ""));
+
+    /** The thread inside the pump, whose own re-offers go straight through. */
+    private static volatile Thread pumping;
+
+    /** Set where the pump cannot work at all, after which nothing is held. */
+    private static volatile boolean broken;
+
+    private static volatile Method knownDelivery;
+    private static volatile boolean complainedAboutHolding;
+
 
     private PortablePerPlayerChunksHooks() {
     }
@@ -417,6 +496,306 @@ public final class PortablePerPlayerChunksHooks {
             return Math.max(dx, dz) <= radius * 2 + 2;
         } catch (Throwable exception) {
             return true;
+        }
+    }
+
+    /**
+     * Whether the game may hand this chunk over in this very frame.
+     *
+     * One place in the bytecode, two questions, so one arbiter answers both.
+     * The first is the older one and has not changed: is this chunk his at all,
+     * by the distance he asked for. The second is the pacing: is it his turn.
+     *
+     * False has always meant "not in this frame" and still does - but there are
+     * two reasons for it now, and one of them takes the chunk with it and hands
+     * it over later. Every other answer is true, which is the game sending
+     * exactly as it would with none of this installed: a player who cannot be
+     * named, a delivery method that cannot be found, a scratch that cannot be
+     * built, a hold already full. Nothing is ever dropped.
+     */
+    public static boolean admit(Object chunkMap, Object player, Object cache, Object chunk) {
+        // The pump re-offering what it is about to send, having already asked
+        // everything below.
+        if (Thread.currentThread() == pumping) {
+            return true;
+        }
+        if (!shouldSend(chunkMap, player, chunk)) {
+            return false;
+        }
+        if (!PACING || broken) {
+            return true;
+        }
+        try {
+            UUID who = uuidOf(player);
+            // The host plays in this very process. Pacing his own ground would
+            // cost him seconds on every world he opens and save nobody
+            // anything: none of it goes near the wire.
+            if (who == null || who.equals(LOCAL_PLAYER)) {
+                return true;
+            }
+            // Found before the first chunk is ever held, never at the first
+            // send. A hook that takes a chunk it cannot later hand back is the
+            // hole-in-the-world bug wearing a different coat.
+            if (delivery(chunkMap, player, chunk) == null) {
+                return true;
+            }
+            Object spare = freshLike(cache);
+            if (spare == null) {
+                return true;
+            }
+            long position = packed(CHUNK_POSITION_OF.method(chunk).invoke(chunk));
+
+            Pending pending = HELD.get(who);
+            if (pending == null || pending.player != player || pending.map != chunkMap) {
+                // A different ServerPlayer or a different level means a
+                // respawn, a portal or a dimension change, and every one of
+                // those is followed at once by his whole rectangle being
+                // offered again. What was held is worth nothing, and that is
+                // the only condition under which throwing it away is safe.
+                pending = new Pending(chunkMap, player);
+                HELD.put(who, pending);
+            }
+            synchronized (pending) {
+                if (pending.queue.size() >= HOLD_LIMIT) {
+                    return true;
+                }
+                if (!pending.live.add(position)) {
+                    // Offered twice before the pump reached it. Held once.
+                    return false;
+                }
+                pending.queue.addLast(new Held(position, chunk, spare));
+            }
+            return false;
+        } catch (Throwable exception) {
+            return true;
+        }
+    }
+
+    /**
+     * Hands over what was held, a few per player, once a tick.
+     *
+     * The game method is called again with the arguments it was given, so the
+     * packet, the entity pairings and the passenger packets it also sends are
+     * all built by the game exactly as it wrote them. Nothing here reproduces
+     * any of that.
+     */
+    public static void deliverHeld(Object chunkMap) {
+        if (!PACING || broken || HELD.isEmpty()) {
+            return;
+        }
+        Thread previous = pumping;
+        pumping = Thread.currentThread();
+        try {
+            for (Iterator<Map.Entry<UUID, Pending>> entries = HELD.entrySet().iterator();
+                 entries.hasNext();) {
+                Pending pending = entries.next().getValue();
+                // Players of another level wait for that level to tick.
+                if (pending.map != chunkMap) {
+                    continue;
+                }
+                synchronized (pending) {
+                    int budget = CHUNKS_PER_TICK;
+                    while (budget > 0 && !pending.queue.isEmpty()) {
+                        Held held = pending.queue.pollFirst();
+                        // The server has since told him to forget it. Handing
+                        // it over now would leave a chunk on his client that
+                        // nothing will ever tell him to drop again.
+                        if (!pending.live.remove(held.position)) {
+                            continue;
+                        }
+                        // Or he walked away from it. The same refusal the offer
+                        // itself would have made, only later, and safe the same
+                        // way: walking back flips the game own test and offers
+                        // it again.
+                        if (!shouldSend(chunkMap, pending.player, held.chunk)) {
+                            continue;
+                        }
+                        if (!hand(chunkMap, pending.player, held)) {
+                            return;
+                        }
+                        budget--;
+                    }
+                    if (pending.queue.isEmpty()) {
+                        entries.remove();
+                    }
+                }
+            }
+        } catch (Throwable exception) {
+            // A pump that throws would stop the tick. It gives up instead, and
+            // everything after it goes out the way the game sends it.
+            broken = true;
+            System.out.println("[PortableIdentity] chunks are no longer paced: " + exception);
+        } finally {
+            pumping = previous;
+        }
+    }
+
+    /**
+     * Called where the server tells a client to forget a chunk, so that one
+     * still waiting is not handed over afterwards.
+     */
+    public static void cancelHeld(Object player, Object chunkPos) {
+        if (!PACING || HELD.isEmpty()) {
+            return;
+        }
+        try {
+            UUID who = uuidOf(player);
+            if (who == null) {
+                return;
+            }
+            Pending pending = HELD.get(who);
+            if (pending == null) {
+                return;
+            }
+            long position = packed(chunkPos);
+            synchronized (pending) {
+                pending.live.remove(position);
+            }
+        } catch (Throwable exception) {
+            // Then it goes out, which is what would have happened anyway.
+        }
+    }
+
+    /** One held chunk, handed to the game. True while the pump still works. */
+    private static boolean hand(Object chunkMap, Object player, Held held) {
+        Method how = delivery(chunkMap, player, held.chunk);
+        if (how == null) {
+            // Nothing was held without this being found first, so this is a
+            // map that has changed underfoot. The chunk is dropped rather than
+            // sent to the wrong place, and the next offer of it goes straight
+            // out because the same lookup fails there too.
+            return true;
+        }
+        try {
+            how.invoke(chunkMap, player, held.cache, held.chunk);
+            return true;
+        } catch (InvocationTargetException thrown) {
+            // The game own code threw, as it would have at the call this stands
+            // in for. One chunk lost, the pump unharmed.
+            complainOnce("a held chunk could not be handed over: " + thrown.getCause());
+            return true;
+        } catch (Throwable exception) {
+            broken = true;
+            System.out.println(
+                "[PortableIdentity] chunks are no longer paced, they go out as the game sends them: "
+                    + exception);
+            return false;
+        }
+    }
+
+    /**
+     * An empty one of whatever the game passed as its scratch argument: an
+     * array of the same length before 1.18, a MutableObject after it.
+     *
+     * The one the caller passed must not be kept. The game makes a single
+     * scratch and shares it across every player the chunk is offered to, so
+     * that the packet is built once - holding it would take an object somebody
+     * else still owns, and would hand the chunk over as it was when it was
+     * offered rather than as it is when it arrives. Block changes in between
+     * are broadcast separately and thrown away by a client that has no chunk to
+     * put them in, so a stale packet is ground that arrives already wrong.
+     * Vanilla builds its packet at the moment of sending too.
+     */
+    private static Object freshLike(Object cache) {
+        try {
+            Class<?> type = cache.getClass();
+            if (type.isArray()) {
+                return Array.newInstance(type.getComponentType(), Array.getLength(cache));
+            }
+            return type.getDeclaredConstructor().newInstance();
+        } catch (Throwable exception) {
+            complainOnce("chunks cannot be paced on this Minecraft: " + exception);
+            return null;
+        }
+    }
+
+    /**
+     * The method that hands one chunk to one player, found by name and by the
+     * shape of the things in hand rather than by types in the abstract - the
+     * middle argument changed type at 1.18 and is never named here.
+     */
+    private static Method delivery(Object chunkMap, Object player, Object chunk) {
+        Method known = knownDelivery;
+        if (known != null && known.getDeclaringClass().isInstance(chunkMap)) {
+            return known;
+        }
+        String[] names = aliases("playerLoadedChunkMethods", "playerLoadedChunk", "a");
+        for (Class<?> type = chunkMap.getClass(); type != null; type = type.getSuperclass()) {
+            for (Method candidate : type.getDeclaredMethods()) {
+                Class<?>[] parameters = candidate.getParameterTypes();
+                if (parameters.length != 3 ||
+                    !parameters[0].isInstance(player) ||
+                    !parameters[2].isInstance(chunk)) {
+                    continue;
+                }
+                for (String name : names) {
+                    if (candidate.getName().equals(name)) {
+                        candidate.setAccessible(true);
+                        knownDelivery = candidate;
+                        return candidate;
+                    }
+                }
+            }
+        }
+        complainOnce("the way to hand a chunk over could not be found, so nothing is paced");
+        return null;
+    }
+
+    /** A UUID written either way, or null if it was written no way at all. */
+    private static UUID readUuid(String text) {
+        try {
+            String plain = text.replace("-", "").trim();
+            if (plain.length() != 32) {
+                return null;
+            }
+            return new UUID(
+                Long.parseUnsignedLong(plain.substring(0, 16), 16),
+                Long.parseUnsignedLong(plain.substring(16), 16));
+        } catch (Throwable exception) {
+            return null;
+        }
+    }
+
+    /** One chunk position as one number, so a hold can be searched by it. */
+    private static long packed(Object chunkPos) throws ReflectiveOperationException {
+        long x = CHUNK_POS_X.field(chunkPos).getInt(chunkPos) & 0xffffffffL;
+        long z = CHUNK_POS_Z.field(chunkPos).getInt(chunkPos) & 0xffffffffL;
+        return (z << 32) | x;
+    }
+
+    /** Said once: this sits on a path that runs for every chunk of every view. */
+    private static void complainOnce(String what) {
+        if (complainedAboutHolding) {
+            return;
+        }
+        complainedAboutHolding = true;
+        System.out.println("[PortableIdentity] " + what);
+    }
+
+    /** One player held chunks, and the level and player they were meant for. */
+    private static final class Pending {
+        private final Object map;
+        private final Object player;
+        private final ArrayDeque<Held> queue = new ArrayDeque<>();
+        /** The positions still wanted, so a cancellation costs one lookup. */
+        private final HashSet<Long> live = new HashSet<>();
+
+        private Pending(Object map, Object player) {
+            this.map = map;
+            this.player = player;
+        }
+    }
+
+    /** One chunk waiting its turn, with the scratch the game will build into. */
+    private static final class Held {
+        private final long position;
+        private final Object chunk;
+        private final Object cache;
+
+        private Held(long position, Object chunk, Object cache) {
+            this.position = position;
+            this.chunk = chunk;
+            this.cache = cache;
         }
     }
 

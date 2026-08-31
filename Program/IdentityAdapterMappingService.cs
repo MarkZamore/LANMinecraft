@@ -40,6 +40,7 @@ internal sealed class IdentityAdapterMappingService
         "net/minecraft/network/protocol/game/ServerboundClientInformationPacket";
     private const string Entity = "net/minecraft/world/entity/Entity";
     private const string ChunkPos = "net/minecraft/world/level/ChunkPos";
+    private const string PlayerChunkSender = "net/minecraft/server/network/PlayerChunkSender";
     private const string LevelChunk = "net/minecraft/world/level/chunk/LevelChunk";
     private const string ChunkAccess = "net/minecraft/world/level/chunk/ChunkAccess";
     private const string NetworkPacket = "net/minecraft/network/protocol/Packet";
@@ -148,6 +149,7 @@ internal sealed class IdentityAdapterMappingService
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
         var perPlayerProperties = new Dictionary<string, string>(StringComparer.Ordinal);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
+        AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
             { YggdrasilSessionService, TextureUrlChecker, GameProfile };
         if (lanScreen is not null)
@@ -528,6 +530,78 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>
+    /// Handing a guest his chunks a few at a time instead of all at once.
+    /// </summary>
+    /// <remarks>
+    /// From 1.20.2 the game paces this itself: PlayerChunkSender measures how
+    /// quickly a client acknowledges a batch and sends the next one at that
+    /// rate. Before that the server writes chunks to the connection as fast as
+    /// it can, and everything else on that connection waits behind the flood -
+    /// the guest's own actions on the way in, the server's answers on the way
+    /// out. It is why eating plays but never finishes, why a blow lands late,
+    /// and why a guest is thrown back by "moved too quickly": his client stalls
+    /// on a burst of chunks and then reports one long step.
+    ///
+    /// The real mechanism cannot be brought back, because it needs the client
+    /// to acknowledge what it received and no client before 1.20.2 knows those
+    /// packets. The server's half can be: hold what will not fit in this tick
+    /// and hand it over on the next, a few at a time.
+    ///
+    /// It rides on the per-player patch, and it gates itself off by the name of
+    /// the class that does the pacing rather than by a version number. Where it
+    /// cannot go in, the per-player narrowing is left exactly as it is - which
+    /// is why this has a flag of its own instead of being folded into that one.
+    /// </remarks>
+    private static bool AddChunkPacingProperties(
+        RuntimeNames? mappings,
+        Dictionary<string, string> properties,
+        bool perPlayerChunks)
+    {
+        // Written before anything here can return. The preflight asks for every
+        // one of these by name, and one it cannot find takes down the whole
+        // adapter, skins and all.
+        properties["chunkPacingEnabled"] = "false";
+        properties["chunkMapTickMethods"] = "tick";
+        properties["chunkMapTickDescriptors"] = "()V";
+        properties["untrackChunkMethods"] = "untrackChunk";
+        properties["untrackChunkDescriptors"] = $"(L{ChunkPos};)V";
+        if (!perPlayerChunks || mappings is null) return false;
+
+        // The game's own, and nothing to do. Named by the class that does the
+        // pacing rather than by the release: ServerPlayer.untrackChunk moved
+        // into it in the same version, so either would answer today, and a
+        // future release that separates the two lands this on the side that is
+        // actually about pacing.
+        if (mappings.FindClass(PlayerChunkSender) is not null) return false;
+
+        var chunkMap = mappings.FindClass(ChunkMap);
+        var serverPlayer = mappings.FindClass(ServerPlayer);
+        var chunkPos = mappings.FindClass(ChunkPos);
+        if (chunkMap is null || serverPlayer is null || chunkPos is null) return false;
+
+        // The pump, once a tick. ChunkMap has other methods that take nothing
+        // and answer nothing, so the descriptor alone will not do and the name
+        // has to come with it.
+        var tick = chunkMap.FindMethod("tick", descriptor => descriptor == "()V");
+        // And the moment the server tells a client to forget a chunk, which is
+        // the only thing that can take a held one back. Without it a chunk the
+        // server has stopped believing in is handed over anyway and stays on
+        // the client until he leaves the world.
+        var untrackChunk = serverPlayer.FindMethod(
+            "untrackChunk",
+            descriptor => descriptor == $"(L{chunkPos.ObfName};)V");
+        if (tick is null || untrackChunk is null) return false;
+
+        properties["chunkPacingEnabled"] = "true";
+        properties["chunkMapTickMethods"] = JoinAliases(tick);
+        properties["untrackChunkMethods"] = JoinAliases(untrackChunk);
+        properties["untrackChunkDescriptors"] = JoinAliases(
+            $"(L{chunkPos.RuntimeName};)V",
+            $"(L{chunkPos.ObfName};)V");
+        return true;
+    }
+
+    /// <summary>
     /// The one method that says how far the server is about to serve.
     /// </summary>
     /// <remarks>
@@ -774,6 +848,7 @@ internal sealed class IdentityAdapterMappingService
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
+        AddChunkPacingProperties(mappings, properties, perPlayerChunks);
         AddServeDistanceProperties(mappings, properties);
 
         AddSkinProperties(properties);
@@ -1069,6 +1144,7 @@ internal sealed class IdentityAdapterMappingService
             ClientInformationPacket,
             Entity,
             ChunkPos,
+            PlayerChunkSender,
             LevelChunk,
             ChunkAccess,
             NetworkPacket,

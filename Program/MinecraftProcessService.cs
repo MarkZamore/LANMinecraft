@@ -167,6 +167,18 @@ public sealed class MinecraftProcessService
         "-XX:+DisableExplicitGC"
     ];
 
+    /// <summary>
+    /// The signed-in player, spelled the one way the agent will recognise him.
+    /// </summary>
+    /// <remarks>
+    /// Anything that does not parse becomes an empty property rather than a
+    /// missing one, and an empty property means the agent knows of no local
+    /// player and paces everybody. That is the safe way round: the worst of it
+    /// is a host whose own world fills in a few seconds instead of at once.
+    /// </remarks>
+    public static string PlayingHere(string? minecraftUuid) =>
+        Guid.TryParse(minecraftUuid, out var parsed) ? parsed.ToString("D") : "";
+
     /// <summary>The tuning a heap of this size is started with.</summary>
     public static IReadOnlyList<string> HeapTuningArgumentsFor(int maximumRamMb) =>
         maximumRamMb <= SmallHeapCeilingMb ? SmallHeapTuningArguments : HeapTuningArguments;
@@ -520,6 +532,16 @@ public sealed class MinecraftProcessService
             $"-Duser.home={javaHome}",
             $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
             $"-Dminecraft.portable.identity.registry={identityRegistryPath}",
+            // Who is playing at this machine. On the versions that cannot pace
+            // their own chunk sending the agent paces it for them, and leaves
+            // this one player out of it: his client is in the same process, so
+            // holding his ground back would cost him seconds on every world he
+            // opens and spare the wire nothing.
+            //
+            // It is a launch property rather than part of the adapter's
+            // configuration on purpose - the configuration is cached under a
+            // hash of itself, and this changes with whoever is signed in.
+            $"-Dminecraft.portable.identity.localPlayer={PlayingHere(identityContext.MinecraftUuid)}",
             // Die at the first OutOfMemoryError instead of carrying on.
             //
             // The game's own answer to running out of memory while a world's
