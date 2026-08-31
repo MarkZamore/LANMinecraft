@@ -46,8 +46,15 @@ public sealed class PeerVisibilityTests
         Assert.Equal("anuvenn", peer.PlayerName);
     }
 
+    /// <summary>
+    /// Somebody in the app this launcher shares with e4steam, publishing none
+    /// of its keys, is in Minecraft without it. They are listed and marked as
+    /// being elsewhere rather than hidden: a player who can see a friend
+    /// playing reads an empty list as a fault in the launcher, and then asks
+    /// why a world cannot be sent to somebody who is plainly there.
+    /// </summary>
     [Fact]
-    public async Task AFriendWhoIsNotRunningTheLauncher_IsNotAPeer()
+    public async Task AFriendInTheGameWithoutTheLauncher_IsListedAsElsewhere()
     {
         var api = new FakeSteamApi
         {
@@ -57,6 +64,35 @@ public sealed class PeerVisibilityTests
             Persona = "MarkZamore"
         };
         api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var directory = new SteamPeerDirectory(client);
+
+        directory.Refresh();
+
+        var peer = Assert.Single(directory.Peers);
+        Assert.True(peer.IsOutsideLauncher);
+        Assert.Equal("anuvenn", peer.PersonaName);
+        Assert.False(peer.IsMinecraftRunning);
+    }
+
+    /// <summary>
+    /// A friend doing something else entirely is not in the list at all. The
+    /// list is of people who could be played with, and Steam has a friend list
+    /// of its own for everybody else.
+    /// </summary>
+    [Fact]
+    public async Task AFriendOutsideTheGameAltogether_IsNotAPeer()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: false, LobbyId: 0));
 
         await using var client = new SteamClientService(api);
         await client.StartAsync(CancellationToken.None);

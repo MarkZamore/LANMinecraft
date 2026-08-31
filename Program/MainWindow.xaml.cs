@@ -881,6 +881,10 @@ public partial class MainWindow : Window
             PlayerName = identity.name,
             MinecraftUuid = identityContext.MinecraftUuid,
             PackHash = _localPackHash,
+            // The folder is the name: a build the launcher offers is named by
+            // its folder, and one somebody put there themselves has no other
+            // name to be known by.
+            PackName = settings.ClientRelativePath,
             State = _minecraftRunning
                 ? SteamPresenceCodec.StateInGame
                 : _minecraftPreparing

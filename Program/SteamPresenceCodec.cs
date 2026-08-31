@@ -15,6 +15,8 @@ public sealed record SteamPeerPresence
     public string PlayerName { get; init; } = "";
     public string MinecraftUuid { get; init; } = "";
     public string PackHash { get; init; } = "";
+    /// <summary>The build they are in, by the name of its folder.</summary>
+    public string PackName { get; init; } = "";
     public string State { get; init; } = SteamPresenceCodec.StateIdle;
     public bool IsSkinAvailable { get; init; }
     public string SkinSha256 { get; init; } = "";
@@ -35,6 +37,12 @@ public sealed record SteamPeerPresence
     /// a reading, not an absence, and it means the list can drop them at once.
     /// </summary>
     public bool HasLeft => State == SteamPresenceCodec.StateOffline;
+
+    /// <summary>
+    /// Seen in the app this launcher shares with e4steam, but publishing none
+    /// of its keys - so they are in Minecraft, and not through here.
+    /// </summary>
+    public bool IsOutsideLauncher { get; init; }
 }
 
 /// <summary>
@@ -71,12 +79,13 @@ public static class SteamPresenceCodec
     internal const string WorldKey = "lanmc_world";
     internal const string WaypointsKey = "lanmc_wp";
     internal const string DiagnosticsKey = "lanmc_diag";
+    internal const string BuildKey = "lanmc_build";
 
     /// <summary>Keys the launcher owns; nothing else is touched, e4steam's least of all.</summary>
     public static IReadOnlyList<string> Keys { get; } =
     [
         MarkerKey, VersionKey, NameKey, UuidKey, PackKey,
-        StateKey, SkinKey, WorldKey, WaypointsKey, DiagnosticsKey
+        StateKey, SkinKey, WorldKey, WaypointsKey, DiagnosticsKey, BuildKey
     ];
 
     public static IReadOnlyDictionary<string, string> Encode(SteamPeerPresence presence)
@@ -97,7 +106,11 @@ public static class SteamPresenceCodec
             [WaypointsKey] = EncodeWaypointProviders(
                 presence.WaypointProtocolVersion,
                 presence.WaypointProviders),
-            [DiagnosticsKey] = presence.DiagnosticProtocolVersion.ToString(CultureInfo.InvariantCulture)
+            [DiagnosticsKey] = presence.DiagnosticProtocolVersion.ToString(CultureInfo.InvariantCulture),
+            // Added after the others, and read as absent rather than as wrong
+            // where a friend's launcher is older than it: a build nobody named
+            // is shown as "in the launcher", which is what it was before.
+            [BuildKey] = Clamp(presence.PackName)
         };
         return values;
     }
@@ -147,6 +160,7 @@ public static class SteamPresenceCodec
             PlayerName = readKey(NameKey),
             MinecraftUuid = readKey(UuidKey),
             PackHash = readKey(PackKey),
+            PackName = readKey(BuildKey),
             State = NormalizeState(readKey(StateKey)),
             IsSkinAvailable = skinSha.Length > 0,
             SkinSha256 = skinSha,

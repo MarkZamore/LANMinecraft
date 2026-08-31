@@ -38,13 +38,72 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     {
         var peer = NewPeer();
         peer.Apply(Presence() with { PlayerName = "anuvenn", PersonaName = "Anu" }, "pack-hash");
-        Assert.Equal("anuvenn (Anu)", peer.DisplayName);
+        Assert.Equal("anuvenn (Anu)", peer.PeerName);
 
         peer.Apply(Presence() with { PlayerName = "", PersonaName = "Anu" }, "pack-hash");
-        Assert.Equal("Anu", peer.DisplayName);
+        Assert.Equal("Anu", peer.PeerName);
 
         peer.Apply(Presence() with { PlayerName = "anuvenn", PersonaName = "anuvenn" }, "pack-hash");
-        Assert.Equal("anuvenn", peer.DisplayName);
+        Assert.Equal("anuvenn", peer.PeerName);
+    }
+
+    /// <summary>
+    /// And the line the list shows is the name and where they are, because the
+    /// list is read to decide who a world can be sent to.
+    /// </summary>
+    [Fact]
+    public void PeerViewModel_SaysWhereTheyAre()
+    {
+        var peer = NewPeer();
+
+        peer.Apply(Presence() with { PlayerName = "anuvenn", PersonaName = "Anu" }, "pack-hash");
+        Assert.Equal("В лаунчере", peer.StatusText);
+        Assert.Equal("anuvenn (Anu) - В лаунчере", peer.DisplayName);
+
+        // In a build: the folder is its name, and it is only worth saying once
+        // the game is actually up.
+        peer.Apply(
+            Presence() with
+            {
+                PlayerName = "anuvenn",
+                PersonaName = "Anu",
+                PackName = "All The Fabric 3",
+                State = SteamPresenceCodec.StateInGame
+            },
+            "pack-hash");
+        Assert.Equal("All The Fabric 3", peer.StatusText);
+
+        // A launcher older than this field names no build, and is still in the
+        // launcher rather than nowhere.
+        peer.Apply(
+            Presence() with { PlayerName = "anuvenn", State = SteamPresenceCodec.StateInGame },
+            "pack-hash");
+        Assert.Equal("В лаунчере", peer.StatusText);
+    }
+
+    /// <summary>
+    /// Somebody in Minecraft without this launcher is listed and said to be
+    /// elsewhere - and a world cannot be sent to them, which is the whole
+    /// reason the list says it.
+    /// </summary>
+    [Fact]
+    public void PeerViewModel_SaysWhenSomebodyIsInAnotherGame()
+    {
+        var peer = NewPeer();
+
+        peer.Apply(
+            new SteamPeerPresence
+            {
+                SteamId = peer.SteamId,
+                PersonaName = "Anu",
+                IsOutsideLauncher = true
+            },
+            "pack-hash");
+
+        Assert.Equal("В другой игре", peer.StatusText);
+        Assert.Equal("Anu - В другой игре", peer.DisplayName);
+        Assert.False(peer.IsCompatible);
+        Assert.False(peer.SupportsDiagnosticLogs);
     }
 
     [Fact]

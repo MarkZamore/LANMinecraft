@@ -82,6 +82,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _playerName = "";
     private string _minecraftUuid = "";
     private string _packHash = "";
+    private string _packName = "";
+    private bool _isOutsideLauncher;
     private string _localPackHash = "";
     private bool _isMinecraftRunning;
     private bool _isMinecraftPreparing;
@@ -129,10 +131,30 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         set { if (Set(ref _localPackHash, value ?? "")) OnPropertyChanged(nameof(PackStatus)); }
     }
 
+    /// <summary>The build they opened, by the name of its folder.</summary>
+    public string PackName
+    {
+        get => _packName;
+        set { if (Set(ref _packName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    /// <summary>In Minecraft, but not through this launcher.</summary>
+    public bool IsOutsideLauncher
+    {
+        get => _isOutsideLauncher;
+        set
+        {
+            if (!Set(ref _isOutsideLauncher, value)) return;
+            OnPropertyChanged(nameof(IsCompatible));
+            OnPropertyChanged(nameof(SupportsDiagnosticLogs));
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
+
     public bool IsMinecraftRunning
     {
         get => _isMinecraftRunning;
-        set => Set(ref _isMinecraftRunning, value);
+        set { if (Set(ref _isMinecraftRunning, value)) OnPropertyChanged(nameof(DisplayName)); }
     }
 
     public bool IsMinecraftPreparing
@@ -218,7 +240,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     /// start. The handshake checks versions properly and says so - guessing
     /// here only made it lie.
     /// </summary>
-    public bool IsCompatible => !IsPresenceKnown || PortableFormat.CanSpeak(ProtocolVersion);
+    public bool IsCompatible =>
+        !IsOutsideLauncher && (!IsPresenceKnown || PortableFormat.CanSpeak(ProtocolVersion));
 
     public bool SupportsDiagnosticLogs =>
         IsCompatible &&
@@ -226,24 +249,49 @@ public sealed class PeerViewModel : INotifyPropertyChanged
          (PortableFormat.CanSpeak(DiagnosticProtocolVersion) && DiagnosticProtocolVersion > 0));
 
     /// <summary>Both names when they differ, because either one may be the familiar one.</summary>
-    public string DisplayName
+    public string PeerName
     {
         get
         {
             var minecraftName = string.IsNullOrWhiteSpace(PlayerName) ? "" : PlayerName.Trim();
             var steamName = string.IsNullOrWhiteSpace(PersonaName) ? "" : PersonaName.Trim();
-            var name = minecraftName.Length == 0
+            return minecraftName.Length == 0
                 ? steamName.Length == 0 ? "Неизвестный игрок" : steamName
                 : steamName.Length == 0 ||
                   string.Equals(minecraftName, steamName, StringComparison.OrdinalIgnoreCase)
                     ? minecraftName
                     : $"{minecraftName} ({steamName})";
-            // Saying it in the list is the only way the pair of them find out
-            // which side has to update - but only when it is true.
-            if (!IsPresenceKnown) return $"{name} — на связи, данные Steam недоступны";
-            return IsCompatible ? name : $"{name} — нужно обновить лаунчер";
         }
     }
+
+    /// <summary>
+    /// Where this player is, in the words a player would use.
+    /// </summary>
+    /// <remarks>
+    /// The order is what makes it useful. Anything that stops a world reaching
+    /// them is said first, because that is what the list is being read for:
+    /// somebody in Minecraft without this launcher, or with a launcher too old
+    /// to talk to. Only then the ordinary answers - the build they opened,
+    /// named by its folder, or the launcher itself.
+    ///
+    /// A build nobody named reads as the launcher rather than as an empty
+    /// space: a friend on a launcher older than this field says nothing about
+    /// which build they are in, and inventing one would be worse than the
+    /// answer they used to get.
+    /// </remarks>
+    public string StatusText
+    {
+        get
+        {
+            if (IsOutsideLauncher) return "В другой игре";
+            if (!IsPresenceKnown) return "на связи, данные Steam недоступны";
+            if (!IsCompatible) return "нужно обновить лаунчер";
+            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return PackName.Trim();
+            return "В лаунчере";
+        }
+    }
+
+    public string DisplayName => $"{PeerName} - {StatusText}";
 
     public string PackStatus
     {
@@ -270,6 +318,8 @@ public sealed class PeerViewModel : INotifyPropertyChanged
         PlayerName = presence.PlayerName;
         MinecraftUuid = presence.MinecraftUuid;
         PackHash = presence.PackHash;
+        PackName = presence.PackName;
+        IsOutsideLauncher = presence.IsOutsideLauncher;
         LocalPackHash = localPackHash;
         IsMinecraftRunning = presence.IsMinecraftRunning;
         IsMinecraftPreparing = presence.IsMinecraftPreparing;
