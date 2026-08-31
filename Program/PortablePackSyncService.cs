@@ -74,8 +74,6 @@ public sealed partial class PortablePackSyncService
     public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
         new(DefaultPackRelativePath, DefaultPackSource),
         new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
-        new("The Broken Script Enhanced",
-            new PackSyncSource("MarkZamore", "The-Broken-Script-Enhanced", "pack-latest")),
         new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
         new("RPG Ars Nouveau", new PackSyncSource("MarkZamore", "RPG-Ars-Nouveau", "pack-latest")),
     ]);

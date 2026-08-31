@@ -21,7 +21,7 @@ public sealed class JavaRuntimeCatalogTests
     /// and 1.20.1, 21 from 1.20.5 onward.
     /// </summary>
     [Theory]
-    [InlineData("1.21.1", 21)]   // Limitless 8, The Broken Script Enhanced, All The Mods 10
+    [InlineData("1.21.1", 21)]   // Limitless 8, All The Mods 10
     [InlineData("1.20.1", 17)]   // RPG Ars Nouveau
     [InlineData("1.18.2", 17)]   // All The Fabric 3
     [InlineData("1.20.5", 21)]

@@ -56,14 +56,18 @@ public sealed class KnownPackTests
         Assert.Equal("pack-latest", source.Tag);
     }
 
+    /// <summary>
+    /// Withdrawn on 31 August 2026. A name left in the list is a name the
+    /// launcher offers and then cannot fetch, which reads to a player as a
+    /// broken download rather than a build that is no longer made.
+    /// </summary>
     [Fact]
-    public void TheBrokenScriptEnhancedIsOffered()
+    public void TheBrokenScriptEnhancedIsNoLongerOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("The Broken Script Enhanced");
-        Assert.NotNull(source);
-        Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("The-Broken-Script-Enhanced", source.Repo);
-        Assert.Equal("pack-latest", source.Tag);
+        Assert.Null(PortablePackSyncService.KnownSourceFor("The Broken Script Enhanced"));
+        Assert.DoesNotContain(
+            PortablePackSyncService.KnownPacks,
+            pack => pack.RelativePath.Contains("Broken Script", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
