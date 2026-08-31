@@ -343,12 +343,25 @@ public final class PortablePerPlayerChunksHooks {
      * given to every player, and a whole ring of them goes past whenever a
      * distance changes. Everything it touches is found once and kept.
      *
-     * The comparison is deliberately one ring wider than the number itself. The
-     * two methods that decide what a player tracks use the game's own range
-     * test, which is generous by about a ring, and this must never be tighter
-     * than they are: a chunk they want and this refuses is a hole in his world,
-     * while one they do not want and this lets through is a chunk he keeps and
+     * The comparison is deliberately wider than the number itself, and by more
+     * than the one ring that would make it exactly equal.
+     *
+     * What this must never be is tighter than the game's own decision, because
+     * the two are not symmetrical. A chunk the game wanted and this refuses is
+     * not late, it is lost: nothing records that it went unsent, and the test
+     * that would offer it again only flips when the player moves far enough for
+     * that chunk to leave his rectangle and come back. It shows up as a hole
+     * that heals only when he changes his distance and everything is re-sent.
+     * A chunk the game did not want and this lets through is one he keeps and
      * nobody misses.
+     *
+     * Exactly equal was not enough. The game's own reach is a ring past the
+     * number, measured from where the player was when it decided; this measures
+     * from a position it reads for itself a moment later. Equal tests either
+     * side of a chunk boundary disagree by exactly one ring - the leading edge,
+     * which is the whole of what walking is. Two rings of slack cost almost
+     * nothing of what the guard is for, which is stopping a guest who asked for
+     * four from being handed the thirty-two the server serves.
      */
     public static boolean shouldSend(Object chunkMap, Object player, Object chunk) {
         try {
@@ -362,7 +375,7 @@ public final class PortablePerPlayerChunksHooks {
                 - CHUNK_POS_X.field(playerPos).getInt(playerPos));
             int dz = Math.abs(CHUNK_POS_Z.field(chunkPos).getInt(chunkPos)
                 - CHUNK_POS_Z.field(playerPos).getInt(playerPos));
-            return Math.max(dx, dz) <= radius + 1;
+            return Math.max(dx, dz) <= radius + 3;
         } catch (Throwable exception) {
             return true;
         }
