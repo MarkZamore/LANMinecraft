@@ -193,6 +193,23 @@ public final class PortablePerPlayerChunksHooks {
     /** Said once per player, and it is the answer to "is this doing anything". */
     private static final Set<UUID> ANNOUNCED = ConcurrentHashMap.newKeySet();
 
+    /**
+     * How far the world is being served, and how often that number moved.
+     *
+     * The distance is not fixed: the launcher serves as far as the furthest
+     * player asks, so it follows whoever wants most. Everything downstream is
+     * measured from it - which chunks a player holds, and, on the versions
+     * that are narrowed per player, how far he is told about entities. A
+     * number that keeps moving therefore keeps dropping entities out of
+     * tracking and putting them back, which is seen as mobs jerking.
+     *
+     * Counted rather than guessed at, because from a log there is otherwise no
+     * way to tell a jerk caused by the tracking rectangle moving from a jerk
+     * caused by the link.
+     */
+    private static volatile int lastServerRadius;
+    private static volatile long serverRadiusMoves;
+
     private static final long REPORT_EVERY_NANOS = 60_000_000_000L;
     private static volatile long lastReport;
 
@@ -429,6 +446,13 @@ public final class PortablePerPlayerChunksHooks {
         // as it returns. Where the server's own number cannot be had, the last
         // one that could is the honest answer; before there has ever been one,
         // the game's own floor is.
+        if (server != lastServerRadius) {
+            // The first read is not a move; it is the first thing there was.
+            if (lastServerRadius != 0) {
+                serverRadiusMoves++;
+            }
+            lastServerRadius = server;
+        }
         if (server <= 0) {
             return lastGoodRadius > 0 ? lastGoodRadius : SMALLEST + 1;
         }
@@ -689,6 +713,8 @@ public final class PortablePerPlayerChunksHooks {
             return;
         }
         lastReport = now;
+        long moves = serverRadiusMoves;
+        serverRadiusMoves = 0;
         if (since == 0 || TALLY.isEmpty()) {
             return;
         }
@@ -717,7 +743,8 @@ public final class PortablePerPlayerChunksHooks {
             System.out.println(
                 "[PortableIdentity] paced chunks for " + entry.getKey() + " this minute: offered "
                     + offered + ", held " + held + ", handed over " + handed + ", dropped "
-                    + dropped + ", still waiting " + waiting + ".");
+                    + dropped + ", still waiting " + waiting + "; served to "
+                    + lastServerRadius + ", which moved " + moves + " time(s).");
         }
     }
 
