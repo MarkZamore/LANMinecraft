@@ -179,7 +179,7 @@ public final class PortablePerPlayerChunksHooks {
      * every version this patch is installed on.
      */
     private static void retrack(Object chunkMap, Object player, UUID who, Integer before, int asked) {
-        Method update = findUpdate(chunkMap);
+        Method update = findUpdate(chunkMap, player);
         if (update == null) {
             remember(who, Integer.valueOf(asked));
             return;
@@ -237,17 +237,24 @@ public final class PortablePerPlayerChunksHooks {
     }
 
     /**
-     * The method that adds a player to the map or takes him out of it, found by
-     * shape rather than by exact types: the launcher knows its name, and the
-     * second argument being a boolean is what separates it from everything else
-     * that takes a player.
+     * The method that adds a player to the map or takes him out of it.
+     *
+     * Found by shape as well as by name, and the shape is asked about this
+     * player rather than about types in the abstract. A chunk map has a second
+     * method of exactly the same outline - two arguments, the second a boolean,
+     * and on an obfuscated runtime the same one-letter name - which answers
+     * which players can see a chunk. Taking that one would throw at the call
+     * and leave the player holding a radius he is not tracked at. Asking
+     * whether the first argument would accept the player in hand tells them
+     * apart without depending on the loader having renamed anything.
      */
-    private static Method findUpdate(Object chunkMap) {
+    private static Method findUpdate(Object chunkMap, Object player) {
         String[] names = aliases("updatePlayerStatusMethods", "updatePlayerStatus", "a");
         for (Class<?> type = chunkMap.getClass(); type != null; type = type.getSuperclass()) {
             for (Method candidate : type.getDeclaredMethods()) {
                 Class<?>[] parameters = candidate.getParameterTypes();
-                if (parameters.length != 2 || parameters[1] != boolean.class) {
+                if (parameters.length != 2 || parameters[1] != boolean.class ||
+                    !parameters[0].isInstance(player)) {
                     continue;
                 }
                 for (String name : names) {
