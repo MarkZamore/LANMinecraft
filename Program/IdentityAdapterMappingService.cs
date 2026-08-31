@@ -156,7 +156,7 @@ internal sealed class IdentityAdapterMappingService
             wanted.Add(lanScreen.ObfName);
         }
 
-        if (perPlayerChunks) AddPerPlayerChunkTargets(mappings, wanted);
+        AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
@@ -436,15 +436,6 @@ internal sealed class IdentityAdapterMappingService
             descriptor => descriptor == obfPlayer + "Z)V");
         var movePlayer = chunkMap.FindMethod("move", descriptor => descriptor == obfPlayer + ")V");
         var viewDistance = chunkMap.FindField("viewDistance");
-        // The field is not the number a player names. Until 1.20 the game
-        // stored it as that number plus one and took the one back off wherever
-        // it mattered; from 1.20 it stores it plainly. Rather than keep a table
-        // of which version does which, the hook watches this setter and reads
-        // the difference off the field afterwards - the constructor calls it,
-        // so the answer is known before anybody can ask for anything.
-        var setServerDistance = chunkMap.FindMethod(
-            "setViewDistance",
-            descriptor => descriptor == "(I)V");
         var updateOptions = serverPlayer.FindMethod(
             "updateOptions",
             descriptor => descriptor == $"(L{packet.ObfName};)V");
@@ -494,7 +485,6 @@ internal sealed class IdentityAdapterMappingService
             "updatePlayer",
             descriptor => descriptor == obfPlayer + ")V");
         if (updatePlayerStatus is null || movePlayer is null || viewDistance is null ||
-            setServerDistance is null ||
             updateOptions is null || clientViewDistance is null || playerUuid is null ||
             playerLoadedChunk is null || chunkGetPos is null || chunkPosition is null ||
             chunkPosX is null || chunkPosZ is null ||
@@ -534,18 +524,56 @@ internal sealed class IdentityAdapterMappingService
         properties["trackedEntityClasses"] = JoinAliases(trackedEntity);
         properties["updatePlayerMethods"] = JoinAliases(updatePlayer);
         properties["updatePlayerDescriptors"] = JoinAliases(runtimePlayer + ")V", obfPlayer + ")V");
-        properties["chunkSetViewDistanceMethods"] = JoinAliases(setServerDistance);
-        properties["chunkSetViewDistanceDescriptors"] = "(I)V";
         return true;
+    }
+
+    /// <summary>
+    /// The one method that says how far the server is about to serve.
+    /// </summary>
+    /// <remarks>
+    /// Two names for one thing: setViewDistance until 1.20.1, and
+    /// setServerViewDistance from 1.20.2, when the number stopped being the
+    /// only one there was. Both take an int and answer nothing, and on every
+    /// version in range it is the only method on the class that does.
+    ///
+    /// It is worth watching wherever a world is shared, and not only where the
+    /// per-player patch goes in. The launcher writes its own number straight
+    /// into the chunk map, on purpose, so that the integrated server's per-tick
+    /// comparison against PlayerList never notices and never fights it - but
+    /// that also means nothing tells the launcher when the host moves his own
+    /// slider and narrows the world underneath a guest. Watching the setter is
+    /// what turns that from a five second wait into one tick, and a version
+    /// where the game hands out distances by itself needs it just as much.
+    /// </remarks>
+    private static MappedMember? ChunkMapSetter(RuntimeNames? mappings)
+    {
+        var chunkMap = mappings?.FindClass(ChunkMap);
+        if (chunkMap is null) return null;
+        return chunkMap.FindMethod("setViewDistance", descriptor => descriptor == "(I)V")
+            ?? chunkMap.FindMethod("setServerViewDistance", descriptor => descriptor == "(I)V");
     }
 
     /// <summary>
     /// The classes the per-player chunk hook rewrites, under both the name this
     /// runtime loads and the obfuscated one.
     /// </summary>
-    private static void AddPerPlayerChunkTargets(RuntimeNames? mappings, HashSet<string> targets)
+    /// <remarks>
+    /// Where the game hands out distances by itself there is nothing to rewrite
+    /// in ServerPlayer or in the entity tracker, and naming a class the patch
+    /// will not touch is not free: the preflight patches every target it is
+    /// given and refuses one that came back unchanged, which is how a whole
+    /// adapter was lost once already. So on those versions only the chunk map
+    /// is named, and only for the setter.
+    /// </remarks>
+    private static void AddPerPlayerChunkTargets(
+        RuntimeNames? mappings,
+        HashSet<string> targets,
+        bool perPlayerChunks)
     {
-        foreach (var official in new[] { ChunkMap, ServerPlayer, TrackedEntity })
+        var officials = perPlayerChunks
+            ? new[] { ChunkMap, ServerPlayer, TrackedEntity }
+            : ChunkMapSetter(mappings) is null ? [] : new[] { ChunkMap };
+        foreach (var official in officials)
         {
             var mapped = mappings?.FindClass(official);
             if (mapped is null) continue;
@@ -628,6 +656,14 @@ internal sealed class IdentityAdapterMappingService
 
         properties["serverLevelClasses"] = JoinAliases(serverLevel);
         properties["chunkSourceClasses"] = JoinAliases(chunkCache);
+        var chunkMapClass = mappings.FindClass(ChunkMap);
+        var chunkMapSetter = ChunkMapSetter(mappings);
+        if (chunkMapClass is not null && chunkMapSetter is not null)
+        {
+            properties["chunkMapClasses"] = JoinAliases(chunkMapClass);
+            properties["chunkSetViewDistanceMethods"] = JoinAliases(chunkMapSetter);
+            properties["chunkSetViewDistanceDescriptors"] = "(I)V";
+        }
         properties["getAllLevelsMethods"] = JoinAliases(allLevels);
         properties["getChunkSourceMethods"] = JoinAliases(chunkSource);
         properties["setChunkViewDistanceMethods"] = JoinAliases(chunkViewDistance);
@@ -756,7 +792,7 @@ internal sealed class IdentityAdapterMappingService
             requiredTargets.Add(ShareToLanScreen);
             requiredTargets.Add(lanScreen.ObfName);
         }
-        if (perPlayerChunks) AddPerPlayerChunkTargets(mappings, requiredTargets);
+        AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
         // same rule on the session service instead.
