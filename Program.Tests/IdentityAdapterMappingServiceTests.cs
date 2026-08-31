@@ -583,7 +583,13 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                  {
                      "loginClasses", "playerInfoClasses", "textureUrlCheckerClasses",
                      "ftbTeleportClasses", "solarFluxPackClasses", "xaeroWaypointTeleportClasses",
-                     "lanShareScreenClasses", "gameProfileClasses"
+                     "lanShareScreenClasses", "gameProfileClasses",
+                     // The three the preflight reads to decide which
+                     // transformer a class belongs to. They have been read
+                     // there since per-player render distance went in and were
+                     // never listed here, which held only because the builder
+                     // happened to name them anyway.
+                     "chunkMapClasses", "serverPlayerClasses", "trackedEntityClasses"
                  })
         {
             Assert.False(string.IsNullOrWhiteSpace(properties.GetValueOrDefault(required)), required);

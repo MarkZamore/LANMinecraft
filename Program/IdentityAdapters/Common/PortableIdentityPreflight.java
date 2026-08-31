@@ -315,23 +315,66 @@ public final class PortableIdentityPreflight {
      * would be silent: a patch that matched nothing and left the world served
      * to the furthest asker with everyone else carrying it.
      */
+    /**
+     * At least one hook went in - and where chunks are paced, exactly the seams
+     * pacing needs, no more and no fewer.
+     *
+     * These four are counted rather than merely found. Two calls to deliverHeld
+     * would quietly hand over twice the budget, none would hold every chunk
+     * forever, and a shouldSend left standing beside admit would decide the
+     * same question twice with the second answer thrown away.
+     */
     private static void verifyPerPlayerChunkTargets(String className, byte[] transformed) throws Exception {
         ClassNode patched = new ClassNode();
         new ClassReader(transformed).accept(patched, 0);
         int hookCalls = 0;
+        int admit = 0;
+        int shouldSend = 0;
+        int deliverHeld = 0;
+        int cancelHeld = 0;
         for (MethodNode method : patched.methods) {
             for (var instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
-                if (instruction instanceof MethodInsnNode call &&
-                    call.owner.equals("minecraft/portable/identity/PortablePerPlayerChunksHooks")) {
-                    hookCalls++;
+                if (!(instruction instanceof MethodInsnNode call) ||
+                    !call.owner.equals("minecraft/portable/identity/PortablePerPlayerChunksHooks")) {
+                    continue;
+                }
+                hookCalls++;
+                switch (call.name) {
+                    case "admit" -> admit++;
+                    case "shouldSend" -> shouldSend++;
+                    case "deliverHeld" -> deliverHeld++;
+                    case "cancelHeld" -> cancelHeld++;
+                    default -> { }
                 }
             }
         }
         if (hookCalls == 0) {
             throw new IllegalStateException(
                 "Per-player chunk transformer inserted no hooks into " + className + ".");
+        }
+        // With the narrowing off, the chunk map still gets the one seam that
+        // watches how far the server is served, and none of these belong.
+        if (!"true".equals(System.getProperty("minecraft.portable.identity.perPlayerChunksEnabled"))) {
+            return;
+        }
+
+        boolean pacing = "true".equals(System.getProperty("minecraft.portable.identity.chunkPacingEnabled"));
+        if (isAlias("chunkMapClasses", className)) {
+            requireHookCount(className, "admit", admit, pacing ? 1 : 0);
+            requireHookCount(className, "shouldSend", shouldSend, pacing ? 0 : 1);
+            requireHookCount(className, "deliverHeld", deliverHeld, pacing ? 1 : 0);
+        } else if (isAlias("serverPlayerClasses", className)) {
+            requireHookCount(className, "cancelHeld", cancelHeld, pacing ? 1 : 0);
+        }
+    }
+
+    private static void requireHookCount(String className, String hook, int found, int wanted) {
+        if (found != wanted) {
+            throw new IllegalStateException(
+                "Per-player chunk transformer inserted " + found + " calls to " + hook + " in " +
+                    className + " instead of " + wanted + ".");
         }
     }
 
