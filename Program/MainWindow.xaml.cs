@@ -746,7 +746,11 @@ public partial class MainWindow : Window
         // would only leave a player who needs help with nowhere to click.
         foreach (var peer in ListOrder.Players(_peers.Where(peer => peer.LastSeen >= cutoff)))
         {
-            result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.DisplayName));
+            // The name alone. The transfer list says where a player is because
+            // that decides whether a world can reach them; a report has no such
+            // question - anyone can take one - so the status here would be a
+            // line of text that changes nothing about the choice.
+            result.Add(new DiagnosticLogTargetOption(peer.SteamId, peer.PeerName));
         }
         return result;
     }
