@@ -307,8 +307,8 @@ public final class PortablePerPlayerChunksHooks {
      * The two numbers brought into one scale, and the smaller of them.
      *
      * The field is not kept in the scale a player names his distance in. Until
-     * 1.19 the game stored that number plus one and took the one back off at
-     * every place it used it; from 1.19 it stores it plainly. Comparing a raw
+     * 1.20 the game stored that number plus one and took the one back off at
+     * every place it used it; from 1.20 it stores it plainly. Comparing a raw
      * ask against the field would therefore have served everybody on the older
      * versions one ring short of what they asked for - a lone player in his own
      * world included, since the integrated server copies his own number into
@@ -321,7 +321,7 @@ public final class PortablePerPlayerChunksHooks {
     /**
      * What the game adds to a distance on its way into the field, read rather
      * than remembered: the setter is watched, the field is read afterwards, and
-     * the difference is the answer. One on 1.17 to 1.18.2, nothing from 1.19,
+     * the difference is the answer. One on 1.17 to 1.19.4, nothing from 1.20,
      * and anything else is treated as nothing - a bias wrong in that direction
      * costs a ring, and wrong in the other hands out chunks the server never
      * loaded.
