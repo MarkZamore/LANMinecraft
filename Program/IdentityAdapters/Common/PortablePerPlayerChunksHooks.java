@@ -374,13 +374,22 @@ public final class PortablePerPlayerChunksHooks {
      * A chunk the game did not want and this lets through is one he keeps and
      * nobody misses.
      *
-     * Exactly equal was not enough. The game's own reach is a ring past the
-     * number, measured from where the player was when it decided; this measures
-     * from a position it reads for itself a moment later. Equal tests either
-     * side of a chunk boundary disagree by exactly one ring - the leading edge,
-     * which is the whole of what walking is. Two rings of slack cost almost
-     * nothing of what the guard is for, which is stopping a guest who asked for
-     * four from being handed the thirty-two the server serves.
+     * So it is not asked to be accurate, only to be gross. It exists for one
+     * case: a guest on a real connection who asked for four while the server
+     * serves thirty-two, and who would otherwise be sent every chunk that
+     * finishes anywhere near him. Refusing past twice his own radius takes
+     * nearly all of that away and leaves the game's own edge - which reaches
+     * one ring past the number, measured from a position this reads separately
+     * and a moment later - far inside what is allowed.
+     *
+     * Anything tighter has been tried and is wrong. Two rings of slack still
+     * put a host at eight into empty ground while his guest played at
+     * thirty-two, and the same world was faultless the moment the two numbers
+     * matched and this stopped narrowing anything at all.
+     *
+     * It is also worth saying what this never saves: the host's own chunks go
+     * to a client inside the same process. Being generous here costs him
+     * nothing whatever.
      */
     public static boolean shouldSend(Object chunkMap, Object player, Object chunk) {
         try {
@@ -394,7 +403,7 @@ public final class PortablePerPlayerChunksHooks {
                 - CHUNK_POS_X.field(playerPos).getInt(playerPos));
             int dz = Math.abs(CHUNK_POS_Z.field(chunkPos).getInt(chunkPos)
                 - CHUNK_POS_Z.field(playerPos).getInt(playerPos));
-            return Math.max(dx, dz) <= radius + 3;
+            return Math.max(dx, dz) <= radius * 2 + 2;
         } catch (Throwable exception) {
             return true;
         }
