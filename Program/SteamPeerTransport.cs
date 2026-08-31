@@ -131,7 +131,14 @@ public sealed class SteamPeerTransport : IPeerTransport
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdown.Token);
             timeout.CancelAfter(ConnectTimeout);
             var context = await dialed.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
-            _logger?.Info($"Steam connection to {peer} is up ({DescribeRoute(handle)}).");
+            // The full link, not just the route. This line is the only record
+            // of a shared session that survives it, and a guest timed out by a
+            // saturated path looks exactly like one timed out by a stalled
+            // server unless somebody wrote down how deep the queue was. Route
+            // and ping alone said nothing, and the permit beside them reads
+            // like a speed while being a permission - which is how three
+            // evenings of guessing at bandwidth began.
+            _logger?.Info($"Steam connection to {peer} is up ({DescribeLink(handle)}).");
             return new PeerConnection(context, channel.Stream);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
