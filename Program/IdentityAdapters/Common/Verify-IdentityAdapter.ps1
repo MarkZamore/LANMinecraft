@@ -1,14 +1,25 @@
 # Replays the launch-time bytecode preflight against a chosen JDK without starting the game.
-# The preflight blocks the launch when it fails, so run this after touching the adapter
-# or before moving the game to a different Java version.
+#
+# A failed preflight has not stopped a launch since the adapter learned to step aside: the pack
+# starts without the hooks and says so in the log. So this is how the failure is found before a
+# player finds it - run it after touching the adapter, or before moving the game to another Java.
+#
+# What it replays are the aliases the launcher derived the LAST time this pack was started. A
+# change to IdentityAdapterMappingService is therefore invisible here until the pack has been
+# started once more.
 param(
-    # Defaults to the JDK that currently runs the game.
+    # Defaults to JAVA_HOME, then to the Java the launcher runs 1.21.1 on: the shared JDK under
+    # Minecraft\Launcher\JavaRuntimes, one install per feature release rather than one per pack.
     [string]$JavaHome,
 
     [string]$AdapterJar,
 
     # adapter-state.json holds the mapping aliases the launcher derived for this pack.
-    [string]$StateJson
+    [string]$StateJson,
+
+    # The launcher's data folder - the one holding Launcher and Personal. Searched for when it is
+    # not given, because it lives wherever the player put the launcher and not beside this repo.
+    [string]$InstallRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,22 +33,38 @@ if (-not (Test-Path -LiteralPath $AdapterJar -PathType Leaf)) {
     throw "Adapter jar was not found: $AdapterJar. Build Program\Minecraft.csproj first."
 }
 
+# Where the launcher keeps its data. It used to be assumed to sit inside this repository, which
+# it does on nobody's machine: the folder goes wherever the player unpacked the launcher.
+$installRoots = @(
+    $InstallRoot,
+    $env:LANMINECRAFT_ROOT,
+    (Join-Path $projectRoot "Minecraft"),
+    (Join-Path ([Environment]::GetFolderPath("Desktop")) "Minecraft")
+) | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ "Launcher") -PathType Container) }
+
 if (-not $StateJson) {
-    $StateJson = Get-ChildItem -LiteralPath (Join-Path $projectRoot "Minecraft\Launcher\IdentityAdapters") `
-        -Recurse -File -Filter "adapter-state.json" -ErrorAction SilentlyContinue |
+    $StateJson = $installRoots |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath (Join-Path $_ "Launcher\IdentityAdapters") `
+                -Recurse -File -Filter "adapter-state.json" -ErrorAction SilentlyContinue
+        } |
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $StateJson -or -not (Test-Path -LiteralPath $StateJson -PathType Leaf)) {
-    throw "adapter-state.json was not found. Launch the game once so the launcher derives the mappings."
+    throw ("adapter-state.json was not found under: " + ($installRoots -join "; ") +
+        ". Launch the game once so the launcher derives the mappings, or pass -InstallRoot or -StateJson.")
 }
 
-$runtimeRoot = Join-Path $projectRoot "Minecraft\Launcher\Runtimes\LL8 Extended"
+# The install that wrote this state file, whichever of the candidates it was: the state names
+# absolute paths into it, so the Java that ran the game is found beside them rather than guessed.
+$installRoot = (Get-Item -LiteralPath $StateJson).Directory.Parent.Parent.Parent.FullName
 if (-not $JavaHome) {
-    $JavaHome = Join-Path $runtimeRoot "runtime\windows-x64\java-runtime-delta"
+    $JavaHome = if ($env:JAVA_HOME) { $env:JAVA_HOME }
+        else { Join-Path $installRoot "Launcher\JavaRuntimes\runtime\windows-x64\java-21" }
 }
 $java = Join-Path $JavaHome "bin\java.exe"
 if (-not (Test-Path -LiteralPath $java -PathType Leaf)) {
-    throw "java.exe was not found under: $JavaHome"
+    throw "java.exe was not found under: $JavaHome. Pass -JavaHome, or set JAVA_HOME to any JDK 21 or newer."
 }
 
 $state = Get-Content -LiteralPath $StateJson -Raw | ConvertFrom-Json
