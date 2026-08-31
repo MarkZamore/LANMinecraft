@@ -3,6 +3,8 @@ package minecraft.portable.identity;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 public final class PortableLanAutoPublishHooks {
     /** The game's own maximum view distance, and as far as a shared world is served. */
@@ -12,6 +14,40 @@ public final class PortableLanAutoPublishHooks {
     // the same instance and must not re-publish or discard user edits.
     private static final Map<Object, Boolean> ATTEMPTED =
         Collections.synchronizedMap(new WeakHashMap<>());
+
+    /**
+     * Raised whenever somebody other than this code moves the server's view
+     * distance, so the keeper can put it back within a tick instead of within
+     * five seconds.
+     */
+    private static final Semaphore CHANGED = new Semaphore(0);
+
+    /** The last number this code asked the server to serve. */
+    private static volatile int lastApplied = -1;
+
+    /**
+     * Called from the head of ChunkMap.setViewDistance, on whichever thread is
+     * setting it - which on a host moving his own slider is the tick thread,
+     * mid-method, before the field is written.
+     *
+     * So this does the least it possibly can: it compares and releases a
+     * permit. It must not post a task to the server, because the server runs a
+     * task posted from its own thread INLINE rather than queueing it, which
+     * would re-enter setViewDistance underneath the frame that is still running
+     * and leave the host's narrow number written last, after two full sweeps of
+     * the chunk map. Waking the keeper instead means the re-apply arrives from
+     * a thread the server will genuinely queue, one tick later, on a clean
+     * stack.
+     *
+     * The comparison against what this code last applied is what stops the
+     * loop: applying a number itself calls the setter once per level, and every
+     * one of those calls arrives here.
+     */
+    static void serverDistanceChanged(int requested) {
+        if (requested != lastApplied) {
+            CHANGED.release();
+        }
+    }
 
     private PortableLanAutoPublishHooks() {
     }
@@ -185,6 +221,20 @@ public final class PortableLanAutoPublishHooks {
                     if (chunks <= 0) {
                         return;
                     }
+                    // Told first, then served. The setter hands chunks to
+                    // players synchronously, inside its own loop, so a client
+                    // that has not yet heard the new radius throws every one of
+                    // them away - and the server has already written them down
+                    // as delivered, so it will not offer them again until the
+                    // player walks far enough for them to leave his rectangle
+                    // and come back. That is a ring of holes in his world, not
+                    // a line in a log. The game's own setter announces first
+                    // for the same reason, and it is safe in both directions: a
+                    // client told more than it is about to get waits with a
+                    // bigger array, and one told less drops what it is about to
+                    // be told to forget anyway.
+                    lastApplied = chunks;
+                    announceServeDistance(server, chunks);
                     for (Object level : levels) {
                         Object source = PortableIdentityReflection.invoke(
                             level,
@@ -195,7 +245,6 @@ public final class PortableLanAutoPublishHooks {
                             new Object[] { chunks },
                             aliases("setChunkViewDistanceMethods", "setViewDistance", "a"));
                     }
-                    announceServeDistance(server, chunks);
                 } catch (Throwable exception) {
                     System.out.println(
                         "[PortableIdentity] LAN serve distance could not be set: " + exception);
@@ -221,7 +270,16 @@ public final class PortableLanAutoPublishHooks {
             Thread keeper = new Thread(() -> {
                 try {
                     while (true) {
-                        Thread.sleep(5000L);
+                        // Woken the moment the host's own slider moves the
+                        // server's number, and every five seconds regardless so
+                        // that a guest arriving or leaving is noticed too.
+                        CHANGED.tryAcquire(5, TimeUnit.SECONDS);
+                        // A dragged slider passes through every notch on the
+                        // way, and each notch costs the tick thread a sweep of
+                        // the whole loaded map plus a ring of packets each way.
+                        // Waiting a moment turns a drag into one re-apply.
+                        Thread.sleep(150L);
+                        CHANGED.drainPermits();
                         if (!Boolean.TRUE.equals(PortableIdentityReflection.invoke(
                             server,
                             aliases("isPublishedMethods", "isPublished", "r")))) {
