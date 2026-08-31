@@ -25,6 +25,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * reflective call that throws: all of them end with the game behaving exactly
  * as it would without any of this. The alternative, failing closed, is a guest
  * standing in an empty world.
+ *
+ * Every name this needs is found once and kept. That is not tidiness: these
+ * methods sit inside the loops that decide chunks, and one of them runs for
+ * every chunk handed to every player. Searching for a name there - walking a
+ * class hierarchy and throwing away a stack trace at each miss - cost a server
+ * seventy seconds of tick in a modpack the same machine serves at thirty-two
+ * chunks when this patch is not installed.
  */
 public final class PortablePerPlayerChunksHooks {
     /**
@@ -54,6 +61,19 @@ public final class PortablePerPlayerChunksHooks {
     /** How often one player may cost the tick thread a whole ring. */
     private static final long COOLDOWN = 1_000_000_000L;
 
+    // Everything the hot paths reach for, each found once. The fallbacks are
+    // the 1.20.1 obfuscated spellings, used only if the launcher named nothing.
+    private static final Member CHUNK_VIEW_DISTANCE = new Member("chunkViewDistanceFields", "viewDistance", "O");
+    private static final Member PLAYER_UUID = new Member("playerUuidMethods", "getUUID", "cq");
+    private static final Member CHUNK_POSITION_OF = new Member("chunkGetPosMethods", "getPos", "f");
+    private static final Member PLAYER_CHUNK_POSITION = new Member("chunkPositionMethods", "chunkPosition", "dk");
+    private static final Member CHUNK_POS_X = new Member("chunkPosXFields", "x", "e");
+    private static final Member CHUNK_POS_Z = new Member("chunkPosZFields", "z", "f");
+    private static final Member PLAYER_LEVEL = new Member("serverLevelMethods", "serverLevel", "x");
+    private static final Member LEVEL_CHUNK_SOURCE = new Member("getChunkSourceMethods", "getChunkSource", "k");
+    private static final Member SOURCE_CHUNK_MAP = new Member("chunkMapFields", "chunkMap", "a");
+    private static final Member ASKED_DISTANCE = new Member("clientViewDistanceMethods", "viewDistance", "c");
+
     /**
      * The last player asked about, and what he wanted.
      *
@@ -73,16 +93,6 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static volatile int lastRequested;
 
-    private static Field viewDistanceField;
-    private static Method uuidMethod;
-
-    /**
-     * The name lists come from system properties that are set before the game
-     * starts and never change afterwards, so each is split once. They are read
-     * on paths that run thousands of times a tick.
-     */
-    private static final Map<String, String[]> ALIASES = new ConcurrentHashMap<>();
-
     private PortablePerPlayerChunksHooks() {
     }
 
@@ -94,9 +104,7 @@ public final class PortablePerPlayerChunksHooks {
     /** Called where the server takes a client's settings, before it reads them. */
     public static void observeOptions(Object player, Object packet) {
         try {
-            Object value = PortableIdentityReflection.invoke(
-                packet,
-                aliases("clientViewDistanceMethods", "viewDistance", "c"));
+            Object value = ASKED_DISTANCE.method(packet).invoke(packet);
             if (!(value instanceof Integer)) {
                 return;
             }
@@ -222,15 +230,9 @@ public final class PortablePerPlayerChunksHooks {
     /** The chunk map of the world this player is standing in. */
     private static Object chunkMapOf(Object player) {
         try {
-            Object level = PortableIdentityReflection.invoke(
-                player,
-                aliases("serverLevelMethods", "serverLevel", "x"));
-            Object source = PortableIdentityReflection.invoke(
-                level,
-                aliases("getChunkSourceMethods", "getChunkSource", "k"));
-            return PortableIdentityReflection.getField(
-                source,
-                aliases("chunkMapFields", "chunkMap", "a"));
+            Object level = PLAYER_LEVEL.method(player).invoke(player);
+            Object source = LEVEL_CHUNK_SOURCE.method(level).invoke(level);
+            return SOURCE_CHUNK_MAP.field(source).get(source);
         } catch (Throwable exception) {
             return null;
         }
@@ -321,6 +323,10 @@ public final class PortablePerPlayerChunksHooks {
      * argument, so the number cannot be narrowed where it is read. It is
      * narrowed here instead, one step later, at the handing over.
      *
+     * This is the hottest thing in the patch: it runs once for every chunk
+     * given to every player, and a whole ring of them goes past whenever a
+     * distance changes. Everything it touches is found once and kept.
+     *
      * The comparison is deliberately one ring wider than the number itself. The
      * two methods that decide what a player tracks use the game's own range
      * test, which is generous by about a ring, and this must never be tighter
@@ -334,32 +340,16 @@ public final class PortablePerPlayerChunksHooks {
             if (radius <= 0) {
                 return true;
             }
-            Object chunkPos = PortableIdentityReflection.invoke(
-                chunk,
-                aliases("chunkGetPosMethods", "getPos", "f"));
-            Object playerPos = PortableIdentityReflection.invoke(
-                player,
-                aliases("chunkPositionMethods", "chunkPosition", "dk"));
-            int dx = Math.abs(x(chunkPos) - x(playerPos));
-            int dz = Math.abs(z(chunkPos) - z(playerPos));
+            Object chunkPos = CHUNK_POSITION_OF.method(chunk).invoke(chunk);
+            Object playerPos = PLAYER_CHUNK_POSITION.method(player).invoke(player);
+            int dx = Math.abs(CHUNK_POS_X.field(chunkPos).getInt(chunkPos)
+                - CHUNK_POS_X.field(playerPos).getInt(playerPos));
+            int dz = Math.abs(CHUNK_POS_Z.field(chunkPos).getInt(chunkPos)
+                - CHUNK_POS_Z.field(playerPos).getInt(playerPos));
             return Math.max(dx, dz) <= radius + 1;
         } catch (Throwable exception) {
             return true;
         }
-    }
-
-    private static int x(Object chunkPos) throws ReflectiveOperationException {
-        return intField(chunkPos, "chunkPosXFields", "x", "e");
-    }
-
-    private static int z(Object chunkPos) throws ReflectiveOperationException {
-        return intField(chunkPos, "chunkPosZFields", "z", "f");
-    }
-
-    private static int intField(Object target, String property, String... fallbacks)
-        throws ReflectiveOperationException {
-        Object value = PortableIdentityReflection.getField(target, aliases(property, fallbacks));
-        return ((Integer) value).intValue();
     }
 
     /**
@@ -418,49 +408,8 @@ public final class PortablePerPlayerChunksHooks {
     }
 
     private static UUID uuidOf(Object player) throws ReflectiveOperationException {
-        Method method = uuidMethod;
-        if (method == null || !method.getDeclaringClass().isInstance(player)) {
-            method = findUuid(player);
-            uuidMethod = method;
-        }
-        Object value = method.invoke(player);
+        Object value = PLAYER_UUID.method(player).invoke(player);
         return value instanceof UUID ? (UUID) value : null;
-    }
-
-    /**
-     * getUUID, found once and then kept.
-     *
-     * It is asked on every tracked entity for every player, which in a busy
-     * world is a four-figure number of times a tick. Searching for it afresh
-     * each time walked four classes of several hundred methods apiece and threw
-     * away three exceptions, each with its stack filled in, on the tick thread
-     * - all to arrive at an answer that cannot change for a class.
-     */
-    private static Method findUuid(Object player) throws NoSuchMethodException {
-        String[] names = aliases("playerUuidMethods", "getUUID", "cq");
-        for (Class<?> type = player.getClass(); type != null; type = type.getSuperclass()) {
-            for (Method candidate : type.getDeclaredMethods()) {
-                if (candidate.getParameterCount() != 0) {
-                    continue;
-                }
-                for (String name : names) {
-                    if (candidate.getName().equals(name)) {
-                        candidate.setAccessible(true);
-                        return candidate;
-                    }
-                }
-            }
-        }
-        // A loader may have left it on an interface instead; the public view of
-        // the class carries whatever it inherited from one.
-        for (String name : names) {
-            try {
-                return player.getClass().getMethod(name);
-            } catch (NoSuchMethodException ignored) {
-                // Try the next spelling.
-            }
-        }
-        throw new NoSuchMethodException("getUUID");
     }
 
     /**
@@ -470,31 +419,107 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static int serverRadius(Object chunkMap) {
         try {
-            Field field = viewDistanceField;
-            if (field == null || !field.getDeclaringClass().isInstance(chunkMap)) {
-                field = findViewDistance(chunkMap);
-                viewDistanceField = field;
-            }
-            return field.getInt(chunkMap);
+            return CHUNK_VIEW_DISTANCE.field(chunkMap).getInt(chunkMap);
         } catch (Throwable exception) {
             return -1;
         }
     }
 
-    private static Field findViewDistance(Object chunkMap) throws NoSuchFieldException {
-        for (String name : aliases("chunkViewDistanceFields", "viewDistance", "O")) {
-            for (Class<?> type = chunkMap.getClass(); type != null; type = type.getSuperclass()) {
-                try {
-                    Field field = type.getDeclaredField(name);
-                    field.setAccessible(true);
-                    return field;
-                } catch (NoSuchFieldException ignored) {
-                    // Keep walking: a loader may have moved it up a class.
+    /**
+     * One member of one class, found the first time it is wanted and kept.
+     *
+     * The launcher writes both spellings of every name into a system property -
+     * the one this runtime loads and the obfuscated one - and those properties
+     * are set before the game starts and never change, so the list is split
+     * once as well.
+     *
+     * What is kept is checked before it is used: a member found on one class is
+     * only handed back for an object that class would accept. That is what
+     * makes it safe to keep a single copy for a name that several classes might
+     * answer to, and it is how the same holder serves a LevelChunk and a
+     * ProtoChunk without noticing the difference.
+     */
+    private static final class Member {
+        private final String property;
+        private final String[] fallbacks;
+        private volatile Method method;
+        private volatile Field field;
+
+        private Member(String property, String... fallbacks) {
+            this.property = property;
+            this.fallbacks = fallbacks;
+        }
+
+        private Method method(Object target) throws ReflectiveOperationException {
+            Method known = this.method;
+            if (known != null && known.getDeclaringClass().isInstance(target)) {
+                return known;
+            }
+            Method found = search(target.getClass());
+            this.method = found;
+            return found;
+        }
+
+        private Field field(Object target) throws ReflectiveOperationException {
+            Field known = this.field;
+            if (known != null && known.getDeclaringClass().isInstance(target)) {
+                return known;
+            }
+            Field found = fieldOf(target.getClass());
+            this.field = found;
+            return found;
+        }
+
+        private Method search(Class<?> from) throws NoSuchMethodException {
+            String[] names = aliases(property, fallbacks);
+            for (Class<?> type = from; type != null; type = type.getSuperclass()) {
+                for (Method candidate : type.getDeclaredMethods()) {
+                    if (candidate.getParameterCount() != 0) {
+                        continue;
+                    }
+                    for (String name : names) {
+                        if (candidate.getName().equals(name)) {
+                            candidate.setAccessible(true);
+                            return candidate;
+                        }
+                    }
                 }
             }
+            // A loader may have left the name on an interface instead; the
+            // public view of the class carries what it inherited from one.
+            for (String name : names) {
+                try {
+                    return from.getMethod(name);
+                } catch (NoSuchMethodException ignored) {
+                    // Try the next spelling.
+                }
+            }
+            throw new NoSuchMethodException(property);
         }
-        throw new NoSuchFieldException("chunk view distance");
+
+        private Field fieldOf(Class<?> from) throws NoSuchFieldException {
+            String[] names = aliases(property, fallbacks);
+            for (Class<?> type = from; type != null; type = type.getSuperclass()) {
+                for (String name : names) {
+                    try {
+                        Field candidate = type.getDeclaredField(name);
+                        candidate.setAccessible(true);
+                        return candidate;
+                    } catch (NoSuchFieldException ignored) {
+                        // Keep walking: a loader may have moved it up a class.
+                    }
+                }
+            }
+            throw new NoSuchFieldException(property);
+        }
     }
+
+    /**
+     * The name lists come from system properties that are set before the game
+     * starts and never change afterwards, so each is split once. They are read
+     * on paths that run thousands of times a tick.
+     */
+    private static final Map<String, String[]> ALIASES = new ConcurrentHashMap<>();
 
     private static String[] aliases(String property, String... fallbacks) {
         String[] known = ALIASES.get(property);
