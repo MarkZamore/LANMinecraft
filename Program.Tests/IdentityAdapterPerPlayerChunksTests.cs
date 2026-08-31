@@ -81,6 +81,8 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         "tsrg2 obf mojmap",
         "aqb net/minecraft/server/level/ChunkMap",
         "\tO serverViewDistance",
+        // Renamed in the same release that made the distance per player.
+        "\ta (I)V setServerViewDistance",
         "\ta (Laqv;)V move",
         "\ta (Laqv;Z)V updatePlayerStatus",
         "aqb$b net/minecraft/server/level/ChunkMap$TrackedEntity",
@@ -203,9 +205,11 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
 
         Assert.Equal("false", properties["perPlayerChunksEnabled"]);
         Assert.False(properties.ContainsKey("updatePlayerStatusMethods"));
-        // The class list is still named, because the preflight asks for it
-        // before it looks at anything else.
-        Assert.Equal("net/minecraft/server/level/ChunkMap", properties["chunkMapClasses"]);
+        // The chunk map is still named, and in both spellings, because one seam
+        // does go in here: the launcher has to hear when the host narrows the
+        // world. What is not named is ServerPlayer or the entity tracker, since
+        // the preflight refuses a class it was told to patch and could not.
+        Assert.Equal("net/minecraft/server/level/ChunkMap,aqb", properties["chunkMapClasses"]);
     }
 
     [Fact]
@@ -215,6 +219,25 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
 
         Assert.Equal("false", properties["perPlayerChunksEnabled"]);
         Assert.False(properties.ContainsKey("updatePlayerStatusMethods"));
+    }
+
+    /// <summary>
+    /// The seam that watches the setter is not part of the narrowing and does
+    /// not go away with it. The launcher writes the server's distance behind
+    /// PlayerList's back on every version, so on every version it needs to hear
+    /// when somebody else writes it instead.
+    /// </summary>
+    [Fact]
+    public void AMinecraftThatDoesItItself_StillWatchesTheSetter()
+    {
+        var properties = Build(NewEnoughMappings);
+
+        Assert.Equal("false", properties["perPlayerChunksEnabled"]);
+        Assert.Equal("setServerViewDistance,a", properties["chunkSetViewDistanceMethods"]);
+        Assert.Equal("(I)V", properties["chunkSetViewDistanceDescriptors"]);
+        // And the class is named in the spelling the runtime loads, or the
+        // transformer would never be handed it.
+        Assert.Equal("net/minecraft/server/level/ChunkMap,aqb", properties["chunkMapClasses"]);
     }
 
     [Fact]

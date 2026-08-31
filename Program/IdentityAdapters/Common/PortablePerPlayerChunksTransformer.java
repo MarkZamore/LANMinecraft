@@ -49,12 +49,15 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         Class<?> classBeingRedefined,
         ProtectionDomain protectionDomain,
         byte[] classfileBuffer) {
-        if (!"true".equals(property("perPlayerChunksEnabled", "false"))) {
-            return null;
-        }
+        // The narrowing goes in only where the game cannot do it itself. The
+        // one seam beside it - watching how far the server is told to serve -
+        // goes in everywhere, because on every version the launcher writes that
+        // number behind PlayerList's back and would otherwise not hear the host
+        // move his own slider until its next look round.
+        boolean perPlayer = "true".equals(property("perPlayerChunksEnabled", "false"));
         boolean chunkMap = contains(property("chunkMapClasses", ""), className);
-        boolean serverPlayer = contains(property("serverPlayerClasses", ""), className);
-        boolean trackedEntity = contains(property("trackedEntityClasses", ""), className);
+        boolean serverPlayer = perPlayer && contains(property("serverPlayerClasses", ""), className);
+        boolean trackedEntity = perPlayer && contains(property("trackedEntityClasses", ""), className);
         if (!chunkMap && !serverPlayer && !trackedEntity) {
             return null;
         }
@@ -68,8 +71,9 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
             // an obfuscated ServerPlayer has twenty-two one-argument void
             // methods called "a", and patching all of them would fail the
             // preflight and take the whole adapter down with it.
-            if (chunkMap && (matches(method, "updatePlayerStatusMethods", "updatePlayerStatusDescriptors") ||
-                matches(method, "movePlayerMethods", "movePlayerDescriptors"))) {
+            if (perPlayer && chunkMap &&
+                (matches(method, "updatePlayerStatusMethods", "updatePlayerStatusDescriptors") ||
+                    matches(method, "movePlayerMethods", "movePlayerDescriptors"))) {
                 patched += askThePlayerInstead(node.name, method);
             } else if (trackedEntity && matches(method, "updatePlayerMethods", "updatePlayerDescriptors")) {
                 // An entity is tracked as far as it carries, capped by how far
@@ -78,7 +82,7 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
                 // narrows the same way - otherwise a guest is told about mobs
                 // standing where he has no ground.
                 patched += askThePlayerInstead(property("chunkMapClasses", ""), method);
-            } else if (chunkMap && isDelivery(method)) {
+            } else if (perPlayer && chunkMap && isDelivery(method)) {
                 onlyIfHeAskedForIt(method);
                 patched++;
             } else if (chunkMap &&
