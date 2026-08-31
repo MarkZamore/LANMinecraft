@@ -271,8 +271,36 @@ public sealed class SteamPeerDirectory(
             // A goodbye is not a presence. Their launcher wrote it on the way
             // out, so they go now rather than in three minutes - and they stay
             // gone, because the keys that say it will still be there next time.
+            //
+            // Unless they are still in the app this launcher shares, which
+            // means they closed the launcher and kept playing. The keys they
+            // left behind still name the build and the release - the goodbye
+            // clears the state, the world and the skin, and nothing else - so
+            // they are moved to that rather than dropped. It reads the same to
+            // somebody who starts their launcher afterwards and has never seen
+            // them: the answer is in the keys, not in what we happened to
+            // witness.
             if (presence.HasLeft)
             {
+                if (friend.IsInSharedApp)
+                {
+                    var stillPlaying = new SteamPeerPresence
+                    {
+                        SteamId = peerId,
+                        PersonaName = friend.PersonaName,
+                        IsOutsideLauncher = true,
+                        PackName = presence.PackName,
+                        Release = presence.Release
+                    };
+                    lock (_gate)
+                    {
+                        changed |= !_peers.TryGetValue(friend.SteamId64, out var before) ||
+                                   before.Presence != stillPlaying;
+                        _peers[friend.SteamId64] = (stillPlaying, now);
+                    }
+                    continue;
+                }
+
                 lock (_gate)
                 {
                     if (_peers.Remove(friend.SteamId64))
