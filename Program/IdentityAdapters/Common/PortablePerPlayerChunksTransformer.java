@@ -81,6 +81,10 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
             } else if (chunkMap && isDelivery(method)) {
                 onlyIfHeAskedForIt(method);
                 patched++;
+            } else if (chunkMap &&
+                matches(method, "chunkSetViewDistanceMethods", "chunkSetViewDistanceDescriptors")) {
+                rememberWhatTheServerServes(method);
+                patched++;
             } else if (serverPlayer && matches(method, "updateOptionsMethods", "updateOptionsDescriptors")) {
                 rememberWhatWasAsked(method);
                 patched++;
@@ -207,6 +211,29 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         // which is what F_SAME says. Without it the class carries a jump to a
         // label no frame describes and will not verify.
         head.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+        method.instructions.insert(head);
+    }
+
+    /**
+     * "remember how far the server was told to serve", in front of the storing
+     * of it.
+     *
+     * The field is not kept in the scale a player names it in: until 1.19 the
+     * game stored the number plus one and took the one off again wherever it
+     * used it. The hook needs both scales in one place to compare them, and
+     * rather than carry a table of which version is which it watches the number
+     * go in and reads what came out. ChunkMap's own constructor calls this, so
+     * the answer is there before a player can ask for anything.
+     */
+    private static void rememberWhatTheServerServes(MethodNode method) {
+        InsnList head = new InsnList();
+        head.add(new VarInsnNode(Opcodes.ILOAD, 1));
+        head.add(new MethodInsnNode(
+            Opcodes.INVOKESTATIC,
+            HOOKS,
+            "observeServerDistance",
+            "(I)V",
+            false));
         method.instructions.insert(head);
     }
 

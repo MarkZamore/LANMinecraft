@@ -397,28 +397,34 @@ internal sealed class IdentityAdapterMappingService
         Dictionary<string, string> properties)
     {
         properties["perPlayerChunksEnabled"] = "false";
-        // Named even when off: the preflight asks for these two by name before
-        // it looks at anything else.
+        // Named even when off: the preflight asks for these by name before it
+        // looks at anything else.
         properties["chunkMapClasses"] = ChunkMap;
         properties["serverPlayerClasses"] = ServerPlayer;
         properties["trackedEntityClasses"] = TrackedEntity;
         if (mappings is null) return false;
 
         var serverPlayer = mappings.FindClass(ServerPlayer);
+        if (serverPlayer is null) return false;
+
+        // The game's own, and nothing to do. Asked before anything else is
+        // looked up, so that a runtime which does this itself is turned away
+        // for the reason it deserves: the settings packet moved to another
+        // package in the very release that gave the server a number per
+        // player, and from here one absence reads exactly like the other.
+        if (serverPlayer.FindMethod("requestedViewDistance", descriptor => descriptor == "()I") is not null)
+        {
+            return false;
+        }
+
         var chunkMap = mappings.FindClass(ChunkMap);
         var packet = mappings.FindClass(ClientInformationPacket);
         var entity = mappings.FindClass(Entity);
         var chunkPos = mappings.FindClass(ChunkPos);
         var levelChunk = mappings.FindClass(LevelChunk);
         var chunkAccess = mappings.FindClass(ChunkAccess);
-        if (serverPlayer is null || chunkMap is null || packet is null || entity is null ||
+        if (chunkMap is null || packet is null || entity is null ||
             chunkPos is null || levelChunk is null || chunkAccess is null)
-        {
-            return false;
-        }
-
-        // The game's own, and nothing to do.
-        if (serverPlayer.FindMethod("requestedViewDistance", descriptor => descriptor == "()I") is not null)
         {
             return false;
         }
@@ -430,6 +436,15 @@ internal sealed class IdentityAdapterMappingService
             descriptor => descriptor == obfPlayer + "Z)V");
         var movePlayer = chunkMap.FindMethod("move", descriptor => descriptor == obfPlayer + ")V");
         var viewDistance = chunkMap.FindField("viewDistance");
+        // The field is not the number a player names. Until 1.19 the game
+        // stored it as that number plus one and took the one back off wherever
+        // it mattered; from 1.19 it stores it plainly. Rather than keep a table
+        // of which version does which, the hook watches this setter and reads
+        // the difference off the field afterwards - the constructor calls it,
+        // so the answer is known before anybody can ask for anything.
+        var setServerDistance = chunkMap.FindMethod(
+            "setViewDistance",
+            descriptor => descriptor == "(I)V");
         var updateOptions = serverPlayer.FindMethod(
             "updateOptions",
             descriptor => descriptor == $"(L{packet.ObfName};)V");
@@ -479,6 +494,7 @@ internal sealed class IdentityAdapterMappingService
             "updatePlayer",
             descriptor => descriptor == obfPlayer + ")V");
         if (updatePlayerStatus is null || movePlayer is null || viewDistance is null ||
+            setServerDistance is null ||
             updateOptions is null || clientViewDistance is null || playerUuid is null ||
             playerLoadedChunk is null || chunkGetPos is null || chunkPosition is null ||
             chunkPosX is null || chunkPosZ is null ||
@@ -518,10 +534,15 @@ internal sealed class IdentityAdapterMappingService
         properties["trackedEntityClasses"] = JoinAliases(trackedEntity);
         properties["updatePlayerMethods"] = JoinAliases(updatePlayer);
         properties["updatePlayerDescriptors"] = JoinAliases(runtimePlayer + ")V", obfPlayer + ")V");
+        properties["chunkSetViewDistanceMethods"] = JoinAliases(setServerDistance);
+        properties["chunkSetViewDistanceDescriptors"] = "(I)V";
         return true;
     }
 
-    /// <summary>The two classes the per-player chunk hook rewrites.</summary>
+    /// <summary>
+    /// The classes the per-player chunk hook rewrites, under both the name this
+    /// runtime loads and the obfuscated one.
+    /// </summary>
     private static void AddPerPlayerChunkTargets(RuntimeNames? mappings, HashSet<string> targets)
     {
         foreach (var official in new[] { ChunkMap, ServerPlayer, TrackedEntity })
