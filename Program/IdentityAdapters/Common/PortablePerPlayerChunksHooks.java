@@ -70,7 +70,7 @@ public final class PortablePerPlayerChunksHooks {
     // Everything the hot paths reach for, each found once. The fallbacks are
     // the 1.20.1 obfuscated spellings, used only if the launcher named nothing.
     private static final Member CHUNK_VIEW_DISTANCE = new Member("chunkViewDistanceFields", "viewDistance", "O");
-    private static final Member PLAYER_UUID = new Member("playerUuidMethods", "getUUID", "cq");
+    private static final Member PLAYER_UUID = new Member("playerUuidMethods", "getUUID", "ct");
     private static final Member CHUNK_POSITION_OF = new Member("chunkGetPosMethods", "getPos", "f");
     private static final Member PLAYER_CHUNK_POSITION = new Member("chunkPositionMethods", "chunkPosition", "dk");
     private static final Member CHUNK_POS_X = new Member("chunkPosXFields", "x", "e");

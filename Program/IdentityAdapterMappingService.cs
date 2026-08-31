@@ -82,9 +82,11 @@ internal sealed class IdentityAdapterMappingService
     /// mappings and a Minecraft new enough to have the classes they name. The
     /// skin hooks patch com.mojang.authlib, which no loader obfuscates and no
     /// mappings describe. Refusing both because the first cannot be had was
-    /// costing the second for no reason: All The Fabric 3 has no mappings at
-    /// all, because Fabric ships intermediary rather than TSRG2, and RPG Ars
-    /// Nouveau has mappings but is 1.20.1, where PlayerSkin does not exist yet.
+    /// costing the second for no reason: All The Fabric 3 is named in
+    /// intermediary rather than TSRG2, and is 1.18.2, and RPG Ars Nouveau has
+    /// mappings but is 1.20.1 - neither has PlayerSkin, which arrived later.
+    /// (Intermediary is read since the third spelling went in; before that All
+    /// The Fabric 3 had no names this could read at all.)
     /// Neither could show a skin, and the skin never needed either.
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
