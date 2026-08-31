@@ -37,6 +37,38 @@ public sealed class JavaRuntimeCatalogTests
     }
 
     /// <summary>
+    /// What a prepared runtime is remembered under is the pack's Java, and for
+    /// half the packs that is not the one the launcher pins for itself.
+    ///
+    /// Anything deciding whether a prepared runtime may be reused has to ask
+    /// this catalogue, not that constant. Comparing against the constant can
+    /// never match a pack built on 17, so every launch of one threw away a good
+    /// runtime and built it again out of Mojang's metadata - slow while those
+    /// hosts answer, and a pack that will not start once they do not.
+    /// </summary>
+    [Theory]
+    [InlineData("1.18.2")]   // All The Fabric 3
+    [InlineData("1.20.1")]   // RPG Ars Nouveau
+    public void APackOnAnOlderJavaIsNotTheOneTheLauncherPins(string minecraftVersion)
+    {
+        var required = JavaRuntimeCatalog.ForMajorVersion(
+            JavaRuntimeCatalog.MajorVersionFor(minecraftVersion));
+
+        Assert.NotNull(required);
+        Assert.NotEqual(PortableJavaRuntimeService.PinnedRuntimeId, required!.RuntimeId);
+    }
+
+    /// <summary>And where they do agree, they agree for a reason, not by luck.</summary>
+    [Fact]
+    public void APackOnTheCurrentJavaIsTheOneTheLauncherPins()
+    {
+        var required = JavaRuntimeCatalog.ForMajorVersion(JavaRuntimeCatalog.MajorVersionFor("1.21.1"));
+
+        Assert.NotNull(required);
+        Assert.Equal(PortableJavaRuntimeService.PinnedRuntimeId, required!.RuntimeId);
+    }
+
+    /// <summary>
     /// A version nobody can read is not a reason to refuse a launch: it gets
     /// what every pack got before any of this existed.
     /// </summary>
