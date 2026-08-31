@@ -36,8 +36,15 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         "\ta (Laig;Z)V updatePlayerStatus",
         // The delivery those two do not cover.
         "\ta (Laig;Lorg/apache/commons/lang3/mutable/MutableObject;Ldei;)V playerLoadedChunk",
-        "ahr$c net/minecraft/server/level/ChunkMap$TrackedEntity",
-        "\ta (Laig;)V updatePlayer",
+        // The setter the scale of the field is read from, and the only (I)V
+        // this class has.
+        "\ta (I)V setViewDistance",
+        "ahr$b net/minecraft/server/level/ChunkMap$TrackedEntity",
+        // Two methods of one obfuscated name and one descriptor, told apart by
+        // nothing but the name Mojang published. Patch the wrong one and a
+        // player stops being told about every entity he can see.
+        "\ta (Laig;)V removePlayer",
+        "\tb (Laig;)V updatePlayer",
         "aig net/minecraft/server/level/ServerPlayer",
         "\ta (Lzl;)V updateOptions",
         "\tx ()Laif; serverLevel",
@@ -76,14 +83,20 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         "\tO serverViewDistance",
         "\ta (Laqv;)V move",
         "\ta (Laqv;Z)V updatePlayerStatus",
-        "aqb$c net/minecraft/server/level/ChunkMap$TrackedEntity",
-        "\ta (Laqv;)V updatePlayer",
+        "aqb$b net/minecraft/server/level/ChunkMap$TrackedEntity",
+        "\ta (Laqv;)V removePlayer",
+        "\tb (Laqv;)V updatePlayer",
         "aqv net/minecraft/server/level/ServerPlayer",
         "\tF ()I requestedViewDistance",
         "\tA ()Laqu; serverLevel",
         "\ta (Laqh;)V updateOptions",
-        "aqh net/minecraft/network/protocol/game/ServerboundClientInformationPacket",
+        // 1.21.1 hands updateOptions a settings object, and the packet itself
+        // moved to another package in the same release that gave the server a
+        // number per player. Naming both the way this version really does is
+        // what makes the switch-off below mean the thing it says.
+        "aqh net/minecraft/server/level/ClientInformation",
         "\tc ()I viewDistance",
+        "aaa net/minecraft/network/protocol/common/ServerboundClientInformationPacket",
         "bsr net/minecraft/world/entity/Entity",
         "\tcz ()Ljava/util/UUID; getUUID",
         "\tdq ()Ldcd; chunkPosition",
@@ -116,6 +129,19 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         .Replace("\tc ()I viewDistance", "\tc ()I getViewDistance", StringComparison.Ordinal)
         .Replace("\tx ()Laif; serverLevel", "\tx ()Laif; getLevel", StringComparison.Ordinal);
 
+    /// <summary>
+    /// The same 1.20.1 excerpt, but answering requestedViewDistance.
+    ///
+    /// 1.21.1 is turned away for a second reason as well - its settings packet
+    /// lives in another package - so on its own it cannot say which of the two
+    /// the decision rests on. This one names everything the patch needs and is
+    /// refused by the guard alone.
+    /// </summary>
+    private static readonly string DoesItItselfMappings = OldEnoughMappings.Replace(
+        "aig net/minecraft/server/level/ServerPlayer",
+        "aig net/minecraft/server/level/ServerPlayer\n\tF ()I requestedViewDistance",
+        StringComparison.Ordinal);
+
     [Fact]
     public void AMinecraftThatCannotDoItItself_GetsThePatch()
     {
@@ -135,9 +161,12 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         Assert.Equal("chunkMap,a", properties["chunkMapFields"]);
         // And the entity tracking, which caps itself with the same number.
         Assert.Equal(
-            "net/minecraft/server/level/ChunkMap$TrackedEntity,ahr$c",
+            "net/minecraft/server/level/ChunkMap$TrackedEntity,ahr$b",
             properties["trackedEntityClasses"]);
-        Assert.Equal("updatePlayer,a", properties["updatePlayerMethods"]);
+        Assert.Equal("updatePlayer,b", properties["updatePlayerMethods"]);
+        // And the setter, which is where the scale of the field is learnt.
+        Assert.Equal("setViewDistance,a", properties["chunkSetViewDistanceMethods"]);
+        Assert.Equal("(I)V", properties["chunkSetViewDistanceDescriptors"]);
         // A name alone does not say which method on an obfuscated ServerPlayer,
         // where twenty-two of them are one-argument voids called "a".
         Assert.Equal(
@@ -177,6 +206,15 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         // The class list is still named, because the preflight asks for it
         // before it looks at anything else.
         Assert.Equal("net/minecraft/server/level/ChunkMap", properties["chunkMapClasses"]);
+    }
+
+    [Fact]
+    public void AMinecraftThatNamesEverythingAndStillDoesItItself_IsLeftAlone()
+    {
+        var properties = Build(DoesItItselfMappings);
+
+        Assert.Equal("false", properties["perPlayerChunksEnabled"]);
+        Assert.False(properties.ContainsKey("updatePlayerStatusMethods"));
     }
 
     [Fact]
