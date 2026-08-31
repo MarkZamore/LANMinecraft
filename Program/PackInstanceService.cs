@@ -109,7 +109,7 @@ public sealed class PackInstanceService : IDisposable
     internal static void CleanupEmptyWorldPlaceholders(string worldsRoot)
     {
         if (!Directory.Exists(worldsRoot)) return;
-        foreach (var world in Directory.EnumerateDirectories(worldsRoot, "*", SearchOption.TopDirectoryOnly))
+        foreach (var world in WorldLocations.Enumerate(worldsRoot))
         {
             foreach (var name in new[] { "datapacks", "EnderStorage" })
             {
@@ -120,20 +120,25 @@ public sealed class PackInstanceService : IDisposable
                 }
             }
 
-            // And the shell a world leaves when it is deleted from inside the
-            // game. The game deletes a world through the junction standing in
-            // this build's saves folder: the files go, the junction goes, and
-            // the folder they pointed at stays behind holding a name and
-            // nothing else. It is not a world by this launcher's own test -
-            // that is a level.dat - so it is never listed and can never be
-            // opened, and yet it is linked into every build at every launch and
-            // holds its name against the next world that wants it. A folder
-            // with no file anywhere beneath it has nothing in it to lose.
-            if (SavesFolderService.IsEmptyDirectory(world))
+        }
+
+        // And the shell a world can leave behind. This used to be the common
+        // case: the game deleted a world through a junction standing in the
+        // build's saves, so the files went, the junction went, and the folder
+        // they pointed at stayed holding a name and nothing else. The game now
+        // deletes a real folder and takes it with it, but a shell from before
+        // that - or from an interrupted transfer - is still worth nothing and
+        // still holds a name. A folder with no file anywhere beneath it has
+        // nothing in it to lose.
+        foreach (var build in Directory.EnumerateDirectories(worldsRoot))
+        {
+            if (WorldLocations.IsWorld(build)) continue;
+            foreach (var shell in Directory.EnumerateDirectories(build).ToList())
             {
+                if (WorldLocations.IsWorld(shell) || !SavesFolderService.IsEmptyDirectory(shell)) continue;
                 try
                 {
-                    Directory.Delete(world, recursive: true);
+                    Directory.Delete(shell, recursive: true);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {

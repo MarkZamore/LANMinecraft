@@ -527,7 +527,7 @@ public partial class MainWindow : Window
 
         var selectedPath = (WorldComboBox.SelectedItem as WorldViewModel)?.Path;
         var metadataContext = CreateWorldMetadataContext();
-        var worlds = Directory.EnumerateDirectories(_paths.Worlds)
+        var worlds = WorldLocations.Enumerate(_paths.Worlds)
             .Where(WorldTransferService.IsMinecraftWorldDirectory)
             .Where(path => !Path.GetFileName(path).Contains(".backup-", StringComparison.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
@@ -1220,7 +1220,9 @@ public partial class MainWindow : Window
             var instance = ResolveCurrentInstanceDirectory();
             if (instance is not null)
             {
-                new SavesFolderService(_logger).Adopt(_paths.Worlds, instance);
+                new SavesFolderService(_logger).Adopt(
+                    WorldLocations.ForBuild(_paths.Worlds, _settings.ClientRelativePath),
+                    instance);
             }
             var stamped = RequireWorldMetadata().StampPlayedWorlds(_paths.Worlds, context, startedUtc);
             foreach (var world in stamped)

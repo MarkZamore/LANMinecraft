@@ -31,8 +31,7 @@ public sealed class WorldPlayerProfileService
             return;
         }
 
-        var worldPaths = Directory.EnumerateDirectories(worldsRoot)
-            .Where(worldPath => File.Exists(Path.Combine(worldPath, "level.dat")))
+        var worldPaths = WorldLocations.Enumerate(worldsRoot)
             .OrderBy(worldPath => worldPath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var failures = new List<string>();
