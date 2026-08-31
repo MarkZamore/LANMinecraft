@@ -25,6 +25,7 @@ public sealed class SteamPresenceTests
         Assert.Equal(presence.MinecraftUuid, decoded.MinecraftUuid);
         Assert.Equal(presence.PackHash, decoded.PackHash);
         Assert.Equal(presence.PackName, decoded.PackName);
+        Assert.Equal(presence.Release, decoded.Release);
         Assert.Equal(presence.SkinSha256, decoded.SkinSha256);
         Assert.Equal("slim", decoded.SkinModel);
         Assert.True(decoded.IsSkinAvailable);
@@ -142,6 +143,7 @@ public sealed class SteamPresenceTests
             MinecraftUuid = "f0f5ec1a-14f5-47b6-9e27-b860f62c14e5",
             PackHash = new string('b', 64),
             PackName = "All The Fabric 3",
+            Release = 312,
             State = SteamPresenceCodec.StateInGame,
             IsSkinAvailable = true,
             SkinSha256 = new string('C', 64),

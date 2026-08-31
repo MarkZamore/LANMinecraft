@@ -885,6 +885,7 @@ public partial class MainWindow : Window
             // its folder, and one somebody put there themselves has no other
             // name to be known by.
             PackName = settings.ClientRelativePath,
+            Release = UpdateService.CurrentReleaseNumber,
             State = _minecraftRunning
                 ? SteamPresenceCodec.StateInGame
                 : _minecraftPreparing
@@ -2841,12 +2842,18 @@ public partial class MainWindow : Window
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is
         // a decision here - the same way the player list does with nobody in it.
-        // Both of these define the transfer that is currently running. Leaving
-        // them live let a player change the answer to a question already being
-        // acted on - and the transfer would carry on with the old one, which is
-        // worse than not offering.
-        WorldComboBox.IsEnabled = configurationEnabled && _worlds.Count > 1;
-        OnlinePlayerComboBox.IsEnabled = configurationEnabled && _peers.Count > 0;
+        //
+        // Only a transfer already running closes them. Both lists define that
+        // transfer, and leaving them live let a player change the answer to a
+        // question already being acted on while it carried on with the old one.
+        // A running game is a different thing entirely: it stops a world being
+        // sent, which the button and the bar say for themselves, but it is no
+        // reason to stop reading the lists. Looking up who is online, and in
+        // what, is most of what they are for - and doing it while playing is
+        // when a player most wants to.
+        var listsEnabled = interactiveEnabled && !_transferActive;
+        WorldComboBox.IsEnabled = listsEnabled && _worlds.Count > 1;
+        OnlinePlayerComboBox.IsEnabled = listsEnabled && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var canTransfer = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&

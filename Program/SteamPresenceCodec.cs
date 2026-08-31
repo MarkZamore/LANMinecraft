@@ -17,6 +17,8 @@ public sealed record SteamPeerPresence
     public string PackHash { get; init; } = "";
     /// <summary>The build they are in, by the name of its folder.</summary>
     public string PackName { get; init; } = "";
+    /// <summary>Which release of the launcher they are on.</summary>
+    public int Release { get; init; }
     public string State { get; init; } = SteamPresenceCodec.StateIdle;
     public bool IsSkinAvailable { get; init; }
     public string SkinSha256 { get; init; } = "";
@@ -80,13 +82,19 @@ public static class SteamPresenceCodec
     internal const string WaypointsKey = "lanmc_wp";
     internal const string DiagnosticsKey = "lanmc_diag";
     internal const string BuildKey = "lanmc_build";
+    internal const string ReleaseKey = "lanmc_rel";
 
     /// <summary>Keys the launcher owns; nothing else is touched, e4steam's least of all.</summary>
     public static IReadOnlyList<string> Keys { get; } =
     [
         MarkerKey, VersionKey, NameKey, UuidKey, PackKey,
-        StateKey, SkinKey, WorldKey, WaypointsKey, DiagnosticsKey, BuildKey
+        StateKey, SkinKey, WorldKey, WaypointsKey, DiagnosticsKey, BuildKey, ReleaseKey
     ];
+
+    private static int ReadRelease(string value) =>
+        int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var release) && release > 0
+            ? release
+            : 0;
 
     public static IReadOnlyDictionary<string, string> Encode(SteamPeerPresence presence)
     {
@@ -110,7 +118,8 @@ public static class SteamPresenceCodec
             // Added after the others, and read as absent rather than as wrong
             // where a friend's launcher is older than it: a build nobody named
             // is shown as "in the launcher", which is what it was before.
-            [BuildKey] = Clamp(presence.PackName)
+            [BuildKey] = Clamp(presence.PackName),
+            [ReleaseKey] = presence.Release.ToString(CultureInfo.InvariantCulture)
         };
         return values;
     }
@@ -140,7 +149,10 @@ public static class SteamPresenceCodec
                 SteamId = peer,
                 PersonaName = personaName,
                 ProtocolVersion = version,
-                PlayerName = readKey(NameKey)
+                PlayerName = readKey(NameKey),
+                // Read even here: a launcher too old to talk to is exactly the
+                // one whose number the other player needs to be told.
+                Release = ReadRelease(readKey(ReleaseKey))
             };
         }
 
@@ -161,6 +173,7 @@ public static class SteamPresenceCodec
             MinecraftUuid = readKey(UuidKey),
             PackHash = readKey(PackKey),
             PackName = readKey(BuildKey),
+            Release = ReadRelease(readKey(ReleaseKey)),
             State = NormalizeState(readKey(StateKey)),
             IsSkinAvailable = skinSha.Length > 0,
             SkinSha256 = skinSha,
