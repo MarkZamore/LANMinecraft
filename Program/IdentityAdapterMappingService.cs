@@ -436,9 +436,9 @@ internal sealed class IdentityAdapterMappingService
             descriptor => descriptor == obfPlayer + "Z)V");
         var movePlayer = chunkMap.FindMethod("move", descriptor => descriptor == obfPlayer + ")V");
         var viewDistance = chunkMap.FindField("viewDistance");
-        // The field is not the number a player names. Until 1.19 the game
+        // The field is not the number a player names. Until 1.20 the game
         // stored it as that number plus one and took the one back off wherever
-        // it mattered; from 1.19 it stores it plainly. Rather than keep a table
+        // it mattered; from 1.20 it stores it plainly. Rather than keep a table
         // of which version does which, the hook watches this setter and reads
         // the difference off the field afterwards - the constructor calls it,
         // so the answer is known before anybody can ask for anything.
