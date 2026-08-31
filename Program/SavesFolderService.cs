@@ -37,11 +37,19 @@ public sealed class SavesFolderService(Logger? logger = null)
     public readonly record struct SavesChanges(int Shown, int Hidden, int Adopted);
 
     /// <summary>
-    /// Lays out the instance's saves folder for one build: a junction for every
-    /// world that build may open, and an empty folder holding the name of every
-    /// world it may not, so the game never offers a name that is already a
-    /// world somewhere else.
+    /// Points the instance's saves folder at this build's worlds.
     /// </summary>
+    /// <remarks>
+    /// One junction, on the folder rather than on each world inside it, so
+    /// that every world the game opens is a plain directory. That is the whole
+    /// reason for the layout: 1.20.1 checks a world folder in a way a Windows
+    /// junction cannot pass, and refuses to open one it had happily listed.
+    ///
+    /// Worlds a previous layout left in the instance are moved out first, and
+    /// worlds still lying flat in the Worlds folder are moved into the build
+    /// they belong to. Both are done every time and cost nothing once there is
+    /// nothing left to move.
+    /// </remarks>
     /// <param name="worldsRoot">The portable Worlds folder, where worlds live.</param>
     /// <param name="instanceDirectory">The instance the game will run in.</param>
     /// <param name="buildRelativePath">The build being launched.</param>
@@ -50,105 +58,51 @@ public sealed class SavesFolderService(Logger? logger = null)
         ArgumentNullException.ThrowIfNull(worldsRoot);
         ArgumentNullException.ThrowIfNull(instanceDirectory);
         Directory.CreateDirectory(worldsRoot);
+        WorldLocations.Migrate(worldsRoot, new WorldMetadataService(), logger);
+
+        var buildRoot = WorldLocations.ForBuild(worldsRoot, buildRelativePath);
+        Directory.CreateDirectory(buildRoot);
+        // The link's own parent, which used to be made as a side effect of
+        // making saves a real folder.
+        Directory.CreateDirectory(instanceDirectory);
         var saves = Path.Combine(instanceDirectory, SavesFolderName);
 
-        // The folder-wide junction of older releases is exactly what this
-        // replaces; taking the link away leaves every world where it was.
+        var adopted = 0;
+        if (Directory.Exists(saves) && !IsLink(saves))
+        {
+            // What the per-world layout left behind: worlds the game made in
+            // here, junctions to worlds elsewhere, and the empty folders that
+            // used to hold a name against another build. Only the first are
+            // worth anything.
+            adopted = Adopt(buildRoot, instanceDirectory);
+            foreach (var entry in Directory.EnumerateDirectories(saves).ToList())
+            {
+                if (IsLink(entry)) Directory.Delete(entry);
+                else if (IsEmptyDirectory(entry)) TryDeleteEmptyDirectory(entry);
+            }
+            if (IsEmptyDirectory(saves)) TryDeleteEmptyDirectory(saves);
+        }
+
         if (IsLink(saves))
         {
+            if (PointsAt(saves, buildRoot)) return new SavesChanges(0, 0, adopted);
             Directory.Delete(saves);
         }
-        Directory.CreateDirectory(saves);
 
-        var adopted = Adopt(worldsRoot, instanceDirectory);
-        var metadata = new WorldMetadataService();
-        var shown = 0;
-        var hidden = 0;
-
-        foreach (var world in Directory.EnumerateDirectories(worldsRoot))
+        if (Directory.Exists(saves) || File.Exists(saves))
         {
-            var name = Path.GetFileName(world);
-            var link = Path.Combine(saves, name);
-            var mayOpen = WorldMetadataService.BelongsToBuild(
-                metadata.Read(world)?.BuildRelativePath, buildRelativePath);
-
-            if (mayOpen)
-            {
-                if (IsLink(link))
-                {
-                    if (PointsAt(link, world)) continue;
-                    Directory.Delete(link);
-                }
-                else if (IsEmptyDirectory(link))
-                {
-                    // Empty is not "something real": nothing is lost by taking
-                    // the name back, and leaving it hides the world it stands
-                    // in front of.
-                    TryDeleteEmptyDirectory(link);
-                }
-                else if (Directory.Exists(link) || File.Exists(link))
-                {
-                    // Something real is standing where the junction belongs.
-                    // Whatever it is, it is not this launcher's to remove.
-                    logger?.Warn($"World {name} is not linked into this build: {link} already exists.");
-                    continue;
-                }
-                CreateJunction(link, world);
-                shown++;
-            }
-            else
-            {
-                if (IsLink(link))
-                {
-                    Directory.Delete(link);
-                    hidden++;
-                }
-
-                // And an empty folder is left standing in the withdrawn world's
-                // name. The game asks whether a name is free by trying to make
-                // the folder and catching FileAlreadyExistsException - not by
-                // reading its own world list - so an empty folder is answer
-                // enough, and it is the same answer on 1.18.2, 1.20.1 and
-                // 1.21.1, whose bytecode for this is instruction for
-                // instruction the same. Without it a build that cannot see the
-                // "New World" of another build is offered that name again, and
-                // the player ends up with two worlds nothing can tell apart.
-                // With it the game offers "New World (1)" of its own accord.
-                if (!Directory.Exists(link) && !File.Exists(link))
-                {
-                    Directory.CreateDirectory(link);
-                }
-            }
+            // Something real is standing where the link belongs, and whatever
+            // it is, it is not this launcher's to remove.
+            logger?.Warn($"Worlds are not linked into this build: {saves} already exists and is not a link.");
+            return new SavesChanges(0, 0, adopted);
         }
 
-        foreach (var entry in Directory.EnumerateDirectories(saves).ToList())
+        CreateJunction(saves, buildRoot);
+        if (adopted > 0)
         {
-            var name = Path.GetFileName(entry);
-            if (IsLink(entry))
-            {
-                // A junction whose world has gone - transferred away, or
-                // renamed - is a world the game would list and fail to open.
-                var target = new DirectoryInfo(entry).LinkTarget;
-                if (target is not null && Directory.Exists(target)) continue;
-                Directory.Delete(entry);
-                hidden++;
-            }
-            else if (IsEmptyDirectory(entry) && !Directory.Exists(Path.Combine(worldsRoot, name)))
-            {
-                // A placeholder outlives the world it stood in for, and would
-                // then hold that name against every world made here afterwards
-                // for no reason at all.
-                TryDeleteEmptyDirectory(entry);
-            }
+            logger?.Info($"Worlds moved out of the instance and into the shared folder: {adopted}.");
         }
-
-        if (shown > 0 || hidden > 0 || adopted > 0)
-        {
-            logger?.Info(
-                $"Worlds this build may open: {shown} linked, {hidden} withdrawn" +
-                (adopted > 0 ? $", {adopted} moved into the shared folder" : "") + ".");
-        }
-        return new SavesChanges(shown, hidden, adopted);
+        return new SavesChanges(1, 0, adopted);
     }
 
     /// <summary>
@@ -158,9 +112,9 @@ public sealed class SavesFolderService(Logger? logger = null)
     /// A name already taken in the shared folder is left alone: two different
     /// worlds under one name is not something to resolve by guessing.
     /// </summary>
-    public int Adopt(string worldsRoot, string instanceDirectory)
+    public int Adopt(string destinationRoot, string instanceDirectory)
     {
-        ArgumentNullException.ThrowIfNull(worldsRoot);
+        ArgumentNullException.ThrowIfNull(destinationRoot);
         ArgumentNullException.ThrowIfNull(instanceDirectory);
         var saves = Path.Combine(instanceDirectory, SavesFolderName);
         if (!Directory.Exists(saves) || IsLink(saves)) return 0;
@@ -177,7 +131,7 @@ public sealed class SavesFolderService(Logger? logger = null)
             // leave the world, which is the moment this can be done at all.
             if (IsWorldOpen(entry)) continue;
             var name = Path.GetFileName(entry);
-            var destination = Path.Combine(worldsRoot, name);
+            var destination = Path.Combine(destinationRoot, name);
             // A directory is not a world. The line above already says what one
             // is - a folder with a level.dat in it - and this used to forget it
             // one line later, so an empty folder left behind by a crash or a
@@ -196,7 +150,7 @@ public sealed class SavesFolderService(Logger? logger = null)
             // nobody has to rename anything: what the player sees in the game
             // is the name inside level.dat, which is untouched. The folder is
             // only how the launcher tells two of them apart.
-            var storedName = FreeName(worldsRoot, name);
+            var storedName = FreeName(destinationRoot, name);
             if (storedName.Length == 0)
             {
                 logger?.Warn(
@@ -204,14 +158,11 @@ public sealed class SavesFolderService(Logger? logger = null)
                     $"beside the others, so it stays where it is: {entry}.");
                 continue;
             }
-            destination = Path.Combine(worldsRoot, storedName);
+            destination = Path.Combine(destinationRoot, storedName);
             try
             {
+                Directory.CreateDirectory(destinationRoot);
                 Directory.Move(entry, destination);
-                // Under the name it was stored as, so the pass below does not
-                // then link the same world in a second time under that name and
-                // list it twice.
-                CreateJunction(Path.Combine(saves, storedName), destination);
                 moved++;
                 logger?.Info(storedName == name
                     ? $"World {name} was made here and now lives beside the others."

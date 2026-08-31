@@ -199,9 +199,8 @@ public sealed class WorldMetadataService
         if (string.IsNullOrWhiteSpace(worldsRoot) || !Directory.Exists(worldsRoot)) return [];
 
         var stamped = new List<string>();
-        foreach (var worldPath in Directory.EnumerateDirectories(worldsRoot))
+        foreach (var worldPath in WorldLocations.Enumerate(worldsRoot))
         {
-            if (!File.Exists(Path.Combine(worldPath, "level.dat"))) continue;
 
             // session.lock, and not level.dat: the game writes the lock the
             // moment it opens a world and nothing else ever touches it, while

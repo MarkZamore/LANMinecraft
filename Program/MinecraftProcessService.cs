@@ -815,7 +815,9 @@ public sealed class MinecraftProcessService
                 // Adopt already asks for a level.dat and skips a world the game
                 // still holds, so the sweep is the same one that runs before a
                 // launch and after it - only now it also runs between worlds.
-                saves.Adopt(_paths.Worlds, gameDir);
+                saves.Adopt(
+                    WorldLocations.ForBuild(_paths.Worlds, Path.GetFileName(gameDir)),
+                    gameDir);
             }
         }
         catch (Exception ex) when (
@@ -1199,9 +1201,8 @@ public sealed class MinecraftProcessService
     {
         if (!Directory.Exists(_paths.Worlds)) return;
         var reset = new PlayerModelResetService(_logger);
-        foreach (var world in Directory.EnumerateDirectories(_paths.Worlds))
+        foreach (var world in WorldLocations.Enumerate(_paths.Worlds))
         {
-            if (!File.Exists(Path.Combine(world, "level.dat"))) continue;
             reset.Apply(packDir, world);
         }
     }
