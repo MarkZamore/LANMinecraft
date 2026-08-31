@@ -99,6 +99,11 @@ public final class PortablePerPlayerChunksHooks {
     /** Called where the server is told how far to serve, before it stores it. */
     public static void observeServerDistance(int requested) {
         lastRequested = requested;
+        // A host moving his own slider narrows the world for everybody, and
+        // until this the launcher only noticed on its next five second look.
+        // Nothing is done here beyond saying so: this runs on the tick thread,
+        // inside the setter, before the field it is about to write.
+        PortableLanAutoPublishHooks.serverDistanceChanged(requested);
     }
 
     /** Called where the server takes a client's settings, before it reads them. */
@@ -377,7 +382,18 @@ public final class PortablePerPlayerChunksHooks {
             try {
                 UUID who = uuidOf(player);
                 if (who != null) {
-                    asked = ASKED.get(who);
+                    // What he wants, which is not always what he is holding: a
+                    // change that arrived inside the re-track floor is still
+                    // waiting its turn. How far the world is loaded should
+                    // follow what people asked for rather than what the
+                    // bookkeeping has caught up with, and it matters most
+                    // downwards - a guest who drops from thirty-two to four
+                    // should stop costing the host a thirty-two chunk world at
+                    // once, not when the tracking next gets round to him.
+                    asked = PENDING.get(who);
+                    if (asked == null) {
+                        asked = ASKED.get(who);
+                    }
                 }
             } catch (Throwable exception) {
                 asked = null;
