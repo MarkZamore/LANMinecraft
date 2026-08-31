@@ -10,9 +10,16 @@ namespace Minecraft.Tests;
 /// away: the keys sit in Steam and friends keep reading them, so the player
 /// stayed listed as available. Sending them a bug report then failed on a
 /// connection nobody was waiting on. The launcher now writes one leaving state
-/// on the way out, and a reader who sees it drops that peer at once rather than
-/// waiting out the grace period that exists for keys Steam merely refuses to
-/// serve.
+/// on the way out, and a reader who sees it stops treating that peer as
+/// available at once rather than waiting out the grace period that exists for
+/// keys Steam merely refuses to serve.
+///
+/// Whether they leave the list depends on where they went. Somebody still in
+/// the app this launcher shares closed the launcher and kept playing, and the
+/// keys they left behind still name their build and their release - the
+/// goodbye clears the state, the world and the skin and nothing else - so they
+/// stay listed as being elsewhere, and cannot be sent anything. Somebody who
+/// left the app as well is simply gone.
 /// </summary>
 public sealed class PeerDepartureTests
 {
@@ -20,7 +27,7 @@ public sealed class PeerDepartureTests
     private const ulong FriendSteamId = 76561198000000002;
 
     [Fact]
-    public async Task AFriendWhoClosedTheirLauncher_LeavesTheListAtOnce()
+    public async Task AFriendWhoClosedTheirLauncher_StopsBeingAvailableAtOnce()
     {
         var api = ReadyApi();
         Assert.True(SteamId64.TryFrom(FriendSteamId, out var friendId));
@@ -30,10 +37,39 @@ public sealed class PeerDepartureTests
         await client.StartAsync(CancellationToken.None);
         var directory = new SteamPeerDirectory(client);
         directory.Refresh();
-        Assert.Single(directory.Peers);
+        Assert.False(Assert.Single(directory.Peers).IsOutsideLauncher);
 
         // Their launcher says goodbye; the keys stay readable, as Steam leaves
-        // them, and say "offline".
+        // them, and say "offline". This friend is still in the shared app - the
+        // game is what they closed the launcher to keep playing.
+        Publish(api, FriendPresence(friendId) with { State = SteamPresenceCodec.StateOffline });
+        directory.Refresh();
+
+        // Listed, but as somebody the launcher can no longer reach: nothing is
+        // sent to them, which is what the goodbye was written for.
+        var peer = Assert.Single(directory.Peers);
+        Assert.True(peer.IsOutsideLauncher);
+        Assert.False(peer.IsMinecraftRunning);
+    }
+
+    /// <summary>
+    /// And leaving the game as well is leaving the list.
+    /// </summary>
+    [Fact]
+    public async Task AFriendWhoClosedEverything_LeavesTheListAtOnce()
+    {
+        var api = ReadyApi();
+        api.FriendList.Clear();
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: false, LobbyId: 0));
+        Assert.True(SteamId64.TryFrom(FriendSteamId, out var friendId));
+        Publish(api, FriendPresence(friendId));
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var directory = new SteamPeerDirectory(client);
+        directory.Refresh();
+        Assert.Single(directory.Peers);
+
         Publish(api, FriendPresence(friendId) with { State = SteamPresenceCodec.StateOffline });
         directory.Refresh();
 
@@ -42,12 +78,14 @@ public sealed class PeerDepartureTests
 
     /// <summary>
     /// The goodbye is written once and Steam keeps serving it. Reading it twice
-    /// must not put them back.
+    /// must not put them back as available, and must not flicker.
     /// </summary>
     [Fact]
-    public async Task TheGoodbyeKeepsThemGone()
+    public async Task TheGoodbyeKeepsThemUnavailable()
     {
         var api = ReadyApi();
+        api.FriendList.Clear();
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: false, LobbyId: 0));
         Assert.True(SteamId64.TryFrom(FriendSteamId, out var friendId));
         Publish(api, FriendPresence(friendId) with { State = SteamPresenceCodec.StateOffline });
 

@@ -126,6 +126,78 @@ public sealed class PeerVisibilityTests
         Assert.Equal("anuvenn", peer.PlayerName);
     }
 
+    /// <summary>
+    /// Closing the launcher while the game runs. The goodbye keys keep the
+    /// build and the release - only the state, the world and the skin are
+    /// cleared - so somebody reading them, whether they had seen this player
+    /// before or not, still learns both.
+    /// </summary>
+    [Fact]
+    public async Task AGoodbyeFromSomebodyStillInTheGame_KeepsWhatTheyLastSaid()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
+        var leaving = Presence() with
+        {
+            PackName = "LL8 Extended",
+            Release = 312,
+            State = SteamPresenceCodec.StateOffline
+        };
+        foreach (var (key, value) in SteamPresenceCodec.Encode(leaving))
+        {
+            api.FriendPresence[(FriendSteamId, key)] = value;
+        }
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        // A launcher that has never seen this player before: everything it
+        // knows has to come out of the keys.
+        var directory = new SteamPeerDirectory(client);
+
+        directory.Refresh();
+
+        var peer = Assert.Single(directory.Peers);
+        Assert.True(peer.IsOutsideLauncher);
+        Assert.Equal("LL8 Extended", peer.PackName);
+        Assert.Equal(312, peer.Release);
+    }
+
+    /// <summary>
+    /// And a goodbye from somebody who left the game as well is what it always
+    /// was: gone, at once, rather than in three minutes.
+    /// </summary>
+    [Fact]
+    public async Task AGoodbyeFromSomebodyWhoLeftAltogether_DropsThem()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = LocalSteamId,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: false, LobbyId: 0));
+        foreach (var (key, value) in SteamPresenceCodec.Encode(
+                     Presence() with { State = SteamPresenceCodec.StateOffline }))
+        {
+            api.FriendPresence[(FriendSteamId, key)] = value;
+        }
+
+        await using var client = new SteamClientService(api);
+        await client.StartAsync(CancellationToken.None);
+        var directory = new SteamPeerDirectory(client);
+
+        directory.Refresh();
+
+        Assert.Empty(directory.Peers);
+    }
+
     private static SteamPeerPresence Presence()
     {
         Assert.True(SteamId64.TryFrom(FriendSteamId, out var peer));
