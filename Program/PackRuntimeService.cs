@@ -22,6 +22,12 @@ namespace Minecraft;
 
 public sealed class PackRuntimeService : IDisposable
 {
+
+    /// <summary>
+    /// How a child process's console is read. Java writes UTF-8; .NET would
+    /// otherwise decode the pipe in the console's own code page.
+    /// </summary>
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
     // Bumped to 3 when the game moved to the launcher-managed Java 25 runtime:
     // the recorded java path had to be re-resolved for everyone.
     // A cache generation, not a data format: it is bumped to throw the cached
@@ -931,6 +937,12 @@ internal sealed class NeoForgeLoaderProvider : IPackLoaderProvider
 
 internal static class OfficialLoaderInstaller
 {
+    /// <summary>
+    /// How the installer's console is read. It is Java, so UTF-8, whatever the
+    /// code page of the console this launcher happens to have.
+    /// </summary>
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
+
     public static async Task<string> InstallAsync(
         PackLoaderInstallationContext context,
         string installerRelativePath,
@@ -997,7 +1009,10 @@ internal static class OfficialLoaderInstaller
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true
+                RedirectStandardError = true,
+                // Java, so UTF-8 whatever the console's code page is.
+                StandardOutputEncoding = Utf8NoBom,
+                StandardErrorEncoding = Utf8NoBom
             };
             startInfo.ArgumentList.Add($"-Djava.io.tmpdir={javaTemp}");
             startInfo.ArgumentList.Add("-jar");

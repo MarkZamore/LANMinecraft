@@ -12,6 +12,12 @@ namespace Minecraft;
 
 public sealed class MinecraftProcessService
 {
+
+    /// <summary>
+    /// How a child process's console is read. Java writes UTF-8; .NET would
+    /// otherwise decode the pipe in the console's own code page.
+    /// </summary>
+    private static readonly UTF8Encoding Utf8NoBom = new(false);
     /// <summary>
     /// Options the modded stack needs on Java 24 and later. JEP 472 warns on every
     /// JNI call from unenabled code (LWJGL, JNA and Netty all use it) and JEP 498
@@ -588,6 +594,16 @@ public sealed class MinecraftProcessService
         // without these pipes the only trace of the failure would be an exit code.
         minecraftProcess.StartInfo.RedirectStandardOutput = true;
         minecraftProcess.StartInfo.RedirectStandardError = true;
+        // Read as UTF-8, which is what the game writes: it is started with
+        // -Dfile.encoding=UTF-8 and every modern JVM says so on the console
+        // too. Without this .NET decodes the pipe in the console's own code
+        // page, which on a Russian Windows is not UTF-8 - the mod named oωo
+        // arrived in the captured log as oП‰o, and everything Cyrillic the game
+        // ever said went the same way. That text is not only read by people:
+        // it is scanned for the phrases a JVM uses when it runs out of memory,
+        // and it is what a bug report carries.
+        minecraftProcess.StartInfo.StandardOutputEncoding = Utf8NoBom;
+        minecraftProcess.StartInfo.StandardErrorEncoding = Utf8NoBom;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
         var startupOutput = new StartupOutputBuffer();
         startupOutput.MirrorTo(gameDir);
