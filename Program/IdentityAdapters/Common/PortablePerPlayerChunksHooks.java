@@ -176,8 +176,20 @@ public final class PortablePerPlayerChunksHooks {
         }
         Object chunkMap = chunkMapOf(player);
         int server = chunkMap == null ? -1 : serverRadius(chunkMap);
-        if (server <= 0 || effective(server, pending) == effective(server, ASKED.get(who))) {
-            // Nothing he would notice, so the note is the whole of it.
+        Integer holding = ASKED.get(who);
+        if (server <= 0 || effective(server, pending) <= effective(server, holding)) {
+            // Nothing to fetch, so the note is the whole of it. Two cases meet
+            // here. One is a number that changes nothing at all. The other is a
+            // player asking for less than he has, and he is the reason this
+            // branch exists rather than only the first: putting him back on the
+            // map would forget and re-send every chunk of the smaller ring,
+            // every one of which he is already holding. That is the largest
+            // burst this hook can produce, aimed at the one player who has just
+            // said he wants less - and on a link where chunks are the
+            // bottleneck it stalls everything he does until it drains. Asking
+            // for less should cost nothing, and now it does: the note narrows
+            // him at once, and the outer ring he keeps is stopped at his own
+            // client, which draws no further than his own slider.
             PENDING.remove(who);
             remember(who, pending);
             return;
@@ -189,9 +201,8 @@ public final class PortablePerPlayerChunksHooks {
             return;
         }
         RETRACKED.put(who, Long.valueOf(now));
-        Integer before = ASKED.get(who);
         PENDING.remove(who);
-        retrack(chunkMap, player, who, before, pending.intValue());
+        retrack(chunkMap, player, who, holding, pending.intValue());
     }
 
     /**
