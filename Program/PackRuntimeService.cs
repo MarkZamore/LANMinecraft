@@ -116,9 +116,19 @@ public sealed class PackRuntimeService : IDisposable
         {
             AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
         }
+        // The Java this pack needs, not the one the launcher pins for itself.
+        // Which Java a pack runs on became a property of its Minecraft - 17 for
+        // 1.18.2 and 1.20.1, 21 from 1.20.5 - but this comparison was left
+        // measuring every runtime against the single old constant. A pack on 17
+        // could therefore never match what it had prepared, so every launch of
+        // All The Fabric 3 and RPG Ars Nouveau threw away a good runtime and
+        // built it again from Mojang's metadata. That was merely slow until the
+        // day those hosts were unreachable, and then it was a pack that would
+        // not start at all with everything it needed already on the disk.
+        var requiredJava = JavaRuntimeCatalog.RequiredFor(descriptor);
         if (state is not null &&
             string.Equals(state.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(state.JavaRuntimeId, PortableJavaRuntimeService.PinnedRuntimeId, StringComparison.Ordinal) &&
+            string.Equals(state.JavaRuntimeId, requiredJava.RuntimeId, StringComparison.Ordinal) &&
             ValidateSourceClientJarState(sourceClientJar, state) &&
             ValidateState(runtimeRoot, state))
         {
@@ -126,7 +136,7 @@ public sealed class PackRuntimeService : IDisposable
             var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime
-                .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
+                .EnsureAsync(_paths.JavaRuntimes, requiredJava, progress, token)
                 .ConfigureAwait(false);
             await EnsureMojangMappingsAsync(runtimeRoot, descriptor, token).ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
@@ -165,8 +175,11 @@ public sealed class PackRuntimeService : IDisposable
             CopyClientJar(sourceClientJar, clientFile.Path!);
         }
 
-        await RuntimeRetry.RunAsync(
-            retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
+        await FromMojangAsync(
+            $"Minecraft {descriptor.MinecraftVersion}",
+            () => RuntimeRetry.RunAsync(
+                retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
+                token),
             token).ConfigureAwait(false);
         // Mojang's component keeps running the loader installer, which NeoForge
         // 21.1.244 was built against; only the game moves to the pinned runtime.
@@ -215,8 +228,11 @@ public sealed class PackRuntimeService : IDisposable
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
-        await RuntimeRetry.RunAsync(
-            retryToken => launcher.InstallAsync(profile, cancellationToken: retryToken).AsTask(),
+        await FromMojangAsync(
+            $"the files {loaderName} needs",
+            () => RuntimeRetry.RunAsync(
+                retryToken => launcher.InstallAsync(profile, cancellationToken: retryToken).AsTask(),
+                token),
             token).ConfigureAwait(false);
 
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Verifying, "Проверка"));
@@ -412,6 +428,34 @@ public sealed class PackRuntimeService : IDisposable
                                        or UnauthorizedAccessException or TaskCanceledException)
         {
             _logger.Warn($"Mojang's mappings could not be fetched: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Runs a step that fetches from Mojang, and says something a player can do
+    /// something about when those hosts cannot be reached.
+    ///
+    /// What a refused connection carries is Windows' own sentence: it arrives
+    /// in the system language, names a host and a port, and tells nobody what
+    /// to do about it. It was reaching players unchanged, in a system dialog
+    /// this launcher is not supposed to show at all.
+    ///
+    /// A cancelled launch is not a network failure and must keep its own
+    /// meaning, so the token is asked before the blame is placed.
+    /// </summary>
+    private static async Task FromMojangAsync(string what, Func<Task> step, CancellationToken token)
+    {
+        try
+        {
+            await step().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+            when (ex is HttpRequestException ||
+                (ex is TaskCanceledException && !token.IsCancellationRequested))
+        {
+            throw new InvalidOperationException(
+                $"{what} could not be downloaded: Mojang's servers did not answer. Check the connection, " +
+                "or start a pack that is already prepared.", ex);
         }
     }
 
