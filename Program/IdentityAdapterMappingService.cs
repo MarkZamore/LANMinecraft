@@ -13,6 +13,15 @@ internal sealed class IdentityAdapterMappingService
     private const string FtbTeleportFromMapPacket = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket";
     private const string SolarFluxResourcePack = "org/zeith/solarflux/client/SolarFluxResourcePack";
     private const string LoginListener = "net/minecraft/server/network/ServerLoginPacketListenerImpl";
+    private const string GameListener = "net/minecraft/server/network/ServerGamePacketListenerImpl";
+    // The half of the listener that 1.20.2 split out and shared with the
+    // configuration phase. Before that release there is no such class and the
+    // method this feature reads sits on the listener itself.
+    private const string CommonListener = "net/minecraft/server/network/ServerCommonPacketListenerImpl";
+    private const string MovePlayerPacket =
+        "net/minecraft/network/protocol/game/ServerboundMovePlayerPacket";
+    private const string MoveVehiclePacket =
+        "net/minecraft/network/protocol/game/ServerboundMoveVehiclePacket";
     private const string HelloPacket = "net/minecraft/network/protocol/login/ServerboundHelloPacket";
     private const string MinecraftServer = "net/minecraft/server/MinecraftServer";
     private const string Connection = "net/minecraft/network/Connection";
@@ -152,6 +161,7 @@ internal sealed class IdentityAdapterMappingService
         var perPlayerProperties = new Dictionary<string, string>(StringComparer.Ordinal);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
         AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
+        var guestMovement = AddGuestMovementProperties(mappings, perPlayerProperties);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
             { YggdrasilSessionService, TextureUrlChecker, GameProfile };
         if (lanScreen is not null)
@@ -161,6 +171,7 @@ internal sealed class IdentityAdapterMappingService
         }
 
         AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
+        AddGuestMovementTargets(mappings, wanted, guestMovement);
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
@@ -532,6 +543,105 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>
+    /// Letting a guest keep the ground he says he is standing on.
+    /// </summary>
+    /// <remarks>
+    /// Minecraft measures every movement packet against how far a player could
+    /// have travelled since the last one and puts him back where he was if the
+    /// step is too long. On a public server that is what stops a flying cheat.
+    /// On a world two friends opened to each other it stops nothing and costs
+    /// something: half a second of packets not arriving over a Steam relay is
+    /// enough to make the next one look like a leap, and the guest is thrown
+    /// backwards for his own connection. Measured on All The Fabric 3 with
+    /// chunk pacing already in and its queue never once backed up - the ground
+    /// was arriving fine and he was still being pulled back twice in four
+    /// minutes.
+    ///
+    /// The game already exempts one player from the test: whoever opened the
+    /// world. The exemption is there for this exact reason and stops at the
+    /// host only because vanilla knows nothing of a world opened to a friend
+    /// rather than to the internet. So it is widened to everybody in one.
+    ///
+    /// Two methods, named. The same question decides who may change the
+    /// world's difficulty and what happens when a connection ends, and neither
+    /// is a guest's to answer - which is why nothing here touches the method
+    /// that answers it.
+    /// </remarks>
+    private static bool AddGuestMovementProperties(
+        RuntimeNames? mappings,
+        Dictionary<string, string> properties)
+    {
+        // Every list, before anything can return: the preflight asks for them
+        // by name and throws on one it was not given, taking the whole adapter
+        // with it - skins included.
+        properties["guestMovementEnabled"] = "false";
+        properties["movementListenerClasses"] = GameListener;
+        properties["handleMovePlayerMethods"] = "handleMovePlayer";
+        properties["handleMovePlayerDescriptors"] = $"(L{MovePlayerPacket};)V";
+        properties["handleMoveVehicleMethods"] = "handleMoveVehicle";
+        properties["handleMoveVehicleDescriptors"] = $"(L{MoveVehiclePacket};)V";
+        properties["singleplayerOwnerMethods"] = "isSingleplayerOwner";
+        properties["singleplayerOwnerClasses"] = GameListener;
+        if (mappings is null) return false;
+
+        var listener = mappings.FindClass(GameListener);
+        var movePlayer = mappings.FindClass(MovePlayerPacket);
+        var moveVehicle = mappings.FindClass(MoveVehiclePacket);
+        if (listener is null || movePlayer is null || moveVehicle is null) return false;
+
+        var handleMovePlayer = listener.FindMethod(
+            "handleMovePlayer", descriptor => descriptor == $"(L{movePlayer.ObfName};)V");
+        var handleMoveVehicle = listener.FindMethod(
+            "handleMoveVehicle", descriptor => descriptor == $"(L{moveVehicle.ObfName};)V");
+        // On the listener until 1.20.1 and on the shared parent from 1.20.2.
+        // Both are asked, and whichever answers is also what names the owner
+        // the call carries in the bytecode.
+        var common = mappings.FindClass(CommonListener);
+        var owner = listener.FindMethod("isSingleplayerOwner", descriptor => descriptor == "()Z")
+            ?? common?.FindMethod("isSingleplayerOwner", descriptor => descriptor == "()Z");
+        if (handleMovePlayer is null || handleMoveVehicle is null || owner is null) return false;
+
+        properties["guestMovementEnabled"] = "true";
+        properties["movementListenerClasses"] = JoinAliases(listener);
+        properties["handleMovePlayerMethods"] = JoinAliases(handleMovePlayer);
+        properties["handleMovePlayerDescriptors"] = JoinAliases(
+            $"(L{movePlayer.RuntimeName};)V", $"(L{movePlayer.ObfName};)V");
+        properties["handleMoveVehicleMethods"] = JoinAliases(handleMoveVehicle);
+        properties["handleMoveVehicleDescriptors"] = JoinAliases(
+            $"(L{moveVehicle.RuntimeName};)V", $"(L{moveVehicle.ObfName};)V");
+        properties["singleplayerOwnerMethods"] = JoinAliases(owner);
+        // Both, and not only the class that declares it. A call to an
+        // inherited method carries the name of the class it was called on, so
+        // on 1.20.2 and later the instruction inside the listener says the
+        // listener even though the method lives on the parent.
+        properties["singleplayerOwnerClasses"] = common is null
+            ? JoinAliases(listener)
+            : JoinAliases(JoinAliases(listener), JoinAliases(common));
+        return true;
+    }
+
+    /// <summary>
+    /// The listener, named only where both its movement handlers and the
+    /// question inside them were found.
+    /// </summary>
+    /// <remarks>
+    /// A target the transformer will not change fails the preflight on
+    /// byte equality and takes the whole adapter down with it, so this names
+    /// nothing on a runtime where the feature switched itself off.
+    /// </remarks>
+    private static void AddGuestMovementTargets(
+        RuntimeNames? mappings,
+        HashSet<string> targets,
+        bool guestMovement)
+    {
+        if (!guestMovement) return;
+        var listener = mappings?.FindClass(GameListener);
+        if (listener is null) return;
+        targets.Add(listener.RuntimeName);
+        targets.Add(listener.ObfName);
+    }
+
+    /// <summary>
     /// Handing a guest his chunks a few at a time instead of all at once.
     /// </summary>
     /// <remarks>
@@ -851,6 +961,7 @@ internal sealed class IdentityAdapterMappingService
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
         AddChunkPacingProperties(mappings, properties, perPlayerChunks);
+        var guestMovement = AddGuestMovementProperties(mappings, properties);
         AddServeDistanceProperties(mappings, properties);
 
         AddSkinProperties(properties);
@@ -870,6 +981,7 @@ internal sealed class IdentityAdapterMappingService
             requiredTargets.Add(lanScreen.ObfName);
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
+        AddGuestMovementTargets(mappings, requiredTargets, guestMovement);
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
         // same rule on the session service instead.
@@ -1129,6 +1241,10 @@ internal sealed class IdentityAdapterMappingService
         private static HashSet<string> Required { get; } = new(StringComparer.Ordinal)
         {
             LoginListener,
+            GameListener,
+            CommonListener,
+            MovePlayerPacket,
+            MoveVehiclePacket,
             HelloPacket,
             MinecraftServer,
             Connection,
