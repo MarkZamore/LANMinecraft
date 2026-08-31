@@ -127,19 +127,29 @@ public final class PortablePerPlayerChunksHooks {
     /**
      * How many chunks one player may be handed in one tick.
      *
-     * The number is the link, not the machine. This launcher measures about
-     * four and a half megabytes a second across a Steam relay, and the packs
-     * it runs cost something like twenty-four kilobytes a chunk. Eight a tick
-     * is a hundred and sixty a second, near four megabytes - under the link,
-     * with about a seventh left over for everything that is not ground, which
-     * is the entire point of the exercise.
+     * A ceiling for a slow link, not a rate this aims at. It was sized for the
+     * worst case the launcher had measured - about four and a half megabytes a
+     * second through a Steam relay, against packs costing something like
+     * twenty-four kilobytes a chunk - so eight a tick is a hundred and sixty a
+     * second, near four megabytes, with about a seventh of the link left for
+     * everything that is not ground.
+     *
+     * What was then measured on a real pair is that the ceiling is never
+     * reached: every minute of every session so far reports nothing left
+     * waiting, at a fifth of this budget or less, because those two play over
+     * a direct link at two milliseconds rather than through a relay at all. So
+     * on that pair this delays nothing and spares nothing either - the flood it
+     * was written against was not what was hurting them. It is kept because the
+     * relay is the case it was written for and a pair who really are on one
+     * would still meet it, and because a ceiling that is never reached costs a
+     * comparison per chunk.
      *
      * A full view at the launcher's own ceiling of sixteen is 33 by 33, which
-     * is 1089 chunks and under seven seconds at this rate; a view of eight is
-     * 289 and under two. Both are far inside the thirty seconds a client waits
-     * before it decides the server is gone. Vanilla starts at nine and then
-     * adapts, because its client says how fast it is keeping up; this cannot
-     * ask, so it errs the other way.
+     * is 1089 chunks and under seven seconds even at this rate; a view of eight
+     * is 289 and under two. Both are far inside the thirty seconds a client
+     * waits before it decides the server is gone. Vanilla starts at nine and
+     * then adapts, because its client says how fast it is keeping up; this
+     * cannot ask, so it errs the other way.
      */
     private static final int CHUNKS_PER_TICK = 8;
 
