@@ -171,6 +171,19 @@ public sealed class SteamPeerDirectory(
                 peerId,
                 friend.PersonaName,
                 key => api.GetFriendRichPresence(friend.SteamId64, key));
+            // Somebody in the same app who publishes none of our keys is in
+            // Minecraft without this launcher. They are listed and said to be
+            // elsewhere, because "not in the list at all" is what a player
+            // reads as "offline" - and then asks why a world cannot be sent to
+            // someone they can see playing.
+            presence ??= friend.IsInSharedApp
+                ? new SteamPeerPresence
+                {
+                    SteamId = peerId,
+                    PersonaName = friend.PersonaName,
+                    IsOutsideLauncher = true
+                }
+                : null;
             if (presence is null) continue;
 
             // A goodbye is not a presence. Their launcher wrote it on the way
