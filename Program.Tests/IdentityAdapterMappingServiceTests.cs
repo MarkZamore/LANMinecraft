@@ -589,7 +589,8 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                      // there since per-player render distance went in and were
                      // never listed here, which held only because the builder
                      // happened to name them anyway.
-                     "chunkMapClasses", "serverPlayerClasses", "trackedEntityClasses"
+                     "chunkMapClasses", "serverPlayerClasses", "trackedEntityClasses",
+                     "movementListenerClasses"
                  })
         {
             Assert.False(string.IsNullOrWhiteSpace(properties.GetValueOrDefault(required)), required);

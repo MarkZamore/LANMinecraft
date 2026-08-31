@@ -37,6 +37,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableXaeroWaypointTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (isAlias("movementListenerClasses", className)) {
+                transformer = new PortableGuestMovementTransformer();
             } else if (isAlias("chunkMapClasses", className) ||
                 isAlias("serverPlayerClasses", className) ||
                 isAlias("trackedEntityClasses", className)) {
@@ -65,6 +67,8 @@ public final class PortableIdentityPreflight {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (isAlias("movementListenerClasses", className)) {
+                verifyGuestMovementTargets(className, transformed);
             } else if (isAlias("chunkMapClasses", className) ||
                 isAlias("serverPlayerClasses", className) ||
                 isAlias("trackedEntityClasses", className)) {
@@ -370,11 +374,38 @@ public final class PortableIdentityPreflight {
         }
     }
 
+    /**
+     * Both movement handlers, and only those two.
+     *
+     * Counted rather than found, because the same question is asked four more
+     * times in this class about things that are not a guest's to decide. One
+     * call means a handler was missed and the guest is still thrown back in
+     * vehicles or on foot; more than two means the answer was widened past
+     * where it was meant to go.
+     */
+    private static void verifyGuestMovementTargets(String className, byte[] transformed) throws Exception {
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int trusted = 0;
+        for (MethodNode method : patched.methods) {
+            for (var instruction = method.instructions.getFirst();
+                 instruction != null;
+                 instruction = instruction.getNext()) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableGuestMovementHooks") &&
+                    call.name.equals("trustedLikeTheHost")) {
+                    trusted++;
+                }
+            }
+        }
+        requireHookCount(className, "trustedLikeTheHost", trusted, 2);
+    }
+
     private static void requireHookCount(String className, String hook, int found, int wanted) {
         if (found != wanted) {
             throw new IllegalStateException(
-                "Per-player chunk transformer inserted " + found + " calls to " + hook + " in " +
-                    className + " instead of " + wanted + ".");
+                "A transformer inserted " + found + " calls to " + hook + " in " + className +
+                    " instead of " + wanted + ".");
         }
     }
 
