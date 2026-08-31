@@ -838,9 +838,17 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
     private string InstallReceivedWorld(string extractedWorldPath, string? worldName)
     {
         var safeWorldName = GetSafeWorldName(worldName);
-        var worldDir = GetAvailableWorldDirectory(safeWorldName);
+        // Straight into the folder of the build it came from, which the world
+        // carries with it. A world with no build named goes to the common
+        // folder: no build will list it, and that is the safe answer - opening
+        // one under mods it does not know is how its blocks are lost. Landing
+        // it in the right place now rather than letting the next launch move it
+        // means it is where the player looks the moment it arrives.
+        var build = new WorldMetadataService().Read(extractedWorldPath)?.BuildRelativePath;
+        var destinationRoot = WorldLocations.ForBuild(_paths.Worlds, build ?? "");
+        var worldDir = GetAvailableWorldDirectory(safeWorldName, destinationRoot);
         _paths.EnsureUnderRoot(worldDir);
-        Directory.CreateDirectory(_paths.Worlds);
+        Directory.CreateDirectory(destinationRoot);
         Directory.Move(extractedWorldPath, worldDir);
         _logger.Info($"Received world installed: {Path.GetFileName(worldDir)}.");
         return worldDir;
@@ -1812,9 +1820,10 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
-    private string GetAvailableWorldDirectory(string safeWorldName)
+    private string GetAvailableWorldDirectory(string safeWorldName, string? root = null)
     {
-        var basePath = Path.Combine(_paths.Worlds, safeWorldName);
+        root ??= _paths.Worlds;
+        var basePath = Path.Combine(root, safeWorldName);
         if (!Directory.Exists(basePath) && !File.Exists(basePath))
         {
             return basePath;
@@ -1822,7 +1831,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 
         for (var index = 2; ; index++)
         {
-            var candidate = Path.Combine(_paths.Worlds, $"{safeWorldName} ({index})");
+            var candidate = Path.Combine(root, $"{safeWorldName} ({index})");
             if (!Directory.Exists(candidate) && !File.Exists(candidate))
             {
                 return candidate;
