@@ -7,8 +7,24 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 public final class PortableLanAutoPublishHooks {
-    /** The game's own maximum view distance, and as far as a shared world is served. */
-    private static final int SERVE_DISTANCE_LIMIT = 32;
+    /**
+     * As far as a shared world is ever served, whatever anybody asks for.
+     *
+     * The game's own maximum is thirty-two and this used to match it. It does
+     * not any more, because thirty-two does not arrive: a view that wide is
+     * something over a hundred megabytes of chunks, a Steam relay carries about
+     * four and a half a second by this launcher's own measurements, and a
+     * client gives up on a server that has sent it nothing for thirty seconds.
+     * The guest asking for thirty-two was therefore timed out by the arithmetic
+     * of her own request, again and again, while the host's machine spent
+     * itself generating ground she would never be shown.
+     *
+     * Sixteen is a quarter of the chunks and fits with room to spare. Nobody
+     * has to know: a client renders the smaller of its own slider and what the
+     * server announces, so a player who leaves his at thirty-two simply sees
+     * sixteen and keeps playing.
+     */
+    private static final int SERVE_DISTANCE_LIMIT = 16;
 
     // One publish attempt per screen instance: Screen.resize() re-runs init() on
     // the same instance and must not re-publish or discard user edits.
