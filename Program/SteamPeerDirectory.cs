@@ -12,9 +12,13 @@
 public sealed class SteamPeerDirectory(
     SteamClientService client,
     IPeerTransport? transport = null,
-    Logger? logger = null)
+    Logger? logger = null,
+    // Two of the answers here are about how long something has been true, and
+    // a test cannot wait ten seconds to ask one of them.
+    Func<DateTimeOffset>? clock = null)
 {
     private readonly ISteamApiFacade api = client.Api;
+    private readonly Func<DateTimeOffset> clock = clock ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>
     /// How long a peer survives after its keys stop being readable. Generous
@@ -47,7 +51,52 @@ public sealed class SteamPeerDirectory(
 
     private static readonly TimeSpan RequestInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// When each friend was first asked, and how long to wait after that before
+    /// concluding they are in something else.
+    /// </summary>
+    /// <remarks>
+    /// Asking is not answering: RequestFriendRichPresence returns at once and
+    /// Steam delivers whenever it likes. Read the keys in the same breath and
+    /// they are empty - which looks exactly like a friend who is not running
+    /// this launcher at all. Calling that "in another game" would libel every
+    /// friend for the first seconds of their session.
+    /// </remarks>
+    private readonly Dictionary<ulong, DateTimeOffset> _firstAsked = [];
+
+    private static readonly TimeSpan OutsideGrace = TimeSpan.FromSeconds(10);
+
     public event EventHandler<IReadOnlyList<SteamPeerPresence>>? PeersChanged;
+
+    /// <summary>
+    /// Whether a friend without our keys can be called elsewhere yet.
+    /// </summary>
+    /// <remarks>
+    /// Two things have to be true before saying it, and both are about not
+    /// saying it wrongly. Steam has to have had time to answer the request for
+    /// their keys, or a friend who just opened the launcher is announced as
+    /// being in another game for as long as it takes Steam to get round to it.
+    /// And whoever is already known to be here stays here: a read that comes
+    /// back empty is Steam being Steam, not somebody leaving, which is the
+    /// whole reason a peer is given three minutes of grace in the first place.
+    /// Their launcher says goodbye on the way out, and that clears them at
+    /// once, so the honest case is not slowed by this.
+    /// </remarks>
+    private bool IsElsewhere(SteamFriendInfo friend, DateTimeOffset now)
+    {
+        if (!friend.IsInSharedApp) return false;
+        if (!_firstAsked.TryGetValue(friend.SteamId64, out var asked) ||
+            now - asked < OutsideGrace)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            return !_peers.TryGetValue(friend.SteamId64, out var known) ||
+                   known.Presence.IsOutsideLauncher;
+        }
+    }
 
     /// <summary>Everyone currently considered online, newest state first seen order.</summary>
     public IReadOnlyList<SteamPeerPresence> Peers
@@ -117,7 +166,7 @@ public sealed class SteamPeerDirectory(
     public void Introduce(SteamPeerPresence presence)
     {
         ArgumentNullException.ThrowIfNull(presence);
-        var now = DateTimeOffset.UtcNow;
+        var now = clock();
         bool changed;
         lock (_gate)
         {
@@ -139,7 +188,7 @@ public sealed class SteamPeerDirectory(
     {
         if (!client.Status.IsReady) return;
 
-        var now = DateTimeOffset.UtcNow;
+        var now = clock();
         var changed = false;
         var local = client.Status.SteamId64;
 
@@ -164,6 +213,7 @@ public sealed class SteamPeerDirectory(
                 now - asked >= RequestInterval)
             {
                 _lastRequested[friend.SteamId64] = now;
+                _firstAsked.TryAdd(friend.SteamId64, now);
                 api.RequestFriendRichPresence(friend.SteamId64);
             }
 
@@ -171,12 +221,18 @@ public sealed class SteamPeerDirectory(
                 peerId,
                 friend.PersonaName,
                 key => api.GetFriendRichPresence(friend.SteamId64, key));
-            // Somebody in the same app who publishes none of our keys is in
-            // Minecraft without this launcher. They are listed and said to be
-            // elsewhere, because "not in the list at all" is what a player
-            // reads as "offline" - and then asks why a world cannot be sent to
-            // someone they can see playing.
-            presence ??= friend.IsInSharedApp
+            // Somebody in the same app publishing none of our keys is in
+            // something else that uses it. Spacewar is Valve's example app and
+            // half the internet borrows its id - engines default to it while a
+            // game is in development, projects that never shipped on Steam use
+            // it for the friends list and the peer-to-peer punch-through, and
+            // cracked games announce themselves as it. So this says "another
+            // game" and not "Minecraft": it has no way of knowing which.
+            //
+            // They are listed rather than hidden because "not in the list at
+            // all" is what a player reads as offline, and then asks why a world
+            // cannot be sent to somebody they can plainly see playing.
+            presence ??= IsElsewhere(friend, now)
                 ? new SteamPeerPresence
                 {
                     SteamId = peerId,

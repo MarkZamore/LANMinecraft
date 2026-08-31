@@ -250,6 +250,7 @@ public sealed class PackInstanceService : IDisposable
         RestoreModOwnedDirectories(gameDir);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
+        state.PackRevision = ReadPackRevision(packDir);
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, StateJsonOptions));
         return new PackInstanceContext(packDir, gameDir, clientJar);
     }
@@ -264,6 +265,12 @@ public sealed class PackInstanceService : IDisposable
     {
         var previousFiles = new Dictionary<string, SourceFileState>(state.Files, StringComparer.OrdinalIgnoreCase);
         var currentFiles = new Dictionary<string, SourceFileState>(StringComparer.OrdinalIgnoreCase);
+        // Whether the recorded hashes still describe the pack on disk. See
+        // ReadSourceState: across an update they can be silently wrong, and
+        // the revision is the only thing that says an update happened.
+        var packRevision = ReadPackRevision(packDir);
+        var hashesAreCurrent = packRevision.Length > 0 &&
+            string.Equals(packRevision, state.PackRevision, StringComparison.Ordinal);
         string? conflictRoot = null;
         var conflictCount = 0;
         var owned = PackOwnedFileService.Load(packDir, _logger);
@@ -291,7 +298,7 @@ public sealed class PackInstanceService : IDisposable
             token.ThrowIfCancellationRequested();
             var relative = NormalizeRelativePath(Path.GetRelativePath(packDir, sourcePath));
             previousFiles.TryGetValue(relative, out var previous);
-            var source = ReadSourceState(sourcePath, previous);
+            var source = ReadSourceState(sourcePath, hashesAreCurrent ? previous : null);
             currentFiles[relative] = source;
             var destination = Path.Combine(gameDir, relative.Replace('/', Path.DirectorySeparatorChar));
             if (Directory.Exists(destination))
@@ -897,6 +904,49 @@ public sealed class PackInstanceService : IDisposable
         .Replace(Path.DirectorySeparatorChar, '_')
         .Replace(Path.AltDirectorySeparatorChar, '_');
 
+    /// <summary>The revision the pack folder was last synced to, or empty.</summary>
+    private static string ReadPackRevision(string packDir)
+    {
+        try
+        {
+            var statePath = Path.Combine(packDir, PortablePackSyncService.SyncStateFileName);
+            if (!File.Exists(statePath)) return "";
+            using var document = JsonDocument.Parse(File.ReadAllText(statePath));
+            return document.RootElement.TryGetProperty("revision", out var revision)
+                ? revision.GetString() ?? ""
+                : "";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Unreadable means "assume the pack moved", which costs a hashing
+            // pass and never costs correctness.
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// What the pack's copy of this file is, hashed once and remembered.
+    /// </summary>
+    /// <remarks>
+    /// The remembering is only safe within one revision of the pack. Every file
+    /// in a pack folder carries the same fixed timestamp - they are unpacked
+    /// from an archive, and an archive has no clock - so the only thing left
+    /// for a cheap comparison is the length. A pack update that rewrites a file
+    /// to the same length therefore looks like no change at all, the old hash
+    /// is handed back, it matches the instance's old copy, and the update is
+    /// dropped without a word.
+    ///
+    /// That is not a corner: it is what changing a number does. Zeroing six
+    /// teleport delays in All The Fabric 3's own build turned "2" into "0" and
+    /// "3" into "0", six times, in a file whose length did not move by a byte -
+    /// and the pack shipped it four times over two days while every launcher
+    /// quietly kept the old one, including a file the pack had explicitly
+    /// claimed as its own.
+    ///
+    /// So across a revision the hashes are thrown away and taken again. Within
+    /// one they are kept, which is where the cost of hashing a three-gigabyte
+    /// pack on every launch actually mattered.
+    /// </remarks>
     private static SourceFileState ReadSourceState(string path, SourceFileState? previous)
     {
         var info = new FileInfo(path);
@@ -1045,6 +1095,13 @@ public sealed class PackInstanceService : IDisposable
         public string ModsMode { get; set; } = "";
         public Dictionary<string, SourceFileState> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, SourceFileState> ModFiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The pack revision these hashes were taken from, so that a new one
+        /// throws them away. See <see cref="ReadSourceState"/> for why they
+        /// cannot be trusted across an update.
+        /// </summary>
+        public string PackRevision { get; set; } = "";
     }
 
     private sealed class SourceFileState
