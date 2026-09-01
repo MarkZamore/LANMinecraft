@@ -75,7 +75,6 @@ public sealed partial class PortablePackSyncService
         new(DefaultPackRelativePath, DefaultPackSource),
         new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
         new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
-        new("RPG Ars Nouveau", new PackSyncSource("MarkZamore", "RPG-Ars-Nouveau", "pack-latest")),
         // Short on purpose. The build list is one narrow column beside the
         // memory field, and "Create & Ars Arcane Awakened" was cut off in it -
         // which is also why the folder is not called what the pack is called,
