@@ -230,15 +230,21 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         var (srg, proguard) = ForgeFlavoured(mergedMappings);
         var paths = new AppPaths(_root);
         var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Forge");
+        Directory.CreateDirectory(runtimeRoot);
+        // Where the libraries really are: shared by every build, and pointedly
+        // NOT under the build's own folder. The fixture used to put them there,
+        // which is why it went on passing when the adapter was left looking in
+        // the old place and every player lost their skin.
+        var librariesRoot = SharedRuntimeStore.Libraries(paths);
         if (withSrgMappings)
         {
-            var mcpDirectory = Path.Combine(runtimeRoot, "libraries", "mcp_config");
+            var mcpDirectory = Path.Combine(librariesRoot, "mcp_config");
             Directory.CreateDirectory(mcpDirectory);
             File.WriteAllText(Path.Combine(mcpDirectory, "mcp_config-test-mappings-merged.txt"), srg);
         }
         if (withMojangMappings)
         {
-            var mojangDirectory = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client", "1.21.1");
+            var mojangDirectory = Path.Combine(librariesRoot, "net", "minecraft", "client", "1.21.1");
             Directory.CreateDirectory(mojangDirectory);
             File.WriteAllText(Path.Combine(mojangDirectory, "client-1.21.1-mappings.txt"), proguard);
         }
@@ -266,7 +272,10 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                     neoForge ? PackLoaderKind.NeoForge : PackLoaderKind.Forge,
                     neoForge ? "26.1.0" : "47.3.0"),
                 "client.jar",
-                "forge-hash"));
+                "forge-hash"))
+        {
+            LibrariesRoot = librariesRoot
+        };
         return (new IdentityAdapterMappingService(paths), runtime, gameDirectory);
     }
 
