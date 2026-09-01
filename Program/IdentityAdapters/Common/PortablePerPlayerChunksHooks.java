@@ -79,6 +79,7 @@ public final class PortablePerPlayerChunksHooks {
     private static final Member LEVEL_CHUNK_SOURCE = new Member("getChunkSourceMethods", "getChunkSource", "k");
     private static final Member SOURCE_CHUNK_MAP = new Member("chunkMapFields", "chunkMap", "a");
     private static final Member ASKED_DISTANCE = new Member("clientViewDistanceMethods", "viewDistance", "c");
+    private static final Member PLAYER_LATENCY = new Member("playerLatencyFields", "latency", "e");
 
     /**
      * The last player asked about, and what he wanted.
@@ -202,6 +203,19 @@ public final class PortablePerPlayerChunksHooks {
 
     /** Said once per player, and it is the answer to "is this doing anything". */
     private static final Set<UUID> ANNOUNCED = ConcurrentHashMap.newKeySet();
+
+    /**
+     * The last ServerPlayer seen for each player, so the report can ask him
+     * how long the round trip is taking.
+     *
+     * The server measures it already: a keep-alive goes out every fifteen
+     * seconds and the time to the answer is kept on the player. That number is
+     * the whole path - the wire, the bridge the game rides over Steam, and the
+     * tick that has to come round before anything is answered - which is
+     * exactly what a player means when he says an action arrives late, and the
+     * one thing none of the other numbers here can see.
+     */
+    private static final Map<UUID, Object> LAST_SEEN = new ConcurrentHashMap<>();
 
     /**
      * How far the world is being served, and how often that number moved.
@@ -613,6 +627,7 @@ public final class PortablePerPlayerChunksHooks {
             }
             long[] tally = TALLY.computeIfAbsent(who, key -> new long[4]);
             tally[OFFERED]++;
+            LAST_SEEN.put(who, player);
             // Found before the first chunk is ever held, never at the first
             // send. A hook that takes a chunk it cannot later hand back is the
             // hole-in-the-world bug wearing a different coat.
@@ -814,7 +829,8 @@ public final class PortablePerPlayerChunksHooks {
                 "[PortableIdentity] paced chunks for " + entry.getKey() + " this minute: offered "
                     + offered + ", held " + held + ", handed over " + handed + ", dropped "
                     + dropped + ", still waiting " + waiting + "; served to "
-                    + lastServerRadius + ", which moved " + moves + " time(s).");
+                    + lastServerRadius + ", which moved " + moves + " time(s)"
+                    + describeLatency(entry.getKey()) + ".");
         }
     }
 
@@ -949,6 +965,25 @@ public final class PortablePerPlayerChunksHooks {
         long x = CHUNK_POS_X.field(chunkPos).getInt(chunkPos) & 0xffffffffL;
         long z = CHUNK_POS_Z.field(chunkPos).getInt(chunkPos) & 0xffffffffL;
         return (z << 32) | x;
+    }
+
+    /**
+     * ", answering in 7 ms" - or nothing at all where the number cannot be had.
+     *
+     * This is the figure to read against the rest: with the tick healthy and
+     * the hold never backing up, a player who still says his actions arrive
+     * late is either waiting on this or on nothing the server can see.
+     */
+    private static String describeLatency(UUID who) {
+        Object player = LAST_SEEN.get(who);
+        if (player == null) {
+            return "";
+        }
+        try {
+            return ", answering in " + PLAYER_LATENCY.field(player).getInt(player) + " ms";
+        } catch (Throwable exception) {
+            return "";
+        }
     }
 
     /** Said once: this sits on a path that runs for every chunk of every view. */

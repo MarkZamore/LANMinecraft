@@ -49,6 +49,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
         "\ta (Laig;)V removePlayer",
         "\tb (Laig;)V updatePlayer",
         "aig net/minecraft/server/level/ServerPlayer",
+        "	e latency",
         "\ta (Lzl;)V updateOptions",
         "\tx ()Laif; serverLevel",
         // And the moment the server tells a client to forget a chunk, which is
@@ -93,6 +94,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
         Assert.Equal("tick,b", properties["chunkMapTickMethods"]);
         Assert.Equal("()V", properties["chunkMapTickDescriptors"]);
         Assert.Equal("untrackChunk,c", properties["untrackChunkMethods"]);
+        Assert.Equal("latency,e", properties["playerLatencyFields"]);
         // Both spellings of the position, because a runtime carries whichever
         // one its loader remapped it to and the transformer matches the
         // descriptor exactly.
@@ -157,6 +159,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     [InlineData("untrackChunkMethods")]
     [InlineData("untrackChunkDescriptors")]
     [InlineData("chunkPacingEnabled")]
+    [InlineData("playerLatencyFields")]
     public void EveryListIsNamed_EvenWithNothingToReadThemFrom(string property)
     {
         var properties = new Dictionary<string, string>(StringComparer.Ordinal);
