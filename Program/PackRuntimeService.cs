@@ -34,7 +34,7 @@ public sealed class PackRuntimeService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    internal const int RuntimeCacheGeneration = 5;
+    internal const int RuntimeCacheGeneration = 6;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -513,11 +513,78 @@ public sealed class PackRuntimeService : IDisposable
                 if (!string.IsNullOrWhiteSpace(file.Path) && File.Exists(file.Path)) files.Add(Path.GetFullPath(file.Path));
             }
             var versionJson = launcher.MinecraftPath.GetVersionJsonPath(version.Id);
-            if (File.Exists(versionJson)) files.Add(versionJson);
+            if (File.Exists(versionJson))
+            {
+                files.Add(versionJson);
+                foreach (var library in LibrariesNamedBy(versionJson, launcher.MinecraftPath.Library))
+                {
+                    files.Add(library);
+                }
+            }
         }
         var localManifest = Path.Combine(launcher.MinecraftPath.Versions, "version_manifest_v2.json");
         if (File.Exists(localManifest)) files.Add(localManifest);
         return files;
+    }
+
+    /// <summary>
+    /// The libraries a version profile names, resolved to where they sit.
+    /// </summary>
+    /// <remarks>
+    /// Read out of the profile's own json rather than asked of the installer,
+    /// because the files that matter most here are the ones nobody downloaded:
+    /// a loader installer runs once and produces <c>neoforge-&lt;v&gt;-client.jar</c>,
+    /// the universal jar and the srg, slim and extra client jars, and CmlLib
+    /// reports only what it fetched. Nothing named them, so nothing protected
+    /// them, and the shared store's sweep took the whole classpath - the game
+    /// then started with neoforge and minecraft both <c>[MISSING]</c> and could
+    /// not be recovered, because a file no state names is also a file no
+    /// validation misses.
+    ///
+    /// Maven coordinates resolve the one way they ever have:
+    /// <c>group:artifact:version[:classifier]</c> becomes
+    /// <c>group/as/path/artifact/version/artifact-version[-classifier].jar</c>.
+    /// Only files that exist are named; a library for another operating system
+    /// is in the json and not on the disk, and claiming it would fail every
+    /// validation from here on.
+    /// </remarks>
+    internal static IEnumerable<string> LibrariesNamedBy(string versionJsonPath, string librariesRoot)
+    {
+        JsonNode? parsed;
+        try
+        {
+            parsed = JsonNode.Parse(File.ReadAllText(versionJsonPath));
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            yield break;
+        }
+
+        if (parsed?["libraries"] is not JsonArray libraries) yield break;
+        foreach (var library in libraries)
+        {
+            var name = library?["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var parts = name.Split(':');
+            if (parts.Length < 3) continue;
+            var group = parts[0].Replace('.', Path.DirectorySeparatorChar);
+            var artifact = parts[1];
+            var version = parts[2];
+            var classifier = parts.Length > 3 ? "-" + parts[3] : "";
+            string path;
+            try
+            {
+                path = Path.GetFullPath(Path.Combine(
+                    librariesRoot, group, artifact, version, $"{artifact}-{version}{classifier}.jar"));
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+
+            if (File.Exists(path)) yield return path;
+        }
     }
 
     private RuntimeState CreateState(
