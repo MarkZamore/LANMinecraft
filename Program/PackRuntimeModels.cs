@@ -69,6 +69,13 @@ public interface IPackLoaderProvider
 public sealed record PackLoaderInstallationContext(
     PackRuntimeDescriptor Descriptor,
     string RuntimeRoot,
+    /// <summary>
+    /// Where the game itself is kept, which is shared by every build. A loader
+    /// installer writes its profile and its libraries into a Minecraft folder,
+    /// and that folder is this one rather than the build's - two builds on one
+    /// loader version want the same profile, and the second must find it made.
+    /// </summary>
+    string GameRoot,
     string TemporaryRoot,
     string BaseVersionId,
     string JavaPath,

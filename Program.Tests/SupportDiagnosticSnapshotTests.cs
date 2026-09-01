@@ -146,7 +146,7 @@ public sealed class SupportDiagnosticSnapshotTests
             Path.Combine(runtimeRoot, ".portable-runtime.json"),
             JsonSerializer.Serialize(new
             {
-                schemaVersion = 3,
+                schemaVersion = PackRuntimeService.RuntimeCacheGeneration,
                 descriptorHash,
                 profileId,
                 javaPathRelativePath = javaPath.Replace('\\', '/'),

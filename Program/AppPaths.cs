@@ -34,6 +34,7 @@ public sealed class AppPaths
         Launcher = CombineUnderService("Launcher");
         Runtimes = Path.Combine(Launcher, "Runtimes");
         JavaRuntimes = Path.Combine(Launcher, "JavaRuntimes");
+        SharedRuntime = Path.Combine(Launcher, "Shared");
         SteamNative = Path.Combine(Launcher, "Steam");
         Personal = CombineUnderService("Personal");
         Instances = Path.Combine(Personal, "Instances");
@@ -59,6 +60,20 @@ public sealed class AppPaths
     /// rather than for whoever asked first.
     /// </summary>
     public string JavaRuntimes { get; }
+
+    /// <summary>
+    /// The game itself, once, for every build: Mojang's assets, the libraries,
+    /// the version and loader profiles, and Mojang's own Java.
+    ///
+    /// It used to live under each build's runtime folder, which meant three
+    /// builds on the same Minecraft held three copies of the same eight hundred
+    /// megabytes of assets and downloaded a fourth for the next one. None of it
+    /// belongs to a build: Mojang's asset store is addressed by the hash of its
+    /// contents, libraries sit at a path made of their own version, and a
+    /// version id names exactly one set of files. Two builds asking for the
+    /// same thing want the same bytes.
+    /// </summary>
+    public string SharedRuntime { get; }
     public string SteamNative { get; }
     public string Personal { get; }
     public string Instances { get; }

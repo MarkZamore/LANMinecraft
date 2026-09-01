@@ -6,12 +6,18 @@ namespace Minecraft;
 /// Takes a downloaded build off the machine.
 ///
 /// A build is not one folder. It is the pack under <c>Packs</c>, the instance
-/// the game actually runs in under <c>Personal\Instances</c>, the prepared
-/// runtime under <c>Launcher\Runtimes</c>, whatever the last sync left in
+/// the game actually runs in under <c>Personal\Instances</c>, its runtime under
+/// <c>Launcher\Runtimes</c>, whatever the last sync left in
 /// <c>Personal\PackConflicts</c> and <c>Personal\Temp</c>, a line in the hash
-/// cache, a line in the settings - and, if nobody else needs it, the three
-/// hundred megabytes of Java it pinned. Deleting the pack folder alone leaves
-/// the rest, and the rest is most of the disk.
+/// cache, a line in the settings - and, if nobody else needs them, the Java it
+/// pinned and its share of the game itself. Deleting the pack folder alone
+/// leaves the rest, and the rest is most of the disk.
+///
+/// The game is the part that is not the build's to delete. Minecraft, its
+/// libraries and its assets are downloaded once and shared, so what a removal
+/// frees there is whatever no remaining build still names - the whole of a
+/// version when this was the last build on it, and nothing at all when it was
+/// not.
 ///
 /// The worlds are the exception and are asked about separately, because they
 /// are the only part a player cannot get back by pressing Play again.
@@ -123,6 +129,13 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
 
         var java = javaRemoved ? plan.Java : [];
 
+        // The game itself is shared, so removing a build removes nothing of it
+        // directly: what goes is whatever no remaining build's runtime state
+        // still names. For the last build on a Minecraft version that is the
+        // whole of it - assets, libraries, the profile - and for a build that
+        // shared its version with another, nothing at all.
+        var shared = SharedRuntimeStore.Sweep(_paths, _logger);
+
         // The hash cache is keyed by pack folder, so an entry for a pack that is
         // gone can never be hit again - and a pack downloaded again under the
         // same name must not be compared against what the old one hashed to.
@@ -145,6 +158,7 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
             $"Build removed: {plan.BuildRelativePath} - {removed} folder(s)" +
             (worlds > 0 ? $", {worlds} world(s)" : ", worlds kept") +
             (java.Count > 0 ? $", Java {string.Join(", ", java)}" : "") +
+            (shared > 0 ? $", {shared} shared file(s)" : "") +
             (kept.Count > 0 ? $"; could not remove {string.Join(", ", kept)}" : "") + ".");
         return outcome;
     }
