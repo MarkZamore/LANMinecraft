@@ -26,7 +26,23 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!--
+      Deliberately off. A single file that carries a compressed payload and
+      unpacks it to run is, in shape, exactly a packer - and that is what a
+      behavioural scanner reads it as. Microsoft says so themselves in the
+      single-file documentation: compression raises the false-positive rate
+      with antivirus software.
+
+      It stopped being theoretical on 1 September 2026, when Defender took
+      LANMinecraft.exe into quarantine as Behavior:Win32/GenCodeInjected.H on
+      two machines at once and one player simply could not start the launcher.
+      A launcher that needs an exclusion set up before it runs is a launcher
+      that does not work, because the person who has to set it up is a friend
+      who only wanted to play.
+
+      The file gets bigger for it. That is the trade, and it is not close.
+    -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <PublishDir>..\</PublishDir>
