@@ -121,6 +121,11 @@ public sealed class HeapTuningArgumentTests
     /// Which list a heap gets. The boundary is four gigabytes: at or under it
     /// the machine is short of memory rather than short of frames.
     /// </summary>
+    /// <remarks>
+    /// Compared flag by flag apart from the two young-generation percentages,
+    /// which are worked out from the heap rather than written down - see the
+    /// theory below for what they come to.
+    /// </remarks>
     [Theory]
     [InlineData(2048, false)]
     [InlineData(3584, false)]
@@ -129,11 +134,16 @@ public sealed class HeapTuningArgumentTests
     [InlineData(16384, true)]
     public void AHeapGetsTheTuningItsSizeCallsFor(int heapMb, bool expectTheLargeList)
     {
+        static string[] WithoutTheYoungBand(IEnumerable<string> flags) => flags
+            .Where(flag => !flag.StartsWith("-XX:G1NewSizePercent=", StringComparison.Ordinal) &&
+                           !flag.StartsWith("-XX:G1MaxNewSizePercent=", StringComparison.Ordinal))
+            .ToArray();
+
         Assert.Equal(
-            expectTheLargeList
+            WithoutTheYoungBand(expectTheLargeList
                 ? MinecraftProcessService.HeapTuningArguments
-                : MinecraftProcessService.SmallHeapTuningArguments,
-            MinecraftProcessService.HeapTuningArgumentsFor(heapMb));
+                : MinecraftProcessService.SmallHeapTuningArguments),
+            WithoutTheYoungBand(MinecraftProcessService.HeapTuningArgumentsFor(heapMb)));
     }
 
     /// <summary>
@@ -156,5 +166,61 @@ public sealed class HeapTuningArgumentTests
         Assert.True(
             MinecraftProcessService.InitialHeapMbFor(heapMb) <= heapMb,
             "a heap may not start larger than it is allowed to become");
+    }
+
+    /// <summary>
+    /// The young generation is a size, not a share. Twenty and forty per cent
+    /// were chosen against a four gigabyte heap; the same percentages against
+    /// sixteen give a young generation of 3.2 to 6.5 GB, and a collection that
+    /// has to evacuate six gigabytes cannot meet a fifty millisecond goal
+    /// however it is asked to. Measured: 202 ms on All The Fabric 3 at sixteen.
+    /// </summary>
+    [Theory]
+    [InlineData(4 * 1024, 20, 40)]    // where the percentages came from: unchanged
+    [InlineData(2 * 1024, 20, 40)]    // and below it, still unchanged
+    [InlineData(8 * 1024, 13, 25)]    // 1 GB floor, 2 GB ceiling: 12.5% and 25%
+    [InlineData(16 * 1024, 6, 13)]
+    [InlineData(32 * 1024, 3, 6)]
+    public void TheYoungGenerationIsBoundedInGigabytesNotPerCent(int heapMb, int floor, int ceiling)
+    {
+        var flags = MinecraftProcessService.HeapTuningArgumentsFor(heapMb);
+
+        Assert.Contains($"-XX:G1NewSizePercent={floor}", flags);
+        Assert.Contains($"-XX:G1MaxNewSizePercent={ceiling}", flags);
+    }
+
+    /// <summary>
+    /// And what those percentages come to in megabytes, which is the thing that
+    /// actually matters: a band that stays put however big the heap is.
+    /// </summary>
+    [Theory]
+    [InlineData(4 * 1024)]
+    [InlineData(8 * 1024)]
+    [InlineData(16 * 1024)]
+    [InlineData(28 * 1024)]
+    public void TheYoungCeilingNeverRunsAwayWithTheHeap(int heapMb)
+    {
+        var flags = MinecraftProcessService.HeapTuningArgumentsFor(heapMb);
+        var ceiling = flags.Single(flag => flag.StartsWith("-XX:G1MaxNewSizePercent=", StringComparison.Ordinal));
+        var percent = int.Parse(ceiling.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
+        var megabytes = heapMb * percent / 100;
+
+        Assert.InRange(megabytes, 512, 2304);
+    }
+
+    /// <summary>A floor above its own ceiling would be refused by the JVM.</summary>
+    [Theory]
+    [InlineData(1024)]
+    [InlineData(4 * 1024)]
+    [InlineData(16 * 1024)]
+    [InlineData(64 * 1024)]
+    public void TheFloorIsNeverAboveTheCeiling(int heapMb)
+    {
+        var flags = MinecraftProcessService.HeapTuningArgumentsFor(heapMb);
+        int Read(string name) => int.Parse(
+            flags.Single(flag => flag.StartsWith(name, StringComparison.Ordinal)).Split('=')[1],
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        Assert.True(Read("-XX:G1NewSizePercent=") <= Read("-XX:G1MaxNewSizePercent="));
     }
 }

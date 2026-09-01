@@ -204,9 +204,57 @@ public sealed class MinecraftProcessService
     public static string PlayingHere(string? minecraftUuid) =>
         Guid.TryParse(minecraftUuid, out var parsed) ? parsed.ToString("D") : "";
 
+    /// <summary>
+    /// The largest the young generation may grow to, and the smallest it may be
+    /// squeezed to, as sizes rather than as shares of the heap.
+    /// </summary>
+    /// <remarks>
+    /// This is the correction the numbers asked for. G1NewSizePercent and its
+    /// ceiling were written as percentages, and a percentage of four gigabytes
+    /// and a percentage of sixteen are not the same instruction: twenty and
+    /// forty per cent give a small machine a young generation of 800 MB to 1.6
+    /// GB, which is what they were chosen for, and give a sixteen gigabyte heap
+    /// one of 3.2 to 6.5 GB, which nothing chose. Measured on All The Fabric 3
+    /// at sixteen: one collection evacuated 5.3 GB and took 202 ms against a
+    /// goal of 50, and it was the only pause all session over 150.
+    ///
+    /// A player who gives a light pack the whole of a big machine should not be
+    /// punished for it, and should not have to know to type a smaller number.
+    /// So the band is a size now. Below about five gigabytes of heap the
+    /// percentages come out exactly where they always were, which is the point:
+    /// nothing changes for the machines these were tuned on.
+    /// </remarks>
+    private const int YoungFloorMb = 1024;
+    private const int YoungCeilingMb = 2048;
+
+    /// <summary>That band as a percentage of the heap actually being given.</summary>
+    private static (int Floor, int Ceiling) YoungGenerationPercents(int maximumRamMb)
+    {
+        var heap = Math.Max(1, maximumRamMb);
+        var floor = Math.Clamp(
+            (int)Math.Round(100d * Math.Min(heap * 0.20, YoungFloorMb) / heap, MidpointRounding.AwayFromZero),
+            1,
+            60);
+        var ceiling = Math.Clamp(
+            (int)Math.Round(100d * Math.Min(heap * 0.40, YoungCeilingMb) / heap, MidpointRounding.AwayFromZero),
+            floor,
+            80);
+        return (floor, ceiling);
+    }
+
     /// <summary>The tuning a heap of this size is started with.</summary>
-    public static IReadOnlyList<string> HeapTuningArgumentsFor(int maximumRamMb) =>
-        maximumRamMb <= SmallHeapCeilingMb ? SmallHeapTuningArguments : HeapTuningArguments;
+    public static IReadOnlyList<string> HeapTuningArgumentsFor(int maximumRamMb)
+    {
+        var (floor, ceiling) = YoungGenerationPercents(maximumRamMb);
+        var template = maximumRamMb <= SmallHeapCeilingMb ? SmallHeapTuningArguments : HeapTuningArguments;
+        return Array.AsReadOnly(template
+            .Select(flag => flag.StartsWith("-XX:G1NewSizePercent=", StringComparison.Ordinal)
+                ? "-XX:G1NewSizePercent=" + floor.ToString(CultureInfo.InvariantCulture)
+                : flag.StartsWith("-XX:G1MaxNewSizePercent=", StringComparison.Ordinal)
+                    ? "-XX:G1MaxNewSizePercent=" + ceiling.ToString(CultureInfo.InvariantCulture)
+                    : flag)
+            .ToArray());
+    }
 
     /// <summary>
     /// What the heap starts at, which is not always what it may reach.
