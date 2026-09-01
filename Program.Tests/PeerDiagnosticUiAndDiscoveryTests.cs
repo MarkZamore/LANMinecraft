@@ -460,15 +460,22 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal("Пресет управления", (string?)button.Attribute("Content"));
         Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
 
-        // And the delete button beside it, in the same cell: the preset button
-        // takes the free width and this one is square at the end of the row,
-        // separated by the gap the transfer and report rows use.
+        // The row reads left to right: what this does to the build, what the
+        // build weighs, and what can be written into it. The preset takes
+        // whatever the other two leave, so there is no gap in the middle.
         var delete = document.Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "DeleteBuildButton");
+        var estimate = document.Descendants(presentation + "TextBlock")
+            .Single(element => (string?)element.Attribute(x + "Name") == "MemoryEstimateText");
         Assert.Equal((1, 1), Cell(delete));
-        Assert.Equal("2", (string?)delete.Attribute("Grid.Column"));
-        Assert.Equal("1", (string?)button.Attribute("Grid.Column"));
-        Assert.Equal("{StaticResource Gap.Left2}", (string?)delete.Attribute("Margin"));
+        Assert.Equal("0", (string?)delete.Attribute("Grid.Column"));
+        Assert.Equal("1", (string?)estimate.Attribute("Grid.Column"));
+        Assert.Equal("2", (string?)button.Attribute("Grid.Column"));
+        // The gap between the three is the one the transfer and report rows
+        // use. The first of them needs none: the row already has its own.
+        Assert.Null(delete.Attribute("Margin"));
+        Assert.Equal("{StaticResource Gap.Left2}", (string?)estimate.Attribute("Margin"));
+        Assert.Equal("{StaticResource Gap.Left2}", (string?)button.Attribute("Margin"));
         Assert.Equal("{StaticResource Size.Control}", (string?)delete.Attribute("Width"));
         Assert.Equal("{StaticResource Brush.Danger}", (string?)delete.Attribute("Foreground"));
         Assert.Equal("True", (string?)delete.Attribute("ToolTipService.ShowOnDisabled"));
