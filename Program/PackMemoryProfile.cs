@@ -86,6 +86,51 @@ public readonly record struct PackMemoryProfile(
         }
     }
 
+    /// <summary>
+    /// Counts a pack from the file list its manifest publishes, for a pack that
+    /// is offered but not installed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ModCount"/> is the jar count here, not the mod count: nothing
+    /// outside a jar says how many mods it carries, and the jars are not on the
+    /// disk to open. So this reads low - on the pack it was checked against,
+    /// eighty-eight jars against a hundred or so mods - and it is still the
+    /// difference between "3 GB" and two thirds of whatever machine is asking.
+    /// The number is replaced by a real measurement the first time the pack is
+    /// installed, which is the moment the estimate stops being a guess.
+    /// </remarks>
+    public static PackMemoryProfile FromPublishedFiles(
+        IEnumerable<(string Path, long SizeBytes)> files,
+        string? minecraftVersion)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        var jars = 0;
+        long modBytes = 0;
+        long assetBytes = 0;
+        foreach (var (rawPath, size) in files)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath) || size < 0) continue;
+            var path = rawPath.Replace('\\', '/');
+            if (path.StartsWith("mods/", StringComparison.OrdinalIgnoreCase) &&
+                path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
+            {
+                jars++;
+                modBytes += size;
+            }
+            else if (path.StartsWith("resourcepacks/", StringComparison.OrdinalIgnoreCase) ||
+                     path.StartsWith("shaderpacks/", StringComparison.OrdinalIgnoreCase))
+            {
+                assetBytes += size;
+            }
+        }
+
+        // A manifest with no mods in it is a manifest this does not understand,
+        // and guessing from one is worse than saying nothing.
+        return jars == 0
+            ? Unknown
+            : new PackMemoryProfile(jars, modBytes, assetBytes, minecraftVersion, jars);
+    }
+
     private static string? ReadMinecraftVersion(string packDirectory)
     {
         try

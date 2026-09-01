@@ -76,11 +76,13 @@ public sealed partial class PortablePackSyncService
         new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
         new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
         new("RPG Ars Nouveau", new PackSyncSource("MarkZamore", "RPG-Ars-Nouveau", "pack-latest")),
-        // The folder cannot be called what the pack is called: a colon is not a
-        // character Windows lets a directory have. The name here is the folder.
+        // Short on purpose. The build list is one narrow column beside the
+        // memory field, and "Create & Ars Arcane Awakened" was cut off in it -
+        // which is also why the folder is not called what the pack is called,
+        // quite apart from the colon Windows will not allow in a directory.
         new(
-            "Create & Ars Arcane Awakened",
-            new PackSyncSource("MarkZamore", "Create-Ars-Arcane-Awakened", "pack-latest")),
+            "C&A Arcane Awakened",
+            new PackSyncSource("MarkZamore", "C-A-Arcane-Awakened", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
@@ -231,6 +233,52 @@ public sealed partial class PortablePackSyncService
     /// remains the thing that guarantees the pack.
     /// </summary>
     /// <returns>True when a file was replaced, so the caller can look again.</returns>
+    /// <summary>
+    /// What a pack weighs, read from the manifest it publishes rather than from
+    /// a folder - which is the only way to answer for a pack nobody has
+    /// downloaded yet.
+    /// </summary>
+    /// <remarks>
+    /// Until this existed, a build that was offered but not installed had no
+    /// weight at all, and the memory rules fell back to giving it two thirds of
+    /// the machine. On a 32 GB machine that put "от 13 ГБ" under a pack built to
+    /// run on eight - more than the 880-mod pack beside it asks for, which is
+    /// exactly backwards and is what a player notices.
+    ///
+    /// The manifest names every file with its size, so the mod jars can be
+    /// counted and weighed without fetching one of them. What it cannot say is
+    /// how many mods those jars carry inside themselves - Limitless 8's 882
+    /// files are 1128 mods - so this under-counts, and knowingly: an answer a
+    /// little low for a pack that is about to be downloaded and weighed
+    /// properly is worth having, and two thirds of the machine never was.
+    /// </remarks>
+    public async Task<PackMemoryProfile> WeighFromSourceAsync(string packRelativePath, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(packRelativePath)) return PackMemoryProfile.Unknown;
+        var source = TryResolveSource(packRelativePath);
+        if (source is null) return PackMemoryProfile.Unknown;
+
+        try
+        {
+            var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
+            var files = (dto.Files ?? [])
+                .Where(file => !string.IsNullOrWhiteSpace(file.Path))
+                .Select(file => (file.Path!, file.SizeBytes));
+            return PackMemoryProfile.FromPublishedFiles(files, dto.MinecraftVersion);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return PackMemoryProfile.Unknown;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or InvalidDataException)
+        {
+            // Silent by design: this is a number beside a field, and a pack that
+            // cannot be weighed simply keeps the older, pack-blind answer.
+            _logger.Warn($"Pack {packRelativePath} could not be weighed from its manifest ({ex.Message}).");
+            return PackMemoryProfile.Unknown;
+        }
+    }
+
     public async Task<bool> RefreshLauncherDataAsync(string packRelativePath, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
@@ -1481,6 +1529,8 @@ public sealed partial class PortablePackSyncService
         public int SchemaVersion { get; set; }
         public string? PackId { get; set; }
         public string? Revision { get; set; }
+        /// <summary>Read only for weighing a pack that is not installed yet.</summary>
+        public string? MinecraftVersion { get; set; }
         public List<RemoteFileDto>? Files { get; set; }
         public List<RemoteAssetDto>? Assets { get; set; }
     }

@@ -48,6 +48,7 @@ public partial class BuildRemovalConfirmationDialog : Window
             _ => $"{Worlds(worlds)} этой сборки останутся в папке Worlds, если выбрать «Только сборку». " +
                  "«Вместе с мирами» удалит и их, и вернуть их будет неоткуда."
         };
+        Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
     }
 
     public BuildRemovalAnswer Answer { get; private set; } = BuildRemovalAnswer.Keep;

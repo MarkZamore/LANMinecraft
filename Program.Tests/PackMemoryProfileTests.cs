@@ -112,4 +112,81 @@ public sealed class PackMemoryProfileTests : IDisposable
             }
             """);
     }
+
+    /// <summary>
+    /// A pack that is offered but not installed is weighed from the file list
+    /// its manifest publishes: the jars under mods, and the texture under
+    /// resourcepacks and shaderpacks. Nothing else counts, and nothing is
+    /// fetched.
+    /// </summary>
+    [Fact]
+    public void APublishedFileList_IsWeighedByItsModsAndItsTexture()
+    {
+        var profile = PackMemoryProfile.FromPublishedFiles(
+            [
+                ("mods/create-1.21.1-6.0.10.jar", 20_000_000),
+                ("mods/sodium.jar", 2_000_000),
+                ("mods/notes.txt", 900),                       // not a jar
+                ("config/foo.json", 4_000),                    // not memory
+                ("resourcepacks/pretty.zip", 8_000_000),
+                ("shaderpacks/shiny.zip", 1_000_000),
+                ("minecraft-1.21.1-client.jar", 26_000_000)    // not under mods
+            ],
+            "1.21.1");
+
+        Assert.True(profile.IsKnown);
+        Assert.Equal(2, profile.ModCount);
+        Assert.Equal(2, profile.JarCount);
+        Assert.Equal(22_000_000, profile.ModBytes);
+        Assert.Equal(9_000_000, profile.AssetBytes);
+        Assert.Equal("1.21.1", profile.MinecraftVersion);
+    }
+
+    /// <summary>A manifest with no mods in it is one this does not understand.</summary>
+    [Fact]
+    public void APublishedListWithNoMods_IsNotAWeight()
+    {
+        Assert.False(
+            PackMemoryProfile.FromPublishedFiles([("config/foo.json", 10)], "1.21.1").IsKnown);
+        Assert.False(PackMemoryProfile.FromPublishedFiles([], null).IsKnown);
+    }
+
+    /// <summary>A manifest written with backslashes says the same thing.</summary>
+    [Fact]
+    public void APublishedListIsReadWhicheverSlashItUses()
+    {
+        var profile = PackMemoryProfile.FromPublishedFiles(
+            [("mods\\a.jar", 5), ("resourcepacks\\b.zip", 7)], null);
+        Assert.Equal(1, profile.ModCount);
+        Assert.Equal(7, profile.AssetBytes);
+    }
+
+    /// <summary>
+    /// The point of the whole thing. Create &amp; Ars is 88 jars and All The
+    /// Mods-sized packs are hundreds; before this, neither was weighed until it
+    /// was installed and both were offered two thirds of the machine - so the
+    /// small one asked for more than the large one, which is what a player sees
+    /// and disbelieves.
+    /// </summary>
+    [Fact]
+    public void TheSmallPack_NowAsksForLessThanTheLargeOne()
+    {
+        var small = PackMemoryProfile.FromPublishedFiles(
+            Enumerable.Range(0, 88).Select(i => ($"mods/small{i}.jar", 1_200_000L)), "1.21.1");
+        var large = PackMemoryProfile.FromPublishedFiles(
+            Enumerable.Range(0, 882).Select(i => ($"mods/large{i}.jar", 2_200_000L)), "1.21.1");
+
+        var smallGb = MemorySizingService.GetRecommendedMemoryGb(small);
+        var largeGb = MemorySizingService.GetRecommendedMemoryGb(large);
+        var unweighed = MemorySizingService.GetRecommendedMemoryGb(PackMemoryProfile.Unknown);
+
+        Assert.True(
+            smallGb < largeGb,
+            $"a pack of 88 jars must not ask for more than one of 882: {smallGb} vs {largeGb}");
+        Assert.True(
+            smallGb < unweighed,
+            $"weighing the small pack must beat the machine-sized guess: {smallGb} vs {unweighed}");
+        // And it lands where the pack was built to land: two and a half to three.
+        Assert.InRange(smallGb, 2, 4);
+    }
 }

@@ -2,13 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Удаление сборки"
-        SizeToContent="Height"
-        Width="520"
+        SizeToContent="WidthAndHeight"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Style="{DynamicResource WindowStyle}">
-    <StackPanel Margin="{StaticResource Gap.Canvas}">
+    <StackPanel x:Name="RemovalPanel"
+                Width="{StaticResource Size.DialogWidth}"
+                Margin="{StaticResource Gap.Canvas}">
         <TextBlock x:Name="QuestionText"
                    FontSize="{StaticResource Font.SizeHeading}"
                    Style="{StaticResource EmphasisTextStyle}"

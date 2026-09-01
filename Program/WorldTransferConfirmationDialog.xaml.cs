@@ -22,6 +22,7 @@ public partial class WorldTransferConfirmationDialog : Window
             (offer.ArchiveBytes > 0
                 ? $", примерно {offer.ArchiveBytes / (1024d * 1024d):F0} МиБ."
                 : ".");
+        Loaded += (_, _) => DialogScale.MatchOwner(this, TransferPanel);
     }
 
     public bool Accepted { get; private set; }

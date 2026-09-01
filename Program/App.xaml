@@ -135,6 +135,9 @@
         <sys:Double x:Key="Size.StatusArea">40</sys:Double>
         <sys:Double x:Key="Size.Scrollbar">8</sys:Double>
         <sys:Double x:Key="Size.Icon">16</sys:Double>
+        <!-- A dialog is as wide as this before it is put on the launcher's
+             scale; the window then sizes itself to whatever that comes to. -->
+        <sys:Double x:Key="Size.DialogWidth">520</sys:Double>
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
         <!-- Grid columns: the label column every block shares, the memory box, the history -->
         <GridLength x:Key="Size.LabelColumn">72</GridLength>
