@@ -101,7 +101,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int RuntimeStateCacheGeneration = 4;
+    private const int RuntimeStateCacheGeneration = 5;
     private const int MaxRuntimeStateBytes = 4 * 1024 * 1024;
     private const int MaxJavaReleaseBytes = 64 * 1024;
     private const string RuntimeStateFileName = ".portable-runtime.json";
