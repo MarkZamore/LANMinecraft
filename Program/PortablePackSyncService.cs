@@ -76,6 +76,11 @@ public sealed partial class PortablePackSyncService
         new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
         new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
         new("RPG Ars Nouveau", new PackSyncSource("MarkZamore", "RPG-Ars-Nouveau", "pack-latest")),
+        // The folder cannot be called what the pack is called: a colon is not a
+        // character Windows lets a directory have. The name here is the folder.
+        new(
+            "Create & Ars Arcane Awakened",
+            new PackSyncSource("MarkZamore", "Create-Ars-Arcane-Awakened", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
