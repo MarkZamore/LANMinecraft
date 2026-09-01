@@ -77,20 +77,57 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     }
 
     /// <summary>
-    /// The libraries and the version profiles are never swept, however
-    /// thoroughly unclaimed they look. A loader installer runs once and leaves
+    /// The libraries and the version profiles are swept only once every build
+    /// on the disk can speak for what is in them - and a build carrying an
+    /// older state cannot, because states written before release 331 named no
+    /// libraries at all.
+    /// </summary>
+    [Fact]
+    public void WithABuildOnAnOlderState_TheLibrariesAreLeftAlone()
+    {
+        Build("Up To Date", Asset("assets/objects/ab/kept"));
+        BuildAtGeneration("Not Yet Prepared", PackRuntimeService.RuntimeCacheGeneration - 1);
+        var loader = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
+        var orphanAsset = Asset("assets/objects/cd/orphan");
+
+        Assert.Equal(1, SharedRuntimeStore.Sweep(_paths));
+        Assert.False(File.Exists(orphanAsset), "assets are swept either way");
+        Assert.True(File.Exists(loader), "the libraries wait until every state is current");
+    }
+
+    /// <summary>
+    /// And once every state is current they are swept like everything else,
+    /// which is what turns the restriction off without a flag to remember.
+    /// </summary>
+    [Fact]
+    public void WithEveryStateCurrent_TheLibrariesAreSweptToo()
+    {
+        Build("Up To Date", Asset("assets/objects/ab/kept"));
+        var orphanLoader = Asset("libraries/net/example/gone/1.0/gone-1.0.jar");
+        var orphanProfile = Asset("versions/gone/gone.json");
+
+        Assert.Equal(2, SharedRuntimeStore.Sweep(_paths));
+        Assert.False(File.Exists(orphanLoader));
+        Assert.False(File.Exists(orphanProfile));
+    }
+
+    /// <summary>
+    /// What a build names is kept whatever root it is in - the loader jars
+    /// included, now that a state names them.
+    /// </summary> A loader installer runs once and leaves
     /// behind files nobody downloaded - the NeoForge client jar, the srg and
     /// extra client jars, Mojang's mappings - and CmlLib reports none of them,
     /// so no state names any of them. Sixty-three files and 132 MB of live
     /// classpath on the machine this was found on.
     /// </summary>
     [Fact]
-    public void TheLoadersOwnFiles_AreNeverSwept_EvenThoughNothingNamesThem()
+    public void TheLoadersOwnFiles_AreKeptWhenABuildNamesThem()
     {
-        Build("LL8 Extended", Asset("assets/objects/ab/kept"));
         var loader = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
         var mappings = Asset("libraries/net/minecraft/client/1.21.1/client-1.21.1-mappings.txt");
         var profile = Asset("versions/neoforge-21.1.248/neoforge-21.1.248.json");
+        Build("LL8 Extended", Asset("assets/objects/ab/kept"), loader, mappings, profile);
+        // Never swept at all: the sweep is told which roots it may take from.
         var installer = Asset("installers/neoforge/21.1.248/neoforge-21.1.248-installer.jar");
 
         Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
@@ -214,8 +251,14 @@ public sealed class SharedRuntimeStoreTests : IDisposable
             path => new { sizeBytes = new FileInfo(path).Length });
         Write(
             Path.Combine(_paths.Runtimes, name, ".portable-runtime.json"),
-            JsonSerializer.Serialize(new { schemaVersion = 4, files = listed }));
+            JsonSerializer.Serialize(new { schemaVersion = PackRuntimeService.RuntimeCacheGeneration, files = listed }));
     }
+
+    /// <summary>A build whose state was written by an older launcher.</summary>
+    private void BuildAtGeneration(string name, int generation) =>
+        Write(
+            Path.Combine(_paths.Runtimes, name, ".portable-runtime.json"),
+            JsonSerializer.Serialize(new { schemaVersion = generation, files = new { } }));
 
     private static void Write(string path, string content)
     {
