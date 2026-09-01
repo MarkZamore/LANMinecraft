@@ -34,7 +34,7 @@ public sealed class PackRuntimeService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    internal const int RuntimeCacheGeneration = 3;
+    internal const int RuntimeCacheGeneration = 4;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -139,12 +139,12 @@ public sealed class PackRuntimeService : IDisposable
             ValidateState(runtimeRoot, state))
         {
             CleanupUntrackedRuntimeFiles(runtimeRoot, state);
-            var clientJar = ResolveStatePath(runtimeRoot, state.ClientJarRelativePath);
+            var clientJar = ResolveStatePath(Anchor, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime
                 .EnsureAsync(_paths.JavaRuntimes, requiredJava, progress, token)
                 .ConfigureAwait(false);
-            await EnsureMojangMappingsAsync(runtimeRoot, descriptor, token).ConfigureAwait(false);
+            await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
             return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
         }
@@ -216,6 +216,7 @@ public sealed class PackRuntimeService : IDisposable
         var context = new PackLoaderInstallationContext(
             descriptor,
             runtimeRoot,
+            _paths.SharedRuntime,
             temporaryRoot,
             baseVersion.Id,
             installerJavaPath,
@@ -242,8 +243,10 @@ public sealed class PackRuntimeService : IDisposable
             token).ConfigureAwait(false);
 
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Verifying, "Проверка"));
-        WindowIconAssetService.Apply(runtimeRoot, profile);
+        WindowIconAssetService.Apply(SharedRuntimeStore.Assets(_paths), profile);
+        var mappings = await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
         var requiredFiles = await EnumerateRequiredFilesAsync(launcher, profile, clientFile.Path!, token).ConfigureAwait(false);
+        if (mappings is not null) requiredFiles = [.. requiredFiles, mappings];
         var newState = CreateState(
             runtimeRoot,
             descriptor,
@@ -260,7 +263,6 @@ public sealed class PackRuntimeService : IDisposable
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");
-        await EnsureMojangMappingsAsync(runtimeRoot, descriptor, token).ConfigureAwait(false);
         return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor);
     }
 
@@ -295,6 +297,15 @@ public sealed class PackRuntimeService : IDisposable
         string subject)
     {
         var minecraftPath = new MinecraftPath(runtimeRoot);
+        // Everything a version is made of is the same bytes for every build
+        // that asks for that version, so it is fetched once and found by the
+        // rest. What stays under the build is what is about the build: its
+        // state file, and the natives it unpacks to run.
+        minecraftPath.Assets = SharedRuntimeStore.Assets(_paths);
+        minecraftPath.Library = SharedRuntimeStore.Libraries(_paths);
+        minecraftPath.Versions = SharedRuntimeStore.Versions(_paths);
+        minecraftPath.Runtime = SharedRuntimeStore.Runtime(_paths);
+        minecraftPath.Resource = SharedRuntimeStore.Resources(_paths);
         minecraftPath.CreateDirs();
         var parameters = MinecraftLauncherParameters.CreateDefault(minecraftPath, _httpClient);
         var extractors = parameters.FileExtractors ?? throw new InvalidOperationException("CmlLib file extractors were not initialized.");
@@ -304,7 +315,7 @@ public sealed class PackRuntimeService : IDisposable
         }
         parameters.GameInstaller = new PortableGameInstaller(
             _httpClient,
-            runtimeRoot,
+            SharedRuntimeStore.Anchor(_paths),
             temporaryRoot,
             progress,
             subject);
@@ -388,28 +399,31 @@ public sealed class PackRuntimeService : IDisposable
     /// that need names and nothing else, which is what a runtime without the
     /// file has now.
     /// </remarks>
-    private async Task EnsureMojangMappingsAsync(
-        string runtimeRoot,
+    /// <returns>The mappings file, or null when there was nothing to fetch.</returns>
+    private async Task<string?> EnsureMojangMappingsAsync(
         PackRuntimeDescriptor descriptor,
         CancellationToken token)
     {
         try
         {
-            var clientLibraries = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client");
+            var clientLibraries = Path.Combine(
+                SharedRuntimeStore.Libraries(_paths), "net", "minecraft", "client");
             if (Directory.Exists(clientLibraries) &&
                 Directory.EnumerateFiles(clientLibraries, "*mappings*.txt", SearchOption.AllDirectories).Any())
             {
-                return;
+                return null;
             }
 
             var versionJson = Path.Combine(
-                runtimeRoot, "versions", descriptor.MinecraftVersion, descriptor.MinecraftVersion + ".json");
-            if (!File.Exists(versionJson)) return;
+                SharedRuntimeStore.Versions(_paths),
+                descriptor.MinecraftVersion,
+                descriptor.MinecraftVersion + ".json");
+            if (!File.Exists(versionJson)) return null;
             var mappings = JsonNode.Parse(await File.ReadAllTextAsync(versionJson, token).ConfigureAwait(false))
                 ?["downloads"]?["client_mappings"];
             var url = mappings?["url"]?.GetValue<string>();
             var sha1 = mappings?["sha1"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(sha1)) return;
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(sha1)) return null;
 
             var destination = Path.Combine(
                 clientLibraries,
@@ -423,17 +437,19 @@ public sealed class PackRuntimeService : IDisposable
                 _logger.Warn(
                     $"Mojang's mappings for {descriptor.MinecraftVersion} did not match the manifest's sha1; " +
                     "the hooks that need names are left out rather than built on the wrong file.");
-                return;
+                return null;
             }
             await File.WriteAllBytesAsync(destination, payload, token).ConfigureAwait(false);
             _logger.Info(
                 $"Mojang's mappings for {descriptor.MinecraftVersion} were fetched for a runtime that ships none " +
                 $"({payload.Length / 1024 / 1024} MB).");
+            return destination;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException
                                        or UnauthorizedAccessException or TaskCanceledException)
         {
             _logger.Warn($"Mojang's mappings could not be fetched: {ex.Message}");
+            return null;
         }
     }
 
@@ -509,7 +525,7 @@ public sealed class PackRuntimeService : IDisposable
             JavaPathRelativePath = "",
             JavaRuntimeId = javaRuntimeId,
             JavaVersion = javaVersion,
-            ClientJarRelativePath = ToRelativePath(runtimeRoot, clientJarPath),
+            ClientJarRelativePath = ToRelativePath(Anchor, clientJarPath),
             SourceClientJarSizeBytes = sourceClientJarPath.Length == 0 ? 0 : new FileInfo(sourceClientJarPath).Length,
             SourceClientJarLastWriteUtcTicks =
                 sourceClientJarPath.Length == 0 ? 0 : File.GetLastWriteTimeUtc(sourceClientJarPath).Ticks,
@@ -520,7 +536,7 @@ public sealed class PackRuntimeService : IDisposable
         {
             token.ThrowIfCancellationRequested();
             var info = new FileInfo(path);
-            state.Files[ToRelativePath(runtimeRoot, path)] = new RuntimeFileState
+            state.Files[ToRelativePath(Anchor, path)] = new RuntimeFileState
             {
                 SizeBytes = info.Length,
                 LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
@@ -544,7 +560,7 @@ public sealed class PackRuntimeService : IDisposable
             string path;
             try
             {
-                path = ResolveStatePath(runtimeRoot, relativePath);
+                path = ResolveStatePath(Anchor, relativePath);
             }
             catch
             {
@@ -564,7 +580,7 @@ public sealed class PackRuntimeService : IDisposable
             // The game JDK is deliberately not checked here: EnsureAsync repairs
             // a deleted or damaged install from the cached archive, which is far
             // cheaper than the full re-prepare a failed validation causes.
-            return File.Exists(ResolveStatePath(runtimeRoot, state.ClientJarRelativePath));
+            return File.Exists(ResolveStatePath(Anchor, state.ClientJarRelativePath));
         }
         catch
         {
@@ -596,28 +612,37 @@ public sealed class PackRuntimeService : IDisposable
     }
 
     /// <summary>
-    /// Removes what preparation leaves behind and does not track: the loader
-    /// installer jar and any runtime directory the state no longer references.
+    /// Removes what preparation leaves behind and does not track: the copies of
+    /// the game this build used to keep for itself, and the loader installer
+    /// jar that was downloaded to be run once.
     /// </summary>
-    private static void CleanupUntrackedRuntimeFiles(string runtimeRoot, RuntimeState state)
+    private void CleanupUntrackedRuntimeFiles(string runtimeRoot, RuntimeState state)
     {
-        foreach (var directoryName in new[] { "java21-windows-x86-64", "natives" })
+        // What the build used to keep for itself and now reads out of the
+        // shared store. A build that has just been prepared against the store
+        // has no use for its own copy, and the copy is most of a gigabyte.
+        foreach (var directoryName in new[]
+                 {
+                     "assets", "libraries", "versions", "runtime", "resources", "java21-windows-x86-64"
+                 })
         {
-            var prefix = directoryName + "/";
-            var isTracked = state.Files.Keys.Any(path => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
-                            state.JavaPathRelativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
-                            state.ClientJarRelativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-            if (!isTracked) TryDeleteDirectory(Path.Combine(runtimeRoot, directoryName));
+            TryDeleteDirectory(Path.Combine(runtimeRoot, directoryName));
         }
 
-        var neoForgeRoot = Path.Combine(runtimeRoot, "libraries", "net", "neoforged", "neoforge");
+        // The installer jar the loader leaves behind, which is downloaded to
+        // run once and never read again. It lives in the shared libraries with
+        // everything else, so an installer another build still lists is left
+        // alone - hence the check against this build's files is not enough on
+        // its own, and the store's own sweep is what finally takes it.
+        var neoForgeRoot = Path.Combine(
+            SharedRuntimeStore.Libraries(_paths), "net", "neoforged", "neoforge");
         if (!Directory.Exists(neoForgeRoot)) return;
         foreach (var installer in Directory.EnumerateFiles(
                      neoForgeRoot,
                      "neoforge-*-installer.jar",
                      SearchOption.AllDirectories))
         {
-            var relative = ToRelativePath(runtimeRoot, installer);
+            var relative = ToRelativePath(Anchor, installer);
             if (!state.Files.ContainsKey(relative)) TryDeleteFile(installer);
         }
     }
@@ -673,10 +698,11 @@ public sealed class PackRuntimeService : IDisposable
         if (descriptor.Loader.Type is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt)) return false;
         if (string.IsNullOrWhiteSpace(state.ProfileId)) return false;
 
-        var path = Path.Combine(runtimeRoot, "versions", state.ProfileId, state.ProfileId + ".json");
+        var path = Path.Combine(
+            SharedRuntimeStore.Versions(_paths), state.ProfileId, state.ProfileId + ".json");
         if (!KnotGameJar.NameIt(path, descriptor.MinecraftVersion, _logger)) return false;
 
-        var relative = ToRelativePath(runtimeRoot, path);
+        var relative = ToRelativePath(Anchor, path);
         var info = new FileInfo(path);
         state.Files[relative] = new RuntimeFileState
         {
@@ -686,6 +712,14 @@ public sealed class PackRuntimeService : IDisposable
         };
         return true;
     }
+
+    /// <summary>
+    /// What a path in a runtime state is relative to. It is the launcher
+    /// folder rather than the build's own, because a state now names files in
+    /// two places: the shared store the game itself lives in, and the build's
+    /// folder beside it.
+    /// </summary>
+    private string Anchor => SharedRuntimeStore.Anchor(_paths);
 
     private static string ToRelativePath(string runtimeRoot, string path)
     {
@@ -794,10 +828,10 @@ internal sealed class FabricLoaderProvider : IPackLoaderProvider
             retryToken => installer.Install(
                 context.Descriptor.MinecraftVersion,
                 context.Descriptor.Loader.Version!,
-                new MinecraftPath(context.RuntimeRoot)).WaitAsync(retryToken),
+                context.Launcher.MinecraftPath).WaitAsync(retryToken),
             token);
         KnotGameJar.NameIt(
-            Path.Combine(context.RuntimeRoot, "versions", profileId, profileId + ".json"),
+            Path.Combine(context.Launcher.MinecraftPath.Versions, profileId, profileId + ".json"),
             context.Descriptor.MinecraftVersion,
             context.Logger);
         return profileId;
@@ -815,10 +849,10 @@ internal sealed class QuiltLoaderProvider : IPackLoaderProvider
             retryToken => installer.Install(
                 context.Descriptor.MinecraftVersion,
                 context.Descriptor.Loader.Version!,
-                new MinecraftPath(context.RuntimeRoot)).WaitAsync(retryToken),
+                context.Launcher.MinecraftPath).WaitAsync(retryToken),
             token);
         KnotGameJar.NameIt(
-            Path.Combine(context.RuntimeRoot, "versions", profileId, profileId + ".json"),
+            Path.Combine(context.Launcher.MinecraftPath.Versions, profileId, profileId + ".json"),
             context.Descriptor.MinecraftVersion,
             context.Logger);
         return profileId;
@@ -952,7 +986,7 @@ internal static class OfficialLoaderInstaller
         Func<string, string, bool> profileMatcher,
         CancellationToken token)
     {
-        var installerPath = Path.Combine(context.RuntimeRoot, installerRelativePath);
+        var installerPath = Path.Combine(context.GameRoot, installerRelativePath);
         var sha1 = await DownloadChecksumAsync(context.HttpClient, installerUri + ".sha1", token);
         var gameFile = new GameFile(Path.GetFileName(installerPath))
         {
@@ -965,7 +999,7 @@ internal static class OfficialLoaderInstaller
             retryToken => RunInstallerAsync(context, installerPath, installArgument, retryToken),
             token);
 
-        return FindProfile(context.RuntimeRoot, expectedProfileIds, profileMatcher)
+        return FindProfile(context.GameRoot, expectedProfileIds, profileMatcher)
             ?? throw new FileNotFoundException(
                 $"Loader installer completed but did not create a launch profile for {context.Descriptor.Loader.Version}.");
     }
@@ -995,7 +1029,7 @@ internal static class OfficialLoaderInstaller
         Directory.CreateDirectory(context.TemporaryRoot);
         var javaTemp = Path.Combine(context.TemporaryRoot, "Java");
         Directory.CreateDirectory(javaTemp);
-        var profilesPath = Path.Combine(context.RuntimeRoot, "launcher_profiles.json");
+        var profilesPath = Path.Combine(context.GameRoot, "launcher_profiles.json");
         var profilesBackup = File.Exists(profilesPath) ? File.ReadAllBytes(profilesPath) : null;
         AtomicFile.WriteAllText(
             profilesPath,
@@ -1018,7 +1052,7 @@ internal static class OfficialLoaderInstaller
             startInfo.ArgumentList.Add("-jar");
             startInfo.ArgumentList.Add(installerPath);
             startInfo.ArgumentList.Add(installArgument);
-            startInfo.ArgumentList.Add(context.RuntimeRoot);
+            startInfo.ArgumentList.Add(context.GameRoot);
             startInfo.Environment["TEMP"] = javaTemp;
             startInfo.Environment["TMP"] = javaTemp;
 
@@ -1061,11 +1095,11 @@ internal static class OfficialLoaderInstaller
     }
 
     private static string? FindProfile(
-        string runtimeRoot,
+        string gameRoot,
         IReadOnlyCollection<string> expectedProfileIds,
         Func<string, string, bool> matcher)
     {
-        var versionsRoot = Path.Combine(runtimeRoot, "versions");
+        var versionsRoot = Path.Combine(gameRoot, "versions");
         if (!Directory.Exists(versionsRoot)) return null;
         foreach (var id in expectedProfileIds)
         {
@@ -1127,11 +1161,11 @@ internal static class WindowIconAssetService
     private const string ResourceName = "Minecraft.WindowIconAssets.jar";
 
     [SuppressMessage("Security", "CA5350", Justification = "Minecraft asset object names use SHA-1 by protocol.")]
-    public static void Apply(string runtimeRoot, IVersion profile)
+    public static void Apply(string assetsRoot, IVersion profile)
     {
         var assetId = profile.GetInheritedProperty(version => version.AssetIndex?.Id);
         if (string.IsNullOrWhiteSpace(assetId)) return;
-        var indexPath = Path.Combine(runtimeRoot, "assets", "indexes", assetId + ".json");
+        var indexPath = Path.Combine(assetsRoot, "indexes", assetId + ".json");
         if (!File.Exists(indexPath)) return;
 
         using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName);
@@ -1151,7 +1185,7 @@ internal static class WindowIconAssetService
             using (var input = entry.Open()) input.CopyTo(memory);
             var bytes = memory.ToArray();
             var hash = Convert.ToHexString(SHA1.HashData(bytes)).ToLowerInvariant();
-            var objectPath = Path.Combine(runtimeRoot, "assets", "objects", hash[..2], hash);
+            var objectPath = Path.Combine(assetsRoot, "objects", hash[..2], hash);
             Directory.CreateDirectory(Path.GetDirectoryName(objectPath)!);
             if (!File.Exists(objectPath)) File.WriteAllBytes(objectPath, bytes);
             foreach (var key in new[] { "icons/" + iconName, "icons/snapshot/" + iconName })

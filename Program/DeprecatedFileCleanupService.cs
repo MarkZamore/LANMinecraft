@@ -102,6 +102,10 @@ public static class DeprecatedFileCleanupService
         removed += CleanupUnpinnedComponents(paths, logger);
         removed += CleanupOrphanedAdapterBuilds(paths, logger);
         removed += CleanupSupersededPackJava(paths, logger);
+        // And whatever a removal that did not finish left in the shared store.
+        // It is cheap when there is nothing to do and it is the only thing that
+        // ever takes files out of there.
+        removed += SharedRuntimeStore.Sweep(paths, logger);
 
         if (removed > 0)
         {
