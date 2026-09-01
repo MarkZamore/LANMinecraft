@@ -1547,6 +1547,56 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
+    /// <summary>
+    /// Takes the selected build off the machine, once the player has said so in
+    /// as many words.
+    /// </summary>
+    /// <remarks>
+    /// The plan is worked out twice on purpose. The first is for the question -
+    /// how many worlds there are, and whether a Java goes with it - and is made
+    /// with the worlds kept, so nothing about asking can delete anything. The
+    /// second is made after the answer, because "вместе с мирами" adds a folder
+    /// the first plan deliberately did not name.
+    /// </remarks>
+    private void DeleteBuildButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_minecraftRunning || _paths is null || _settings is null || _settingsService is null) return;
+        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build || !build.IsInstalled) return;
+
+        var removal = new BuildRemovalService(_paths, _packHash, _logger);
+        BuildRemovalService.RemovalPlan plan;
+        try
+        {
+            plan = removal.Plan(build.RelativePath, worldsToo: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidOperationException or ArgumentException)
+        {
+            RequireLogger().Warn($"Build removal could not be planned for {build.RelativePath}: {ex.Message}");
+            SetState("Не удалось прочитать, из чего состоит сборка");
+            return;
+        }
+
+        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name, plan.Worlds, plan.Java);
+        if (answer == BuildRemovalAnswer.Keep) return;
+
+        var worldsToo = answer == BuildRemovalAnswer.WithWorlds;
+        var outcome = removal.Remove(worldsToo ? removal.Plan(build.RelativePath, worldsToo: true) : plan);
+        if (BuildRemovalService.Forget(_settings, build.RelativePath)) _settingsService.Save(_settings);
+
+        RefreshBuilds();
+        RefreshControlsPresetStatus();
+        RefreshUi();
+        SetState(outcome.Complete
+            ? $"Сборка удалена: {build.Name}" +
+              (outcome.Worlds > 0 ? $", {BuildRemovalConfirmationDialog.Worlds(outcome.Worlds)}" : "") +
+              (outcome.Java.Count > 0 ? $", Java {string.Join(", ", outcome.Java)}" : "")
+            // A part that would not go is almost always the game or an
+            // explorer window holding a file open, and saying which folder
+            // stayed is the difference between closing it and reinstalling.
+            : $"Сборка удалена не полностью - осталось: {string.Join(", ", outcome.Kept)}");
+    }
+
     private void SkinButton_Click(object sender, RoutedEventArgs e)
     {
         if (_minecraftRunning || _settings is null || _skinService is null)
@@ -2832,6 +2882,16 @@ public partial class MainWindow : Window
         // have. The other two quiet states are worth explaining - the game is
         // holding the file, or the layout is already in place - because there
         // the button would otherwise look broken.
+        // The delete button belongs to a build that is actually on the disk:
+        // a name the list only offers has nothing to remove, and a game that is
+        // running is holding the very files this would delete.
+        var installed = BuildComboBox.SelectedItem is ClientBuildViewModel selected && selected.IsInstalled;
+        DeleteBuildButton.IsEnabled = installed && !_minecraftRunning;
+        DeleteBuildButton.ToolTip = !installed
+            ? "Эта сборка ещё не скачана"
+            : _minecraftRunning
+                ? "Игра запущена - файлы сборки сейчас у неё"
+                : "Удалить сборку с компьютера";
         ControlsPresetButton.ToolTip = !preset.HasPreset
             ? null
             : _minecraftRunning
