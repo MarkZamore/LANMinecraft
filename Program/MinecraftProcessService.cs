@@ -114,9 +114,34 @@ public sealed class MinecraftProcessService
     /// </summary>
     public static IReadOnlyList<string> HeapTuningArguments { get; } =
     [
-        "-XX:MaxGCPauseMillis=40",
-        "-XX:G1ReservePercent=15",
+        // Named rather than assumed. G1 is the default on both runtimes this
+        // launcher ships, and writing it down costs nothing and settles it.
+        "-XX:+UseG1GC",
+        // The one that was missing, and missing from the list where it matters
+        // most. Reference processing is single-threaded without it, and a
+        // modded heap is made of weak and soft references - it is in every
+        // tuning guide for this game, and it was in the small-heap list all
+        // along. A large heap has more of them, not fewer.
+        "-XX:+ParallelRefProcEnabled",
+        // Forty was too tight to be a goal and became a way of missing one.
+        // G1 meets a pause target by shrinking the young generation, and a
+        // young generation squeezed hard enough promotes objects that were
+        // about to die anyway; the old generation then fills, and what a
+        // player finally sees is not the forty milliseconds asked for but the
+        // mixed collection that follows. Fifty is the tick itself, which is
+        // the number that actually matters here.
+        "-XX:MaxGCPauseMillis=50",
+        // Two of these are experimental, so the unlock is written first, in
+        // this list, and the order is pinned by a test. See the small-heap
+        // list below for the release this rule was learnt from.
+        "-XX:+UnlockExperimentalVMOptions",
+        // And a floor under the young generation, so the goal above cannot
+        // squeeze it away. This is the half of the pair that stops premature
+        // promotion; the goal alone was only ever the half that causes it.
+        "-XX:G1NewSizePercent=20",
+        "-XX:G1MaxNewSizePercent=40",
         "-XX:G1HeapRegionSize=32M",
+        "-XX:G1ReservePercent=15",
         "-XX:+ExplicitGCInvokesConcurrent"
     ];
 
@@ -552,7 +577,15 @@ public sealed class MinecraftProcessService
             // memory" screen does, so the dangerous button is the one a player
             // sees first. A JVM that exits on the spot never shows either, and
             // the launcher says what happened instead.
-            "-XX:+ExitOnOutOfMemoryError"
+            "-XX:+ExitOnOutOfMemoryError",
+            // Every collection, with its length, into the same log the adapter
+            // writes its own minute report to - so a pause and a tick that
+            // went missing can be read against each other without lining up
+            // two files by hand. Three sessions were spent guessing whether
+            // multi-second stalls were the collector or the world save; the
+            // second was proved by removing it, the first was never proved at
+            // all because nothing wrote it down.
+            "-Xlog:gc:stdout:time,uptime"
             // G1 tuned for a big modded heap. Left alone it grew the committed
             // heap from 2 GB to 9.4 GB in one session in resize steps, each a
             // pause a player feels as a stutter; Xms=Xmx below ends that. The

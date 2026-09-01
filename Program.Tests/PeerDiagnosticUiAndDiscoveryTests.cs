@@ -457,7 +457,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal((0, 1), memory);
         Assert.Equal((1, 1), preset);
 
-        Assert.Equal("Пресет настроек управления", (string?)button.Attribute("Content"));
+        Assert.Equal("Пресет управления", (string?)button.Attribute("Content"));
         Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
     }
 
