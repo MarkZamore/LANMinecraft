@@ -128,12 +128,15 @@ public final class PortablePerPlayerChunksHooks {
     /**
      * How many chunks one player may be handed in one tick.
      *
-     * A ceiling for a slow link, not a rate this aims at. It was sized for the
-     * worst case the launcher had measured - about four and a half megabytes a
-     * second through a Steam relay, against packs costing something like
-     * twenty-four kilobytes a chunk - so eight a tick is a hundred and sixty a
-     * second, near four megabytes, with about a seventh of the link left for
-     * everything that is not ground.
+     * Sized against the pipe the game actually uses, which is not the one this
+     * launcher measured. The launcher's own Steam transport raises its send
+     * rate to eight mebibytes a second; the game rides e4steam's bridge on
+     * Steam's defaults, an order of magnitude lower. Eight a tick was a hundred
+     * and sixty a second, near four megabytes, and it emptied into a pipe that
+     * would not take it - the queue grew, the keep-alive could not get past it,
+     * and a guest was thrown out for not answering within the thirty seconds a
+     * server allows. Four a tick is half of that and leaves the rest of the
+     * connection room, which is the entire point of the exercise.
      *
      * What was then measured on a real pair is that the ceiling is never
      * reached: every minute of every session so far reports nothing left
@@ -152,7 +155,36 @@ public final class PortablePerPlayerChunksHooks {
      * then adapts, because its client says how fast it is keeping up; this
      * cannot ask, so it errs the other way.
      */
-    private static final int CHUNKS_PER_TICK = 8;
+    private static final int CHUNKS_PER_TICK = 4;
+
+    /**
+     * The round trip past which the budget starts giving way, and the floor it
+     * gives way to.
+     *
+     * A guest was thrown out of a world for not answering a keep-alive within
+     * the thirty seconds the server allows, while that same minute reported
+     * 2999 chunks offered - about fifty a second, near one and a quarter
+     * megabytes. The budget had been sized against the launcher's own Steam
+     * transport, which raises its send rate to eight mebibytes a second. The
+     * game does not use that transport: it rides e4steam's bridge, on Steam's
+     * default rates, which are an order of magnitude lower. So the ground was
+     * being pushed in faster than the pipe would take it, everything that was
+     * not ground queued behind it, and the keep-alive that had to come back
+     * never did.
+     *
+     * There is no asking the client how it is coping - that is the packet
+     * 1.20.2 added and no older client knows. But the server already measures
+     * the round trip to each player, and a pipe filling up is exactly what
+     * makes that number climb. So it is the signal: while the answer comes
+     * back quickly the budget stands, and as it stretches the budget gives way
+     * until the ground is a trickle and everything else gets through.
+     *
+     * Backing off costs a slower fill. Not backing off cost a disconnection.
+     */
+    private static final int SLOW_MILLIS = 300;
+    private static final int VERY_SLOW_MILLIS = 1000;
+    private static final int CHUNKS_PER_TICK_WHEN_SLOW = 2;
+    private static final int CHUNKS_PER_TICK_WHEN_VERY_SLOW = 1;
 
     /**
      * How deep a hold may get before the pacing gives way and the game sends
@@ -702,7 +734,7 @@ public final class PortablePerPlayerChunksHooks {
                 }
                 long[] tally = TALLY.computeIfAbsent(entry.getKey(), key -> new long[4]);
                 synchronized (pending) {
-                    int budget = CHUNKS_PER_TICK;
+                    int budget = budgetFor(pending.player);
                     while (budget > 0 && !pending.queue.isEmpty()) {
                         Held held = pending.queue.pollFirst();
                         // The server has since told him to forget it. Handing
@@ -740,6 +772,30 @@ public final class PortablePerPlayerChunksHooks {
             pumping = previous;
         }
         report();
+    }
+
+    /**
+     * How many chunks this player may take this tick, by how fast he is
+     * answering.
+     *
+     * Read from the player each tick rather than remembered: it costs one
+     * field read on a path that already runs once a tick, and a number that
+     * went stale would be worse than not having it.
+     */
+    private static int budgetFor(Object player) {
+        try {
+            int answering = PLAYER_LATENCY.field(player).getInt(player);
+            if (answering >= VERY_SLOW_MILLIS) {
+                return CHUNKS_PER_TICK_WHEN_VERY_SLOW;
+            }
+            if (answering >= SLOW_MILLIS) {
+                return CHUNKS_PER_TICK_WHEN_SLOW;
+            }
+            return CHUNKS_PER_TICK;
+        } catch (Throwable exception) {
+            // A number that cannot be read is not a reason to send nothing.
+            return CHUNKS_PER_TICK;
+        }
     }
 
     /** The gap since this level last ticked, kept for the minute report. */
