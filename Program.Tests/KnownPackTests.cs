@@ -81,19 +81,19 @@ public sealed class KnownPackTests
     }
 
     /// <summary>
-    /// The one built for a machine that has nothing to spare: 73 mods on
-    /// 1.20.1, which is the only pack here whose room beside the heap leaves a
-    /// three gigabyte heap inside what an eight gigabyte laptop can be asked
-    /// for.
+    /// Withdrawn on 1 September 2026, the same way The Broken Script Enhanced
+    /// was: the repository is gone, so a name left in this list would be a name
+    /// the launcher offers and then cannot fetch. An instance somebody already
+    /// has keeps working - the sync says it could not check for updates and
+    /// plays the local copy - but nothing downloads it again.
     /// </summary>
     [Fact]
-    public void RpgArsNouveauIsOffered()
+    public void RpgArsNouveauIsNoLongerOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("RPG Ars Nouveau");
-        Assert.NotNull(source);
-        Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("RPG-Ars-Nouveau", source.Repo);
-        Assert.Equal("pack-latest", source.Tag);
+        Assert.Null(PortablePackSyncService.KnownSourceFor("RPG Ars Nouveau"));
+        Assert.DoesNotContain(
+            PortablePackSyncService.KnownPacks,
+            pack => pack.RelativePath.Contains("RPG", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
