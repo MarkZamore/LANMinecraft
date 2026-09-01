@@ -49,46 +49,37 @@ public static class SharedRuntimeStore
     /// really does mean unused - four files out of five thousand on a live
     /// install.
     ///
-    /// <c>libraries</c> and <c>versions</c> are not like that. A loader
-    /// installer runs once and leaves behind files nobody downloaded: the
+    /// <c>libraries</c> and <c>versions</c> are not like that, and this is the
+    /// second time that has been proved on somebody's install. What a loader
+    /// installer produces is not downloaded and so is reported by nobody: the
     /// NeoForge client and universal jars, the slim, srg and extra client jars,
-    /// and Mojang's mappings. CmlLib reports none of them, so no state names
-    /// them, so the sweep would have taken every one - sixty-three files and
-    /// 132 MB on this machine, which is the whole classpath plus the file the
-    /// identity hooks are built from. Three builds would have stopped starting
-    /// and every player would have lost their skin, again.
+    /// the natives unpacked beside a profile. Release 331 tried to close the
+    /// gap by naming, from a version's own json, every library it lists - and
+    /// the file that actually matters is not in that list. NeoForge 21.1 never
+    /// names <c>net.neoforged:neoforge</c> anywhere in its profile: not in
+    /// <c>libraries</c>, not on the module path in <c>arguments.jvm</c>. FML
+    /// finds it on the disk at launch, by convention, and nothing written down
+    /// points at it.
     ///
-    /// So those two roots are left alone until a build can record what it made
-    /// and not only what it fetched. Assets are the bulk of the store, so this
-    /// keeps nearly all of what the sweep is for.
+    /// So the sweep took it. Twice: once before 331, once after, when the
+    /// condition that had held the sweep back turned itself off exactly as
+    /// designed. Three builds started with <c>neoforge</c> and <c>minecraft</c>
+    /// both <c>[MISSING]</c>, and neither could recover on its own, because a
+    /// file no state names is also a file no validation misses - the launcher
+    /// checked every one of the 4594 files it knew about, found them all, and
+    /// launched into the crash.
+    ///
+    /// The rule this leaves is the one the class was built on and should not
+    /// have been talked out of: the sweep may only take from a root where
+    /// "unnamed" provably means "unused". That is true of assets and of
+    /// Mojang's Java, and it is not true of these two - not with any amount of
+    /// reading version json, because the fact is not written there. Naming what
+    /// an installer produced would mean recording it at the moment it is
+    /// produced, and until something does, these roots are not swept at all.
+    /// They are also the small half of the store: assets are the bulk, and the
+    /// sweep still has them.
     /// </remarks>
     private static readonly string[] AlwaysSweepable = ["assets", "runtime"];
-
-    /// <summary>
-    /// The two roots that are only swept once every build can speak for what is
-    /// in them.
-    /// </summary>
-    /// <remarks>
-    /// These hold the files a loader installer makes rather than downloads -
-    /// the NeoForge client and universal jars, the srg and extra client jars -
-    /// and until release 331 nothing recorded them. The sweep took the whole
-    /// classpath, the game started with neoforge and minecraft both [MISSING],
-    /// and it could not recover, because a file no state names is also a file
-    /// no validation misses.
-    ///
-    /// A state written at the current generation does name them, so the two
-    /// roots are safe to sweep - but only when EVERY state on the disk is that
-    /// new. One build still carrying an older state would contribute a
-    /// keep-set with no libraries in it, and its own jars would go: not a crash
-    /// this time, because a state of the wrong generation fails validation and
-    /// the build prepares again before it can launch, but a re-download bought
-    /// for nothing.
-    ///
-    /// So it turns itself on. Every build gets prepared once after an update,
-    /// and from the first moment they all have, the store is swept whole again
-    /// with no flag to set and nothing to remember.
-    /// </remarks>
-    private static readonly string[] SweepableOnceEveryStateIsCurrent = ["libraries", "versions"];
 
     /// <summary>
     /// Everything a runtime state can name: the store, and the build folders
@@ -129,27 +120,19 @@ public static class SharedRuntimeStore
 
         var anchor = Anchor(paths);
         var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var everyStateIsCurrent = true;
         foreach (var statePath in EnumerateStates(paths))
         {
             // Unreadable is not empty. A state that will not parse is a build
             // whose needs are unknown, and guessing them as "none" is how a
             // sweep deletes the game out from under a perfectly good install.
             if (!TryReadLiveFiles(statePath, anchor, live)) return 0;
-            if (ReadGeneration(statePath) != PackRuntimeService.RuntimeCacheGeneration)
-            {
-                everyStateIsCurrent = false;
-            }
         }
 
         // No builds at all is a different thing entirely, and it is the case
         // this was asked for: with the last build gone nothing is used by
         // anything, so the whole store goes. The next install refills it.
         var removed = 0;
-        var roots = everyStateIsCurrent
-            ? AlwaysSweepable.Concat(SweepableOnceEveryStateIsCurrent)
-            : AlwaysSweepable;
-        foreach (var sweepable in roots)
+        foreach (var sweepable in AlwaysSweepable)
         {
             var directory = Path.Combine(root, sweepable);
             if (!Directory.Exists(directory)) continue;
@@ -163,30 +146,9 @@ public static class SharedRuntimeStore
         }
         if (removed > 0)
         {
-            logger?.Info(
-                $"Shared runtime store: {removed} file(s) no build needs any more were removed" +
-                (everyStateIsCurrent
-                    ? "."
-                    : "; the libraries were left alone until every build has been prepared once."));
+            logger?.Info($"Shared runtime store: {removed} file(s) no build needs any more were removed.");
         }
         return removed;
-    }
-
-    /// <summary>The schema a state was written with, or -1 when it will not say.</summary>
-    private static int ReadGeneration(string statePath)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(statePath));
-            return document.RootElement.TryGetProperty("schemaVersion", out var value) &&
-                   value.TryGetInt32(out var generation)
-                ? generation
-                : -1;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            return -1;
-        }
     }
 
     private static IEnumerable<string> EnumerateStates(AppPaths paths)
