@@ -99,18 +99,29 @@ public sealed class KnownPackTests
     /// <summary>
     /// The second one built for a machine with nothing to spare, and the first
     /// where its author did that work himself: Sodium, Lithium, FerriteCore,
-    /// ModernFix and Noisium are all in his own list. Its folder is spelt
-    /// without the colon the pack's name carries, because a folder cannot have
-    /// one.
+    /// ModernFix and Noisium are all in his own list. It goes by a short name
+    /// because the build list is one narrow column and the full one was cut off
+    /// in it.
     /// </summary>
     [Fact]
     public void CreateAndArsIsOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("Create & Ars Arcane Awakened");
+        var source = PortablePackSyncService.KnownSourceFor("C&A Arcane Awakened");
         Assert.NotNull(source);
         Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("Create-Ars-Arcane-Awakened", source.Repo);
+        Assert.Equal("C-A-Arcane-Awakened", source.Repo);
         Assert.Equal("pack-latest", source.Tag);
+    }
+
+    /// <summary>
+    /// And the long name it was offered under for one release answers for
+    /// nothing: a name in this list is a name the launcher will fetch, and that
+    /// repository no longer answers to it.
+    /// </summary>
+    [Fact]
+    public void TheLongCreateAndArsNameIsNotOffered()
+    {
+        Assert.Null(PortablePackSyncService.KnownSourceFor("Create & Ars Arcane Awakened"));
     }
 
     /// <summary>

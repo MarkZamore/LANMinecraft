@@ -1522,14 +1522,7 @@ public partial class MainWindow : Window
         var directories = ResolveSelectedBuildDirectories();
         if (directories is null) return;
 
-        var answer = MessageBox.Show(
-            this,
-            "Настройки управления будут заменены пресетом сборки: раскладка без конфликтов " +
-            "для всех модов. Продолжить?",
-            "Пресет управления",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes) return;
+        if (!ControlsPresetConfirmationDialog.Ask(this, _controlsPresetStatus.FirstDifference)) return;
 
         try
         {
@@ -2612,7 +2605,22 @@ public partial class MainWindow : Window
         StartMemoryEstimateWait();
         var service = _settingsService;
         var settings = _settings;
-        _ = Task.Run(() => service.MeasurePack(wanted)).ContinueWith(
+        var sync = _packSync;
+        _ = Task.Run(async () =>
+        {
+            var measured = service.MeasurePack(wanted);
+            // A build that is offered but not downloaded has no folder to walk,
+            // and the rules would otherwise fall back to giving it two thirds of
+            // the machine - which put a bigger number under a pack built for a
+            // laptop than under the 880-mod one beside it. Its manifest names
+            // every file with its size, so it can be weighed without fetching
+            // any of them.
+            if (!measured.IsKnown && sync is not null)
+            {
+                service.UsePackMemory(
+                    await sync.WeighFromSourceAsync(wanted, CancellationToken.None).ConfigureAwait(false));
+            }
+        }).ContinueWith(
             _ =>
             {
                 // A player who clicks through three builds gets three walks, and

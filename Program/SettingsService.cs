@@ -66,6 +66,21 @@ public sealed class SettingsService
     }
 
     /// <summary>
+    /// Takes a weight worked out somewhere other than a pack folder - the
+    /// manifest of a pack that is offered but not installed - and treats it as
+    /// this pack's, so the estimate stops guessing from the size of the machine.
+    /// </summary>
+    /// <returns>False for a weight that says nothing, which changes nothing.</returns>
+    public bool UsePackMemory(PackMemoryProfile profile)
+    {
+        // Never over an answer read from a real folder: that one counted the
+        // mods inside the jars and this one could not.
+        if (!profile.IsKnown || PackMemory.IsKnown) return false;
+        PackMemory = profile;
+        return true;
+    }
+
+    /// <summary>
     /// Puts the field in step with the pack that is now selected: back to the
     /// number the player last set on this pack, or to what the launcher makes
     /// of its weight if they never set one. Returns true when the number moved.
