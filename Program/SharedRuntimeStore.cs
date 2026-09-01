@@ -62,7 +62,33 @@ public static class SharedRuntimeStore
     /// and not only what it fetched. Assets are the bulk of the store, so this
     /// keeps nearly all of what the sweep is for.
     /// </remarks>
-    private static readonly string[] SweepableRoots = ["assets", "runtime"];
+    private static readonly string[] AlwaysSweepable = ["assets", "runtime"];
+
+    /// <summary>
+    /// The two roots that are only swept once every build can speak for what is
+    /// in them.
+    /// </summary>
+    /// <remarks>
+    /// These hold the files a loader installer makes rather than downloads -
+    /// the NeoForge client and universal jars, the srg and extra client jars -
+    /// and until release 331 nothing recorded them. The sweep took the whole
+    /// classpath, the game started with neoforge and minecraft both [MISSING],
+    /// and it could not recover, because a file no state names is also a file
+    /// no validation misses.
+    ///
+    /// A state written at the current generation does name them, so the two
+    /// roots are safe to sweep - but only when EVERY state on the disk is that
+    /// new. One build still carrying an older state would contribute a
+    /// keep-set with no libraries in it, and its own jars would go: not a crash
+    /// this time, because a state of the wrong generation fails validation and
+    /// the build prepares again before it can launch, but a re-download bought
+    /// for nothing.
+    ///
+    /// So it turns itself on. Every build gets prepared once after an update,
+    /// and from the first moment they all have, the store is swept whole again
+    /// with no flag to set and nothing to remember.
+    /// </remarks>
+    private static readonly string[] SweepableOnceEveryStateIsCurrent = ["libraries", "versions"];
 
     /// <summary>
     /// Everything a runtime state can name: the store, and the build folders
@@ -103,19 +129,27 @@ public static class SharedRuntimeStore
 
         var anchor = Anchor(paths);
         var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var everyStateIsCurrent = true;
         foreach (var statePath in EnumerateStates(paths))
         {
             // Unreadable is not empty. A state that will not parse is a build
             // whose needs are unknown, and guessing them as "none" is how a
             // sweep deletes the game out from under a perfectly good install.
             if (!TryReadLiveFiles(statePath, anchor, live)) return 0;
+            if (ReadGeneration(statePath) != PackRuntimeService.RuntimeCacheGeneration)
+            {
+                everyStateIsCurrent = false;
+            }
         }
 
         // No builds at all is a different thing entirely, and it is the case
         // this was asked for: with the last build gone nothing is used by
         // anything, so the whole store goes. The next install refills it.
         var removed = 0;
-        foreach (var sweepable in SweepableRoots)
+        var roots = everyStateIsCurrent
+            ? AlwaysSweepable.Concat(SweepableOnceEveryStateIsCurrent)
+            : AlwaysSweepable;
+        foreach (var sweepable in roots)
         {
             var directory = Path.Combine(root, sweepable);
             if (!Directory.Exists(directory)) continue;
@@ -129,9 +163,30 @@ public static class SharedRuntimeStore
         }
         if (removed > 0)
         {
-            logger?.Info($"Shared runtime store: {removed} file(s) no build needs any more were removed.");
+            logger?.Info(
+                $"Shared runtime store: {removed} file(s) no build needs any more were removed" +
+                (everyStateIsCurrent
+                    ? "."
+                    : "; the libraries were left alone until every build has been prepared once."));
         }
         return removed;
+    }
+
+    /// <summary>The schema a state was written with, or -1 when it will not say.</summary>
+    private static int ReadGeneration(string statePath)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(statePath));
+            return document.RootElement.TryGetProperty("schemaVersion", out var value) &&
+                   value.TryGetInt32(out var generation)
+                ? generation
+                : -1;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return -1;
+        }
     }
 
     private static IEnumerable<string> EnumerateStates(AppPaths paths)
