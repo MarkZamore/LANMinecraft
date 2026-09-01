@@ -97,6 +97,23 @@ public sealed class KnownPackTests
     }
 
     /// <summary>
+    /// The second one built for a machine with nothing to spare, and the first
+    /// where its author did that work himself: Sodium, Lithium, FerriteCore,
+    /// ModernFix and Noisium are all in his own list. Its folder is spelt
+    /// without the colon the pack's name carries, because a folder cannot have
+    /// one.
+    /// </summary>
+    [Fact]
+    public void CreateAndArsIsOffered()
+    {
+        var source = PortablePackSyncService.KnownSourceFor("Create & Ars Arcane Awakened");
+        Assert.NotNull(source);
+        Assert.Equal("MarkZamore", source!.Owner);
+        Assert.Equal("Create-Ars-Arcane-Awakened", source.Repo);
+        Assert.Equal("pack-latest", source.Tag);
+    }
+
+    /// <summary>
     /// The names that were dropped are dropped: nothing answers for them, and a
     /// folder still called one of them is a pack of somebody's own as far as
     /// the launcher is concerned.
