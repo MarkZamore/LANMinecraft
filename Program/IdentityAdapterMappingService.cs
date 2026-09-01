@@ -677,6 +677,7 @@ internal sealed class IdentityAdapterMappingService
         properties["chunkMapTickDescriptors"] = "()V";
         properties["untrackChunkMethods"] = "untrackChunk";
         properties["untrackChunkDescriptors"] = $"(L{ChunkPos};)V";
+        properties["playerLatencyFields"] = "latency";
         if (!perPlayerChunks || mappings is null) return false;
 
         // The game's own, and nothing to do. Named by the class that does the
@@ -710,6 +711,12 @@ internal sealed class IdentityAdapterMappingService
         properties["untrackChunkDescriptors"] = JoinAliases(
             $"(L{chunkPos.RuntimeName};)V",
             $"(L{chunkPos.ObfName};)V");
+        // What the server already knows about the round trip to each player:
+        // it answers a keep-alive every fifteen seconds and keeps the time it
+        // took. Absent on 1.20.2 and later, where it moved onto the shared
+        // listener - which is not a version this feature runs on anyway.
+        var latency = serverPlayer.FindField("latency");
+        if (latency is not null) properties["playerLatencyFields"] = JoinAliases(latency);
         return true;
     }
 
