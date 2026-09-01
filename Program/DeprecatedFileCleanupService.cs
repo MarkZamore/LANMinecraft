@@ -101,6 +101,7 @@ public static class DeprecatedFileCleanupService
 
         removed += CleanupUnpinnedComponents(paths, logger);
         removed += CleanupOrphanedAdapterBuilds(paths, logger);
+        removed += CleanupSupersededPackJava(paths, logger);
 
         if (removed > 0)
         {
@@ -135,6 +136,42 @@ public static class DeprecatedFileCleanupService
                 if (!keptFileIds.Contains(Path.GetFileName(version), StringComparer.OrdinalIgnoreCase))
                 {
                     removed += TryDeleteDirectory(version, logger);
+                }
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// Java used to be installed inside each pack's own runtime folder. Moving
+    /// it to one shared install did nothing about the copies already there, so
+    /// a machine that played a build before the move still carries three
+    /// hundred megabytes of JDK per build that nothing reads.
+    /// </summary>
+    /// <remarks>
+    /// Only the launcher's own names are taken. Mojang's Java lives in the very
+    /// same folder under names of its own - <c>java-runtime-delta</c>,
+    /// <c>jre-legacy</c> and the like - and that Java is not spare: it runs the
+    /// loader installer, every one of its files is listed in the runtime state,
+    /// and removing one would fail the state check and cost a full re-prepare
+    /// of the whole runtime. The two naming schemes have never overlapped,
+    /// which is what makes this safe to do by name.
+    /// </remarks>
+    private static int CleanupSupersededPackJava(AppPaths paths, Logger? logger)
+    {
+        if (!Directory.Exists(paths.Runtimes)) return 0;
+
+        var removed = 0;
+        foreach (var build in EnumerateDirectories(paths.Runtimes))
+        {
+            var components = Path.Combine(build, "runtime", "windows-x64");
+            if (!Directory.Exists(components)) continue;
+            foreach (var directory in EnumerateDirectories(components))
+            {
+                if (JavaRuntimeCatalog.InstallDirectoryNames.Contains(
+                        Path.GetFileName(directory), StringComparer.OrdinalIgnoreCase))
+                {
+                    removed += TryDeleteDirectory(directory, logger);
                 }
             }
         }
