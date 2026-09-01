@@ -14,7 +14,7 @@ public sealed class PackRuntimeStateTests
             .GetField("RuntimeStateCacheGeneration", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetRawConstantValue();
 
-        Assert.Equal(5, PackRuntimeService.RuntimeCacheGeneration);
+        Assert.Equal(6, PackRuntimeService.RuntimeCacheGeneration);
         Assert.Equal(PackRuntimeService.RuntimeCacheGeneration, snapshotSchema);
     }
 }
