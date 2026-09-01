@@ -40,6 +40,31 @@ public static class SharedRuntimeStore
     public static string Resources(AppPaths paths) => Path.Combine(Root(paths), "resources");
 
     /// <summary>
+    /// The only parts of the store the sweep may take from.
+    /// </summary>
+    /// <remarks>
+    /// A measured restriction rather than a cautious one. Everything under
+    /// <c>assets</c> and <c>runtime</c> is fetched by name and reported as a
+    /// file of the version, so a state lists every one of them and "unnamed"
+    /// really does mean unused - four files out of five thousand on a live
+    /// install.
+    ///
+    /// <c>libraries</c> and <c>versions</c> are not like that. A loader
+    /// installer runs once and leaves behind files nobody downloaded: the
+    /// NeoForge client and universal jars, the slim, srg and extra client jars,
+    /// and Mojang's mappings. CmlLib reports none of them, so no state names
+    /// them, so the sweep would have taken every one - sixty-three files and
+    /// 132 MB on this machine, which is the whole classpath plus the file the
+    /// identity hooks are built from. Three builds would have stopped starting
+    /// and every player would have lost their skin, again.
+    ///
+    /// So those two roots are left alone until a build can record what it made
+    /// and not only what it fetched. Assets are the bulk of the store, so this
+    /// keeps nearly all of what the sweep is for.
+    /// </remarks>
+    private static readonly string[] SweepableRoots = ["assets", "runtime"];
+
+    /// <summary>
     /// Everything a runtime state can name: the store, and the build folders
     /// whose own files are listed beside it. Paths in a state are relative to
     /// this, so one list can hold both.
@@ -90,13 +115,18 @@ public static class SharedRuntimeStore
         // this was asked for: with the last build gone nothing is used by
         // anything, so the whole store goes. The next install refills it.
         var removed = 0;
-        foreach (var file in EnumerateFilesSafe(root))
+        foreach (var sweepable in SweepableRoots)
         {
-            if (live.Contains(Path.GetFullPath(file))) continue;
-            if (TryDelete(file, logger)) removed++;
-        }
+            var directory = Path.Combine(root, sweepable);
+            if (!Directory.Exists(directory)) continue;
+            foreach (var file in EnumerateFilesSafe(directory))
+            {
+                if (live.Contains(Path.GetFullPath(file))) continue;
+                if (TryDelete(file, logger)) removed++;
+            }
 
-        RemoveEmptyDirectories(root, logger);
+            RemoveEmptyDirectories(directory, logger);
+        }
         if (removed > 0)
         {
             logger?.Info($"Shared runtime store: {removed} file(s) no build needs any more were removed.");
