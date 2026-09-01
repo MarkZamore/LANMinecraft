@@ -148,6 +148,49 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         Assert.True(File.Exists(adapter));
     }
 
+    /// <summary>
+    /// Java that a build installed for itself before it was shared. The whole
+    /// risk in this sweep is the folder it works in: Mojang's own Java lives
+    /// right beside ours under names of its own, it runs the loader installer,
+    /// and every one of its files is listed in the runtime state - so removing
+    /// one would fail the state check and cost a full re-prepare. The two are
+    /// told apart by name, and that is what this pins.
+    /// </summary>
+    [Fact]
+    public void PackJavaFromBeforeItWasShared_IsGone_AndMojangsIsNot()
+    {
+        var paths = CreatePaths();
+        var components = Path.Combine(paths.Runtimes, "LL8 Extended", "runtime", "windows-x64");
+        var ours = Path.Combine(components, "java-21", "bin", "javaw.exe");
+        var mojang = Path.Combine(components, "java-runtime-delta", "bin", "javaw.exe");
+        var legacy = Path.Combine(components, "jre-legacy", "bin", "java.exe");
+        foreach (var path in new[] { ours, mojang, legacy }) WriteFile(path, "exe");
+        // And the one that is still in use, where it lives now.
+        var shared = Path.Combine(paths.JavaRuntimes, "runtime", "windows-x64", "java-21", "bin", "javaw.exe");
+        WriteFile(shared, "exe");
+
+        DeprecatedFileCleanupService.Run(paths);
+
+        Assert.False(Directory.Exists(Path.Combine(components, "java-21")));
+        Assert.True(File.Exists(mojang));
+        Assert.True(File.Exists(legacy));
+        Assert.True(File.Exists(shared));
+    }
+
+    /// <summary>A build with nothing of ours under it is left entirely alone.</summary>
+    [Fact]
+    public void ABuildWithOnlyMojangsJava_IsUntouched()
+    {
+        var paths = CreatePaths();
+        var components = Path.Combine(paths.Runtimes, "RPG Ars Nouveau", "runtime", "windows-x64");
+        var mojang = Path.Combine(components, "java-runtime-gamma", "bin", "javaw.exe");
+        WriteFile(mojang, "exe");
+
+        DeprecatedFileCleanupService.Run(paths);
+
+        Assert.True(File.Exists(mojang));
+    }
+
     [Fact]
     public void RunningTwice_IsHarmless()
     {
