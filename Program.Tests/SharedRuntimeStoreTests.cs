@@ -77,48 +77,53 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     }
 
     /// <summary>
-    /// The libraries and the version profiles are swept only once every build
-    /// on the disk can speak for what is in them - and a build carrying an
-    /// older state cannot, because states written before release 331 named no
-    /// libraries at all.
+    /// The loader's own jars survive a sweep in which nothing names them, and
+    /// every state on the disk is current.
     /// </summary>
+    /// <remarks>
+    /// This is the shape of the bug, exactly: NeoForge 21.1 names
+    /// net.neoforged:neoforge nowhere in its profile - not in libraries, not on
+    /// the module path - so no amount of reading that json puts the jar in a
+    /// keep-set, and the sweep that trusts the keep-set takes it. It happened
+    /// twice on one install. The test that was here before asserted the
+    /// opposite and passed, because its fixture only ever held jars a state had
+    /// named.
+    /// </remarks>
     [Fact]
-    public void WithABuildOnAnOlderState_TheLibrariesAreLeftAlone()
+    public void TheLoadersOwnJars_SurviveEvenThoughNoStateNamesThem()
     {
-        Build("Up To Date", Asset("assets/objects/ab/kept"));
-        BuildAtGeneration("Not Yet Prepared", PackRuntimeService.RuntimeCacheGeneration - 1);
-        var loader = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
+        Build("LL8 Extended", Asset("assets/objects/ab/kept"));
+        var client = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
+        var universal = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-universal.jar");
+        var natives = Asset("versions/neoforge-21.1.248/natives/lwjgl.dll");
         var orphanAsset = Asset("assets/objects/cd/orphan");
 
         Assert.Equal(1, SharedRuntimeStore.Sweep(_paths));
-        Assert.False(File.Exists(orphanAsset), "assets are swept either way");
-        Assert.True(File.Exists(loader), "the libraries wait until every state is current");
+        Assert.False(File.Exists(orphanAsset), "assets are still swept");
+        foreach (var path in new[] { client, universal, natives })
+        {
+            Assert.True(File.Exists(path), path + " is needed and named by nothing");
+        }
     }
 
     /// <summary>
-    /// And once every state is current they are swept like everything else,
-    /// which is what turns the restriction off without a flag to remember.
+    /// A library or a profile nobody uses stays too. That is the price, and it
+    /// is the right way round: these two roots are the small half of the store.
     /// </summary>
     [Fact]
-    public void WithEveryStateCurrent_TheLibrariesAreSweptToo()
+    public void ALibraryNoBuildUses_StaysAnyway()
     {
         Build("Up To Date", Asset("assets/objects/ab/kept"));
         var orphanLoader = Asset("libraries/net/example/gone/1.0/gone-1.0.jar");
         var orphanProfile = Asset("versions/gone/gone.json");
 
-        Assert.Equal(2, SharedRuntimeStore.Sweep(_paths));
-        Assert.False(File.Exists(orphanLoader));
-        Assert.False(File.Exists(orphanProfile));
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        Assert.True(File.Exists(orphanLoader));
+        Assert.True(File.Exists(orphanProfile));
     }
 
     /// <summary>
-    /// What a build names is kept whatever root it is in - the loader jars
-    /// included, now that a state names them.
-    /// </summary> A loader installer runs once and leaves
-    /// behind files nobody downloaded - the NeoForge client jar, the srg and
-    /// extra client jars, Mojang's mappings - and CmlLib reports none of them,
-    /// so no state names any of them. Sixty-three files and 132 MB of live
-    /// classpath on the machine this was found on.
+    /// What a build names is kept whatever root it is in.
     /// </summary>
     [Fact]
     public void TheLoadersOwnFiles_AreKeptWhenABuildNamesThem()
@@ -253,12 +258,6 @@ public sealed class SharedRuntimeStoreTests : IDisposable
             Path.Combine(_paths.Runtimes, name, ".portable-runtime.json"),
             JsonSerializer.Serialize(new { schemaVersion = PackRuntimeService.RuntimeCacheGeneration, files = listed }));
     }
-
-    /// <summary>A build whose state was written by an older launcher.</summary>
-    private void BuildAtGeneration(string name, int generation) =>
-        Write(
-            Path.Combine(_paths.Runtimes, name, ".portable-runtime.json"),
-            JsonSerializer.Serialize(new { schemaVersion = generation, files = new { } }));
 
     private static void Write(string path, string content)
     {
