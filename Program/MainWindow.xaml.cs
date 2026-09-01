@@ -154,6 +154,11 @@ public partial class MainWindow : Window
             LoadChangelog();
             ShowSidePanel(news: false);
             DeprecatedFileCleanupService.Run(_paths, _logger);
+            // And the structural pass: runtimes for builds that are gone, and
+            // the copies of the game a build kept before the game was shared.
+            // It runs after the one above because that one is what removes the
+            // folders this one would otherwise have to reason about.
+            StructureCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
