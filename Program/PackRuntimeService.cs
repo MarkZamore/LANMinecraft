@@ -34,7 +34,7 @@ public sealed class PackRuntimeService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    internal const int RuntimeCacheGeneration = 4;
+    internal const int RuntimeCacheGeneration = 5;
     private const string RuntimeStateFileName = ".portable-runtime.json";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -494,6 +494,18 @@ public sealed class PackRuntimeService : IDisposable
         CancellationToken token)
     {
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { clientJarPath };
+        // The asset index, which CmlLib downloads and then does not report as a
+        // file of the version. Everything in the shared store that is needed
+        // must be named by some build, or the store's own sweep takes it - and
+        // this one is what the game reads to find every asset it has by name,
+        // so losing it costs the language list before anything else.
+        var assetId = profile.GetInheritedProperty(version => version.AssetIndex?.Id);
+        if (!string.IsNullOrWhiteSpace(assetId))
+        {
+            var index = Path.Combine(launcher.MinecraftPath.Assets, "indexes", assetId + ".json");
+            if (File.Exists(index)) files.Add(Path.GetFullPath(index));
+        }
+
         foreach (var version in profile.EnumerateToParent())
         {
             foreach (var file in await launcher.ExtractFiles(version, token))
