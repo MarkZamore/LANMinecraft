@@ -1526,7 +1526,7 @@ public partial class MainWindow : Window
             this,
             "Настройки управления будут заменены пресетом сборки: раскладка без конфликтов " +
             "для всех модов. Продолжить?",
-            "Пресет настроек управления",
+            "Пресет управления",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question);
         if (answer != MessageBoxResult.Yes) return;
@@ -1541,7 +1541,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             RequireLogger().Warn($"Controls preset failed: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Пресет настроек управления", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(this, ex.Message, "Пресет управления", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         RefreshControlsPresetStatus();
         RefreshUi();

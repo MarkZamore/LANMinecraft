@@ -150,7 +150,7 @@
                                TextTrimming="CharacterEllipsis"
                                Margin="{StaticResource Gap.Right2}"/>
                     <Button Grid.Column="1" x:Name="ControlsPresetButton"
-                            Content="Пресет настроек управления"
+                            Content="Пресет управления"
                             Click="ControlsPresetButton_Click"
                             IsEnabled="False"
                             ToolTipService.ShowOnDisabled="True"/>

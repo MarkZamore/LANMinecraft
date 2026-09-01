@@ -25,35 +25,27 @@ public sealed class HeapTuningArgumentTests
     ];
 
     /// <summary>
-    /// The large-heap list keeps to product options, so nothing in it needs an
-    /// unlock ahead of it and none may appear.
+    /// Both lists use experimental options now, and that is the one thing about
+    /// either that can stop a game from starting at all. The unlock has to come
+    /// first - not merely be present - because HotSpot reads the command line in
+    /// order and refuses an experimental option it meets before the switch that
+    /// allows it.
     /// </summary>
-    [Fact]
-    public void TheLargeHeapListNeedsNoUnlockOption()
+    /// <remarks>
+    /// The large-heap list used to keep to product options and was pinned that
+    /// way. It stopped doing so when a floor was put under the young generation:
+    /// a pause goal on its own only tells G1 to shrink it, which is the half of
+    /// the pair that causes premature promotion rather than the half that stops
+    /// it. So the rule that guarded the small list now guards both.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EachListUnlocksBeforeItUsesAnExperimentalOption(bool small)
     {
-        foreach (var argument in MinecraftProcessService.HeapTuningArguments)
-        {
-            foreach (var name in NeedAnUnlock.Concat(
-                ["UnlockExperimentalVMOptions", "UnlockDiagnosticVMOptions"]))
-            {
-                Assert.False(
-                    argument.Contains(name, StringComparison.Ordinal),
-                    $"{argument} needs an unlock option before it; the JVM will not start without one.");
-            }
-        }
-    }
-
-    /// <summary>
-    /// The small-heap list does need two of them, and that is the one thing
-    /// about it that can stop a game from starting at all. The unlock has to
-    /// come first - not merely be present - because HotSpot reads the command
-    /// line in order and refuses an experimental option it meets before the
-    /// switch that allows it.
-    /// </summary>
-    [Fact]
-    public void TheSmallHeapListUnlocksBeforeItUsesAnExperimentalOption()
-    {
-        var flags = MinecraftProcessService.SmallHeapTuningArguments;
+        var flags = small
+            ? MinecraftProcessService.SmallHeapTuningArguments
+            : MinecraftProcessService.HeapTuningArguments;
         var unlock = flags.ToList().FindIndex(
             flag => flag.Contains("UnlockExperimentalVMOptions", StringComparison.Ordinal));
 
@@ -79,9 +71,14 @@ public sealed class HeapTuningArgumentTests
     {
         Assert.Equal(
             [
-                "-XX:MaxGCPauseMillis=40",
-                "-XX:G1ReservePercent=15",
+                "-XX:+UseG1GC",
+                "-XX:+ParallelRefProcEnabled",
+                "-XX:MaxGCPauseMillis=50",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:G1NewSizePercent=20",
+                "-XX:G1MaxNewSizePercent=40",
                 "-XX:G1HeapRegionSize=32M",
+                "-XX:G1ReservePercent=15",
                 "-XX:+ExplicitGCInvokesConcurrent"
             ],
             MinecraftProcessService.HeapTuningArguments);
