@@ -459,6 +459,21 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         Assert.Equal("Пресет управления", (string?)button.Attribute("Content"));
         Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
+
+        // And the delete button beside it, in the same cell: the preset button
+        // takes the free width and this one is square at the end of the row,
+        // separated by the gap the transfer and report rows use.
+        var delete = document.Descendants(presentation + "Button")
+            .Single(element => (string?)element.Attribute(x + "Name") == "DeleteBuildButton");
+        Assert.Equal((1, 1), Cell(delete));
+        Assert.Equal("2", (string?)delete.Attribute("Grid.Column"));
+        Assert.Equal("1", (string?)button.Attribute("Grid.Column"));
+        Assert.Equal("{StaticResource Gap.Left2}", (string?)delete.Attribute("Margin"));
+        Assert.Equal("{StaticResource Size.Control}", (string?)delete.Attribute("Width"));
+        Assert.Equal("{StaticResource Brush.Danger}", (string?)delete.Attribute("Foreground"));
+        Assert.Equal("True", (string?)delete.Attribute("ToolTipService.ShowOnDisabled"));
+        // The red is on the glyph, never on the button: no Background is set.
+        Assert.Null(delete.Attribute("Background"));
     }
 
     /// <summary>The Grid.Row of the nearest element that declares one.</summary>

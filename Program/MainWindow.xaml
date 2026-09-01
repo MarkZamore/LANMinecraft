@@ -137,13 +137,14 @@
 
                 <!-- One press writes the pack's key layout into the game's options,
                      and the button stays quiet until something - the player in
-                     game, or the pack - changes what is there. The button is
-                     only as wide as its own words, and what that frees goes to
-                     the number the launcher would put in the field above. -->
+                     game, or the pack - changes what is there. It takes the whole
+                     of the row that the memory estimate and the delete button do
+                     not, so the row has no gap in the middle of it. -->
                 <Grid Grid.Row="1" Grid.Column="1" Margin="{StaticResource Gap.Left2Above2}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="{StaticResource Size.EstimateColumn}"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" x:Name="MemoryEstimateText"
                                Style="{StaticResource LabelTextStyle}"
@@ -154,6 +155,28 @@
                             Click="ControlsPresetButton_Click"
                             IsEnabled="False"
                             ToolTipService.ShowOnDisabled="True"/>
+                    <!-- The only irreversible thing in the window, so it is the
+                         only red on it - and red on the glyph alone, on an
+                         ordinary surface. It is square, the height of the row,
+                         and it says what it does in a tooltip rather than in
+                         words that would take the space the button beside it
+                         needs. The icon takes its colour from the button's
+                         Foreground, so the disabled state greys it with
+                         everything else instead of fading it out. -->
+                    <Button Grid.Column="2" x:Name="DeleteBuildButton"
+                            Width="{StaticResource Size.Control}"
+                            Padding="{StaticResource Pad.None}"
+                            Foreground="{StaticResource Brush.Danger}"
+                            Margin="{StaticResource Gap.Left2}"
+                            Click="DeleteBuildButton_Click"
+                            IsEnabled="False"
+                            ToolTipService.ShowOnDisabled="True">
+                        <Path Width="{StaticResource Size.Icon}"
+                              Height="{StaticResource Size.Icon}"
+                              Stretch="Uniform"
+                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z"/>
+                    </Button>
                 </Grid>
             </Grid>
 

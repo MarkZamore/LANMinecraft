@@ -34,6 +34,11 @@
         <!-- Progress: a muted emerald fill so light text stays readable over it -->
         <Color x:Key="Color.ProgressTrack">#2D3138</Color>
         <Color x:Key="Color.ProgressFill">#276F4C</Color>
+        <!-- The one thing on the screen that is not the accent and not a
+             neutral: a button that destroys what it points at. It is a colour
+             on a glyph, never a filled button - a red surface would compete
+             with "Играть" for the eye, and there is one main action here. -->
+        <Color x:Key="Color.Danger">#EC5D5E</Color>
         <!-- Scrolling -->
         <Color x:Key="Color.ScrollThumb">#3B414A</Color>
         <Color x:Key="Color.ScrollThumbHover">#4B515B</Color>
@@ -53,6 +58,7 @@
         <SolidColorBrush x:Key="Brush.AccentHover" Color="{StaticResource Color.AccentHover}"/>
         <SolidColorBrush x:Key="Brush.AccentPressed" Color="{StaticResource Color.AccentPressed}"/>
         <SolidColorBrush x:Key="Brush.OnAccent" Color="{StaticResource Color.OnAccent}"/>
+        <SolidColorBrush x:Key="Brush.Danger" Color="{StaticResource Color.Danger}"/>
         <SolidColorBrush x:Key="Brush.ProgressTrack" Color="{StaticResource Color.ProgressTrack}"/>
         <SolidColorBrush x:Key="Brush.ProgressFill" Color="{StaticResource Color.ProgressFill}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumb" Color="{StaticResource Color.ScrollThumb}"/>
@@ -128,6 +134,7 @@
         <sys:Double x:Key="Size.StatusLine">32</sys:Double>
         <sys:Double x:Key="Size.StatusArea">40</sys:Double>
         <sys:Double x:Key="Size.Scrollbar">8</sys:Double>
+        <sys:Double x:Key="Size.Icon">16</sys:Double>
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
         <!-- Grid columns: the label column every block shares, the memory box, the history -->
         <GridLength x:Key="Size.LabelColumn">72</GridLength>

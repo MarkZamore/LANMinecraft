@@ -1,0 +1,34 @@
+﻿<Window x:Class="Minecraft.BuildRemovalConfirmationDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Удаление сборки"
+        SizeToContent="Height"
+        Width="520"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Style="{DynamicResource WindowStyle}">
+    <StackPanel Margin="{StaticResource Gap.Canvas}">
+        <TextBlock x:Name="QuestionText"
+                   FontSize="{StaticResource Font.SizeHeading}"
+                   Style="{StaticResource EmphasisTextStyle}"
+                   TextWrapping="Wrap"/>
+        <TextBlock x:Name="ExplanationText" Margin="{StaticResource Gap.Above2}" TextWrapping="Wrap"/>
+        <TextBlock x:Name="WorldsText"
+                   Margin="{StaticResource Gap.Above2}"
+                   Style="{StaticResource ParagraphTextStyle}"
+                   TextWrapping="Wrap"/>
+        <!-- Three answers, and the one that does nothing is the one Enter and
+             Esc both give. The two that delete have to be pressed on purpose. -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
+            <Button x:Name="BuildOnlyButton" Content="Только сборку"
+                    Padding="{StaticResource Pad.Wide}" Click="BuildOnlyButton_Click"/>
+            <Button x:Name="WithWorldsButton" Content="Вместе с мирами"
+                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}"
+                    Click="WithWorldsButton_Click"/>
+            <Button x:Name="KeepButton" Content="Не хочу" IsCancel="True" IsDefault="True"
+                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}"
+                    Click="KeepButton_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

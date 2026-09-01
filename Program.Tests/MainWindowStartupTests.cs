@@ -52,10 +52,15 @@ public sealed class MainWindowStartupTests
     public void TheStateDrivenButtons_DoNotStartEnabledInTheMarkup()
     {
         var markup = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
-        var button = markup[markup.IndexOf("x:Name=\"ControlsPresetButton\"", StringComparison.Ordinal)..];
-        button = button[..button.IndexOf("/>", StringComparison.Ordinal)];
+        foreach (var name in new[] { "ControlsPresetButton", "DeleteBuildButton" })
+        {
+            var button = markup[markup.IndexOf($"x:Name=\"{name}\"", StringComparison.Ordinal)..];
+            // The preset button closes itself; the delete button has a Path
+            // inside it, so its opening tag ends at the first bare > instead.
+            button = button[..button.IndexOfAny(['>'])];
 
-        Assert.Contains("IsEnabled=\"False\"", button, StringComparison.Ordinal);
+            Assert.Contains("IsEnabled=\"False\"", button, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>

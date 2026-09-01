@@ -99,6 +99,7 @@ public sealed class DesignTokensTests
     [InlineData("MainWindow.xaml")]
     [InlineData("CenteredDropDown.xaml")]
     [InlineData("WorldTransferConfirmationDialog.xaml")]
+    [InlineData("BuildRemovalConfirmationDialog.xaml")]
     public void TheMarkup_NamesTokensNotColours(string file)
     {
         var xaml = File.ReadAllText(FindRepositoryFile("Program", file));
