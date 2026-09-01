@@ -57,7 +57,23 @@ public sealed record PreparedRuntime(
     string ProfileId,
     string JavaPath,
     string ClientJarPath,
-    PackRuntimeDescriptor Descriptor);
+    PackRuntimeDescriptor Descriptor)
+{
+    /// <summary>
+    /// Where the libraries are, which is not under <see cref="RuntimeRoot"/>:
+    /// they are shared by every build. Anything reading a jar out of the
+    /// prepared game - the mappings the identity hooks are built from, authlib
+    /// itself - has to look here.
+    /// </summary>
+    /// <remarks>
+    /// It is a field rather than a path built from the runtime root because
+    /// building it from the root is exactly what broke when the game was moved
+    /// into one shared store: the mappings were fetched, the adapter looked for
+    /// them where they used to be, found none, and every player lost their skin
+    /// and the patched multiplayer screen at once.
+    /// </remarks>
+    public string LibrariesRoot { get; init; } = System.IO.Path.Combine(RuntimeRoot, "libraries");
+}
 
 public interface IPackLoaderProvider
 {

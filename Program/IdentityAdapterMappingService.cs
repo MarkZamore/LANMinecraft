@@ -100,8 +100,8 @@ internal sealed class IdentityAdapterMappingService
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
-        var mojangMappingPath = FindMojangMappings(runtime.RuntimeRoot);
-        var mappingPath = FindTsrg2Mappings(runtime.RuntimeRoot);
+        var mojangMappingPath = FindMojangMappings(runtime.LibrariesRoot);
+        var mappingPath = FindTsrg2Mappings(runtime.LibrariesRoot);
         var intermediaryPath = mappingPath is null ? FindIntermediaryMappings(runtime) : null;
         // A NeoForge that ships neither is not a runtime without an answer: it
         // loads the game under Mojang's own names, and Mojang's own file is
@@ -1012,9 +1012,9 @@ internal sealed class IdentityAdapterMappingService
     /// downloads them too and has no use for them here, because its own merged
     /// file already answers in official names.
     /// </summary>
-    private static string? FindMojangMappings(string runtimeRoot)
+    private static string? FindMojangMappings(string librariesRoot)
     {
-        var libraries = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client");
+        var libraries = Path.Combine(librariesRoot, "net", "minecraft", "client");
         if (!Directory.Exists(libraries)) return null;
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
                      .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
@@ -1051,7 +1051,7 @@ internal sealed class IdentityAdapterMappingService
     /// </summary>
     private static string? FindIntermediaryMappings(PreparedRuntime runtime)
     {
-        var libraries = Path.Combine(runtime.RuntimeRoot, "libraries", "net", "fabricmc", "intermediary");
+        var libraries = Path.Combine(runtime.LibrariesRoot, "net", "fabricmc", "intermediary");
         if (!Directory.Exists(libraries)) return null;
         var wanted = $"intermediary-{runtime.Descriptor.MinecraftVersion}.jar";
         return Directory.EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories)
@@ -1060,9 +1060,9 @@ internal sealed class IdentityAdapterMappingService
             .FirstOrDefault();
     }
 
-    private static string? FindTsrg2Mappings(string runtimeRoot)
+    private static string? FindTsrg2Mappings(string librariesRoot)
     {
-        var libraries = Path.Combine(runtimeRoot, "libraries");
+        var libraries = librariesRoot;
         if (!Directory.Exists(libraries)) return null;
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
                      .OrderByDescending(path => Path.GetFileName(path).Contains("merged", StringComparison.OrdinalIgnoreCase))
@@ -1087,7 +1087,7 @@ internal sealed class IdentityAdapterMappingService
     {
         var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal);
         var candidates = new List<string>();
-        var minecraftLibraries = Path.Combine(runtime.RuntimeRoot, "libraries", "net", "minecraft", "client");
+        var minecraftLibraries = Path.Combine(runtime.LibrariesRoot, "net", "minecraft", "client");
         if (Directory.Exists(minecraftLibraries))
         {
             candidates.AddRange(Directory.EnumerateFiles(minecraftLibraries, "*-srg.jar", SearchOption.AllDirectories));
@@ -1100,7 +1100,7 @@ internal sealed class IdentityAdapterMappingService
         {
             candidates.AddRange(Directory.EnumerateFiles(instanceMods, "*.jar", SearchOption.TopDirectoryOnly));
         }
-        var libraries = Path.Combine(runtime.RuntimeRoot, "libraries");
+        var libraries = runtime.LibrariesRoot;
         if (Directory.Exists(libraries))
         {
             candidates.AddRange(Directory.EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories));

@@ -146,7 +146,10 @@ public sealed class PackRuntimeService : IDisposable
                 .ConfigureAwait(false);
             await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
-            return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor);
+            return new PreparedRuntime(runtimeRoot, state.ProfileId, cachedJava.JavaWPath, clientJar, descriptor)
+            {
+                LibrariesRoot = SharedRuntimeStore.Libraries(_paths)
+            };
         }
 
         Directory.CreateDirectory(temporaryRoot);
@@ -263,7 +266,10 @@ public sealed class PackRuntimeService : IDisposable
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
             $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");
-        return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor);
+        return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor)
+        {
+            LibrariesRoot = SharedRuntimeStore.Libraries(_paths)
+        };
     }
 
     private void CleanupTemporaryFiles(string packRelativePath)
