@@ -119,6 +119,10 @@ public static class StructureCleanupService
             if (ReadStateGeneration(Path.Combine(runtime, RuntimeStateFileName)) is not { } generation) continue;
             if (generation >= PackRuntimeService.RuntimeCacheGeneration) continue;
 
+            // Counted for this build rather than for the whole sweep: saying
+            // "the copy is gone" on the strength of another build's copy is a
+            // line that is simply not true.
+            var before = removed;
             foreach (var root in SharedNowRoots)
             {
                 var directory = Path.Combine(runtime, root);
@@ -126,7 +130,7 @@ public static class StructureCleanupService
                 if (TryDeleteTree(directory, logger)) removed++;
             }
 
-            if (removed > 0)
+            if (removed > before)
             {
                 logger?.Info(
                     $"{Path.GetFileName(runtime)} kept its own copy of the game from before it was shared; " +

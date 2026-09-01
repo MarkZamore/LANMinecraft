@@ -62,7 +62,7 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     public void WhatNobodyNeedsAnyMore_Goes()
     {
         var kept = Asset("assets/objects/ab/kept");
-        var orphan = Asset("libraries/net/example/old/1.0/old-1.0.jar");
+        var orphan = Asset("assets/objects/cd/orphan");
         Build("LL8 Extended", kept);
         Build("RPG Ars Nouveau", orphan);
 
@@ -72,8 +72,32 @@ public sealed class SharedRuntimeStoreTests : IDisposable
         Assert.Equal(1, removed);
         Assert.False(File.Exists(orphan));
         Assert.True(File.Exists(kept));
-        // The empty shelves it stood on go with it.
-        Assert.False(Directory.Exists(Path.Combine(_paths.SharedRuntime, "libraries", "net")));
+        // The empty shelf it stood on goes with it.
+        Assert.False(Directory.Exists(Path.Combine(_paths.SharedRuntime, "assets", "objects", "cd")));
+    }
+
+    /// <summary>
+    /// The libraries and the version profiles are never swept, however
+    /// thoroughly unclaimed they look. A loader installer runs once and leaves
+    /// behind files nobody downloaded - the NeoForge client jar, the srg and
+    /// extra client jars, Mojang's mappings - and CmlLib reports none of them,
+    /// so no state names any of them. Sixty-three files and 132 MB of live
+    /// classpath on the machine this was found on.
+    /// </summary>
+    [Fact]
+    public void TheLoadersOwnFiles_AreNeverSwept_EvenThoughNothingNamesThem()
+    {
+        Build("LL8 Extended", Asset("assets/objects/ab/kept"));
+        var loader = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
+        var mappings = Asset("libraries/net/minecraft/client/1.21.1/client-1.21.1-mappings.txt");
+        var profile = Asset("versions/neoforge-21.1.248/neoforge-21.1.248.json");
+        var installer = Asset("installers/neoforge/21.1.248/neoforge-21.1.248-installer.jar");
+
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        foreach (var path in new[] { loader, mappings, profile, installer })
+        {
+            Assert.True(File.Exists(path), path + " must not be swept");
+        }
     }
 
     /// <summary>
@@ -85,13 +109,14 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     public void WithTheLastBuildGone_TheStoreIsEmptied()
     {
         var a = Asset("assets/objects/ab/one");
-        var b = Asset("versions/1.21.1/1.21.1.jar");
+        var b = Asset("runtime/windows-x64/java-runtime-delta/bin/java.exe");
         Build("Only Build", a, b);
 
         Directory.Delete(Path.Combine(_paths.Runtimes, "Only Build"), recursive: true);
 
         Assert.Equal(2, SharedRuntimeStore.Sweep(_paths));
-        Assert.Empty(Directory.GetFiles(_paths.SharedRuntime, "*", SearchOption.AllDirectories));
+        Assert.False(File.Exists(a));
+        Assert.False(File.Exists(b));
     }
 
     /// <summary>
