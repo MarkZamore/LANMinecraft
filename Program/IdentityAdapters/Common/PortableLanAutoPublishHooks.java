@@ -156,22 +156,7 @@ public final class PortableLanAutoPublishHooks {
 
             try {
                 closeScreenSoon(minecraftType, screenType);
-                Object message = PortableIdentityReflection.invokeStatic(
-                    publishCommandType,
-                    new Class<?>[] { int.class },
-                    new Object[] { port },
-                    aliases("publishSuccessMethods", "getSuccessMessage", "a"));
-                Object gui = PortableIdentityReflection.getField(
-                    minecraft,
-                    aliases("minecraftGuiFields", "gui", "l"));
-                Object chat = PortableIdentityReflection.invoke(
-                    gui,
-                    aliases("guiChatMethods", "getChat", "d"));
-                PortableIdentityReflection.invokeDeclared(
-                    chat,
-                    new Class<?>[] { componentType },
-                    new Object[] { message },
-                    aliases("chatAddMessageMethods", "addMessage", "a"));
+                sayItInChat(minecraft, publishCommandType, componentType, port);
                 PortableIdentityReflection.invoke(
                     minecraft,
                     aliases("updateTitleMethods", "updateTitle", "d"));
@@ -189,6 +174,48 @@ public final class PortableLanAutoPublishHooks {
             System.out.println("[PortableIdentity] LAN auto-publish unavailable: " + exception);
             return false;
         }
+    }
+
+    /**
+     * The line vanilla writes in chat when a world is published, best effort.
+     *
+     * <p>Not every version has it under a name this can find: on 1.18.2 the
+     * lookup for getSuccessMessage throws NoSuchMethodException every single
+     * launch, and it used to take the title update down with it and print an
+     * exception into the log of a session where nothing had gone wrong. A
+     * version that cannot say the world is published has still published it,
+     * so a missing method here is silence rather than a failure.</p>
+     *
+     * <p>Anything else that goes wrong is still thrown, because that is a real
+     * fault and the caller writes it down.</p>
+     */
+    private static void sayItInChat(
+        Object minecraft,
+        Class<?> publishCommandType,
+        Class<?> componentType,
+        int port) throws ReflectiveOperationException {
+        Object message;
+        try {
+            message = PortableIdentityReflection.invokeStatic(
+                publishCommandType,
+                new Class<?>[] { int.class },
+                new Object[] { port },
+                aliases("publishSuccessMethods", "getSuccessMessage", "a"));
+        } catch (NoSuchMethodException absentOnThisVersion) {
+            return;
+        }
+
+        Object gui = PortableIdentityReflection.getField(
+            minecraft,
+            aliases("minecraftGuiFields", "gui", "l"));
+        Object chat = PortableIdentityReflection.invoke(
+            gui,
+            aliases("guiChatMethods", "getChat", "d"));
+        PortableIdentityReflection.invokeDeclared(
+            chat,
+            new Class<?>[] { componentType },
+            new Object[] { message },
+            aliases("chatAddMessageMethods", "addMessage", "a"));
     }
 
     /**
