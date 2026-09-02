@@ -2310,7 +2310,7 @@ public partial class MainWindow : Window
         _transferRun = null;
         if (run is null || !run.Completed || _transferPacingStore is null) return;
 
-        _transferPacing = _transferPacing.Blend(run.Timings());
+        _transferPacing = _transferPacing.Blend(run.Timings(), run.Stage);
         _transferPacingStore.Save(_transferPacing);
     }
 

@@ -133,12 +133,28 @@ internal sealed class TransferPacing
     /// what was believed before it. Steps the run never reached keep the shape
     /// they had, so watching one side of a handover does not erase the other.
     /// </summary>
-    public TransferPacing Blend(IReadOnlyDictionary<string, double> observedSeconds)
+    /// <param name="pipelineStage">
+    /// A step of the side that was watched - the run's own last step, which
+    /// <c>TransferRun.Completed</c> has already checked is the last step of a
+    /// pipeline. This used to be guessed from whichever key a dictionary
+    /// happened to hand over first, and a key that named no step of either side
+    /// made the guess fail; a failed guess returns the pacing unchanged, so the
+    /// measurement was thrown away and every estimate a player ever saw came
+    /// from the numbers this shipped with rather than from their own transfers.
+    /// </param>
+    public TransferPacing Blend(
+        IReadOnlyDictionary<string, double> observedSeconds, string pipelineStage = "")
     {
+        ArgumentNullException.ThrowIfNull(observedSeconds);
         var total = observedSeconds.Values.Where(seconds => seconds > 0).Sum();
         if (total <= 0) return this;
 
-        var pipeline = PipelineFor(observedSeconds.Keys.FirstOrDefault() ?? "");
+        // Every key rather than the first, for a caller that has no stage to
+        // give: one unrecognised name is then no longer the whole answer.
+        var pipeline = PipelineFor(pipelineStage)
+            ?? observedSeconds.Keys
+                .Select(PipelineFor)
+                .FirstOrDefault(found => found is not null);
         if (pipeline is null) return this;
 
         // Renormalising against this side's share keeps the other side's steps

@@ -16,6 +16,42 @@ public sealed class TransferPacingTests
 {
     private static readonly string[] SenderLabels = [.. TransferPacing.Sending];
 
+    /// <summary>
+    /// A measured handover teaches the pacing even when the timings begin with a
+    /// step neither side names.
+    /// </summary>
+    /// <remarks>
+    /// Blend used to pick the side out of whichever key the dictionary handed
+    /// over first. A key that names no step of either pipeline made that lookup
+    /// fail, and a failed lookup returns the pacing untouched - so the
+    /// measurement was dropped and every estimate a player saw came from the
+    /// numbers this shipped with rather than from their own transfers. The run
+    /// knows which side it was; it says so now.
+    /// </remarks>
+    [Fact]
+    public void TimingsThatStartWithAnUnknownStep_AreStillLearnedFrom()
+    {
+        var last = TransferPacing.Sending[^1];
+        var timings = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            ["Что-то ещё"] = 4,
+            [TransferPacing.Sending[0]] = 30,
+            [last] = 12
+        };
+
+        var told = new TransferPacing().Blend(timings, last);
+        Assert.NotEqual(
+            new TransferPacing().FractionDone([TransferPacing.Sending[0]], last, 0),
+            told.FractionDone([TransferPacing.Sending[0]], last, 0));
+
+        // And a caller with no stage to give reads every key rather than the
+        // first, so one unrecognised name is no longer the whole answer.
+        var guessed = new TransferPacing().Blend(timings);
+        Assert.Equal(
+            told.FractionDone([TransferPacing.Sending[0]], last, 0),
+            guessed.FractionDone([TransferPacing.Sending[0]], last, 0));
+    }
+
     /// <summary>Each side of a handover is recognised from any step of it.</summary>
     [Fact]
     public void AStepNamesTheSideItBelongsTo()
