@@ -80,19 +80,37 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
             : new SkinAnnouncement(true, asset.Sha256, asset.Model);
     }
 
+    /// <summary>
+    /// Takes the file a player picked: reads it, checks it is a skin, and
+    /// remembers it as theirs.
+    /// </summary>
+    /// <remarks>
+    /// The identity may be missing, and that is not a reason to refuse. A UUID
+    /// is what a skin is filed under so that other players can ask for it, and
+    /// it comes from Steam - but choosing a skin is a thing done in the
+    /// launcher, at rest, and Steam being down is when a player is most likely
+    /// to be sitting in the launcher fiddling with it. So without a UUID the
+    /// file is still read and still refused if it is not a skin, the path is
+    /// still saved, and only the registry entry waits: <see cref="PrepareRegistry"/>
+    /// re-reads the path and files it the next time the game starts, which is
+    /// the first moment anyone could see it anyway.
+    /// </remarks>
     public SkinAnnouncement SelectLocalSkin(AppSettings settings, string identityId, string path)
     {
         var fullPath = Path.GetFullPath(path);
         var info = new FileInfo(fullPath);
         if (!info.Exists) throw new FileNotFoundException("Selected skin file was not found.", fullPath);
         var asset = ReadSkin(fullPath, info);
-        _localUuid = NormalizeUuid(identityId);
-        if (_localUuid.Length == 0) throw new InvalidDataException("Local player UUID is invalid.");
         settings.SkinPath = fullPath;
         _localAsset = asset;
         _localSourceState = BuildSourceState(fullPath, info);
-        _assets[_localUuid] = asset;
-        WriteRegistry();
+        var uuid = NormalizeUuid(identityId);
+        if (uuid.Length > 0)
+        {
+            _localUuid = uuid;
+            _assets[uuid] = asset;
+            WriteRegistry();
+        }
         return new SkinAnnouncement(true, asset.Sha256, asset.Model);
     }
 
@@ -127,8 +145,13 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         try
         {
             var current = _localAsset;
+            // Already read and already filed under this UUID is the only state
+            // with nothing to do. Read but not filed is what a skin chosen with
+            // no Steam looks like, and returning here would leave it read for
+            // ever and filed never - chosen in the launcher, invisible in game.
             if (current is not null && string.Equals(current.SourcePath, path, StringComparison.OrdinalIgnoreCase) &&
-                current.SizeBytes == info.Length && current.LastWriteUtcTicks == info.LastWriteTimeUtc.Ticks)
+                current.SizeBytes == info.Length && current.LastWriteUtcTicks == info.LastWriteTimeUtc.Ticks &&
+                _assets.ContainsKey(_localUuid))
             {
                 return;
             }

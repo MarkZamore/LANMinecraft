@@ -1617,8 +1617,22 @@ public partial class MainWindow : Window
 
         try
         {
-            var identity = RequireIdentityService().ResolveContext(_settings);
-            var skin = _skinService.SelectLocalSkin(_settings, identity.MinecraftUuid, dialog.FileName);
+            // Steam names the player, and the name is what a skin is filed
+            // under for other people to fetch. It is not what makes the file a
+            // skin, and it is not needed to remember which one was chosen - so
+            // without it the choice still happens, and the filing waits for the
+            // launch, which needs Steam anyway. A player sitting in the launcher
+            // with Steam down is exactly who this used to turn away.
+            var identityId = "";
+            try
+            {
+                identityId = RequireIdentityService().ResolveContext(_settings).MinecraftUuid;
+            }
+            catch (IdentityUnavailableException)
+            {
+            }
+
+            var skin = _skinService.SelectLocalSkin(_settings, identityId, dialog.FileName);
             RequireSettingsService().Save(_settings);
             RefreshSkinHint();
             SetState($"Skin selected ({skin.Model})");
