@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft;
 
@@ -41,14 +41,14 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
     /// <summary>What a removal is about to do, worked out before anything goes.</summary>
     /// <param name="BuildRelativePath">The build's folder name, as the launcher spells it.</param>
     /// <param name="Directories">Every folder that will be removed, pack first.</param>
-    /// <param name="WorldsDirectory">The build's folder under Worlds, or null when the worlds stay.</param>
-    /// <param name="Worlds">How many worlds that folder holds - the number worth showing a player.</param>
+    /// <param name="WorldDirectories">Everything holding this build's worlds that will go, or empty when the worlds stay.</param>
+    /// <param name="Worlds">How many worlds those hold - the number worth showing a player.</param>
     /// <param name="JavaDirectories">Folders of a Java no remaining build asks for.</param>
     /// <param name="Java">The feature releases those folders are, for saying so.</param>
     public readonly record struct RemovalPlan(
         string BuildRelativePath,
         IReadOnlyList<string> Directories,
-        string? WorldsDirectory,
+        IReadOnlyList<string> WorldDirectories,
         int Worlds,
         IReadOnlyList<string> JavaDirectories,
         IReadOnlyList<int> Java);
@@ -83,18 +83,65 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
             if (candidate is not null && Directory.Exists(candidate)) directories.Add(candidate);
         }
 
-        var worlds = WorldLocations.ForBuild(_paths.Worlds, build);
-        var worldsExist = Directory.Exists(worlds);
+        // Worlds live in a folder per build, but they only move there when that
+        // build is launched - WorldLocations.Migrate runs from Prepare and
+        // nowhere else. A build updated and then deleted without being played
+        // still has its worlds lying flat in the root of Worlds, and looking
+        // only at the folder found none of them: the window offered "and its
+        // worlds", the player agreed, and the worlds stayed. A build withdrawn
+        // from the list, as RPG Ars Nouveau was, can never be launched again and
+        // so could never migrate at all.
+        var worldDirectories = new List<string>();
+        var packFolder = WorldLocations.ForBuild(_paths.Worlds, build);
+        var worlds = 0;
+        if (!string.Equals(packFolder, _paths.Worlds, StringComparison.OrdinalIgnoreCase) &&
+            Directory.Exists(packFolder))
+        {
+            worldDirectories.Add(packFolder);
+            worlds += CountWorlds(packFolder);
+        }
+        foreach (var stray in StrandedWorlds(build))
+        {
+            worldDirectories.Add(stray);
+            worlds++;
+        }
         // Java has nothing to do with the worlds: it goes if the build that
         // pinned it was the last one asking for it, either way round.
         var (javaDirectories, java) = JavaNothingElseNeeds(build);
         return new RemovalPlan(
             build,
             directories,
-            worldsToo && worldsExist ? worlds : null,
-            worldsExist ? CountWorlds(worlds) : 0,
+            worldsToo ? worldDirectories : [],
+            worlds,
             javaDirectories,
             java);
+    }
+
+    /// <summary>
+    /// Worlds of this build still lying flat in the root of Worlds, which is
+    /// where every world lived before they were filed by build.
+    /// </summary>
+    /// <remarks>
+    /// The match is exact and deliberately not
+    /// <see cref="WorldMetadataService.BelongsToBuild"/>. That one answers yes
+    /// for a world that names no build at all, which is right when deciding what
+    /// to show - an unattributed world is shown to everybody rather than lost -
+    /// and would be a disaster here: it would delete every unattributed world on
+    /// the machine along with the first build a player removes. A world goes
+    /// only if it says, in as many words, that it is this build's.
+    /// </remarks>
+    private IEnumerable<string> StrandedWorlds(string build)
+    {
+        if (!Directory.Exists(_paths.Worlds)) yield break;
+
+        var metadata = new WorldMetadataService();
+        foreach (var candidate in Directory.EnumerateDirectories(_paths.Worlds))
+        {
+            if (!WorldLocations.IsWorld(candidate)) continue;
+            var recorded = metadata.Read(candidate)?.BuildRelativePath?.Trim().Trim('\\', '/');
+            if (string.IsNullOrEmpty(recorded)) continue;
+            if (string.Equals(recorded, build, StringComparison.OrdinalIgnoreCase)) yield return candidate;
+        }
     }
 
     /// <summary>Carries out a plan. Never throws for a folder that would not go.</summary>
@@ -109,14 +156,11 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         }
 
         var worlds = 0;
-        if (plan.WorldsDirectory is { } worldsDirectory)
+        foreach (var worldDirectory in plan.WorldDirectories)
         {
-            worlds = CountWorlds(worldsDirectory);
-            if (!RemoveTree(worldsDirectory))
-            {
-                kept.Add(worldsDirectory);
-                worlds = 0;
-            }
+            var held = WorldLocations.IsWorld(worldDirectory) ? 1 : CountWorlds(worldDirectory);
+            if (RemoveTree(worldDirectory)) worlds += held;
+            else kept.Add(worldDirectory);
         }
 
         var javaRemoved = true;
