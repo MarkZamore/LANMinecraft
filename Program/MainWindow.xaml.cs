@@ -266,7 +266,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Error);
+            NoticeDialog.Show(this, "Лаунчер не смог запуститься", ex.Message);
             Close();
         }
     }
@@ -1401,7 +1401,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             RequireLogger().Warn(ex.Message);
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeDialog.Show(this, "Игра не запустилась", ex.Message);
         }
         finally
         {
@@ -1540,7 +1540,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             RequireLogger().Warn($"Controls preset failed: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Пресет управления", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeDialog.Show(this, "Пресет управления не применился", ex.Message);
         }
         RefreshControlsPresetStatus();
         RefreshUi();
@@ -1682,7 +1682,7 @@ public partial class MainWindow : Window
                                    IdentityUnavailableException)
         {
             RequireLogger().Warn($"Skin selection failed: {ex.Message}");
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeDialog.Show(this, "Скин не сменился", ex.Message);
         }
     }
 
@@ -1736,16 +1736,14 @@ public partial class MainWindow : Window
             // survived. It did: nothing leaves this machine until the far side
             // has the whole world and says so.
             RequireLogger().Warn(ex.Message);
-            MessageBox.Show(
-                "Передача мира прервалась." + Environment.NewLine +
+            NoticeDialog.Show(
+                this,
+                "Передача мира прервалась",
                 "Ваш мир на месте, ничего не потеряно - можно просто попробовать ещё раз." +
                 Environment.NewLine + Environment.NewLine +
                 "Если обрывается снова, попросите игрока не закрывать Steam и лаунчер " +
                 "и не запускать Minecraft во время передачи." + Environment.NewLine +
-                Environment.NewLine + "Подробности: " + ex.Message,
-                "Minecraft",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                Environment.NewLine + "Подробности: " + ex.Message);
         }
         finally
         {
@@ -2606,7 +2604,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             RequireLogger().Warn($"Update failed: {ex.Message}");
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeDialog.Show(this, "Обновление не установилось", ex.Message);
         }
         finally
         {
@@ -2863,7 +2861,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             RequireLogger().Warn(ex.Message);
-            MessageBox.Show(ex.Message, "Minecraft", MessageBoxButton.OK, MessageBoxImage.Warning);
+            NoticeDialog.Show(this, "Имя не сохранилось", ex.Message);
         }
         finally
         {

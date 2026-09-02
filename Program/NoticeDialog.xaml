@@ -1,0 +1,27 @@
+﻿<Window x:Class="Minecraft.NoticeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Лаунчер"
+        SizeToContent="WidthAndHeight"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Style="{DynamicResource WindowStyle}">
+    <StackPanel x:Name="NoticePanel"
+                Width="{StaticResource Size.DialogWidth}"
+                Margin="{StaticResource Gap.Canvas}">
+        <TextBlock x:Name="HeadingText"
+                   FontSize="{StaticResource Font.SizeHeading}"
+                   Style="{StaticResource EmphasisTextStyle}"
+                   TextWrapping="Wrap"/>
+        <TextBlock x:Name="DetailText"
+                   Margin="{StaticResource Gap.Above2}"
+                   Style="{StaticResource ParagraphTextStyle}"
+                   TextWrapping="Wrap"/>
+        <!-- One answer, because there is nothing to decide: the thing has
+             already happened and this only says what it was. -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
+            <Button x:Name="CloseButton" Content="Понятно" IsCancel="True" IsDefault="True"
+                    Padding="{StaticResource Pad.Wide}" Click="CloseButton_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
