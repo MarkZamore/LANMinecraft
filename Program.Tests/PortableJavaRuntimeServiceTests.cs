@@ -418,6 +418,14 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         Assert.All(progress.Reports, report =>
             Assert.Equal(RuntimePreparationStage.InstallingJava, report.Stage));
         Assert.Contains(progress.Reports, report => report.TotalBytes == archive.Length);
+        // And every line names the runtime being installed rather than the one
+        // the build pins by default. The test pin is 25.0.3 and the default is
+        // 21.0.12.1, so a line that reads the constant instead of the pin says
+        // the wrong number here - which is what a player saw while a 1.20.1 pack
+        // downloaded Java 17 under the heading "Java 21.0.12.1".
+        Assert.NotEqual(TestJavaVersion, PortableJavaRuntimeService.PinnedJavaVersion);
+        Assert.All(progress.Reports, report =>
+            Assert.Equal($"Java {TestJavaVersion}", report.Message));
     }
 
     [Fact]
