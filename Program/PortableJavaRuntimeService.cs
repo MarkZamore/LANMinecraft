@@ -558,7 +558,7 @@ public sealed partial class PortableJavaRuntimeService
         _paths.EnsureUnderRoot(stageRoot);
         try
         {
-            Directory.CreateDirectory(stageRoot);
+            CreateStagingDirectory(stageRoot);
             ExtractStripped(archivePath, stageRoot, token);
 
             var javaw = Path.Combine(stageRoot, "bin", "javaw.exe");
@@ -641,18 +641,59 @@ public sealed partial class PortableJavaRuntimeService
     /// </remarks>
     internal static void PublishInstall(string stageRoot, string installRoot)
     {
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1; attempt <= PublishAttempts; attempt++)
         {
             try
             {
                 Directory.Move(stageRoot, installRoot);
                 return;
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Something arrived at the destination while we waited. That is
+                // not a lock and waiting will not clear it, so say what happened.
+                if (Directory.Exists(installRoot)) throw;
+                if (attempt == PublishAttempts) break;
+                Thread.Sleep(PublishRetryDelay * attempt);
+            }
+        }
+
+        // Renaming a folder needs it to be nobody's; reading it only needs it to
+        // be readable, and a scanner going through a two hundred megabyte tree
+        // that appeared a second ago refuses the first and allows the second. So
+        // the runtime is copied into place instead of moved. What stays behind is
+        // a staging folder, which the sweep beside this one collects.
+        CopyTree(stageRoot, installRoot);
+    }
+
+    /// <summary>Makes the staging folder, waiting out a moment's refusal.</summary>
+    private static void CreateStagingDirectory(string stageRoot)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.CreateDirectory(stageRoot);
+                return;
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
-                                       attempt < PublishAttempts && !Directory.Exists(installRoot))
+                                       attempt < PublishAttempts)
             {
                 Thread.Sleep(PublishRetryDelay * attempt);
             }
+        }
+    }
+
+    private static void CopyTree(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
+        }
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), overwrite: true);
         }
     }
 

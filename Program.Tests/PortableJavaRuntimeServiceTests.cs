@@ -59,22 +59,55 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     /// <summary>
-    /// And a hold that never lets go is still an error rather than a hang: the
-    /// last attempt throws what Windows said, so the launcher can say it too.
+    /// And a hold that never lets go is copied around rather than waited out.
     /// </summary>
+    /// <remarks>
+    /// This used to throw, and that is what a player saw four times in one
+    /// evening: "Access to the path ...\.java-17.install.9fd5c780 is denied",
+    /// then two hundred megabytes downloaded again on the next try. Renaming a
+    /// folder needs it to be nobody's, and a scanner reading a tree that appeared
+    /// a second ago will not give it up on anybody's schedule. Reading it is
+    /// allowed the whole time, so the runtime is copied into place instead. The
+    /// staging folder is left where it is; the sweep collects it.
+    /// </remarks>
     [Fact]
-    public void AnInstallHeldOpenForever_GivesUpRatherThanWaitingForever()
+    public void AnInstallHeldOpenForever_IsCopiedIntoPlaceInstead()
     {
         var parent = Path.Combine(_root, "runtime-stuck");
         var stage = Path.Combine(parent, ".java-17.install.def");
         var installed = Path.Combine(parent, "java-17");
         Directory.CreateDirectory(Path.Combine(stage, "bin"));
         File.WriteAllText(Path.Combine(stage, "bin", "java.exe"), "not really java");
+        Directory.CreateDirectory(Path.Combine(stage, "lib"));
+        File.WriteAllText(Path.Combine(stage, "lib", "modules"), "modules");
 
         using var held = File.Open(
             Path.Combine(stage, "bin", "java.exe"), FileMode.Open, FileAccess.Read, FileShare.Read);
 
+        PortableJavaRuntimeService.PublishInstall(stage, installed);
+
+        Assert.Equal("not really java", File.ReadAllText(Path.Combine(installed, "bin", "java.exe")));
+        Assert.Equal("modules", File.ReadAllText(Path.Combine(installed, "lib", "modules")));
+        Assert.True(Directory.Exists(stage), "the folder that could not be moved is left for the sweep");
+    }
+
+    /// <summary>
+    /// A destination that already exists is a different thing entirely, and no
+    /// amount of waiting or copying makes it right.
+    /// </summary>
+    [Fact]
+    public void AnInstallWhoseDestinationAppears_SaysSoRatherThanCopyingOverIt()
+    {
+        var parent = Path.Combine(_root, "runtime-taken");
+        var stage = Path.Combine(parent, ".java-17.install.ghi");
+        var installed = Path.Combine(parent, "java-17");
+        Directory.CreateDirectory(Path.Combine(stage, "bin"));
+        File.WriteAllText(Path.Combine(stage, "bin", "java.exe"), "not really java");
+        Directory.CreateDirectory(installed);
+        File.WriteAllText(Path.Combine(installed, "occupied.txt"), "someone else");
+
         Assert.ThrowsAny<Exception>(() => PortableJavaRuntimeService.PublishInstall(stage, installed));
+        Assert.True(File.Exists(Path.Combine(installed, "occupied.txt")));
     }
 
     [Fact]
