@@ -1596,6 +1596,46 @@ public partial class MainWindow : Window
             : $"Сборка удалена не полностью - осталось: {string.Join(", ", outcome.Kept)}");
     }
 
+    /// <summary>
+    /// Deletes the selected world, once the player has said so in as many words.
+    /// </summary>
+    /// <remarks>
+    /// The question names the world exactly as the list above the button names
+    /// it - the world and its build - because two builds can each hold a "New
+    /// World" and the name alone would not say which one is going.
+    ///
+    /// The world itself is deleted, not the junction an instance keeps into it.
+    /// Those are left dangling on purpose: the next Prepare sweeps a junction
+    /// whose world has gone, and doing it here would mean walking every
+    /// instance for a link that may not exist.
+    /// </remarks>
+    private void DeleteWorldButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_minecraftRunning || _paths is null) return;
+        if (WorldComboBox.SelectedItem is not WorldViewModel world) return;
+        if (!Directory.Exists(world.Path)) return;
+
+        if (!WorldRemovalConfirmationDialog.Ask(this, world.DisplayName)) return;
+
+        try
+        {
+            Directory.Delete(world.Path, recursive: true);
+            RequireLogger().Info($"World {world.DisplayName} was deleted at the player's request.");
+            SetState($"Мир удалён: {world.DisplayName}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Almost always the game or an explorer window holding a file in it,
+            // and saying so is the difference between closing that and trying
+            // again forever.
+            RequireLogger().Warn($"World {world.DisplayName} could not be deleted: {ex.Message}");
+            SetState($"Мир не удалён - его файлы сейчас заняты: {world.Name}");
+        }
+
+        RefreshWorlds();
+        RefreshUi();
+    }
+
     private void SkinButton_Click(object sender, RoutedEventArgs e)
     {
         if (_minecraftRunning || _settings is null || _skinService is null)
@@ -2924,6 +2964,15 @@ public partial class MainWindow : Window
             : _minecraftRunning
                 ? "Игра запущена - файлы сборки сейчас у неё"
                 : "Удалить сборку с компьютера";
+        // The same three states for the world beside it, and the same reason for
+        // each: nothing chosen, the game is holding it, or it can go.
+        var worldChosen = WorldComboBox.SelectedItem is WorldViewModel;
+        DeleteWorldButton.IsEnabled = worldChosen && !_minecraftRunning;
+        DeleteWorldButton.ToolTip = !worldChosen
+            ? "Мир не выбран"
+            : _minecraftRunning
+                ? "Игра запущена - мир сейчас у неё"
+                : "Удалить выбранный мир с компьютера";
         ControlsPresetButton.ToolTip = !preset.HasPreset
             ? null
             : _minecraftRunning

@@ -189,6 +189,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Мир" Style="{StaticResource LabelTextStyle}"/>
                     <Grid Grid.Column="1">
@@ -200,6 +201,26 @@
                                    Style="{StaticResource PlaceholderTextStyle}"
                                    Visibility="Collapsed"/>
                     </Grid>
+                    <!-- The build's delete button again, and beside the list
+                         rather than at the head of the row: this one acts on
+                         what the list has selected, so it belongs at the end
+                         the selection is at. Red on the glyph alone, and what it
+                         does is in a tooltip rather than in words that would
+                         take the width the list needs. -->
+                    <Button Grid.Column="2" x:Name="DeleteWorldButton"
+                            Width="{StaticResource Size.Control}"
+                            Margin="{StaticResource Gap.Left2}"
+                            Padding="{StaticResource Pad.None}"
+                            Foreground="{StaticResource Brush.Danger}"
+                            Click="DeleteWorldButton_Click"
+                            IsEnabled="False"
+                            ToolTipService.ShowOnDisabled="True">
+                        <Path Width="{StaticResource Size.Icon}"
+                              Height="{StaticResource Size.Icon}"
+                              Stretch="Uniform"
+                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z"/>
+                    </Button>
                 </Grid>
                 <Grid>
                     <Grid.ColumnDefinitions>
