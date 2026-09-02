@@ -543,7 +543,7 @@ public sealed partial class PortableJavaRuntimeService
                 }));
 
             if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true);
-            Directory.Move(stageRoot, installRoot);
+            PublishInstall(stageRoot, installRoot);
             _logger.Info($"Java runtime {_pin.RuntimeId} installed at {installRoot}.");
         }
         finally
@@ -551,6 +551,45 @@ public sealed partial class PortableJavaRuntimeService
             TryDeleteDirectory(stageRoot);
         }
     }
+
+    /// <summary>
+    /// Moves the finished runtime into place, giving Windows a moment to let go
+    /// of it first.
+    /// </summary>
+    /// <remarks>
+    /// java.exe was run from inside this folder a breath ago, to check that the
+    /// launcher's JVM options are ones it accepts, and Windows keeps an
+    /// executable's image mapped for a short while after the process object
+    /// says the process has gone - longer when a real-time scanner is reading a
+    /// two hundred megabyte tree that appeared a second earlier. Directory.Move
+    /// then fails with "Access to the path ... is denied", naming the staging
+    /// folder, and the install is thrown away and started again from the
+    /// download. It is a breath rather than a wall: the same move goes through
+    /// moments later, which is what this waits for.
+    /// </remarks>
+    internal static void PublishInstall(string stageRoot, string installRoot)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(stageRoot, installRoot);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException &&
+                                       attempt < PublishAttempts && !Directory.Exists(installRoot))
+            {
+                Thread.Sleep(PublishRetryDelay * attempt);
+            }
+        }
+    }
+
+    // Five tries spread over three seconds. Measured against nothing - the wait
+    // that matters is a scanner's, and it is not ours to predict - so it is set
+    // by what a player would forgive: three seconds of a progress line that was
+    // already installing Java, against downloading it all over again.
+    private const int PublishAttempts = 6;
+    private const int PublishRetryDelay = 200;
 
     private void ExtractStripped(string archivePath, string stageRoot, CancellationToken token)
     {
