@@ -526,13 +526,30 @@ public sealed partial class PortableJavaRuntimeService
                 throw new InvalidDataException(
                     $"Java runtime reports version {version ?? "<unknown>"} instead of {_pin.JavaVersion}.");
             }
+            // The move goes first. Nothing has been run out of the staging
+            // folder yet, so Windows has no image of it mapped and the one
+            // thing that made this move fail cannot have happened.
+            if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true);
+            PublishInstall(stageRoot, installRoot);
+        }
+        finally
+        {
+            TryDeleteDirectory(stageRoot);
+        }
+
+        try
+        {
             if (_pin.VerifyFlags)
             {
-                VerifyLaunchFlags(java);
+                VerifyLaunchFlags(Path.Combine(installRoot, "bin", "java.exe"));
             }
 
+            // Written last, and this is what makes an install count as done:
+            // TryDescribeInstalled reads the marker first and calls a runtime
+            // without one no install at all. So a probe that fails leaves
+            // nothing the next launch can mistake for a finished Java.
             File.WriteAllText(
-                Path.Combine(stageRoot, MarkerFileName),
+                Path.Combine(installRoot, MarkerFileName),
                 JsonSerializer.Serialize(new JavaRuntimeMarker
                 {
                     SchemaVersion = MarkerCacheGeneration,
@@ -541,15 +558,17 @@ public sealed partial class PortableJavaRuntimeService
                     JavaVersion = _pin.JavaVersion,
                     InstalledAtUtc = DateTimeOffset.UtcNow
                 }));
-
-            if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true);
-            PublishInstall(stageRoot, installRoot);
-            _logger.Info($"Java runtime {_pin.RuntimeId} installed at {installRoot}.");
         }
-        finally
+        catch
         {
-            TryDeleteDirectory(stageRoot);
+            // java.exe has just been run from here, so this delete can be
+            // denied for the very reason the move used to be. It does not have
+            // to succeed: an unmarked tree is not an install, and the next
+            // launch writes over it.
+            TryDeleteDirectory(installRoot);
+            throw;
         }
+        _logger.Info($"Java runtime {_pin.RuntimeId} installed at {installRoot}.");
     }
 
     /// <summary>
@@ -557,15 +576,19 @@ public sealed partial class PortableJavaRuntimeService
     /// of it first.
     /// </summary>
     /// <remarks>
-    /// java.exe was run from inside this folder a breath ago, to check that the
-    /// launcher's JVM options are ones it accepts, and Windows keeps an
-    /// executable's image mapped for a short while after the process object
-    /// says the process has gone - longer when a real-time scanner is reading a
-    /// two hundred megabyte tree that appeared a second earlier. Directory.Move
-    /// then fails with "Access to the path ... is denied", naming the staging
-    /// folder, and the install is thrown away and started again from the
-    /// download. It is a breath rather than a wall: the same move goes through
-    /// moments later, which is what this waits for.
+    /// This used to run after java.exe had been started from inside the folder,
+    /// to check the launcher's JVM options against it, and Windows keeps an
+    /// executable's image mapped for a while after the process object says the
+    /// process has gone. Directory.Move then failed with "Access to the path
+    /// ... is denied", naming the staging folder, and the whole install was
+    /// thrown away and downloaded again. Three seconds of retries were not
+    /// enough, so the probe moved after the move instead and that cause is
+    /// gone.
+    ///
+    /// The waiting stays for the one that is left: a real-time scanner reading
+    /// a two hundred megabyte tree that appeared a second earlier holds files
+    /// nobody in this process opened. It is a breath rather than a wall - the
+    /// same move goes through moments later, which is what this waits for.
     /// </remarks>
     internal static void PublishInstall(string stageRoot, string installRoot)
     {

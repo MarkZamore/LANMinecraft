@@ -449,11 +449,53 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         return runtimeRoot;
     }
 
+    /// <summary>
+    /// A runtime that refuses the launcher's JVM options leaves nothing behind
+    /// that the next launch could take for a finished Java.
+    /// </summary>
+    /// <remarks>
+    /// The probe runs after the move now, not before it. Running java.exe out of
+    /// the staging folder is what made Directory.Move fail with "Access to the
+    /// path ...\.java-17.install.3c821788 is denied", and three seconds of
+    /// retries did not always outlast a scanner. So the runtime goes into place
+    /// first and is asked afterwards, which means a rejected one has already
+    /// been moved: the marker, written last, is what keeps it from counting.
+    /// TryDescribeInstalled reads the marker first and calls a tree without one
+    /// no install at all.
+    ///
+    /// The stand-in is a real executable rather than a text file, because this
+    /// has to fail the probe rather than fail to start. where.exe exits 1 on the
+    /// launcher's arguments, which is the shape of a runtime saying no.
+    /// </remarks>
+    [Fact]
+    public async Task ARuntimeThatRefusesTheLaunchersOptions_LeavesNoInstallBehind()
+    {
+        var archive = BuildArchive(
+            javaExe: File.ReadAllBytes(Path.Combine(Environment.SystemDirectory, "where.exe")));
+        var handler = new RecordingHandler(_ => Success(archive));
+        using var httpClient = new HttpClient(handler);
+        var service = CreateService(httpClient, archive, verifyFlags: true);
+        var runtimeRoot = CreateRuntimeRoot();
+
+        var rejected = await Assert.ThrowsAsync<InvalidDataException>(
+            () => service.EnsureAsync(runtimeRoot, null, CancellationToken.None));
+        // Pins it to the probe: without this the test would also pass on an
+        // install that fell over somewhere earlier and never ran anything.
+        Assert.Contains("rejected the launcher's JVM options", rejected.Message, StringComparison.Ordinal);
+
+        var siblings = Path.Combine(runtimeRoot, "runtime", "windows-x64");
+        Assert.False(
+            File.Exists(Path.Combine(siblings, "java-25", ".portable-java.json")),
+            "a runtime that failed its probe must not be left marked as installed");
+        Assert.Empty(Directory.EnumerateDirectories(siblings, ".java-25.install.*"));
+    }
+
     private PortableJavaRuntimeService CreateService(
         HttpClient httpClient,
         byte[] archive,
         Func<string, long, bool>? freeSpaceProbe = null,
-        IReadOnlyList<Uri>? downloadUris = null)
+        IReadOnlyList<Uri>? downloadUris = null,
+        bool verifyFlags = false)
     {
         Directory.CreateDirectory(_root);
         var pin = new JavaRuntimePin(
@@ -467,9 +509,10 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
             archive.LongLength,
             Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant(),
             RequiredFreeSpaceBytes: 1024,
-            // A synthetic java.exe cannot be executed, so the probe is off here;
-            // the real pin keeps it on.
-            VerifyFlags: false);
+            // A synthetic java.exe cannot be executed, so the probe is off
+            // unless a test hands over one that really runs; the real pin keeps
+            // it on.
+            VerifyFlags: verifyFlags);
         return new PortableJavaRuntimeService(
             new AppPaths(_root),
             new Logger(Path.Combine(_root, "log.txt")),
@@ -480,12 +523,14 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
 
     private static byte[] BuildArchive(
         string releaseVersion = TestJavaVersion,
-        string? extraEntry = null)
+        string? extraEntry = null,
+        byte[]? javaExe = null)
     {
         using var buffer = new MemoryStream();
         using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
         {
-            WriteEntry(archive, ArchivePrefix + "bin/java.exe", "java");
+            if (javaExe is null) WriteEntry(archive, ArchivePrefix + "bin/java.exe", "java");
+            else WriteEntry(archive, ArchivePrefix + "bin/java.exe", javaExe);
             WriteEntry(archive, ArchivePrefix + "bin/javaw.exe", "javaw");
             WriteEntry(archive, ArchivePrefix + "lib/modules", "modules");
             WriteEntry(
@@ -497,10 +542,13 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         return buffer.ToArray();
     }
 
-    private static void WriteEntry(ZipArchive archive, string name, string content)
+    private static void WriteEntry(ZipArchive archive, string name, string content) =>
+        WriteEntry(archive, name, Encoding.UTF8.GetBytes(content));
+
+    private static void WriteEntry(ZipArchive archive, string name, byte[] content)
     {
         using var stream = archive.CreateEntry(name).Open();
-        stream.Write(Encoding.UTF8.GetBytes(content));
+        stream.Write(content);
     }
 
     private static HttpResponseMessage Success(byte[] payload) =>
