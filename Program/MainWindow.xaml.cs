@@ -607,14 +607,16 @@ public partial class MainWindow : Window
             }
         }
 
-        // Nothing here is ever switched off. This is the panel a player reaches
-        // for when something has gone wrong, and what goes wrong first is Steam
-        // and the friends list - the very things the panel used to wait for
-        // before it would let itself be touched. It stays live and says why
-        // instead: the reason belongs in the line under the button, where it can
-        // be read, not in a grey button that explains nothing.
+        // With nobody to send to, the list and the button go quiet and say
+        // nothing about it. The list already carries "Нет игроков в сети" where
+        // the names would be, which is the whole of the explanation; a line
+        // under the button repeating it, or telling a player to go and start
+        // Steam, is a sentence about the launcher rather than about the report.
+        var hasRecipient = targets.Count > 0;
+        DiagnosticLogTargetComboBox.IsEnabled = hasRecipient;
+        SendBugReportButton.IsEnabled = hasRecipient && !_bugReportSending;
         DiagnosticLogTargetPlaceholderText.Visibility =
-            targets.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            hasRecipient ? Visibility.Collapsed : Visibility.Visible;
         ShowBugReportStatus();
     }
 
@@ -635,19 +637,18 @@ public partial class MainWindow : Window
             SetBugReportStatus(_bugReportStatus);
             return;
         }
-        if (!IsIdentityBound)
-        {
-            SetBugReportStatus("Steam ещё не подключился - без него отчёт некому передать.");
-            return;
-        }
-        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient)
-        {
-            SetBugReportStatus("Некому отправить отчёт");
-            return;
-        }
+        // Both of these are what a disabled button already says. Reached only
+        // if the state changed between the refresh and the click, and then the
+        // right answer is to do nothing rather than to explain.
+        if (!IsIdentityBound) return;
+        if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient) return;
 
         _bugReportSending = true;
         _bugReportRate.Reset();
+        // The button goes down for the length of the send, the way it comes back
+        // up in the finally below: one report at a time, and a second press
+        // while the first is in flight is a press that does nothing.
+        RefreshDiagnosticsPanel();
         SetBugReportStatus($"Подготовка отчёта для {recipient.DisplayName}…");
         try
         {
@@ -702,19 +703,19 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The status line, or - while nothing has happened - what stands in for
-    /// it. An empty box under a filled one reads as a box that broke, so it
-    /// says the panel is fine; and when Steam is not signed in it says the one
-    /// thing there is to do about it, because that is also why the list of
-    /// people to send the report to is empty.
+    /// The status line: what happened to the last report, and nothing else.
+    /// An empty box under a filled one reads as a box that broke, so at rest it
+    /// says the panel is fine - but only while it is. With no Steam and nobody
+    /// to send to it says nothing at all, because the list and the button are
+    /// already dead in front of the player and a line explaining that is one
+    /// more thing to read on the way to giving up.
     /// </summary>
     private void ShowBugReportStatus() =>
         DiagnosticLogStatusText.Text = _bugReportStatus.Length > 0
             ? _bugReportStatus
             : _steamClient?.Status.IsReady == true && IsIdentityBound
                 ? "Всё работает :)"
-                : "Включите Steam и нажмите кнопку " +
-                  "«Повторить» в нижнем правом углу экрана";
+                : string.Empty;
 
     internal void OpenSupportLogsDirectory()
     {
@@ -2836,9 +2837,13 @@ public partial class MainWindow : Window
         if (_settings is null) return;
 
         RefreshPlayerIdentityDisplay();
-        // Everything that touches a world needs to know who the player is, and
-        // that answer comes from Steam; without it only the settings stay live.
-        var interactiveEnabled = !_busy && IsIdentityBound;
+        // Steam answers one question - who this player is - and only two
+        // things in the window actually need the answer: a world can only be
+        // sent to somebody, and the game can only be started as somebody. The
+        // lists, the settings and the report do not, and greying them out hid
+        // the window from a player who had come to it precisely because Steam
+        // was down. So the identity gates those two and nothing else.
+        var interactiveEnabled = !_busy;
         var configurationEnabled = interactiveEnabled &&
                                    !_transferActive &&
                                    !_minecraftRunning &&
@@ -2879,7 +2884,7 @@ public partial class MainWindow : Window
             PlayButtonText.Text = "Играть";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
-            PlayButton.IsEnabled = configurationEnabled && hasBuild && !_isEditingPlayerName;
+            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName;
         }
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
@@ -2933,7 +2938,8 @@ public partial class MainWindow : Window
         OnlinePlayerComboBox.IsEnabled = listsEnabled && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        var canTransfer = interactiveEnabled && !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
+        var canTransfer = interactiveEnabled && IsIdentityBound &&
+                          !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
                           WorldComboBox.SelectedItem is WorldViewModel &&
                           selectedRecipient is not null &&
                           !selectedRecipient.IsMinecraftRunning &&
