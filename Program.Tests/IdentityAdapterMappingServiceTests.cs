@@ -599,12 +599,65 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
                      // never listed here, which held only because the builder
                      // happened to name them anyway.
                      "chunkMapClasses", "serverPlayerClasses", "trackedEntityClasses",
-                     "movementListenerClasses"
+                     "movementListenerClasses",
+                     // And the four the menu-registration fix reads. It is on
+                     // in this configuration too, because it needs nothing from
+                     // the game's mappings - the classes it rewrites are a
+                     // mod's, and their names do not move.
+                     "menuRegistrationFixClasses", "menuBuilderClasses",
+                     "menuBuilderRegisteringMethods", "menuBuilderUnregisteredMethods",
+                     "menuBuilderDescriptors"
                  })
         {
             Assert.False(string.IsNullOrWhiteSpace(properties.GetValueOrDefault(required)), required);
         }
         Assert.Equal("false", properties["lanPublishEnabled"]);
+        Assert.Equal("true", properties["menuRegistrationFixEnabled"]);
+    }
+
+    /// <summary>
+    /// The menu-registration fix, named in full and on in both configurations.
+    /// </summary>
+    /// <remarks>
+    /// A menu built with Applied Energistics' build(id) is registered by AE2,
+    /// and when that call sits inside a NeoForge DeferredRegister it is
+    /// registered by NeoForge as well. The second one throws, the registry
+    /// rolls back to vanilla, and the pack stops starting - blaming, in the
+    /// crash report, whichever mod happened to read a config on the error
+    /// screen the game could no longer draw.
+    ///
+    /// Everything here is fixed text rather than anything resolved from the
+    /// game, and that is the point: these are a mod's class names, they do not
+    /// move between Minecraft versions, and naming a class no build has
+    /// installed costs nothing, because the agent only ever sees classes the
+    /// game loads. Which is also why it stays on in the skins-only fallback.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheMenuRegistrationFix_IsNamedInFull(bool withMappingFile)
+    {
+        var (service, runtime, gameDirectory) =
+            CreateFixture(GoldenMappings, DefaultJarClasses, withMappingFile: withMappingFile);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("true", properties["menuRegistrationFixEnabled"]);
+        var targets = properties["menuRegistrationFixClasses"].Split(',');
+        Assert.Contains("net/pedroksl/ae2addonlib/registry/MenuRegistry", targets);
+        Assert.Contains("com/raishxn/ufo/init/ModMenus", targets);
+        Assert.Equal("appeng/menu/implementations/MenuTypeBuilder", properties["menuBuilderClasses"]);
+        Assert.Equal("build", properties["menuBuilderRegisteringMethods"]);
+        Assert.Equal("buildUnregistered", properties["menuBuilderUnregisteredMethods"]);
+        Assert.Equal(
+            "(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/inventory/MenuType;",
+            properties["menuBuilderDescriptors"]);
+        // Rewriting a call to itself would leave the double registration where
+        // it was and report that it had been fixed - the one failure here that
+        // nothing downstream would notice.
+        Assert.NotEqual(
+            properties["menuBuilderRegisteringMethods"],
+            properties["menuBuilderUnregisteredMethods"]);
     }
 
     /// <summary>

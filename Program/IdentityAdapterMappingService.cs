@@ -12,6 +12,17 @@ internal sealed class IdentityAdapterMappingService
     private const string FtbWaypointMapIcon = "dev/ftb/mods/ftbchunks/client/mapicon/WaypointMapIcon";
     private const string FtbTeleportFromMapPacket = "dev/ftb/mods/ftbchunks/net/TeleportFromMapPacket";
     private const string SolarFluxResourcePack = "org/zeith/solarflux/client/SolarFluxResourcePack";
+    // The two classes in this pack that build an Applied Energistics menu with
+    // the builder that registers it, from inside a NeoForge DeferredRegister
+    // that registers it as well. Named here rather than discovered because a
+    // mod class cannot be resolved from the game's mappings, and the cost of
+    // naming one that is not installed is nothing: the transformer only ever
+    // sees a class the game actually loads.
+    private const string Ae2AddonLibMenuRegistry = "net/pedroksl/ae2addonlib/registry/MenuRegistry";
+    private const string UfoModMenus = "com/raishxn/ufo/init/ModMenus";
+    private const string Ae2MenuTypeBuilder = "appeng/menu/implementations/MenuTypeBuilder";
+    private const string Ae2MenuBuildDescriptor =
+        "(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/world/inventory/MenuType;";
     private const string LoginListener = "net/minecraft/server/network/ServerLoginPacketListenerImpl";
     private const string GameListener = "net/minecraft/server/network/ServerGamePacketListenerImpl";
     // The half of the listener that 1.20.2 split out and shared with the
@@ -205,6 +216,12 @@ internal sealed class IdentityAdapterMappingService
                 FtbWaypointMapIcon,
                 FtbTeleportFromMapPacket),
             ["solarFluxPackClasses"] = SolarFluxResourcePack,
+            ["menuRegistrationFixEnabled"] = "true",
+            ["menuRegistrationFixClasses"] = JoinAliases(Ae2AddonLibMenuRegistry, UfoModMenus),
+            ["menuBuilderClasses"] = Ae2MenuTypeBuilder,
+            ["menuBuilderRegisteringMethods"] = "build",
+            ["menuBuilderUnregisteredMethods"] = "buildUnregistered",
+            ["menuBuilderDescriptors"] = Ae2MenuBuildDescriptor,
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
         };
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
@@ -949,6 +966,12 @@ internal sealed class IdentityAdapterMappingService
             ["solarFluxSyncEnabled"] = "false",
             ["solarFluxPackClasses"] = SolarFluxResourcePack,
             ["solarFluxSyncMethods"] = "init,listResources,getNamespaces,getResource",
+            ["menuRegistrationFixEnabled"] = "true",
+            ["menuRegistrationFixClasses"] = JoinAliases(Ae2AddonLibMenuRegistry, UfoModMenus),
+            ["menuBuilderClasses"] = Ae2MenuTypeBuilder,
+            ["menuBuilderRegisteringMethods"] = "build",
+            ["menuBuilderUnregisteredMethods"] = "buildUnregistered",
+            ["menuBuilderDescriptors"] = Ae2MenuBuildDescriptor,
             ["xaeroWaypointTeleportClasses"] = XaeroWaypointTeleport,
             ["xaeroWaypointTeleportMethods"] = "teleportToWaypoint",
             ["xaeroWaypointTeleportDescriptors"] = JoinAliases(

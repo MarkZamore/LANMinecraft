@@ -33,6 +33,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableFtbTeleportTransformer();
             } else if (isAlias("solarFluxPackClasses", className)) {
                 transformer = new PortableSolarFluxSyncTransformer();
+            } else if (isAlias("menuRegistrationFixClasses", className)) {
+                transformer = new PortableMenuRegistrationTransformer();
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 transformer = new PortableXaeroWaypointTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
@@ -63,6 +65,8 @@ public final class PortableIdentityPreflight {
                 verifyFtbTeleportTargets(archive, className, transformed);
             } else if (isAlias("solarFluxPackClasses", className)) {
                 verifySolarFluxTargets(className, transformed);
+            } else if (isAlias("menuRegistrationFixClasses", className)) {
+                verifyMenuRegistrationTargets(className, original, transformed);
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
@@ -242,6 +246,55 @@ public final class PortableIdentityPreflight {
                 "SolarFlux transformer synchronized " + synchronizedMethods +
                 " methods of " + packClass + " instead of 4.");
         }
+    }
+
+    /**
+     * Every registering build call the class had is now the unregistered one,
+     * and there are as many of them as there were.
+     *
+     * <p>Counted both sides rather than asserting a number: the count is the
+     * mod's, not ours, and a version that adds a menu is not a version that
+     * broke the patch. What would be a break is a call left behind - that is
+     * the double registration still in place - so none may remain.
+     */
+    private static void verifyMenuRegistrationTargets(
+        String menuClass,
+        byte[] original,
+        byte[] transformed) {
+        String owner = alias("menuBuilderClasses", 0);
+        String registering = alias("menuBuilderRegisteringMethods", 0);
+        String unregistered = alias("menuBuilderUnregisteredMethods", 0);
+        String[] descriptors = aliases("menuBuilderDescriptors");
+        int before = countCalls(original, owner, registering, descriptors);
+        int afterRegistering = countCalls(transformed, owner, registering, descriptors);
+        int afterUnregistered = countCalls(transformed, owner, unregistered, descriptors);
+        if (before == 0) {
+            throw new IllegalStateException(
+                menuClass + " has no registering menu builder call to rewrite; " +
+                "the target list names a class that does not need it.");
+        }
+        if (afterRegistering != 0 || afterUnregistered != before) {
+            throw new IllegalStateException(
+                "Menu registration transformer left " + menuClass + " with " + afterRegistering +
+                " registering call(s) and " + afterUnregistered + " unregistered of " + before + ".");
+        }
+    }
+
+    private static int countCalls(byte[] classfile, String owner, String name, String[] descriptors) {
+        ClassNode node = new ClassNode();
+        new ClassReader(classfile).accept(node, 0);
+        int count = 0;
+        for (MethodNode method : node.methods) {
+            for (AbstractInsnNode instruction : method.instructions) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals(owner) &&
+                    call.name.equals(name) &&
+                    Arrays.asList(descriptors).contains(call.desc)) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     private static void verifyXaeroWaypointTargets(
