@@ -99,9 +99,16 @@ public readonly record struct PackMemoryProfile(
     /// The number is replaced by a real measurement the first time the pack is
     /// installed, which is the moment the estimate stops being a guess.
     /// </remarks>
+    /// <param name="publishedModCount">
+    /// What the publisher counted: jars plus the mods nested inside them, the
+    /// same number <see cref="Measure"/> arrives at by opening every jar. Null
+    /// for a manifest written before the field existed, and then the jar count
+    /// stands in for it, which is what this did for every manifest.
+    /// </param>
     public static PackMemoryProfile FromPublishedFiles(
         IEnumerable<(string Path, long SizeBytes)> files,
-        string? minecraftVersion)
+        string? minecraftVersion,
+        int? publishedModCount = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         var jars = 0;
@@ -126,9 +133,17 @@ public readonly record struct PackMemoryProfile(
 
         // A manifest with no mods in it is a manifest this does not understand,
         // and guessing from one is worse than saying nothing.
-        return jars == 0
-            ? Unknown
-            : new PackMemoryProfile(jars, modBytes, assetBytes, minecraftVersion, jars);
+        if (jars == 0) return Unknown;
+
+        // Nested mods are the whole of the disagreement this used to have with
+        // Measure: the bytes, the assets and the version already matched to the
+        // byte, and only the count moved - by 259 mods on Limitless 8, which is
+        // three gigabytes of suggested heap. A count the publisher took cannot
+        // be arrived at from a file list, because the ratio of nested to jars
+        // runs from 1.18 to 2.79 across the packs here and follows neither the
+        // loader nor the bytes.
+        var loaded = publishedModCount is { } counted && counted >= jars ? counted : jars;
+        return new PackMemoryProfile(loaded, modBytes, assetBytes, minecraftVersion, jars);
     }
 
     private static string? ReadMinecraftVersion(string packDirectory)
