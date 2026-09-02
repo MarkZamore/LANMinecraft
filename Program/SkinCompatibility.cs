@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 
 namespace Minecraft;
 
@@ -71,8 +71,9 @@ public static class SkinCompatibility
     public static string Describe(string? minecraftVersion, string? skinPath)
     {
         var rule =
-            "Скин - PNG. Ширина 64 пикселя или кратная ей (128, 256, до 4096), " +
-            "высота такая же для современного формата или вдвое меньше для старого 64x32. " +
+            "Скин - PNG шириной ровно 64 пикселя: столько читают все версии. Более крупный старые " +
+            "обрезают по левому верхнему углу, а с 1.17 игра его вовсе отбрасывает. " +
+            "Размер 64x64 для современного формата или 64x32 для старого. " +
             $"Не больше {SkinService.MaxSkinBytes / (1024 * 1024)} МБ: файл уходит по Steam всем, кто играет рядом.";
 
         if (ReadsModernSkins(minecraftVersion)) return rule;

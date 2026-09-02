@@ -41,7 +41,26 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
     /// stops the rest.
     /// </remarks>
     internal const int MaxSkinBytes = 8 * 1024 * 1024;
-    internal const int MaxSkinWidth = 4096;
+    /// <summary>
+    /// Sixty-four pixels, which is every version's answer and not a compromise
+    /// between them.
+    /// </summary>
+    /// <remarks>
+    /// This said 4096, on the idea that a bigger file is a better one and the
+    /// game would make what it could of it. Reading the clients says otherwise.
+    /// A skin wider than 64 renders in exactly one window of versions, 1.13
+    /// through 1.16.5, where the image goes to the GPU at whatever size it
+    /// arrived. Either side of that it is thrown away or worse: 1.7 draws it
+    /// into a 64x32 canvas and 1.8 into a 64x64 one, keeping the top-left corner
+    /// and discarding the rest, and 1.17 onward measures it and refuses -
+    /// "Discarding incorrectly sized skin texture" - leaving the player as the
+    /// default character with no idea why.
+    ///
+    /// The launcher carries packs from 1.7, which is as far back as e4steam
+    /// goes, to the newest. One file has to satisfy all of them, so the ceiling
+    /// is the one width every one of them reads.
+    /// </remarks>
+    internal const int MaxSkinWidth = 64;
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly IPeerTransport _transport;
@@ -551,8 +570,8 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         if (width > MaxSkinWidth)
         {
             throw new InvalidDataException(
-                $"Skin is {width} pixels wide; {MaxSkinWidth} is the most, and already sixty-four times " +
-                "the detail the game's own model carries.");
+                $"Skin is {width} pixels wide, and {MaxSkinWidth} is what Minecraft reads. Wider than that " +
+                "is drawn from its top-left corner on old versions and thrown away entirely from 1.17 on.");
         }
 
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
