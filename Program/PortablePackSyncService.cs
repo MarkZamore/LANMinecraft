@@ -82,6 +82,9 @@ public sealed partial class PortablePackSyncService
         new(
             "C&A Arcane Awakened",
             new PackSyncSource("MarkZamore", "C-A-Arcane-Awakened", "pack-latest")),
+        new(
+            "TerraFirma Rebirth",
+            new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
