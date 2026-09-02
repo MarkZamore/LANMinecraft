@@ -22,8 +22,11 @@ public partial class WorldRemovalConfirmationDialog : Window
         DarkTitleBar.Apply(this);
         QuestionText.Text = $"Вы точно хотите удалить мир «{displayName}»?";
         ExplanationText.Text =
-            "Мир удалится с диска вместе со всем, что в нём построено, и вернуть его будет неоткуда. " +
-            "Копия у друга, которому его передавали, останется.";
+            "Мир удалится с диска вместе со всем, что в нём построено, и вернуть его будет неоткуда.";
+        // The launcher is a canvas in a Viewbox, so its text is drawn smaller
+        // than its size says. Without this the same token gives a bigger
+        // letter here than in the window behind.
+        Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
     }
 
     /// <summary>True when the player asked for the world to go.</summary>

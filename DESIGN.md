@@ -70,7 +70,7 @@ Montserrat, вшит в exe (`Program/Fonts/`, SIL Open Font License, текст
 
 Форма: `Radius.Control` 6 у всех контролов, `Radius.Primary` 8 у «Играть», `Radius.Scrollbar` 4 у ползунка. Теней нет.
 
-Диалоги. Окно лаунчера — это полотно 820×574 в `Viewbox`, то есть на экране его текст мельче своего кегля. Свои диалоги (`WorldTransferConfirmationDialog`, `BuildRemovalConfirmationDialog`, `ControlsPresetConfirmationDialog`) поэтому не задают своих кеглей, а масштабируются под владельца (`DialogScale`): один и тот же токен даёт одинаковую букву и в окне, и в диалоге поверх него. Ширина полотна диалога — `Size.DialogWidth`, окно подгоняется под то, во что она превратится.
+Диалоги. Окно лаунчера — это полотно 820×574 в `Viewbox`, то есть на экране его текст мельче своего кегля. Свои диалоги (`WorldTransferConfirmationDialog`, `BuildRemovalConfirmationDialog`, `ControlsPresetConfirmationDialog`, `WorldRemovalConfirmationDialog`) поэтому не задают своих кеглей, а масштабируются под владельца (`DialogScale`): один и тот же токен даёт одинаковую букву и в окне, и в диалоге поверх него. Ширина полотна диалога — `Size.DialogWidth`, окно подгоняется под то, во что она превратится.
 
 ## Состояния
 
