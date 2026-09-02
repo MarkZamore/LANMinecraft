@@ -109,7 +109,11 @@ public sealed class PlayButtonCaptionTests
         var program = FindProgramDirectory();
         var fonts = new Uri(Path.Combine(program, "Fonts") + Path.DirectorySeparatorChar);
         var typeface = new Typeface(
-            new FontFamily(fonts, "#Montserrat"),
+            // "./#Montserrat" is what Fonts.GetFontFamilies actually reports at a
+            // directory uri; "#Montserrat" resolves to nothing and silently
+            // measures a fallback about a tenth narrower, which is a guard that
+            // passes captions the button would cut.
+            new FontFamily(fonts, "./#Montserrat, Segoe UI"),
             FontStyles.Normal,
             FontWeights.Light,
             FontStretches.Normal);

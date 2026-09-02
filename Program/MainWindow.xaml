@@ -346,7 +346,7 @@
                 <Grid Grid.Column="0">
                     <ProgressBar x:Name="UpdateProgressBar" Minimum="0" Maximum="100"
                                  Foreground="{StaticResource Brush.ProgressTrack}"/>
-                    <TextBlock x:Name="UpdateProgressText" Text="Вы на последней версии"
+                    <TextBlock x:Name="UpdateProgressText" Text="Проверка обновлений"
                                Style="{StaticResource ProgressTextStyle}"/>
                 </Grid>
                 <Button Grid.Column="1" x:Name="UpdateButton" Content="Обновить"

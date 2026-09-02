@@ -2391,7 +2391,7 @@ public partial class MainWindow : Window
         UpdateProgressBar.Value = 0;
         UpdateProgressBar.IsIndeterminate = false;
         SetProgressActivity(UpdateProgressBar, active: false);
-        UpdateProgressText.Text = LatestVersionText();
+        UpdateProgressText.Text = UpdateProgressLine.Checking();
         UpdateButton.IsEnabled = false;
     }
 
@@ -2449,6 +2449,9 @@ public partial class MainWindow : Window
         if (_updateService is null) return;
 
         PreparedUpdate? startupPrepared = null;
+        // The release this pass was working on, so a failure can name it rather
+        // than fall back to claiming there was nothing to fetch.
+        int? fetching = null;
         try
         {
             startupPrepared = await Task.Run(_updateService.TryGetPreparedUpdate, token);
@@ -2462,7 +2465,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = "Обновление готово к установке";
+                    UpdateProgressText.Text = UpdateProgressLine.Ready(startupPrepared.Manifest.ReleaseNumber);
                     RefreshUi();
                 });
             }
@@ -2485,8 +2488,8 @@ public partial class MainWindow : Window
                         UpdateProgressBar.Value = 0;
                         SetProgressActivity(UpdateProgressBar, active: false);
                         UpdateProgressText.Text = result.IsUnavailable
-                            ? "Не удалось проверить обновления"
-                            : LatestVersionText();
+                            ? UpdateProgressLine.CheckFailed()
+                            : UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber);
                     });
                 }
             }
@@ -2500,7 +2503,8 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 0;
                     SetProgressActivity(UpdateProgressBar, active: true);
-                    UpdateProgressText.Text = "Скачивается обновление";
+                    fetching = result.Manifest.ReleaseNumber;
+                    UpdateProgressText.Text = UpdateProgressLine.Starting(result.Manifest.ReleaseNumber);
                     RefreshUi();
                 });
 
@@ -2513,14 +2517,23 @@ public partial class MainWindow : Window
                     }
                     if (value.Stage == UpdatePreparationStage.Downloading && value.TotalBytes > 0)
                     {
-                        var speed = _updateRate.Update(value.DownloadedBytes, "update");
-                        UpdateProgressText.Text =
-                            $"Скачивается обновление: {FormatBytes(value.DownloadedBytes)} / {FormatBytes(value.TotalBytes)} ({FormatBytes((long)speed)}/с)";
+                        // Keyed on what is moving. One constant scope covered the
+                        // patch and the whole executable both, and the rate tracker
+                        // clamps a backward byte count to the last sample - so after
+                        // the second download started the line read 0 Б/с to the end.
+                        var speed = _updateRate.Update(
+                            value.DownloadedBytes, $"update:{value.TotalBytes}");
+                        UpdateProgressText.Text = UpdateProgressLine.Downloading(
+                            result.Manifest.ReleaseNumber,
+                            value.DownloadedBytes,
+                            value.TotalBytes,
+                            speed,
+                            UpdateProgressLine.Estimate(value.DownloadedBytes, value.TotalBytes, speed));
                     }
                     else if (value.Stage == UpdatePreparationStage.ApplyingDelta)
                     {
                         _updateRate.Reset();
-                        UpdateProgressText.Text = "Применение обновления";
+                        UpdateProgressText.Text = UpdateProgressLine.Applying(result.Manifest.ReleaseNumber);
                     }
                 });
                 var readyUpdate = await _updateService.DownloadUpdateAsync(result, progress, token);
@@ -2531,7 +2544,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = "Обновление готово к установке";
+                    UpdateProgressText.Text = UpdateProgressLine.Ready(readyUpdate.Manifest.ReleaseNumber);
                 });
             }
         }
@@ -2549,7 +2562,12 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 0;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = LatestVersionText();
+                    // Not "you are on the latest": nothing established that. The
+                    // check or the download fell over, and saying otherwise turns
+                    // a failure into an all-clear.
+                    UpdateProgressText.Text = fetching is { } release
+                        ? UpdateProgressLine.DownloadFailed(release)
+                        : UpdateProgressLine.CheckFailed();
                 });
             }
         }
@@ -2585,14 +2603,14 @@ public partial class MainWindow : Window
             if (prepared is null)
             {
                 _preparedUpdate = null;
-                UpdateProgressText.Text = LatestVersionText();
+                UpdateProgressText.Text = UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber);
                 UpdateProgressBar.Value = 0;
                 SetProgressActivity(UpdateProgressBar, active: false);
                 return;
             }
 
             _preparedUpdate = prepared;
-            UpdateProgressText.Text = "Обновление готово к установке";
+            UpdateProgressText.Text = UpdateProgressLine.Ready(prepared.Manifest.ReleaseNumber);
             UpdateProgressBar.Value = 100;
             SetProgressActivity(UpdateProgressBar, active: false);
             _restartAfterUpdateOnExit = true;
