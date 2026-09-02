@@ -21,6 +21,62 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         TempTree.Delete(_root);
     }
 
+    /// <summary>
+    /// A runtime whose folder Windows is still holding goes into place anyway,
+    /// once it lets go.
+    /// </summary>
+    /// <remarks>
+    /// java.exe is run from the staging folder before the move, to check the
+    /// launcher's JVM options against it, and Windows keeps an executable's
+    /// image mapped for a breath after the process has gone - longer with a
+    /// scanner reading a tree that appeared a second earlier. The move failed
+    /// with "Access to the path ...\.java-17.install.8977cec7 is denied" and the
+    /// whole install was thrown away and downloaded again. The lock here is a
+    /// real open handle rather than a stand-in for one.
+    /// </remarks>
+    [Fact]
+    public void AnInstallHeldOpenForAMoment_StillLandsInPlace()
+    {
+        var parent = Path.Combine(_root, "runtime");
+        var stage = Path.Combine(parent, ".java-17.install.abc");
+        var installed = Path.Combine(parent, "java-17");
+        Directory.CreateDirectory(Path.Combine(stage, "bin"));
+        File.WriteAllText(Path.Combine(stage, "bin", "java.exe"), "not really java");
+
+        var held = File.Open(
+            Path.Combine(stage, "bin", "java.exe"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        var released = Task.Run(() =>
+        {
+            Thread.Sleep(250);
+            held.Dispose();
+        });
+
+        PortableJavaRuntimeService.PublishInstall(stage, installed);
+
+        released.GetAwaiter().GetResult();
+        Assert.False(Directory.Exists(stage));
+        Assert.True(File.Exists(Path.Combine(installed, "bin", "java.exe")));
+    }
+
+    /// <summary>
+    /// And a hold that never lets go is still an error rather than a hang: the
+    /// last attempt throws what Windows said, so the launcher can say it too.
+    /// </summary>
+    [Fact]
+    public void AnInstallHeldOpenForever_GivesUpRatherThanWaitingForever()
+    {
+        var parent = Path.Combine(_root, "runtime-stuck");
+        var stage = Path.Combine(parent, ".java-17.install.def");
+        var installed = Path.Combine(parent, "java-17");
+        Directory.CreateDirectory(Path.Combine(stage, "bin"));
+        File.WriteAllText(Path.Combine(stage, "bin", "java.exe"), "not really java");
+
+        using var held = File.Open(
+            Path.Combine(stage, "bin", "java.exe"), FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        Assert.ThrowsAny<Exception>(() => PortableJavaRuntimeService.PublishInstall(stage, installed));
+    }
+
     [Fact]
     public void PinnedTemurinArtifact_MatchesAdoptium21_0_12_1_1()
     {
