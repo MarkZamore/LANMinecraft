@@ -4,47 +4,67 @@ using System.Linq;
 namespace Minecraft.Tests;
 
 /// <summary>
-/// "Сообщить о проблеме" is the way out when something has gone wrong, so
-/// nothing in it is ever switched off. It used to grey itself out exactly when
-/// it was needed most - no Steam, no friends online - and a grey button says
-/// nothing about why. The reason goes into the line under it instead.
+/// "Сообщить о проблеме" answers for itself by what it lets a player touch,
+/// not by a line of prose.
 /// </summary>
+/// <remarks>
+/// It went the other way first: nothing in the panel was ever switched off, and
+/// the reason went into the status line instead - "Включите Steam и нажмите
+/// «Повторить»" under a live button that would not send. That is two things to
+/// read and one of them a lie, and it was asked for the other way round. With
+/// nobody to send to, the list and the button are simply dead and the list says
+/// "Нет игроков в сети" where the names would be. That is the whole of it.
+/// </remarks>
 public sealed class BugReportPanelTests
 {
     [Fact]
-    public void NothingInThePanel_IsEverDisabled()
+    public void WithNobodyToSendTo_TheListAndTheButtonGoDown()
     {
         var panel = Between(ReadWindowCode(), "internal void RefreshDiagnosticsPanel()", "\n    }");
 
-        Assert.DoesNotContain("DiagnosticLogTargetComboBox.IsEnabled", panel, StringComparison.Ordinal);
-        Assert.DoesNotContain("SendBugReportButton.IsEnabled", panel, StringComparison.Ordinal);
-        Assert.DoesNotContain("BugReportMessageTextBox.IsEnabled", panel, StringComparison.Ordinal);
-
-        // And no other part of the window reaches in to switch them off either.
-        var source = ReadWindowCode();
-        foreach (var name in new[] { "DiagnosticLogTargetComboBox", "SendBugReportButton", "BugReportMessageTextBox" })
-        {
-            Assert.DoesNotContain(name + ".IsEnabled =", source, StringComparison.Ordinal);
-        }
+        Assert.Contains("DiagnosticLogTargetComboBox.IsEnabled = hasRecipient", panel, StringComparison.Ordinal);
+        Assert.Contains("SendBugReportButton.IsEnabled = hasRecipient", panel, StringComparison.Ordinal);
+        // What a player types survives having nobody to send it to: the text is
+        // the report, and losing it to a friend logging off would be its own bug.
+        Assert.DoesNotContain("BugReportMessageTextBox.IsEnabled", ReadWindowCode(), StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Pressing it when a report cannot go out has to say so. Every early exit
-    /// leaves a line behind; a silent return would read as a dead button.
+    /// And the line under the button says nothing about either of them.
     /// </summary>
     [Fact]
-    public void EveryReasonNotToSend_IsSaidOutLoud()
+    public void TheStatusLine_NeverExplainsSteamOrAnEmptyList()
+    {
+        var source = ReadWindowCode();
+        var status = Between(source, "private void ShowBugReportStatus()", ";\n");
+
+        Assert.DoesNotContain("Включите Steam", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("некому передать", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Некому отправить", source, StringComparison.Ordinal);
+        // At rest it still says the panel is fine, because an empty box under a
+        // filled one reads as a box that broke - but only while it is fine.
+        Assert.Contains("Всё работает :)", status, StringComparison.Ordinal);
+        Assert.Contains("string.Empty", status, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A press that cannot send is a press that does nothing. The two states the
+    /// disabled button already stands for return without a word; the ones a
+    /// player cannot see coming still leave a line.
+    /// </summary>
+    [Fact]
+    public void ThePressesTheButtonAlreadyRefuses_SayNothing()
     {
         var click = Between(ReadWindowCode(), "private async void SendBugReportButton_Click(", "\n    }");
-        var guards = click.Split("return;", StringSplitOptions.None);
 
-        Assert.True(guards.Length >= 5, "the button answers for itself in every case it cannot send");
-        foreach (var guard in guards.Take(guards.Length - 1))
-        {
-            Assert.Contains("SetBugReportStatus(", guard, StringComparison.Ordinal);
-        }
-        Assert.Contains("Steam ещё не подключился", click, StringComparison.Ordinal);
-        Assert.Contains("Некому отправить отчёт", click, StringComparison.Ordinal);
+        Assert.Contains("if (!IsIdentityBound) return;", click, StringComparison.Ordinal);
+        Assert.Contains(
+            "is not DiagnosticLogTargetOption recipient) return;",
+            click,
+            StringComparison.Ordinal);
+        // The launcher still starting up is not something the panel shows, so
+        // that one is still said.
+        Assert.Contains("Лаунчер ещё готовится", click, StringComparison.Ordinal);
     }
 
     /// <summary>
