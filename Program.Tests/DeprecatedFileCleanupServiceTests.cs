@@ -93,10 +93,20 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         // Every loader's build is pinned at once now, so the sweep keeps them all.
         var pinnedBuilds = ManagedComponentService.PinnedCacheFileIds("e4steam")!;
         var pinned = pinnedBuilds.First();
-        var runtime = ManagedComponentService.PinnedCacheFileIds("java-runtime")!.Single();
+        // Every runtime in the catalogue, not just the one pinned by default. A
+        // machine that plays a 1.20.1 pack keeps a Java 17 beside its Java 21,
+        // and while only the default counted, the other one's archive was
+        // deleted on every launch and downloaded again - two hundred megabytes
+        // before that pack could start, four times in one evening.
+        var runtimes = ManagedComponentService.PinnedCacheFileIds("java-runtime")!;
+        Assert.True(runtimes.Count > 1, "the catalogue pins more than one runtime; the sweep has to know them all");
         WriteFile(Path.Combine(components, "e4steam", pinned, "e4steam.jar"), "current");
         WriteFile(Path.Combine(components, "e4steam", "19999", "e4steam-old.jar"), "superseded");
-        WriteFile(Path.Combine(components, "java-runtime", runtime, "runtime.zip"), "current");
+        foreach (var runtime in runtimes)
+        {
+            WriteFile(Path.Combine(components, "java-runtime", runtime, "runtime.zip"), "current");
+        }
+        WriteFile(Path.Combine(components, "java-runtime", "temurin-1.2.3_4", "runtime.zip"), "superseded");
         WriteFile(Path.Combine(components, "tiptothescales", "1234", "mod.jar"), "no longer pinned");
         // The teleport layer's pins went with the layer itself.
         WriteFile(Path.Combine(components, "ftb-essentials", "7608733", "ftb.jar"), "unpinned");
@@ -106,7 +116,11 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         DeprecatedFileCleanupService.Run(paths);
 
         Assert.True(File.Exists(Path.Combine(components, "e4steam", pinned, "e4steam.jar")));
-        Assert.True(File.Exists(Path.Combine(components, "java-runtime", runtime, "runtime.zip")));
+        Assert.All(runtimes, runtime =>
+            Assert.True(
+                File.Exists(Path.Combine(components, "java-runtime", runtime, "runtime.zip")),
+                $"java-runtime/{runtime} is pinned and must survive the sweep"));
+        Assert.False(Directory.Exists(Path.Combine(components, "java-runtime", "temurin-1.2.3_4")));
         Assert.False(Directory.Exists(Path.Combine(components, "e4steam", "19999")));
         Assert.False(Directory.Exists(Path.Combine(components, "tiptothescales")));
         Assert.False(Directory.Exists(Path.Combine(components, "ftb-essentials")));

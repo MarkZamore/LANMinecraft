@@ -258,7 +258,15 @@ public sealed class ManagedComponentService
     public static IReadOnlyCollection<string>? PinnedCacheFileIds(string componentId) => componentId switch
     {
         E4steamComponentId => SteamTransportCatalog.CacheFileIds,
-        "java-runtime" => [PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_')],
+        // Every runtime the catalogue knows, not just the one this build
+        // pins by default. A machine that plays a 1.20.1 pack keeps a Java
+        // 17 beside its Java 21, and naming only the default made the
+        // other one's archive unpinned - so it was deleted on every launch
+        // and downloaded again, two hundred megabytes at a time, before
+        // that pack could start.
+        "java-runtime" => JavaRuntimeCatalog.CacheDirectoryNames
+            .Append(PortableJavaRuntimeService.PinnedRuntimeId.Replace('+', '_'))
+            .ToArray(),
         _ => null
     };
 

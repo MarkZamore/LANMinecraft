@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.Windows.Input;
 
 namespace Minecraft;
 
@@ -55,5 +56,14 @@ public partial class NoticeDialog : Window
         dialog.ShowDialog();
     }
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+    // There is no button. Nothing here is a decision, and a dialog that only
+    // says what happened is dismissed the way every other window is - by
+    // closing it. Esc has to be caught by hand for that, because what used
+    // to answer it was the button's IsCancel.
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not Key.Escape and not Key.Enter) return;
+        e.Handled = true;
+        Close();
+    }
 }
