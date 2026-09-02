@@ -13,7 +13,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int AdapterCacheGeneration = 10;
+    private const int AdapterCacheGeneration = 11;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     private readonly AppPaths _paths;
@@ -191,6 +191,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
         if (Says(properties, "chunkPacingEnabled")) present.Add("paced chunk sending");
         if (Says(properties, "guestMovementEnabled")) present.Add("guests trusted with their own movement");
+        if (Says(properties, "menuRegistrationFixEnabled")) present.Add("menus registered once");
         return present.Count == 0 ? "nothing beyond skins and the UUID" : string.Join(", ", present);
     }
 

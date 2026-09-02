@@ -89,6 +89,7 @@ foreach ($requiredFile in @(
     (Join-Path $commonRoot "PortableIdentityReflection.java"),
     (Join-Path $commonRoot "PortableFtbTeleportTransformer.java"),
     (Join-Path $commonRoot "PortableSolarFluxSyncTransformer.java"),
+    (Join-Path $commonRoot "PortableMenuRegistrationTransformer.java"),
     (Join-Path $commonRoot "PortableXaeroWaypointHooks.java"),
     (Join-Path $commonRoot "PortableXaeroWaypointTransformer.java"),
     (Join-Path $commonRoot "PortableLanAutoPublishHooks.java"),
