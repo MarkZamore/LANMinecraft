@@ -16,5 +16,5 @@
 
 - Номер релиза = число коммитов в `main`; перед коммитом добавить `## <N+1>` в `Program/Changelog.md` — одна версия, один абзац, без длинного тире.
 - Описание версии — ровно два коротких предложения, не длиннее 240 символов вместе. Это окно «Что нового», а не отчёт: берутся два самых заметных для игрока изменения, остальное остаётся в коммите. Держит `ChangelogTests`.
-- `dotnet test Program.Tests -c Debug` перед коммитом. Для сборки java-адаптера задать `JAVA_HOME=C:\Program Files\Java\jdk-25.0.3`: в `PATH` только стубы Oracle (`java`, `javac`), `jar.exe` там нет, и без `JAVA_HOME` сборка падает на `jar.exe was not found`. Без JDK — `-p:SkipPortableIdentityAdapter=true`, состав тестов тот же.
+- `dotnet test Program.Tests -c Debug` перед коммитом. Для сборки java-адаптера задать `JAVA_HOME=C:\Tools\jdk-25.0.2`: в `PATH` только стубы Oracle (`java`, `javac`), `jar.exe` там нет, и без `JAVA_HOME` сборка падает на `jar.exe was not found`. Без JDK — `-p:SkipPortableIdentityAdapter=true`, состав тестов тот же.
 - Префлайт по настоящим jar'ам гонится локально: `Program/IdentityAdapters/Common/Verify-IdentityAdapter.ps1`. Он повторяет то, что лаунчер вывел в прошлый запуск сборки, поэтому после правки `IdentityAdapterMappingService` сборку надо один раз запустить, иначе проверятся старые алиасы.
