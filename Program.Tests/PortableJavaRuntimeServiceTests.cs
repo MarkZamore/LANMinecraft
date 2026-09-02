@@ -490,6 +490,46 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         Assert.Empty(Directory.EnumerateDirectories(siblings, ".java-25.install.*"));
     }
 
+    /// <summary>
+    /// A staging directory a killed run left behind is collected even when it
+    /// belongs to a runtime nothing pins any more - and one still being written
+    /// is not.
+    /// </summary>
+    /// <remarks>
+    /// Install() clears its own pin's leftovers before it starts, which covers a
+    /// runtime that is still asked for. The one nobody will ask for again was
+    /// covered by nothing: the superseded-install sweep matches java-&lt;major&gt;
+    /// exactly and a staging name is not that, so a machine whose packs all moved
+    /// to 1.21.1 kept a few hundred megabytes of half-extracted java-17 for good,
+    /// counting against the free space every later install checks for.
+    /// </remarks>
+    [Fact]
+    public async Task StagingFromAKilledRun_IsCollectedEvenForARuntimeNothingPinsNow()
+    {
+        var archive = BuildArchive();
+        var handler = new RecordingHandler(_ => Success(archive));
+        using var httpClient = new HttpClient(handler);
+        var runtimeRoot = CreateRuntimeRoot();
+        var siblings = Path.Combine(runtimeRoot, "runtime", "windows-x64");
+
+        var abandoned = Path.Combine(siblings, ".java-17.install." + new string('a', 32));
+        Directory.CreateDirectory(Path.Combine(abandoned, "bin"));
+        Directory.SetLastWriteTimeUtc(abandoned, DateTime.UtcNow - TimeSpan.FromDays(2));
+
+        // Freshly touched, so it stands for an extraction happening right now.
+        var live = Path.Combine(siblings, ".java-21.install." + new string('b', 32));
+        Directory.CreateDirectory(Path.Combine(live, "bin"));
+
+        await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
+
+        Assert.False(
+            Directory.Exists(abandoned),
+            "a staging tree nothing will ever install again has to be collected");
+        Assert.True(
+            Directory.Exists(live),
+            "a staging tree still being written must not be taken away mid-extraction");
+    }
+
     private PortableJavaRuntimeService CreateService(
         HttpClient httpClient,
         byte[] archive,
