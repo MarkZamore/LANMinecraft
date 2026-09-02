@@ -263,7 +263,7 @@ public sealed partial class PortablePackSyncService
             var files = (dto.Files ?? [])
                 .Where(file => !string.IsNullOrWhiteSpace(file.Path))
                 .Select(file => (file.Path!, file.SizeBytes));
-            return PackMemoryProfile.FromPublishedFiles(files, dto.MinecraftVersion);
+            return PackMemoryProfile.FromPublishedFiles(files, dto.MinecraftVersion, dto.ModCount);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -1530,6 +1530,12 @@ public sealed partial class PortablePackSyncService
         public string? Revision { get; set; }
         /// <summary>Read only for weighing a pack that is not installed yet.</summary>
         public string? MinecraftVersion { get; set; }
+        /// <summary>
+        /// Jars plus the mods nested inside them, as the publisher counted them.
+        /// Absent from a manifest written before the field, and the weighing
+        /// falls back to the jar count exactly as it always did.
+        /// </summary>
+        public int? ModCount { get; set; }
         public List<RemoteFileDto>? Files { get; set; }
         public List<RemoteAssetDto>? Assets { get; set; }
     }
