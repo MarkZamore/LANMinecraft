@@ -294,10 +294,119 @@ public sealed class BuildRemovalServiceTests : IDisposable
         return [install, archive];
     }
 
+    /// <summary>
+    /// A world that never moved into its build's folder goes with the build all
+    /// the same.
+    /// </summary>
+    /// <remarks>
+    /// Worlds are filed by build, but they only move there when that build is
+    /// launched: WorldLocations.Migrate runs from Prepare and nowhere else. A
+    /// build updated and then deleted without being played still has its worlds
+    /// lying flat in the root, and looking only at the folder found none of them
+    /// - the window offered "and its worlds", the player agreed, and the worlds
+    /// stayed. A build withdrawn from the list can never be launched again, so
+    /// it could never migrate at all.
+    /// </remarks>
+    [Fact]
+    public void AWorldStillLyingFlatInTheRoot_GoesWithItsBuild()
+    {
+        Install(Build, "1.21.1");
+        var stranded = MakeStrandedWorld(Build, "Новый мир");
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.Plan(Build, worldsToo: true);
+
+        // The window shows this number, so it has to count the strays too.
+        Assert.Equal(1, plan.Worlds);
+        var outcome = service.Remove(plan);
+        Assert.True(outcome.Complete);
+        Assert.Equal(1, outcome.Worlds);
+        Assert.False(Directory.Exists(stranded));
+    }
+
+    /// <summary>
+    /// And a world nobody claimed stays where it is. This is the reason the
+    /// match here is exact rather than WorldMetadataService.BelongsToBuild,
+    /// which answers yes for a world naming no build at all: that answer is
+    /// right when deciding what to show and would delete every unattributed
+    /// world on the machine along with the first build a player removes.
+    /// </summary>
+    [Fact]
+    public void AWorldThatNamesNoBuild_IsNeverTakenByOne()
+    {
+        Install(Build, "1.21.1");
+        var unclaimed = MakeStrandedWorld(build: null, "Ничей");
+        var someoneElses = MakeStrandedWorld(Other, "Соседский");
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.Plan(Build, worldsToo: true);
+
+        Assert.Equal(0, plan.Worlds);
+        service.Remove(plan);
+        Assert.True(File.Exists(Path.Combine(unclaimed, "level.dat")));
+        Assert.True(File.Exists(Path.Combine(someoneElses, "level.dat")));
+    }
+
+    /// <summary>Both places at once: the folder and a stray that never reached it.</summary>
+    [Fact]
+    public void ABuildWithWorldsInBothPlaces_LosesBoth()
+    {
+        Install(Build, "1.21.1");
+        var filed = MakeWorld(Build, "Переехавший");
+        var stranded = MakeStrandedWorld(Build, "Оставшийся");
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.Plan(Build, worldsToo: true);
+
+        Assert.Equal(2, plan.Worlds);
+        var outcome = service.Remove(plan);
+        Assert.Equal(2, outcome.Worlds);
+        Assert.False(Directory.Exists(filed));
+        Assert.False(Directory.Exists(stranded));
+    }
+
+    /// <summary>Without the worlds asked for, a stray is left alone like the rest.</summary>
+    [Fact]
+    public void AStrayWorld_StaysWhenTheWorldsWereNotAskedFor()
+    {
+        Install(Build, "1.21.1");
+        var stranded = MakeStrandedWorld(Build, "Новый мир");
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.Plan(Build, worldsToo: false);
+
+        // Counted, because the window says how many there are either way.
+        Assert.Equal(1, plan.Worlds);
+        var outcome = service.Remove(plan);
+        Assert.Equal(0, outcome.Worlds);
+        Assert.True(File.Exists(Path.Combine(stranded, "level.dat")));
+    }
+
     private string MakeWorld(string build, string name)
     {
         var world = Path.Combine(WorldLocations.ForBuild(_paths.Worlds, build), name);
         Write(Path.Combine(world, "level.dat"), "world");
+        return world;
+    }
+
+    /// <summary>
+    /// A world where every world used to live: flat in the root of Worlds, with
+    /// the build it belongs to written inside it rather than spelled by the
+    /// folder above it.
+    /// </summary>
+    private string MakeStrandedWorld(string? build, string name)
+    {
+        var world = Path.Combine(_paths.Worlds, name);
+        Write(Path.Combine(world, "level.dat"), "world");
+        if (build is not null)
+        {
+            Write(
+                Path.Combine(world, ".minecraft-portable-world.json"),
+                $$"""
+                {"schemaVersion":11,"worldId":"{{Guid.NewGuid()}}","buildName":"{{build}}",
+                 "buildRelativePath":"{{build}}"}
+                """);
+        }
         return world;
     }
 
