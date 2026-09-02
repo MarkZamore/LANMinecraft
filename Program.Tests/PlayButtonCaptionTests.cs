@@ -70,11 +70,14 @@ public sealed class PlayButtonCaptionTests
         // Every word the preparation can put in front of a pair of sizes: the
         // Java it is fetching, and the name of whatever set of files is coming
         // down - the base game, or the loader the pack asks for.
-        var subjects = new[]
-        {
-            $"Java {PortableJavaRuntimeService.PinnedJavaVersion}",
-            "Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"
-        };
+        // Every Java the catalogue pins, not just the one this build defaults
+        // to. A 1.16 pack fetches Java 8, whose version reads "1.8.0_504" - the
+        // longest of the four - and it was never measured while this named the
+        // default alone.
+        var subjects = JavaRuntimeCatalog.Releases
+            .Select(release => $"Java {release.JavaVersion}")
+            .Concat(["Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"])
+            .ToArray();
         foreach (var stage in byteStages)
         {
             foreach (var subject in subjects)

@@ -27,13 +27,31 @@ internal sealed class TransferRateTracker
             _samples.Clear();
             _bytesPerSecond = 0;
         }
-        // A count that steps back within a stage is a wobble in how "delivered"
-        // is measured, not a restart; a restart changes the stage. Clamping to
-        // the last value keeps one bad sample from zeroing six seconds of
-        // history.
+        // A small step back is a wobble in how "delivered" is measured, and
+        // clamping to the last value keeps one bad sample from zeroing six
+        // seconds of history.
+        //
+        // A step back past the oldest sample in the window is not that. This
+        // used to assume a restart always changes the stage, and it does not:
+        // the Java download falls over to its second source and begins again at
+        // nothing under the same "Java 21.0.12.1", and the loader fetches its
+        // installer and then its libraries under one name. The window then
+        // describes a download that is no longer running, the clamp pins every
+        // later sample to the old high-water mark, and the difference across the
+        // window is exactly zero - so the line reads 0 Б/с for the rest of the
+        // pass. Past the oldest sample the window is thrown away instead, and
+        // the speed is nothing until the new one fills, which is the truth.
         if (_samples.Count > 0 && currentBytes < _samples.Last().Bytes)
         {
-            currentBytes = _samples.Last().Bytes;
+            if (currentBytes < _samples.Peek().Bytes)
+            {
+                _samples.Clear();
+                _bytesPerSecond = 0;
+            }
+            else
+            {
+                currentBytes = _samples.Last().Bytes;
+            }
         }
 
         _samples.Enqueue((now, currentBytes));
