@@ -245,7 +245,56 @@ public sealed partial class PortableJavaRuntimeService
             Path.GetDirectoryName(Path.GetDirectoryName(GetCachePath())),
             name => !keptArchives.Contains(name),
             "cached Java archive");
+        SweepAbandonedStaging(Path.GetDirectoryName(installRoot));
     }
+
+    /// <summary>
+    /// Throws away staging directories a killed run left behind, whichever
+    /// runtime made them rather than only this one.
+    /// </summary>
+    /// <remarks>
+    /// Install() clears its own pin's leftovers before it starts, and that is
+    /// enough for as long as the pin is still asked for. It stops being enough
+    /// the moment it is not: a machine whose packs all move to 1.21.1 never
+    /// installs java-17 again, so a .java-17.install.&lt;guid&gt; that a kill left
+    /// behind is a few hundred megabytes nothing ever looks at again - and it
+    /// counts against the free space every later install checks for.
+    ///
+    /// The superseded-install sweep beside this one cannot reach them: it knows
+    /// names of the form java-&lt;major&gt; exactly, and a staging directory is not
+    /// one of those.
+    ///
+    /// Anything still being written is left alone. A tree in the middle of an
+    /// extraction has had a directory put in it moments ago, and an hour is far
+    /// past what an extraction, a probe and a move take together - so a second
+    /// launcher installing a different runtime beside this one is never robbed
+    /// halfway through.
+    /// </remarks>
+    private void SweepAbandonedStaging(string? parent)
+    {
+        if (parent is null || !Directory.Exists(parent)) return;
+        var stale = DateTime.UtcNow - AbandonedStagingAge;
+        foreach (var directory in Directory.EnumerateDirectories(parent))
+        {
+            var name = Path.GetFileName(directory);
+            if (!AbandonedStagingRegex().IsMatch(name)) continue;
+            try
+            {
+                if (Directory.GetLastWriteTimeUtc(directory) > stale) continue;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+            TryDeleteDirectory(directory);
+            if (!Directory.Exists(directory))
+            {
+                _logger.Info($"Removed the abandoned Java staging directory {name}.");
+            }
+        }
+    }
+
+    private static readonly TimeSpan AbandonedStagingAge = TimeSpan.FromHours(1);
 
     private void Sweep(string? parent, Func<string, bool> superseded, string what)
     {
@@ -803,6 +852,12 @@ public sealed partial class PortableJavaRuntimeService
 
     [GeneratedRegex("^JAVA_VERSION=\"([^\"]+)\"")]
     private static partial Regex JavaVersionRegex();
+
+    // What Install() names a staging directory: a dot, the install folder's
+    // name, ".install." and a guid with no dashes. Anchored both ends so it can
+    // only ever match something this service wrote itself.
+    [GeneratedRegex(@"^\.java-[0-9]+\.install\.[0-9a-f]{32}$", RegexOptions.IgnoreCase)]
+    private static partial Regex AbandonedStagingRegex();
 
     [GeneratedRegex("^java-[0-9]+$", RegexOptions.IgnoreCase)]
     private static partial Regex PortableInstallDirectoryRegex();
