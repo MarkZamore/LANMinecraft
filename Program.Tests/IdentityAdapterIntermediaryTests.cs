@@ -61,6 +61,35 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     }
 
     /// <summary>
+    /// A hook the bytecode refuses is not a reason to drop the skin hooks with
+    /// it: those are in com.mojang.authlib, which no version obfuscates and no
+    /// check of the game's own bytecode can speak for. Losing them together is
+    /// what left All The Fabric 3 with a default skin.
+    /// </summary>
+    [Fact]
+    public void SkinsCanBeAskedForOnTheirOwn_WhenTheRestIsRefused()
+    {
+        var (service, runtime, gameDirectory) = CreateFabricFixture();
+
+        var properties = service.BuildSkins(runtime, gameDirectory, "the preflight refused it").Properties;
+
+        Assert.Equal("false", properties["identityHooksEnabled"]);
+        Assert.Equal("getTextures,getPackedTextures", properties["skinReaderMethods"]);
+    }
+
+    /// <summary>And the launch path actually asks a second time.</summary>
+    [Fact]
+    public void AFailedPreflight_AsksForTheSkinsAgainBeforeGivingUp()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("Program", "PortableIdentityAdapterService.cs"));
+
+        var refused = source.IndexOf("_mappings.BuildSkins(", StringComparison.Ordinal);
+        Assert.True(refused > 0, "A refused preflight no longer asks for the skins on their own.");
+        // And the second ask is preflighted too, rather than trusted.
+        Assert.Contains("refusal = await PreflightAsync(configuration)", source, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The library store is shared by every build on the machine, and a
     /// NeoForge pack leaves its own mappings in it. Reading a Fabric runtime
     /// through them is how All The Fabric 3 came to believe its 1.18.2 was
@@ -105,6 +134,18 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
         Assert.Equal("false", properties["lanPublishEnabled"]);
         Assert.Equal("false", properties["identityHooksEnabled"]);
         Assert.Equal("getTextures,getPackedTextures", properties["skinReaderMethods"]);
+    }
+
+    private static string FindRepositoryFile(params string[] relativeParts)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            var candidate = relativeParts.Aggregate(current.FullName, Path.Combine);
+            if (File.Exists(candidate)) return candidate;
+            current = current.Parent;
+        }
+        throw new FileNotFoundException($"Repository file was not found: {Path.Combine(relativeParts)}");
     }
 
     // Just the LAN publish group, which is what a Fabric runtime in e4steam's

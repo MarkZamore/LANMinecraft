@@ -96,38 +96,65 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     "is the hook that settles the UUID at the door and the refusal of two players under one.");
             }
 
-            try
+            async Task<string?> PreflightAsync(IdentityAdapterConfiguration candidate)
             {
-                foreach (var target in configuration.Targets)
+                try
                 {
-                    await RunPreflightAsync(runtime.JavaPath, adapterPath, configuration.Properties, target, token)
-                        .ConfigureAwait(false);
-                    if (IsConfiguredAlias(configuration.Properties, "textureUrlCheckerClasses", target.ClassName))
+                    foreach (var target in candidate.Targets)
                     {
-                        await RunSkinSemanticPreflightAsync(
-                                runtime.JavaPath,
-                                adapterPath,
-                                configuration.Properties,
-                                target,
-                                token)
+                        await RunPreflightAsync(runtime.JavaPath, adapterPath, candidate.Properties, target, token)
                             .ConfigureAwait(false);
+                        if (IsConfiguredAlias(candidate.Properties, "textureUrlCheckerClasses", target.ClassName))
+                        {
+                            await RunSkinSemanticPreflightAsync(
+                                    runtime.JavaPath,
+                                    adapterPath,
+                                    candidate.Properties,
+                                    target,
+                                    token)
+                                .ConfigureAwait(false);
+                        }
                     }
+                    return null;
+                }
+                catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException
+                                               or TimeoutException or IOException)
+                {
+                    return ex.Message;
                 }
             }
-            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException
-                                           or TimeoutException or IOException)
+
+            // The preflight is how the launcher finds out that its hooks do not
+            // fit this runtime. Finding that out is not a reason to refuse to
+            // start the pack - it is the reason to start it without them, which
+            // is what happens when the configuration could not be built at all.
+            // It used to stop the launch and put the failure on screen, and All
+            // The Fabric 3 met that as a dialog it could not get past: the
+            // adapter was built for Java 21 and 1.18.2 runs on 17, so the check
+            // could not even load.
+            var refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+            if (refusal is not null && configuration.Properties.GetValueOrDefault("identityHooksEnabled") != "false")
             {
-                // The preflight is how the launcher finds out that its hooks do
-                // not fit this runtime. Finding that out is not a reason to
-                // refuse to start the pack - it is the reason to start it
-                // without them, which is what happens when the configuration
-                // could not be built at all. It used to stop the launch and put
-                // the failure on screen, and All The Fabric 3 met that as a
-                // dialog it could not get past: the adapter was built for Java
-                // 21 and 1.18.2 runs on 17, so the check could not even load.
+                // One hook that does not fit used to cost the pack every hook,
+                // and the skin hooks are not even in Minecraft: they are in
+                // com.mojang.authlib, which no version obfuscates and no
+                // preflight of the game's own bytecode can speak for. So the
+                // refusal is carried forward and the skins are asked for again
+                // on their own - the same answer Build gives when it is a name
+                // that is missing rather than the bytecode behind it.
+                _logger.Warn(
+                    $"The UUID hooks do not fit Minecraft {runtime.Descriptor.MinecraftVersion} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +
+                    "Asking for the skin hooks on their own.");
+                configuration = _mappings.BuildSkins(runtime, targetRoot, refusal);
+                refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+            }
+
+            if (refusal is not null)
+            {
                 _logger.Warn(
                     $"No portable hooks for Minecraft {runtime.Descriptor.MinecraftVersion} " +
-                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {ex.Message} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +
                     "The pack starts without them: everyone keeps the UUID Minecraft gives them offline, " +
                     "and the skin chosen in the launcher is not shown.");
                 return [];
