@@ -7,9 +7,10 @@ namespace Minecraft;
 /// in order.
 /// </summary>
 /// <remarks>
-/// The bottom right corner of the work area, newest at the bottom, older ones
-/// pushed up - where a player looks for this sort of thing, and clear of the
-/// clock. The primary monitor, because that is where Windows puts its own.
+/// The bottom left corner of the work area, newest at the bottom, older ones
+/// pushed up. The primary monitor, and the left corner rather than the right:
+/// the right one is where Windows puts its own notifications, and two things
+/// arriving in the same corner cover each other.
 /// </remarks>
 public sealed class PeerNoticeService(Window owner, Logger? logger = null) : IDisposable
 {
@@ -72,7 +73,7 @@ public sealed class PeerNoticeService(Window owner, Logger? logger = null) : IDi
         {
             var window = _open[index];
             if (window.ActualHeight <= 0) continue;
-            window.Left = area.Right - margin - window.ActualWidth;
+            window.Left = area.Left + margin;
             window.Top = bottom - window.ActualHeight;
             bottom -= window.ActualHeight + margin;
         }
