@@ -65,7 +65,7 @@ public sealed class NicknameRuleTests
     [Fact]
     public void ANameAlreadySaved_IsLeftExactlyAsItIs()
     {
-        Assert.Equal("Женя", LocalIdentityService.NormalizeNickname("Женя", "Fallback"));
+        Assert.Equal("Женя", LocalIdentityService.NormalizedOrNothing("Женя"));
         Assert.True(LocalIdentityService.TryNormalizeNickname("Женя", out var normalized, out _));
         Assert.Equal("Женя", normalized);
     }

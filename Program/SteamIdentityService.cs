@@ -80,7 +80,7 @@ public sealed class SteamIdentityService : IIdentityService
     public LocalIdentityContext ResolveContext(AppSettings settings)
     {
         var binding = Binding ?? throw new IdentityUnavailableException(SteamUnavailableMessage);
-        var nickname = LocalIdentityService.NormalizeNickname(settings.PlayerName, Environment.UserName);
+        var nickname = LocalIdentityService.NormalizedOrNothing(settings.PlayerName);
         var uuid = binding.PlayerUuid.ToString("D");
         return new LocalIdentityContext
         {
