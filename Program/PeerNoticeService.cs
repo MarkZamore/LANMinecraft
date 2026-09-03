@@ -30,7 +30,15 @@ public sealed class PeerNoticeService(Window owner, Logger? logger = null) : IDi
 
         try
         {
-            while (_open.Count >= MostAtOnce) _open[0].Dismiss();
+            // Taken off the list before it is asked to go, not after: it now
+            // fades before it closes, and a loop that waited for Closed to
+            // shorten the list would never see it shorten.
+            while (_open.Count >= MostAtOnce)
+            {
+                var oldest = _open[0];
+                _open.RemoveAt(0);
+                oldest.Dismiss();
+            }
 
             var window = new PeerNoticeWindow(owner, notice);
             window.Closed += (_, _) =>
@@ -53,7 +61,7 @@ public sealed class PeerNoticeService(Window owner, Logger? logger = null) : IDi
         if (_disposed) return;
         _disposed = true;
         // Copied first: dismissing raises Closed, which edits the list.
-        foreach (var window in _open.ToArray()) window.Dismiss();
+        foreach (var window in _open.ToArray()) window.CloseNow();
         _open.Clear();
     }
 

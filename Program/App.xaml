@@ -155,6 +155,8 @@
              a flicker; a third of a second reads as the button letting go. -->
         <Duration x:Key="Motion.FocusRise">0:0:0.08</Duration>
         <Duration x:Key="Motion.FocusFade">0:0:0.35</Duration>
+        <Duration x:Key="Motion.NoticeRise">0:0:0.2</Duration>
+        <Duration x:Key="Motion.NoticeFade">0:0:0.35</Duration>
 
         <CornerRadius x:Key="Radius.Control">6</CornerRadius>
         <CornerRadius x:Key="Radius.Primary">8</CornerRadius>

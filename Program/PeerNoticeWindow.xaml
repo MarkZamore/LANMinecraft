@@ -8,11 +8,13 @@
         ShowActivated="False"
         ShowInTaskbar="False"
         Topmost="True"
-        Background="{x:Null}"
+        AllowsTransparency="True"
+        Opacity="0"
+        Background="Transparent"
         MouseLeftButtonDown="Window_MouseLeftButtonDown"
         Style="{DynamicResource WindowStyle}">
-    <!-- The window itself has no background, so the rounded corner is the
-         panel's and not a square of canvas behind it. -->
+    <!-- Transparent so the rounded corner is the panel's and not a square of
+         canvas behind it, and so the whole notice can be faded in and out. -->
     <Border x:Name="NoticeSurface"
             Width="{StaticResource Size.NoticeWidth}"
             Background="{StaticResource Brush.Surface}"
