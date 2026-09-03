@@ -17,6 +17,27 @@ namespace Minecraft.Tests;
 /// </remarks>
 public sealed class BugReportPanelTests
 {
+    /// <summary>
+    /// The status line under the report panel is where the sync says what an
+    /// update took away, and nothing used to take it back down. A player who
+    /// started a different build, or the same one again, went on being told
+    /// about mods removed from an update they had already read about - and the
+    /// line reads as news about the launch in front of them.
+    ///
+    /// Cleared at the top of a launch, it falls back to saying the panel is
+    /// fine, which is the honest answer when this update changed nothing.
+    /// </summary>
+    [Fact]
+    public void StartingABuild_ClearsWhatTheLastUpdateSaid()
+    {
+        var launch = Between(ReadWindowCode(), "private async void PlayButton_Click(", "\n    }");
+
+        var cleared = launch.IndexOf("SetBugReportStatus(string.Empty)", StringComparison.Ordinal);
+        var synced = launch.IndexOf("SyncAsync(", StringComparison.Ordinal);
+        Assert.True(cleared > 0, "A launch no longer clears what the last update said.");
+        Assert.True(synced > cleared, "The line is cleared after the sync, so this update's own word is lost.");
+    }
+
     [Fact]
     public void WithNobodyToSendTo_TheListAndTheButtonGoDown()
     {
