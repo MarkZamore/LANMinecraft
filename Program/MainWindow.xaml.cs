@@ -345,19 +345,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LoadSettingsIntoUi()
-    {
-        var settings = RequireSettings();
-        _suppressTextPersistence = true;
-        try
-        {
-            PlayerNameTextBox.Text = RequireSettings().PlayerName;
-        }
-        finally
-        {
-            _suppressTextPersistence = false;
-        }
-    }
+    /// <summary>
+    /// Puts the saved settings on screen for the first time.
+    /// </summary>
+    /// <remarks>
+    /// Through the guarded writer rather than straight into the box, because
+    /// this is not the first thing that happens: Steam is asked before it, and
+    /// that takes seconds during which the window is up and the name field is
+    /// there to be typed into. Writing over it here would throw away a name the
+    /// player was in the middle of giving.
+    /// </remarks>
+    private void LoadSettingsIntoUi() => RefreshPlayerIdentityDisplay();
 
     /// <summary>
     /// Re-reads the friends list. Steam serves it from its own cache, so this
@@ -1835,7 +1833,7 @@ public partial class MainWindow : Window
             {
                 throw new InvalidOperationException(error);
             }
-            var previousName = LocalIdentityService.NormalizeNickname(settings.PlayerName, Environment.UserName);
+            var previousName = LocalIdentityService.NormalizedOrNothing(settings.PlayerName);
             if (string.Equals(previousName, normalized, StringComparison.Ordinal))
             {
                 FinishPlayerNameEdit(normalized);
@@ -1910,7 +1908,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            ResolveAndPersistLocalIdentity();
+            ResolveAndPersistLocalIdentity(status.PersonaName);
             // A retry after Steam was fixed has to bring the network up too;
             // during startup this runs once more, and starting is idempotent.
             if (_startupComplete) await StartNetworkingAsync().ConfigureAwait(true);
@@ -1974,11 +1972,25 @@ public partial class MainWindow : Window
 
     private bool IsIdentityBound => _identityService?.IsBound == true;
 
-    private void ResolveAndPersistLocalIdentity()
+    /// <summary>
+    /// Settles who this machine plays as, now that Steam has answered.
+    /// </summary>
+    /// <remarks>
+    /// A name the player has already chosen is left exactly as it is - the one
+    /// they have been playing under for a year, and equally the one they typed
+    /// a minute ago while this very connection was still being made. Only an
+    /// install with no name at all takes Steam's, and only as much of it as
+    /// Minecraft can address.
+    /// </remarks>
+    private void ResolveAndPersistLocalIdentity(string personaName)
     {
         if (_identityService is null || _settings is null || _settingsService is null) return;
 
-        _settings.PlayerName = LocalIdentityService.NormalizeNickname(_settings.PlayerName, Environment.UserName);
+        _settings.PlayerName = LocalIdentityService.NormalizedOrNothing(_settings.PlayerName);
+        if (_settings.PlayerName.Length == 0)
+        {
+            _settings.PlayerName = LocalIdentityService.NicknameFromPersona(personaName);
+        }
         var resolvedContext = _identityService.ResolveContext(_settings);
         var updated = false;
 
@@ -2026,14 +2038,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private string GetPlayerDisplayName()
-    {
-        var playerName = RequireSettings().PlayerName;
-        return string.IsNullOrWhiteSpace(playerName)
-            ? LocalIdentityService.NormalizeNickname(null, Environment.UserName)
-            : playerName.Trim();
-    }
-
     private void ApplyPlayerName()
     {
         if (_settings is null || _identityService is null || _settingsService is null)
@@ -2041,7 +2045,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var normalized = LocalIdentityService.NormalizeNickname(PlayerNameTextBox.Text, Environment.UserName);
+        var normalized = LocalIdentityService.NormalizedOrNothing(PlayerNameTextBox.Text);
 
         _suppressTextPersistence = true;
         try
@@ -2076,17 +2080,27 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Writes the player's name down, with whatever Steam has said about them
+    /// so far.
+    /// </summary>
+    /// <remarks>
+    /// The name is saved even when Steam has not answered yet. It is the one
+    /// thing here that is the player's own rather than the account's, and a
+    /// name typed during the few seconds Steam takes to connect used to be
+    /// thrown away for want of an identity to file it under.
+    /// </remarks>
     private void PersistActivePlayerIdentity()
     {
-        if (_settings is null || _identityService is null || _settingsService is null ||
-            string.IsNullOrWhiteSpace(_settings.PlayerName))
+        if (_settings is null || _settingsService is null) return;
+
+        if (_identityService is { IsBound: true } && !string.IsNullOrWhiteSpace(_settings.PlayerName))
         {
-            return;
+            var identity = _identityService.ResolveContext(_settings);
+            _settings.LocalIdentityId = identity.SteamId64.ToString();
+            _settings.LocalIdentityName = identity.IdentityName;
         }
 
-        var identity = _identityService.ResolveContext(_settings);
-        _settings.LocalIdentityId = identity.SteamId64.ToString();
-        _settings.LocalIdentityName = identity.IdentityName;
         _settingsService.Save(_settings);
     }
 
@@ -2097,7 +2111,11 @@ public partial class MainWindow : Window
     private (string id, string name) GetActiveLocalOwner()
     {
         var settings = RequireSettings();
-        if (_identityService is not { IsBound: true }) return ("", Environment.UserName);
+        // No Steam, so no UUID for anything to belong to. The name is the
+        // player's own or nothing: a world stamped with the account name of
+        // the computer that made it carries that name for good.
+        if (_identityService is not { IsBound: true })
+            return ("", LocalIdentityService.NormalizedOrNothing(settings.PlayerName));
         var resolved = _identityService.ResolveContext(settings);
         return (resolved.MinecraftUuid, resolved.IdentityName);
     }
@@ -2110,7 +2128,7 @@ public partial class MainWindow : Window
             return (
                 string.IsNullOrWhiteSpace(settings.LocalIdentityId) ? string.Empty : settings.LocalIdentityId.Trim(),
                 string.IsNullOrWhiteSpace(settings.LocalIdentityName)
-                    ? Environment.UserName
+                    ? LocalIdentityService.NormalizedOrNothing(settings.PlayerName)
                     : settings.LocalIdentityName.Trim()
             );
         }
@@ -2919,6 +2937,7 @@ public partial class MainWindow : Window
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
+        var hasName = !string.IsNullOrWhiteSpace(_settings.PlayerName);
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
         // The name and the memory size are read when the game starts, so they
         // stay editable while the pack downloads - that wait is long, and there
@@ -2954,8 +2973,12 @@ public partial class MainWindow : Window
             PlayButtonText.Text = "Играть";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
-            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName;
+            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName;
         }
+        // The name is the one thing the launcher will not invent, so it is also
+        // the one thing it has to ask for. Without this the button is simply
+        // dead and nothing on the window says why.
+        PlayButton.ToolTip = hasName ? null : "Сначала задайте ник";
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;

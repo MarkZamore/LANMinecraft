@@ -57,7 +57,8 @@
                  the game is up, it is the disabled button that says so. -->
             <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below4}">
                 <Button x:Name="PlayButton" Click="PlayButton_Click"
-                        Style="{StaticResource PrimaryButtonStyle}">
+                        Style="{StaticResource PrimaryButtonStyle}"
+                        ToolTipService.ShowOnDisabled="True">
                     <Grid>
                         <ProgressBar x:Name="PlayProgressBar" Minimum="0" Maximum="100"
                                      Style="{StaticResource PlayProgressBarStyle}"
@@ -88,15 +89,33 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Имя" Style="{StaticResource LabelTextStyle}"/>
-                    <TextBox Grid.Column="1" x:Name="PlayerNameTextBox"
-                             MaxLength="16"
-                             IsReadOnly="True"
-                             TextChanged="PlayerNameTextBox_TextChanged"
-                             PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
-                             DataObject.Pasting="PlayerNameTextBox_Pasting"
-                             LostFocus="PlayerNameTextBox_LostFocus"
-                             KeyDown="PlayerNameTextBox_KeyDown"
-                             Margin="{StaticResource Gap.Right2}"/>
+                    <!-- A new launcher invents no name, so the field is empty
+                         until the player types one or Steam offers one, and the
+                         hint says so rather than leaving a blank box. -->
+                    <Grid Grid.Column="1" Margin="{StaticResource Gap.Right2}">
+                        <TextBox x:Name="PlayerNameTextBox"
+                                 MaxLength="16"
+                                 IsReadOnly="True"
+                                 TextChanged="PlayerNameTextBox_TextChanged"
+                                 PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
+                                 DataObject.Pasting="PlayerNameTextBox_Pasting"
+                                 LostFocus="PlayerNameTextBox_LostFocus"
+                                 KeyDown="PlayerNameTextBox_KeyDown"/>
+                        <TextBlock Text="Ник не задан"
+                                   VerticalAlignment="Center"
+                                   Margin="{StaticResource Pad.FieldText}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text, ElementName=PlayerNameTextBox}" Value="">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
                     <Button Grid.Column="2" x:Name="ChangePlayerNameButton"
                             Content="Изменить" Click="ChangePlayerNameButton_Click"/>
                 </Grid>

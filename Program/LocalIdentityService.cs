@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Text;
 
 namespace Minecraft;
 
@@ -65,14 +66,52 @@ public static class LocalIdentityService
         return false;
     }
 
-    public static string NormalizeNickname(string? value, string? fallback = null)
+    /// <summary>
+    /// A name as it will be stored, or nothing at all when there is not one yet.
+    /// </summary>
+    /// <remarks>
+    /// There was a fallback here once: an empty name became the Windows account
+    /// name, and failing that the literal "Player". So a player who had never
+    /// chosen a name was given one anyway - usually the name of an account
+    /// somebody else set up on their computer, which is how a friend arrives on
+    /// a shared world called "PC" and does not know why. A name nobody chose is
+    /// worse than no name, because it is the name they are then known by. The
+    /// launcher waits for the player instead, and asks Steam only if the player
+    /// has not answered by the time Steam does.
+    /// </remarks>
+    public static string NormalizedOrNothing(string? value) =>
+        TryNormalizeNickname(value, out var normalized, out _) ? normalized : string.Empty;
+
+    /// <summary>
+    /// A nickname made out of a Steam persona name, or nothing when the persona
+    /// leaves nothing to work with.
+    /// </summary>
+    /// <remarks>
+    /// A persona is not a nickname. Steam takes spaces, Cyrillic, emoji and a
+    /// great many more characters than sixteen, and the game can address none
+    /// of that - see <see cref="IsNameMinecraftAccepts"/> for why that matters.
+    /// So the persona is read for the letters Minecraft accepts and the rest is
+    /// dropped: "Mark Zamore" arrives as "MarkZamore".
+    ///
+    /// What survives has to be a name in its own right. A persona of "Женя"
+    /// leaves nothing, and nothing is the honest answer: a player offered an
+    /// empty field will type their own name, where one handed "" or a mangled
+    /// stump would have to notice it first.
+    /// </remarks>
+    public static string NicknameFromPersona(string? persona)
     {
-        if (TryNormalizeNickname(value, out var normalized, out _))
+        if (persona is null) return string.Empty;
+
+        var kept = new StringBuilder(MaxNicknameLength);
+        foreach (var character in persona)
         {
-            return normalized;
+            if (!char.IsAsciiLetterOrDigit(character) && character != '_') continue;
+            kept.Append(character);
+            if (kept.Length == MaxNicknameLength) break;
         }
 
-        return TryNormalizeNickname(fallback, out normalized, out _) ? normalized : "Player";
+        var name = kept.ToString();
+        return IsNameMinecraftAccepts(name) ? name : string.Empty;
     }
 
     /// <summary>
