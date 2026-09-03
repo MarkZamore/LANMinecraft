@@ -111,8 +111,8 @@ internal sealed class IdentityAdapterMappingService
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
-        var mojangMappingPath = FindMojangMappings(runtime.LibrariesRoot);
-        var mappingPath = FindTsrg2Mappings(runtime.LibrariesRoot);
+        var mojangMappingPath = FindMojangMappings(runtime);
+        var mappingPath = FindTsrg2Mappings(runtime);
         var intermediaryPath = mappingPath is null ? FindIntermediaryMappings(runtime) : null;
         // A NeoForge that ships neither is not a runtime without an answer: it
         // loads the game under Mojang's own names, and Mojang's own file is
@@ -1035,12 +1035,16 @@ internal sealed class IdentityAdapterMappingService
     /// downloads them too and has no use for them here, because its own merged
     /// file already answers in official names.
     /// </summary>
-    private static string? FindMojangMappings(string librariesRoot)
+    private static string? FindMojangMappings(PreparedRuntime runtime)
     {
-        var libraries = Path.Combine(librariesRoot, "net", "minecraft", "client");
+        var libraries = Path.Combine(runtime.LibrariesRoot, "net", "minecraft", "client");
         if (!Directory.Exists(libraries)) return null;
+        // This Minecraft's own file first, for the same reason as above: the
+        // store holds every version the machine has ever played, and taking the
+        // alphabetically first put 1.18.2's file in front of 1.21.1's.
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
-                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                     .OrderByDescending(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
+                     .ThenBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
@@ -1083,12 +1087,56 @@ internal sealed class IdentityAdapterMappingService
             .FirstOrDefault();
     }
 
-    private static string? FindTsrg2Mappings(string librariesRoot)
+    /// <summary>
+    /// Forge's and NeoForge's own mappings for this runtime, if it ships them.
+    /// </summary>
+    /// <remarks>
+    /// Scoped to the runtime on purpose, twice over. The library store is
+    /// shared by every build on the machine, and this used to take the first
+    /// tsrg2 file anywhere under it: the day a NeoForge 1.21.1 pack put its
+    /// merged mappings there, All The Fabric 3 began reading its own 1.18.2
+    /// under 1.21.1's names. It then believed it could hook everything, asked
+    /// for the class 1.21.1 calls "arw", and was handed the 1.18.2 class of
+    /// that name - a block-entity datafixer. The preflight refused it, the
+    /// whole adapter was dropped, and the player lost their skin.
+    ///
+    /// So: a tsrg2 file never describes a Fabric or Quilt runtime at all, and
+    /// a mappings file that is not filed under this Minecraft's version is
+    /// somebody else's.
+    /// </remarks>
+    /// <summary>
+    /// Whether a shared library file belongs to this Minecraft. Every one of
+    /// them is filed in a folder named for its version, either exactly or with
+    /// a build stamp after it ("1.21.1-20240808.144430").
+    /// </summary>
+    internal static bool IsFiledUnderVersion(string path, string? minecraftVersion)
     {
-        var libraries = librariesRoot;
+        if (string.IsNullOrWhiteSpace(minecraftVersion)) return false;
+        foreach (var segment in path.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment.Equals(minecraftVersion, StringComparison.OrdinalIgnoreCase)) return true;
+            if (segment.StartsWith(minecraftVersion + "-", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string? FindTsrg2Mappings(PreparedRuntime runtime)
+    {
+        if (runtime.Descriptor.Loader.Type is not (PackLoaderKind.Forge or PackLoaderKind.NeoForge))
+        {
+            return null;
+        }
+
+        var libraries = runtime.LibrariesRoot;
         if (!Directory.Exists(libraries)) return null;
+        // This Minecraft's own file first, when there is one. A preference and
+        // not a filter: every real store files them under a version folder, but
+        // a layout that does not is still this runtime's only answer.
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
-                     .OrderByDescending(path => Path.GetFileName(path).Contains("merged", StringComparison.OrdinalIgnoreCase))
+                     .OrderByDescending(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
+                     .ThenByDescending(path => Path.GetFileName(path).Contains("merged", StringComparison.OrdinalIgnoreCase))
                      .ThenBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             try

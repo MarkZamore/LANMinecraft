@@ -61,6 +61,37 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     }
 
     /// <summary>
+    /// The library store is shared by every build on the machine, and a
+    /// NeoForge pack leaves its own mappings in it. Reading a Fabric runtime
+    /// through them is how All The Fabric 3 came to believe its 1.18.2 was
+    /// 1.21.1: it then asked for the class 1.21.1 calls "arw", was handed the
+    /// 1.18.2 class of that name - a datafixer - and the preflight refused it.
+    /// The whole adapter was dropped, and the player lost their skin.
+    /// </summary>
+    [Fact]
+    public void ANeoForgeMappingInTheSharedStore_IsNotReadAsThisRuntimesOwn()
+    {
+        var (service, runtime, gameDirectory) = CreateFabricFixture();
+        var intruder = Path.Combine(
+            runtime.LibrariesRoot, "net", "neoforged", "neoform", "1.21.1-20240808.144430");
+        Directory.CreateDirectory(intruder);
+        File.WriteAllText(
+            Path.Combine(intruder, "neoform-1.21.1-20240808.144430-mappings-merged.txt"),
+            """
+            tsrg2 obf srg
+            net/minecraft/server/network/ServerLoginPacketListenerImpl arw
+            """);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        // Still read through intermediary, as if the intruder were not there.
+        Assert.Equal("net.minecraft.class_1001,fgo", properties["minecraftClasses"]);
+        Assert.Equal("method_2000,a", properties["publishServerMethods"]);
+        // And nothing in it may name a class out of somebody else's Minecraft.
+        Assert.DoesNotContain("arw", string.Join("|", properties.Values), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Without Mojang's file the intermediary names stand for nothing, and what
     /// needs no mappings at all is kept rather than guessed at.
     /// </summary>
