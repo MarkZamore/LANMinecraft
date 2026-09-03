@@ -21,6 +21,8 @@ public partial class MainWindow : Window
     // EB59 is a half-size badge glyph; this maps its ink bounds onto EA18's full shield bounds.
 
     private readonly ObservableCollection<PeerViewModel> _peers = new();
+    private readonly PeerArrivalNotifier _peerArrivals = new();
+    private PeerNoticeService? _peerNotices;
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
@@ -184,6 +186,7 @@ public partial class MainWindow : Window
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
             _peerDirectory = new SteamPeerDirectory(_steamClient, _peerTransport, _logger);
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
+            _peerNotices = new PeerNoticeService(this, _logger);
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
             _packRuntimes = new PackRuntimeService(_paths, _logger);
@@ -310,6 +313,9 @@ public partial class MainWindow : Window
             if (_skinService is not null) await _skinService.DisposeAsync();
             if (_peerTransport is not null) await _peerTransport.DisposeAsync();
             if (_steamClient is not null) await _steamClient.DisposeAsync();
+            // Before the launcher goes: a notice left standing is a window
+            // that outlives the process that drew it.
+            _peerNotices?.Dispose();
             _packInstances?.Dispose();
             _packRuntimes?.Dispose();
             _identityAdapter?.Dispose();
@@ -1127,6 +1133,11 @@ public partial class MainWindow : Window
         }
 
         SortPeersByName();
+
+        // Who arrived and who started a build, worked out from this pass
+        // against the last one - the list is re-applied whole every two
+        // seconds, so there is no event to hang this on.
+        foreach (var notice in _peerArrivals.Observe(_peers)) _peerNotices?.Show(notice);
 
         OnlinePlayerComboBox.SelectedItem =
             FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();

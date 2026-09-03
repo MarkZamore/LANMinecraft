@@ -1,0 +1,34 @@
+<Window x:Class="Minecraft.PeerNoticeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LANMinecraft"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Background="{x:Null}"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown"
+        Style="{DynamicResource WindowStyle}">
+    <!-- The window itself has no background, so the rounded corner is the
+         panel's and not a square of canvas behind it. -->
+    <Border x:Name="NoticeSurface"
+            Width="{StaticResource Size.NoticeWidth}"
+            Background="{StaticResource Brush.Surface}"
+            BorderBrush="{StaticResource Brush.BorderStrong}"
+            BorderThickness="{StaticResource Border.Control}"
+            CornerRadius="{StaticResource Radius.Primary}"
+            Padding="{StaticResource Gap.Canvas}">
+        <StackPanel>
+            <!-- Who, then what: the name carries the weight because it is the
+                 word a player is looking for. -->
+            <TextBlock x:Name="TitleText"
+                       Style="{StaticResource EmphasisTextStyle}"
+                       TextWrapping="Wrap"/>
+            <TextBlock x:Name="BodyText"
+                       Margin="{StaticResource Gap.Above1}"
+                       Style="{StaticResource ParagraphTextStyle}"/>
+        </StackPanel>
+    </Border>
+</Window>
