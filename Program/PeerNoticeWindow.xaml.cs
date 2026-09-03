@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace Minecraft;
@@ -35,7 +36,14 @@ public partial class PeerNoticeWindow : Window
         BodyText.Text = notice.Body;
         // The launcher's canvas is drawn smaller than its size says, and a
         // notice standing beside it has to be lettered on the same scale.
-        Loaded += (_, _) => DialogScale.MatchOwner(this, NoticeSurface);
+        Loaded += (_, _) =>
+        {
+            DialogScale.MatchOwner(this, NoticeSurface);
+            // Nothing in the launcher appears at full strength out of nowhere,
+            // and a notice least of all: it arrives on its own, over whatever
+            // the player was looking at.
+            Fade(to: 1, duration: "Motion.NoticeRise", then: null);
+        };
         _timer = new DispatcherTimer { Interval = Lifetime };
         _timer.Tick += (_, _) => Dismiss();
         _timer.Start();
@@ -47,7 +55,35 @@ public partial class PeerNoticeWindow : Window
         if (_closing) return;
         _closing = true;
         _timer.Stop();
+        Fade(to: 0, duration: "Motion.NoticeFade", then: Close);
+    }
+
+    /// <summary>
+    /// Goes now, without the fade. For the launcher closing: an animation that
+    /// outlives the dispatcher never finishes, and the window would be left
+    /// standing over an application that has gone.
+    /// </summary>
+    internal void CloseNow()
+    {
+        _closing = true;
+        _timer.Stop();
+        BeginAnimation(OpacityProperty, null);
         Close();
+    }
+
+    private void Fade(double to, string duration, Action? then)
+    {
+        var length = Application.Current?.TryFindResource(duration) as Duration?;
+        if (length is null)
+        {
+            Opacity = to;
+            then?.Invoke();
+            return;
+        }
+
+        var animation = new DoubleAnimation(to, length.Value);
+        if (then is not null) animation.Completed += (_, _) => then();
+        BeginAnimation(OpacityProperty, animation);
     }
 
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => Dismiss();
