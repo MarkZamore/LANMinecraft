@@ -35,15 +35,14 @@ public sealed class PeerArrivalNotifier(Func<DateTimeOffset>? clock = null)
     // a silent peer, so anything faster than that was never a real departure.
     private static readonly TimeSpan ArrivalCooldown = TimeSpan.FromMinutes(5);
 
-    // The friends who were already playing when the launcher opened are not
-    // news. They arrive over the first seconds - Steam is read every five - and
-    // announcing them would greet the player with a stack of notifications for
-    // people who had been there all along.
-    private static readonly TimeSpan StartupQuiet = TimeSpan.FromSeconds(30);
-
     private readonly Func<DateTimeOffset> _now = clock ?? (() => DateTimeOffset.Now);
     private readonly Dictionary<ulong, Seen> _seen = [];
-    private DateTimeOffset? _startedAt;
+
+    // Whoever is already there when the launcher opens is not news, and the
+    // first look is what says who that was. There is no waiting period: a
+    // friend who arrives a second after the window is up is announced a second
+    // after the window is up.
+    private bool _lookedOnce;
 
     /// <summary>
     /// Reads the list as it stands and says what has happened since the last
@@ -53,8 +52,8 @@ public sealed class PeerArrivalNotifier(Func<DateTimeOffset>? clock = null)
     {
         ArgumentNullException.ThrowIfNull(peers);
         var now = _now();
-        _startedAt ??= now;
-        var quiet = now - _startedAt.Value < StartupQuiet;
+        var firstLook = !_lookedOnce;
+        _lookedOnce = true;
         var notices = new List<PeerNotice>();
 
         foreach (var peer in peers)
@@ -66,7 +65,17 @@ public sealed class PeerArrivalNotifier(Func<DateTimeOffset>? clock = null)
             // seconds later, and that is the moment worth announcing.
             var inLauncher = !peer.IsOutsideLauncher && peer.IsPresenceKnown;
             var build = peer.IsMinecraftRunning ? (peer.PackName ?? "").Trim() : "";
-            var seen = _seen.TryGetValue(id, out var known) ? known : Seen.Never;
+            var known = _seen.TryGetValue(id, out var remembered);
+            var seen = known ? remembered : Seen.Never;
+
+            // Somebody already inside a build the first time we lay eyes on
+            // them did not open their launcher this second: starting one takes
+            // longer than the two seconds between looks, so we would have found
+            // them idle or preparing first. This is what catches the friend
+            // whose presence Steam served to us late - they were there all
+            // along, and the list simply had not reached them yet.
+            var alreadyPlaying = !known && build.Length > 0;
+            var quiet = firstLook || alreadyPlaying;
 
             var arriving = !quiet && inLauncher && !seen.InLauncher &&
                            now - seen.Announced >= ArrivalCooldown;
