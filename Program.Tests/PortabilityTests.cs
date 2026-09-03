@@ -89,6 +89,32 @@ public sealed class PortabilityTests
         "Preferences.systemRoot",
     ];
 
+    /// <summary>
+    /// Writes that can only be recognised inside a file already allowed to hold
+    /// a registry key.
+    /// </summary>
+    /// <remarks>
+    /// RegistryKey.SetValue writes to the registry and DependencyObject.SetValue
+    /// is how WPF spells a property, and a search through text cannot tell which
+    /// of the two it is looking at. Held against the whole launcher the word
+    /// would fail on a combo box, so it is not held against the whole launcher:
+    /// a file on the reader list has no WPF in it and never will, and there the
+    /// word can only mean the first.
+    ///
+    /// Everywhere else the pair below is unnecessary anyway. Writing needs a key,
+    /// a key comes from one of the roots or from a RegistryKey, and both of those
+    /// are already caught - so a file that does not appear here cannot be holding
+    /// one to write to.
+    /// </remarks>
+    private static readonly string[] RegistryWritesWhereAKeyIsHeld =
+    [
+        "SetValue(",
+        // The writable overload. It opens nothing by itself, but a file that
+        // asks for write access is not reading any more.
+        "writable: true",
+        "RegistryKeyPermissionCheck.ReadWriteSubTree",
+    ];
+
     /// <summary>Every way of reaching the registry at all, to read or to write.</summary>
     private static readonly string[] RegistryReach =
     [
@@ -138,7 +164,18 @@ public sealed class PortabilityTests
                 if (text.Contains(write, StringComparison.OrdinalIgnoreCase)) writers.Add($"{name}: {write}");
             }
 
-            if (RegistryReaders.ContainsKey(name)) continue;
+            // The one file allowed to hold a key is the one file where a write
+            // could still hide, because reaching for the registry is exactly
+            // what it is permitted to do.
+            if (RegistryReaders.ContainsKey(name))
+            {
+                foreach (var write in RegistryWritesWhereAKeyIsHeld)
+                {
+                    if (text.Contains(write, StringComparison.Ordinal)) writers.Add($"{name}: {write}");
+                }
+                continue;
+            }
+
             foreach (var reach in RegistryReach)
             {
                 if (text.Contains(reach, StringComparison.Ordinal)) readers.Add($"{name}: {reach}");
