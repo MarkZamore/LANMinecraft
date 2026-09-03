@@ -133,7 +133,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
             // adapter was built for Java 21 and 1.18.2 runs on 17, so the check
             // could not even load.
             var refusal = await PreflightAsync(configuration).ConfigureAwait(false);
-            if (refusal is not null && configuration.Properties.GetValueOrDefault("identityHooksEnabled") != "false")
+            if (refusal is not null)
             {
                 // One hook that does not fit used to cost the pack every hook,
                 // and the skin hooks are not even in Minecraft: they are in
@@ -142,6 +142,12 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 // refusal is carried forward and the skins are asked for again
                 // on their own - the same answer Build gives when it is a name
                 // that is missing rather than the bytecode behind it.
+                //
+                // Asked without looking at what failed, because "skins only" is
+                // not the bare set: it still carries the hook that opens a world
+                // to the network, whose class lives in Minecraft like any other.
+                // Reading the flag instead of retrying is what let All The
+                // Fabric 3 fall straight through to giving up.
                 _logger.Warn(
                     $"The UUID hooks do not fit Minecraft {runtime.Descriptor.MinecraftVersion} " +
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +

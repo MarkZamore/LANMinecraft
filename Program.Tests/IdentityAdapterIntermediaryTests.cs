@@ -121,6 +121,34 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     }
 
     /// <summary>
+    /// The same shared store holds another version's Minecraft, and a class
+    /// name is not unique across versions. Taking the first jar that has a
+    /// class of the right name handed All The Fabric 3 the ShareToLanScreen out
+    /// of a 1.21.1 srg jar: right name, wrong insides, and a preflight that
+    /// refused it and cost the pack its skin.
+    /// </summary>
+    [Fact]
+    public void AnotherMinecraftInTheSharedStore_IsNotWhereATargetIsLookedFor()
+    {
+        var (service, runtime, gameDirectory) = CreateFabricFixture();
+        var intruderDirectory = Path.Combine(
+            runtime.LibrariesRoot, "net", "minecraft", "client", "1.21.1-20240808.144430");
+        Directory.CreateDirectory(intruderDirectory);
+        var intruder = Path.Combine(intruderDirectory, "client-1.21.1-20240808.144430-srg.jar");
+        using (var archive = ZipFile.Open(intruder, ZipArchiveMode.Create))
+        {
+            // Every class this runtime could ask for, under the official names
+            // a 1.21.1 srg jar carries them by.
+            foreach (var (official, _, _) in Classes) archive.CreateEntry(official + ".class");
+        }
+
+        var targets = service.Build(runtime, gameDirectory).Targets;
+
+        Assert.NotEmpty(targets);
+        Assert.All(targets, target => Assert.DoesNotContain("1.21.1", target.JarPath, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Without Mojang's file the intermediary names stand for nothing, and what
     /// needs no mappings at all is kept rather than guessed at.
     /// </summary>
