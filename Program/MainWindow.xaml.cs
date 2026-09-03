@@ -1330,6 +1330,15 @@ public partial class MainWindow : Window
             {
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
+            // What the last update had to say goes now, before this launch has
+            // anything of its own to say. A line naming the mods an update took
+            // away stood there until something else overwrote it - across a
+            // different build, and across starting the same one again - so it
+            // read as news about the launch a player was watching rather than
+            // about one they had forgotten. Cleared, the line falls back to
+            // saying the panel is fine, which is the honest answer when this
+            // update changed nothing.
+            SetBugReportStatus(string.Empty);
             ApplyPlayerName();
             ApplyMemoryText(chosenByPlayer: false);
             var settings = RequireSettings();
