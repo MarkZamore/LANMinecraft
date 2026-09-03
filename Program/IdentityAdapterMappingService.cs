@@ -159,6 +159,20 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>
+    /// The skin hooks alone, for a runtime whose other hooks were built and
+    /// then refused by the bytecode itself rather than by the names.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Build"/> already falls back this way when a name is missing.
+    /// A preflight failure is the same discovery made one step later - the
+    /// class was found and its insides were not what the hook expects - and it
+    /// deserves the same answer instead of costing the pack its skins too.
+    /// </remarks>
+    public IdentityAdapterConfiguration BuildSkins(
+        PreparedRuntime runtime, string gameDirectory, string whyNotEverything) =>
+        BuildSkinsOnly(runtime, gameDirectory, whyNotEverything);
+
+    /// <summary>
     /// The skin hooks, which need nothing from the runtime but its authlib.
     /// </summary>
     private IdentityAdapterConfiguration BuildSkinsOnly(
