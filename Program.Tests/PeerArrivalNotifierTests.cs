@@ -21,12 +21,14 @@ public sealed class PeerArrivalNotifierTests
 
     private DateTimeOffset _now = new(2026, 9, 3, 12, 0, 0, TimeSpan.Zero);
 
-    /// <summary>The launcher has been open long enough for arrivals to be news.</summary>
+    /// <summary>
+    /// The first look has been taken, so anything that turns up now is news.
+    /// No time passes: there is no waiting period to wait out.
+    /// </summary>
     private PeerArrivalNotifier Settled()
     {
         var notifier = new PeerArrivalNotifier(() => _now);
         notifier.Observe([]);
-        _now = _now.AddMinutes(1);
         return notifier;
     }
 
@@ -35,11 +37,46 @@ public sealed class PeerArrivalNotifierTests
     {
         var notifier = new PeerArrivalNotifier(() => _now);
 
-        // The list fills over the first seconds as Steam answers; none of it is
-        // news, because none of them arrived.
-        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak")]));
-        _now = _now.AddSeconds(10);
-        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InLauncher(OtherId, "anuvenn")]));
+        // The first look says who was already here. Nobody in it is news.
+        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+        _now = _now.AddSeconds(2);
+        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+    }
+
+    /// <summary>
+    /// Steam serves one friend's presence a moment after the rest, and that is
+    /// not them arriving. Somebody found already inside a build cannot have
+    /// opened their launcher in the two seconds since the last look.
+    /// </summary>
+    [Fact]
+    public void AFriendFoundAlreadyInABuild_IsNotAnnounced()
+    {
+        var notifier = Settled();
+
+        Assert.Empty(notifier.Observe([InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+
+        // And having been recorded, a build they move to afterwards is news.
+        _now = _now.AddSeconds(2);
+        Assert.Equal(
+            "Зашёл в TerraFirma Rebirth",
+            Assert.Single(notifier.Observe([InBuild(OtherId, "anuvenn", "TerraFirma Rebirth")])).Body);
+    }
+
+    /// <summary>
+    /// The whole point of dropping the waiting period: a friend who opens the
+    /// launcher a moment after we open ours is announced then and there.
+    /// </summary>
+    [Fact]
+    public void AFriendWhoArrivesSecondsAfterWeOpen_IsAnnouncedAtOnce()
+    {
+        var notifier = new PeerArrivalNotifier(() => _now);
+        notifier.Observe([]);
+
+        _now = _now.AddSeconds(2);
+
+        Assert.Equal(
+            new PeerNotice("Kazak", "Зашёл в LANMinecraft"),
+            Assert.Single(notifier.Observe([InLauncher(FriendId, "Kazak")])));
     }
 
     [Fact]
@@ -149,7 +186,9 @@ public sealed class PeerArrivalNotifierTests
     public void AFriendWhoFlickersOutAndBack_IsNotAnnouncedTwice()
     {
         var notifier = Settled();
-        // Seen for the first time already in a build: one notice, the build one.
+        // Found idle, then in a build: two events, both news.
+        Assert.Single(notifier.Observe([InLauncher(FriendId, "Kazak")]));
+        _now = _now.AddSeconds(2);
         Assert.Equal(
             "Зашёл в LL8 Extended",
             Assert.Single(notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")])).Body);

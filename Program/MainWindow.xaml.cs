@@ -1136,8 +1136,14 @@ public partial class MainWindow : Window
 
         // Who arrived and who started a build, worked out from this pass
         // against the last one - the list is re-applied whole every two
-        // seconds, so there is no event to hang this on.
-        foreach (var notice in _peerArrivals.Observe(_peers)) _peerNotices?.Show(notice);
+        // seconds, so there is no event to hang this on. Not before Steam can
+        // answer, because the first look is the one that decides who was
+        // already here, and a look taken while Steam is still connecting sees
+        // nobody at all.
+        if (_steamClient?.Status.IsReady == true)
+        {
+            foreach (var notice in _peerArrivals.Observe(_peers)) _peerNotices?.Show(notice);
+        }
 
         OnlinePlayerComboBox.SelectedItem =
             FindMatchingPeer(_peers, selectedPeerId) ?? _peers.FirstOrDefault();
