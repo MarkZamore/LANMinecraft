@@ -1165,6 +1165,13 @@ internal sealed class IdentityAdapterMappingService
         return null;
     }
 
+    /// <summary>
+    /// Whether a jar is Minecraft itself, from a version that is not this one.
+    /// </summary>
+    private static bool IsAnotherMinecraft(string path, string minecraftLibraries, string? minecraftVersion) =>
+        path.StartsWith(minecraftLibraries, StringComparison.OrdinalIgnoreCase) &&
+        !IsFiledUnderVersion(path, minecraftVersion);
+
     private List<IdentityAdapterTarget> FindRuntimeTargets(
         PreparedRuntime runtime,
         string gameDirectory,
@@ -1172,12 +1179,20 @@ internal sealed class IdentityAdapterMappingService
     {
         var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal);
         var candidates = new List<string>();
+        // This runtime's own Minecraft first, and only then anybody else's.
+        // The store is shared, a class name is not unique across versions, and
+        // first-jar-wins used to hand a 1.18.2 pack the ShareToLanScreen out of
+        // a 1.21.1 srg jar - a class of the right name whose insides the hook
+        // could not patch, which failed the preflight and cost the pack its
+        // skins.
+        candidates.Add(runtime.ClientJarPath);
         var minecraftLibraries = Path.Combine(runtime.LibrariesRoot, "net", "minecraft", "client");
         if (Directory.Exists(minecraftLibraries))
         {
-            candidates.AddRange(Directory.EnumerateFiles(minecraftLibraries, "*-srg.jar", SearchOption.AllDirectories));
+            candidates.AddRange(Directory
+                .EnumerateFiles(minecraftLibraries, "*-srg.jar", SearchOption.AllDirectories)
+                .Where(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion)));
         }
-        candidates.Add(runtime.ClientJarPath);
         var normalizedGameDirectory = Path.GetFullPath(gameDirectory);
         _paths.EnsureUnderRoot(normalizedGameDirectory);
         var instanceMods = Path.Combine(normalizedGameDirectory, "mods");
@@ -1188,7 +1203,12 @@ internal sealed class IdentityAdapterMappingService
         var libraries = runtime.LibrariesRoot;
         if (Directory.Exists(libraries))
         {
-            candidates.AddRange(Directory.EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories));
+            // Everything else in the store - authlib and the loader's own jars,
+            // which carry no Minecraft classes - minus another version's
+            // Minecraft, which carries all of them under the same names.
+            candidates.AddRange(Directory
+                .EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories)
+                .Where(path => !IsAnotherMinecraft(path, minecraftLibraries, runtime.Descriptor.MinecraftVersion)));
         }
 
         var found = new List<IdentityAdapterTarget>();
