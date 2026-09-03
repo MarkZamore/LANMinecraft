@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
@@ -17,6 +17,18 @@ public sealed class MinecraftWindowPlacementService
     private const uint ShowMaximized = 3;
     private const uint RestoreToMaximized = 0x0002;
     private const uint MonitorDefaultToNearest = 0x00000002;
+    private const uint MonitorDefaultToPrimary = 0x00000001;
+    private const int EffectiveDpi = 0;
+    private const uint DefaultDpi = 96;
+    // What GLFW builds a decorated, resizable window with, and so the frame
+    // the game's window will be wearing: WS_OVERLAPPEDWINDOW over
+    // WS_EX_APPWINDOW.
+    private const uint DecoratedWindowStyle = 0x00CF0000;
+    private const uint AppWindowExtendedStyle = 0x00040000;
+    // Below this it is not a game window but a splash, a loading dialog, or
+    // a rectangle left behind by something that went wrong.
+    private const int MinimumWindowWidth = 320;
+    private const int MinimumWindowHeight = 200;
     private const long WindowStyleCaption = 0x00C00000L;
     private const long WindowStyleThickFrame = 0x00040000L;
     private const long WindowStylePopup = 0x80000000L;
@@ -34,6 +46,93 @@ public sealed class MinecraftWindowPlacementService
     {
         _placementFile = paths.MinecraftWindowPlacementFile;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// The inside size the game's window should be built at, or null when there
+    /// is nothing to work it out from.
+    /// </summary>
+    /// <remarks>
+    /// Everything below can only move a window that already exists, and it
+    /// looks for one twice a second. That is the flash a player sees: a pack
+    /// whose early window fills the screen hands the game a screen-sized
+    /// window, the game rebuilds it at the 854x480 it was given no better
+    /// number for, and half a second later the poll below stretches it out
+    /// again. The game reads --width and --height before it builds anything, so
+    /// the size is settled here and nothing has to be resized afterwards.
+    ///
+    /// Both numbers are the inside of the window, which is what GLFW is given,
+    /// so the frame that the remembered rectangle counts is taken back off -
+    /// measured at the DPI of the screen the window will open on, because a
+    /// 150% screen wears a taller caption than a 100% one.
+    /// </remarks>
+    public (int Width, int Height)? StartupClientSize()
+    {
+        try
+        {
+            if (StartupBounds(TryRead()) is not { } bounds)
+            {
+                return null;
+            }
+
+            var frame = FrameSize(bounds);
+            var width = bounds.Right - bounds.Left - frame.Width;
+            var height = bounds.Bottom - bounds.Top - frame.Height;
+            return width >= MinimumWindowWidth && height >= MinimumWindowHeight
+                ? (width, height)
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Could not work out the size to open Minecraft at: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static NativeRect? StartupBounds(SavedMinecraftWindowPlacement? saved)
+    {
+        if (saved is null)
+        {
+            // Nothing remembered yet, so the first game fills the screen. The
+            // packs ask for the same thing from their own side - their early
+            // window opens maximised - and this keeps the game from dropping
+            // out of it a moment later.
+            return WorkAreaOf(PrimaryMonitor());
+        }
+
+        var bounds = ClampToNearestWorkArea(new NativeRect
+        {
+            Left = saved.Left,
+            Top = saved.Top,
+            Right = saved.Right,
+            Bottom = saved.Bottom
+        });
+        if (!IsValid(bounds))
+        {
+            return null;
+        }
+
+        // A maximised window remembers the smaller size it had before it was
+        // maximised, and opening at that one would be the same flash the other
+        // way round.
+        return saved.Maximized ? WorkAreaOf(MonitorOf(bounds)) ?? bounds : bounds;
+    }
+
+    private static (int Width, int Height) FrameSize(NativeRect bounds)
+    {
+        var frame = default(NativeRect);
+        return AdjustWindowRectExForDpi(
+            ref frame, DecoratedWindowStyle, false, AppWindowExtendedStyle, DpiOf(bounds))
+            ? (frame.Right - frame.Left, frame.Bottom - frame.Top)
+            : (0, 0);
+    }
+
+    private static uint DpiOf(NativeRect bounds)
+    {
+        var monitor = MonitorOf(bounds);
+        return monitor != nint.Zero && GetDpiForMonitor(monitor, EffectiveDpi, out var dpiX, out _) == 0
+            ? dpiX
+            : DefaultDpi;
     }
 
     public async Task TrackAsync(int processId, CancellationToken token)
@@ -216,7 +315,7 @@ public sealed class MinecraftWindowPlacementService
 
             var width = bounds.Right - bounds.Left;
             var height = bounds.Bottom - bounds.Top;
-            if (width < 320 || height < 200)
+            if (width < MinimumWindowWidth || height < MinimumWindowHeight)
             {
                 return true;
             }
@@ -273,29 +372,19 @@ public sealed class MinecraftWindowPlacementService
 
     private static NativeRect ClampToNearestWorkArea(NativeRect bounds)
     {
-        var monitor = MonitorFromRect(ref bounds, MonitorDefaultToNearest);
-        if (monitor == nint.Zero)
+        if (WorkAreaOf(MonitorOf(bounds)) is not { } workArea)
         {
             return bounds;
         }
 
-        var monitorInfo = MonitorInfo.Create();
-        if (!GetMonitorInfo(monitor, ref monitorInfo))
-        {
-            return bounds;
-        }
-
-        var workWidth = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
-        var workHeight = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
-        if (workWidth <= 0 || workHeight <= 0)
-        {
-            return bounds;
-        }
-
-        var width = Math.Clamp(bounds.Right - bounds.Left, Math.Min(320, workWidth), workWidth);
-        var height = Math.Clamp(bounds.Bottom - bounds.Top, Math.Min(200, workHeight), workHeight);
-        var left = Math.Clamp(bounds.Left, monitorInfo.WorkArea.Left, monitorInfo.WorkArea.Right - width);
-        var top = Math.Clamp(bounds.Top, monitorInfo.WorkArea.Top, monitorInfo.WorkArea.Bottom - height);
+        var workWidth = workArea.Right - workArea.Left;
+        var workHeight = workArea.Bottom - workArea.Top;
+        var width = Math.Clamp(
+            bounds.Right - bounds.Left, Math.Min(MinimumWindowWidth, workWidth), workWidth);
+        var height = Math.Clamp(
+            bounds.Bottom - bounds.Top, Math.Min(MinimumWindowHeight, workHeight), workHeight);
+        var left = Math.Clamp(bounds.Left, workArea.Left, workArea.Right - width);
+        var top = Math.Clamp(bounds.Top, workArea.Top, workArea.Bottom - height);
         return new NativeRect
         {
             Left = left,
@@ -303,6 +392,25 @@ public sealed class MinecraftWindowPlacementService
             Right = left + width,
             Bottom = top + height
         };
+    }
+
+    private static nint MonitorOf(NativeRect bounds) =>
+        MonitorFromRect(ref bounds, MonitorDefaultToNearest);
+
+    private static nint PrimaryMonitor() =>
+        MonitorFromPoint(default, MonitorDefaultToPrimary);
+
+    private static NativeRect? WorkAreaOf(nint monitor)
+    {
+        if (monitor == nint.Zero)
+        {
+            return null;
+        }
+
+        var monitorInfo = MonitorInfo.Create();
+        return GetMonitorInfo(monitor, ref monitorInfo) && IsValid(monitorInfo.WorkArea)
+            ? monitorInfo.WorkArea
+            : null;
     }
 
     private static bool Equivalent(SavedMinecraftWindowPlacement? left, SavedMinecraftWindowPlacement? right) =>
@@ -360,6 +468,21 @@ public sealed class MinecraftWindowPlacementService
 
     [DllImport("user32.dll")]
     private static extern nint MonitorFromRect(ref NativeRect rectangle, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromPoint(NativePoint point, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustWindowRectExForDpi(
+        ref NativeRect rectangle,
+        uint style,
+        [MarshalAs(UnmanagedType.Bool)] bool menu,
+        uint extendedStyle,
+        uint dpi);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(nint monitor, int type, out uint dpiX, out uint dpiY);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

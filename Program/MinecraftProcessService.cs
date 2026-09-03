@@ -673,6 +673,13 @@ public sealed class MinecraftProcessService
         _logger.Info(
             $"Java: -Xms{InitialHeapMbFor(maximumRamMb)}M -Xmx{maximumRamMb}M " +
             string.Join(' ', extraJvmArguments));
+        // The size the window is built at, rather than the size it is dragged
+        // to half a second after it appears; see StartupClientSize.
+        var startupSize = _gameWindowPlacement.StartupClientSize();
+        if (startupSize is { } size)
+        {
+            _logger.Info($"Game window: opening at {size.Width}x{size.Height}");
+        }
         var launchOption = new MLaunchOption
         {
             Path = launchPath,
@@ -686,6 +693,10 @@ public sealed class MinecraftProcessService
             GameLauncherVersion = "1",
             VersionType = $"{descriptor.Loader.Type} {descriptor.Loader.Version}".Trim(),
             FullScreen = false,
+            // Zero is what these were before there was anything to put in
+            // them, and zero is what the game is not told about at all.
+            ScreenWidth = startupSize?.Width ?? 0,
+            ScreenHeight = startupSize?.Height ?? 0,
             ExtraJvmArguments = extraJvmArguments.Select(argument => new MArgument(argument)).ToList()
         };
         var minecraftProcess = launcher.BuildProcess(profile, launchOption);
