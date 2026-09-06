@@ -70,14 +70,18 @@ public sealed class KnownPackTests
             pack => pack.RelativePath.Contains("Broken Script", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Withdrawn on 6 September 2026 at the owner's word, repository and all.
+    /// A name left here is a name the launcher offers before the folder
+    /// exists, so it would go on offering a build that nothing can fetch.
+    /// </summary>
     [Fact]
-    public void AllTheFabric3IsOffered()
+    public void AllTheFabric3IsNoLongerOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("All The Fabric 3");
-        Assert.NotNull(source);
-        Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("All-The-Fabric-3", source.Repo);
-        Assert.Equal("pack-latest", source.Tag);
+        Assert.Null(PortablePackSyncService.KnownSourceFor("All The Fabric 3"));
+        Assert.DoesNotContain(
+            PortablePackSyncService.KnownPacks,
+            pack => pack.RelativePath.Contains("Fabric", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -97,20 +101,18 @@ public sealed class KnownPackTests
     }
 
     /// <summary>
-    /// The second one built for a machine with nothing to spare, and the first
-    /// where its author did that work himself: Sodium, Lithium, FerriteCore,
-    /// ModernFix and Noisium are all in his own list. It goes by a short name
-    /// because the build list is one narrow column and the full one was cut off
-    /// in it.
+    /// Withdrawn on 6 September 2026 alongside All The Fabric 3, repository
+    /// and all. It was offered under a short name because the build list is
+    /// one narrow column and "Create &amp; Ars Arcane Awakened" was cut off in
+    /// it; neither name answers for anything now.
     /// </summary>
     [Fact]
-    public void CreateAndArsIsOffered()
+    public void CreateAndArsIsNoLongerOffered()
     {
-        var source = PortablePackSyncService.KnownSourceFor("C&A Arcane Awakened");
-        Assert.NotNull(source);
-        Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("C-A-Arcane-Awakened", source.Repo);
-        Assert.Equal("pack-latest", source.Tag);
+        Assert.Null(PortablePackSyncService.KnownSourceFor("C&A Arcane Awakened"));
+        Assert.DoesNotContain(
+            PortablePackSyncService.KnownPacks,
+            pack => pack.RelativePath.Contains("Arcane", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

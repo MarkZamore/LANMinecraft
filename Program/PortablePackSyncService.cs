@@ -74,14 +74,6 @@ public sealed partial class PortablePackSyncService
     public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
         new(DefaultPackRelativePath, DefaultPackSource),
         new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
-        new("All The Fabric 3", new PackSyncSource("MarkZamore", "All-The-Fabric-3", "pack-latest")),
-        // Short on purpose. The build list is one narrow column beside the
-        // memory field, and "Create & Ars Arcane Awakened" was cut off in it -
-        // which is also why the folder is not called what the pack is called,
-        // quite apart from the colon Windows will not allow in a directory.
-        new(
-            "C&A Arcane Awakened",
-            new PackSyncSource("MarkZamore", "C-A-Arcane-Awakened", "pack-latest")),
         new(
             "TerraFirma Rebirth",
             new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")),
