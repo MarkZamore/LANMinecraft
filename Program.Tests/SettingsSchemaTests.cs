@@ -61,7 +61,7 @@ public sealed class SettingsSchemaTests : IDisposable
         {
           "playerName": "MarkZamore",
           "maxMemoryGb": 12,
-          "clientRelativePath": "Infinity",
+          "clientRelativePath": "Some Build",
           "selectedNetworkInterfaceId": "{144D92B7-CEA3-4EE3-87C9-C8D14EDAD1AB}",
           "selectedNetworkAddress": "10.147.18.145",
           "voicePttMode": "Hold",
@@ -81,7 +81,7 @@ public sealed class SettingsSchemaTests : IDisposable
         var carried = MemorySizingService.ClampHeapGb(12);
         Assert.Equal(carried, settings.MaxHeapGb);
         Assert.True(settings.MemorySettingIsTheHeap);
-        Assert.Equal("Infinity", settings.ClientRelativePath);
+        Assert.Equal("Some Build", settings.ClientRelativePath);
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
 
         var saved = File.ReadAllText(paths.SettingsFile);

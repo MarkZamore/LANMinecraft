@@ -34,7 +34,7 @@ public sealed class LogVolumeTests : IDisposable
     public void TheGamesDebugCopy_IsNotKeptAndNotStreamed()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Infinity");
+        var instance = paths.CombineUnderInstances("Some Build");
         var logs = Path.Combine(instance, "logs");
         Directory.CreateDirectory(logs);
         var debug = Path.Combine(logs, "debug.log");
@@ -55,7 +55,7 @@ public sealed class LogVolumeTests : IDisposable
     public void InstanceDiagnostics_StayInsideTheirBudget()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Infinity");
+        var instance = paths.CombineUnderInstances("Some Build");
         var logs = Path.Combine(instance, "logs");
         Directory.CreateDirectory(logs);
 
@@ -120,8 +120,8 @@ public sealed class LogVolumeTests : IDisposable
     public void TheGameLoggingConfiguration_KeepsLatestLogAndDropsTheRest()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Infinity");
-        var pack = paths.CombineUnderPacks("Infinity");
+        var instance = paths.CombineUnderInstances("Some Build");
+        var pack = paths.CombineUnderPacks("Some Build");
         Directory.CreateDirectory(instance);
         Directory.CreateDirectory(pack);
 
@@ -143,8 +143,8 @@ public sealed class LogVolumeTests : IDisposable
     public void APackWithItsOwnLoggingConfiguration_IsLeftAlone()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Infinity");
-        var pack = paths.CombineUnderPacks("Infinity");
+        var instance = paths.CombineUnderInstances("Some Build");
+        var pack = paths.CombineUnderPacks("Some Build");
         Directory.CreateDirectory(Path.Combine(pack, "config"));
         File.WriteAllText(Path.Combine(pack, "config", "log4j2.xml"), "<Configuration/>");
 

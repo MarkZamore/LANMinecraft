@@ -106,19 +106,19 @@ public sealed class MeasuredMemoryTests : IDisposable
     {
         var store = new MeasuredMemoryStore(Paths());
 
-        store.Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession);
+        store.Remember("Some Build", new VideoMemoryProfile(16), 32, TheLoggedSession);
 
-        Assert.True(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.True(store.Recall("Some Build", new VideoMemoryProfile(16), 32).IsKnown);
         Assert.False(store.Recall("Odyssey", new VideoMemoryProfile(16), 32).IsKnown);
-        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(8), 32).IsKnown);
-        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 16).IsKnown);
+        Assert.False(store.Recall("Some Build", new VideoMemoryProfile(8), 32).IsKnown);
+        Assert.False(store.Recall("Some Build", new VideoMemoryProfile(16), 16).IsKnown);
         // A card nobody could read is its own machine: the sizing charges it
         // nothing, so a measurement taken under that rule is not the answer for
         // a machine whose card answered.
-        Assert.False(store.Recall("Infinity", VideoMemoryProfile.Unknown, 32).IsKnown);
+        Assert.False(store.Recall("Some Build", VideoMemoryProfile.Unknown, 32).IsKnown);
         // And the same folder spelled another way is the same folder; Windows
         // has never thought otherwise.
-        Assert.True(store.Recall("infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.True(store.Recall("some build", new VideoMemoryProfile(16), 32).IsKnown);
     }
 
     /// <summary>
@@ -135,15 +135,15 @@ public sealed class MeasuredMemoryTests : IDisposable
 
         // One unusually heavy evening, then enough ordinary ones to push it out.
         store.Remember(
-            "Infinity", card, 32, TheLoggedSession with { CommittedMb = 30000, ResidentMb = 20000 });
-        Assert.Equal(30000 - 19456, store.Recall("Infinity", card, 32).AtMostMb);
+            "Some Build", card, 32, TheLoggedSession with { CommittedMb = 30000, ResidentMb = 20000 });
+        Assert.Equal(30000 - 19456, store.Recall("Some Build", card, 32).AtMostMb);
 
         for (var session = 0; session < MeasuredMemoryStore.SessionsKept; session++)
         {
-            store.Remember("Infinity", card, 32, TheLoggedSession);
+            store.Remember("Some Build", card, 32, TheLoggedSession);
         }
 
-        var measured = store.Recall("Infinity", card, 32);
+        var measured = store.Recall("Some Build", card, 32);
         Assert.Equal(MeasuredMemoryStore.SessionsKept, measured.Sessions);
         Assert.Equal(26989 - 19456, measured.AtMostMb);
     }
@@ -159,12 +159,12 @@ public sealed class MeasuredMemoryTests : IDisposable
         File.WriteAllText(Path.Combine(paths.Personal, "memory-measurements.json"), "{ this is not json");
         var store = new MeasuredMemoryStore(paths);
 
-        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.False(store.Recall("Some Build", new VideoMemoryProfile(16), 32).IsKnown);
 
         // And it heals: the next session that finishes writes a file that reads.
-        store.Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession);
+        store.Remember("Some Build", new VideoMemoryProfile(16), 32, TheLoggedSession);
 
-        Assert.True(new MeasuredMemoryStore(paths).Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.True(new MeasuredMemoryStore(paths).Recall("Some Build", new VideoMemoryProfile(16), 32).IsKnown);
     }
 
     /// <summary>
@@ -177,12 +177,12 @@ public sealed class MeasuredMemoryTests : IDisposable
         var store = new MeasuredMemoryStore(Paths());
 
         Assert.False(store.Remember("", new VideoMemoryProfile(16), 32, TheLoggedSession).IsKnown);
-        Assert.False(store.Remember("Infinity", new VideoMemoryProfile(16), 0, TheLoggedSession).IsKnown);
+        Assert.False(store.Remember("Some Build", new VideoMemoryProfile(16), 0, TheLoggedSession).IsKnown);
         // A session not worth keeping is not written down either.
         Assert.False(store
-            .Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession with { Minutes = 2 })
+            .Remember("Some Build", new VideoMemoryProfile(16), 32, TheLoggedSession with { Minutes = 2 })
             .IsKnown);
-        Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.False(store.Recall("Some Build", new VideoMemoryProfile(16), 32).IsKnown);
     }
 
     /// <summary>

@@ -485,7 +485,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
 
     private string CreateRuntimeRoot()
     {
-        var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Infinity");
+        var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Some Build");
         Directory.CreateDirectory(runtimeRoot);
         return runtimeRoot;
     }

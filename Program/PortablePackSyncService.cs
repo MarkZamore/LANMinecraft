@@ -52,13 +52,6 @@ public sealed partial class PortablePackSyncService
         new("MarkZamore", "LL8-Extended", "pack-latest");
 
     /// <summary>
-    /// Repositories the built-in pack was published from before the rename.
-    /// A marker naming one of them inside the default pack folder is what the
-    /// rename left behind, not a source the player chose.
-    /// </summary>
-    private static readonly string[] LegacyDefaultSourceRepos = ["Infinity", "InfinityPack", "LL8"];
-
-    /// <summary>
     /// A pack the launcher knows how to fetch, and therefore may offer before it
     /// exists on disk. Without an entry here a pack can only be seen by someone
     /// who already has its folder, which is no way to hand a new build to
@@ -146,9 +139,17 @@ public sealed partial class PortablePackSyncService
         _freeSpaceProbe = freeSpaceProbe ?? HasFreeSpace;
     }
 
+    /// <summary>
+    /// A marker in the built-in pack's own folder naming a different repository
+    /// of the same owner. That is what a rename leaves behind rather than a
+    /// source anybody chose: the folder is the built-in pack either way, and
+    /// there is no screen for pointing it somewhere else. Asking whether the
+    /// repository differs, instead of listing the ones it used to be, means the
+    /// next rename is healed without anybody remembering to add it here.
+    /// </summary>
     internal static bool IsLegacyDefaultSource(PackSyncSource source) =>
         string.Equals(source.Owner, DefaultPackSource.Owner, StringComparison.OrdinalIgnoreCase) &&
-        LegacyDefaultSourceRepos.Contains(source.Repo, StringComparer.OrdinalIgnoreCase);
+        !string.Equals(source.Repo, DefaultPackSource.Repo, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsDefaultPack(string packRelativePath) =>
         string.Equals(packRelativePath, DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase);
