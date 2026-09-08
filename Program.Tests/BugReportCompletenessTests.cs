@@ -144,7 +144,7 @@ public sealed class BugReportCompletenessTests : IDisposable
             () => directory,
             () => new BugReportContext(
                 steamId, "MarkZamore", "MarkZamore", Guid.NewGuid().ToString("D"),
-                "release 170", "LL8 Extended", new string('a', 64), IsMinecraftRunning: false));
+                "release 170", "Build A", new string('a', 64), IsMinecraftRunning: false));
     }
 
     private (BugReportService Service, PeerConnectionRouter Router) CreateReceiver(
@@ -160,7 +160,7 @@ public sealed class BugReportCompletenessTests : IDisposable
             () => null,
             () => new BugReportContext(
                 steamId, "anuvenn", "anuvenn", Guid.NewGuid().ToString("D"),
-                "release 170", "LL8 Extended", new string('b', 64), IsMinecraftRunning: false));
+                "release 170", "Build A", new string('b', 64), IsMinecraftRunning: false));
         var router = new PeerConnectionRouter(transport);
         router.Register(service);
         return (service, router);

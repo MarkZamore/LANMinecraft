@@ -8,8 +8,7 @@ namespace Minecraft.Tests;
 /// at the first character outside that. A Cyrillic nickname therefore cannot be
 /// addressed at all - "/tp @s Женя" does not run, and neither does a message,
 /// a team, a scoreboard entry or any mod command that names a player. Two
-/// players on The Broken Script Enhanced found this out by not being able to
-/// teleport to each other.
+/// players found this out by not being able to teleport to each other.
 ///
 /// So a new name is held to the rule Minecraft itself holds names to, and one
 /// already saved is left exactly as it is: it is what that player is called on

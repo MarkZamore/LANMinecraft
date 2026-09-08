@@ -53,7 +53,7 @@ public sealed class ResourcePackDefaultsTests
     [Fact]
     public void APackTheBuildDropped_ComesOffTheSelection_AndThePlayersOwnStay()
     {
-        var root = Path.Combine(Path.GetTempPath(), "ll8-defaults-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "pack-defaults-" + Guid.NewGuid().ToString("N"));
         var packDirectory = Path.Combine(root, "pack");
         var instance = Path.Combine(root, "instance");
         Directory.CreateDirectory(Path.Combine(packDirectory, "launcher"));
@@ -131,7 +131,7 @@ public sealed class ResourcePackDefaultsTests
     [Fact]
     public void APackSwitchedOff_ComesBackOnTheNextLaunch()
     {
-        var root = Path.Combine(Path.GetTempPath(), "ll8-defaults-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "pack-defaults-" + Guid.NewGuid().ToString("N"));
         var packDirectory = Path.Combine(root, "pack");
         var instance = Path.Combine(root, "instance");
         Directory.CreateDirectory(Path.Combine(packDirectory, "launcher"));

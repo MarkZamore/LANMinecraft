@@ -43,18 +43,18 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     public void WhatAnotherBuildStillNeeds_Stays()
     {
         var shared = Asset("assets/objects/ab/abcdef");
-        Build("LL8 Extended", shared);
-        Build("C&A Arcane Awakened", shared);
+        Build("Some Build", shared);
+        Build("Another Build", shared);
 
         Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
         Assert.True(File.Exists(shared));
 
         // And now the last one of the two goes.
-        Directory.Delete(Path.Combine(_paths.Runtimes, "C&A Arcane Awakened"), recursive: true);
+        Directory.Delete(Path.Combine(_paths.Runtimes, "Another Build"), recursive: true);
         Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
         Assert.True(File.Exists(shared));
 
-        Directory.Delete(Path.Combine(_paths.Runtimes, "LL8 Extended"), recursive: true);
+        Directory.Delete(Path.Combine(_paths.Runtimes, "Some Build"), recursive: true);
     }
 
     /// <summary>And when the last build that named it is gone, it goes.</summary>
@@ -63,10 +63,10 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     {
         var kept = Asset("assets/objects/ab/kept");
         var orphan = Asset("assets/objects/cd/orphan");
-        Build("LL8 Extended", kept);
-        Build("RPG Ars Nouveau", orphan);
+        Build("Some Build", kept);
+        Build("Another Build", orphan);
 
-        Directory.Delete(Path.Combine(_paths.Runtimes, "RPG Ars Nouveau"), recursive: true);
+        Directory.Delete(Path.Combine(_paths.Runtimes, "Another Build"), recursive: true);
         var removed = SharedRuntimeStore.Sweep(_paths);
 
         Assert.Equal(1, removed);
@@ -92,7 +92,7 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     [Fact]
     public void TheLoadersOwnJars_SurviveEvenThoughNoStateNamesThem()
     {
-        Build("LL8 Extended", Asset("assets/objects/ab/kept"));
+        Build("Some Build", Asset("assets/objects/ab/kept"));
         var client = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
         var universal = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-universal.jar");
         var natives = Asset("versions/neoforge-21.1.248/natives/lwjgl.dll");
@@ -131,7 +131,7 @@ public sealed class SharedRuntimeStoreTests : IDisposable
         var loader = Asset("libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar");
         var mappings = Asset("libraries/net/minecraft/client/1.21.1/client-1.21.1-mappings.txt");
         var profile = Asset("versions/neoforge-21.1.248/neoforge-21.1.248.json");
-        Build("LL8 Extended", Asset("assets/objects/ab/kept"), loader, mappings, profile);
+        Build("Some Build", Asset("assets/objects/ab/kept"), loader, mappings, profile);
         // Never swept at all: the sweep is told which roots it may take from.
         var installer = Asset("installers/neoforge/21.1.248/neoforge-21.1.248-installer.jar");
 
@@ -171,7 +171,7 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     public void ADamagedStateStopsTheSweepEntirely()
     {
         var shared = Asset("assets/objects/ab/abcdef");
-        Build("LL8 Extended", shared);
+        Build("Some Build", shared);
         var orphan = Asset("assets/objects/cd/orphan");
         Build("Broken", orphan);
         File.WriteAllText(
@@ -201,7 +201,7 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     public void SweepingTwice_IsHarmless()
     {
         var orphan = Asset("assets/objects/ab/orphan");
-        Build("LL8 Extended", Asset("assets/objects/cd/kept"));
+        Build("Some Build", Asset("assets/objects/cd/kept"));
 
         Assert.Equal(1, SharedRuntimeStore.Sweep(_paths));
         Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
@@ -216,9 +216,9 @@ public sealed class SharedRuntimeStoreTests : IDisposable
     [Fact]
     public void ABuildsOwnFilesAreNotInTheStoreAndAreNotSwept()
     {
-        var natives = Path.Combine(_paths.Runtimes, "LL8 Extended", "natives", "lwjgl.dll");
+        var natives = Path.Combine(_paths.Runtimes, "Some Build", "natives", "lwjgl.dll");
         Write(natives, "dll");
-        Build("LL8 Extended", Asset("assets/objects/ab/kept"), natives);
+        Build("Some Build", Asset("assets/objects/ab/kept"), natives);
 
         SharedRuntimeStore.Sweep(_paths);
 

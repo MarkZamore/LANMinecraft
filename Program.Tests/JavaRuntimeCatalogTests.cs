@@ -21,9 +21,9 @@ public sealed class JavaRuntimeCatalogTests
     /// and 1.20.1, 21 from 1.20.5 onward.
     /// </summary>
     [Theory]
-    [InlineData("1.21.1", 21)]   // Limitless 8, All The Mods 10
-    [InlineData("1.20.1", 17)]   // RPG Ars Nouveau
-    [InlineData("1.18.2", 17)]   // All The Fabric 3
+    [InlineData("1.21.1", 21)]
+    [InlineData("1.20.1", 17)]
+    [InlineData("1.18.2", 17)]
     [InlineData("1.20.5", 21)]
     [InlineData("1.20.4", 17)]
     [InlineData("1.21", 21)]
@@ -47,8 +47,8 @@ public sealed class JavaRuntimeCatalogTests
     /// hosts answer, and a pack that will not start once they do not.
     /// </summary>
     [Theory]
-    [InlineData("1.18.2")]   // All The Fabric 3
-    [InlineData("1.20.1")]   // RPG Ars Nouveau
+    [InlineData("1.18.2")]
+    [InlineData("1.20.1")]
     public void APackOnAnOlderJavaIsNotTheOneTheLauncherPins(string minecraftVersion)
     {
         var required = JavaRuntimeCatalog.ForMajorVersion(

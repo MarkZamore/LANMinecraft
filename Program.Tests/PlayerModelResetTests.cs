@@ -110,7 +110,7 @@ public sealed class PlayerModelResetTests
 
     private static (string Pack, string World, string Root) NewPair(string token)
     {
-        var root = Path.Combine(Path.GetTempPath(), "ll8-model-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "pack-model-" + Guid.NewGuid().ToString("N"));
         var pack = Path.Combine(root, "pack");
         var world = Path.Combine(root, "world");
         Directory.CreateDirectory(Path.Combine(pack, "launcher"));

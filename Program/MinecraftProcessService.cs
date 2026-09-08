@@ -214,7 +214,7 @@ public sealed class MinecraftProcessService
     /// and a percentage of sixteen are not the same instruction: twenty and
     /// forty per cent give a small machine a young generation of 800 MB to 1.6
     /// GB, which is what they were chosen for, and give a sixteen gigabyte heap
-    /// one of 3.2 to 6.5 GB, which nothing chose. Measured on All The Fabric 3
+    /// one of 3.2 to 6.5 GB, which nothing chose. Measured on a 287-mod build
     /// at sixteen: one collection evacuated 5.3 GB and took 202 ms against a
     /// goal of 50, and it was the only pause all session over 150.
     ///
@@ -537,7 +537,7 @@ public sealed class MinecraftProcessService
         // floor, and the game takes more than the number promised. AT the
         // threshold the arithmetic works perfectly and the heap IS the floor -
         // two gigabytes - which for a pack of ninety-four mods is not a heap,
-        // it is a crash with the sums adding up. All The Fabric 3 was given
+        // it is a crash with the sums adding up. A 287-mod build was given
         // exactly the threshold, four gigabytes against a suggestion of five,
         // and ran out of them while generating a world; the note below already
         // said in as many words that this is what the threshold buys.
@@ -970,7 +970,7 @@ public sealed class MinecraftProcessService
     /// Writes down what the game actually held beside the heap it was given.
     /// </summary>
     /// <remarks>
-    /// The whole memory model rests on a single measurement - Limitless 8, 874
+    /// The whole memory model rests on a single measurement - a build of 874
     /// jars, about eight gigabytes outside a twelve gigabyte heap - and every
     /// other pack is an extrapolation from it. That was defensible while there
     /// was nothing else to go on, and it is what decides whether a three
@@ -1007,7 +1007,7 @@ public sealed class MinecraftProcessService
     /// <remarks>
     /// The line above has been written every session for a while and read by
     /// nobody: it is the one number that could tell the sizing rules they are
-    /// wrong, and it went into a log file. It was wrong, too - Limitless 8 on a
+    /// wrong, and it went into a log file. It was wrong, too - a large build on a
     /// 24 GB budget was estimated at 12 GB beside its heap and left with a 12 GB
     /// heap that spark reported 11.5 GB of in use, while the log for the same
     /// pack said 7533 MB.

@@ -127,10 +127,10 @@ public sealed class PackRuntimeService : IDisposable
         // 1.18.2 and 1.20.1, 21 from 1.20.5 - but this comparison was left
         // measuring every runtime against the single old constant. A pack on 17
         // could therefore never match what it had prepared, so every launch of
-        // All The Fabric 3 and RPG Ars Nouveau threw away a good runtime and
-        // built it again from Mojang's metadata. That was merely slow until the
-        // day those hosts were unreachable, and then it was a pack that would
-        // not start at all with everything it needed already on the disk.
+        // such a pack threw away a good runtime and built it again from
+        // Mojang's metadata. That was merely slow until the day those hosts
+        // were unreachable, and then it was a pack that would not start at all
+        // with everything it needed already on the disk.
         var requiredJava = JavaRuntimeCatalog.RequiredFor(descriptor);
         if (state is not null &&
             string.Equals(state.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase) &&

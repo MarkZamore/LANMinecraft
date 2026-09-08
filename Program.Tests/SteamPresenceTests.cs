@@ -142,7 +142,7 @@ public sealed class SteamPresenceTests
             PlayerName = "anuvenn",
             MinecraftUuid = "f0f5ec1a-14f5-47b6-9e27-b860f62c14e5",
             PackHash = new string('b', 64),
-            PackName = "All The Fabric 3",
+            PackName = "Build A",
             Release = 312,
             State = SteamPresenceCodec.StateInGame,
             IsSkinAvailable = true,

@@ -51,7 +51,7 @@ public sealed class BugReportGzipTests
 
     private static string WriteGzippedLog(IEnumerable<string> lines)
     {
-        var path = Path.Combine(Path.GetTempPath(), "ll8-log-" + Guid.NewGuid().ToString("N") + ".log.gz");
+        var path = Path.Combine(Path.GetTempPath(), "pack-log-" + Guid.NewGuid().ToString("N") + ".log.gz");
         using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
         using var gzip = new GZipStream(file, CompressionLevel.Optimal);
         using var writer = new StreamWriter(gzip, new UTF8Encoding(false));

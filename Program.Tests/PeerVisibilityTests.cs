@@ -145,7 +145,7 @@ public sealed class PeerVisibilityTests
         api.FriendList.Add(new SteamFriendInfo(FriendSteamId, "anuvenn", IsInSharedApp: true, LobbyId: 0));
         var leaving = Presence() with
         {
-            PackName = "LL8 Extended",
+            PackName = "Build A",
             Release = 312,
             State = SteamPresenceCodec.StateOffline
         };
@@ -164,7 +164,7 @@ public sealed class PeerVisibilityTests
 
         var peer = Assert.Single(directory.Peers);
         Assert.True(peer.IsOutsideLauncher);
-        Assert.Equal("LL8 Extended", peer.PackName);
+        Assert.Equal("Build A", peer.PackName);
         Assert.Equal(312, peer.Release);
     }
 

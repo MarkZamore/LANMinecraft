@@ -15,7 +15,7 @@ public sealed class ClientPresenceTests
     [Fact]
     public void TheSameProcess_IsRecognised()
     {
-        var session = new ClientPresenceService.ClientSession(4242, Started, "LL8");
+        var session = new ClientPresenceService.ClientSession(4242, Started, "Build A");
 
         Assert.True(ClientPresenceService.IsStillRunning(session, ("javaw", Started)));
     }
@@ -24,7 +24,7 @@ public sealed class ClientPresenceTests
     [Fact]
     public void AReusedId_IsNotTheGame()
     {
-        var session = new ClientPresenceService.ClientSession(4242, Started, "LL8");
+        var session = new ClientPresenceService.ClientSession(4242, Started, "Build A");
 
         Assert.False(ClientPresenceService.IsStillRunning(session, ("javaw", Started.AddMinutes(20))));
         Assert.False(ClientPresenceService.IsStillRunning(session, ("notepad", Started)));
@@ -38,7 +38,7 @@ public sealed class ClientPresenceTests
     [Fact]
     public void ASecondOfSlack_IsAllowed()
     {
-        var session = new ClientPresenceService.ClientSession(7, Started, "LL8");
+        var session = new ClientPresenceService.ClientSession(7, Started, "Build A");
 
         Assert.True(ClientPresenceService.IsStillRunning(session, ("java", Started.AddMilliseconds(900))));
         Assert.False(ClientPresenceService.IsStillRunning(session, ("java", Started.AddSeconds(5))));

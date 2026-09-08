@@ -49,7 +49,7 @@ public sealed record PackDetection(
 /// silences the Fabric vote rather than counting against it.</item>
 /// <item>Versions must be voted on, never intersected. Authors write
 /// <c>[1.21,1.21.1)</c> meaning "1.21.x" and exclude the very version their
-/// own file name carries; intersecting the ranges of Limitless 8 returns
+/// own file name carries; intersecting the ranges of one large build returns
 /// nothing at all, over 754 jars, because 48 of them contradict the truth.</item>
 /// <item>Roughly one jar in seven declares no version. That is an abstention,
 /// never a vote, and a folder without a quorum of them gets no answer.</item>
@@ -268,7 +268,7 @@ public static class PackDetector
         if (!match.Success) return null;
         var range = match.Groups[1].Value.Trim();
         // An unexpanded Gradle token is a build that shipped without being
-        // filled in; three jars in Limitless 8 carry one.
+        // filled in; three of the jars measured carry one.
         return range.Contains("${", StringComparison.Ordinal) ? null : range;
     }
 

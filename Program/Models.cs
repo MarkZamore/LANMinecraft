@@ -48,11 +48,11 @@ public sealed class AppSettings
     /// </summary>
     /// <remarks>
     /// It is a number per pack rather than one number because the packs
-    /// disagree: the same player wants twelve gigabytes for Limitless 8 and
-    /// five for a pack built to fit a laptop, and a single answer made one of
-    /// those two wrong every time they switched. Written the moment the field
-    /// is edited, not when the game is started, so a number chosen and thought
-    /// better of is still there on the way back.
+    /// disagree: the same player wants twelve gigabytes for a thousand-mod
+    /// pack and five for a pack built to fit a laptop, and a single answer made
+    /// one of those two wrong every time they switched. Written the moment the
+    /// field is edited, not when the game is started, so a number chosen and
+    /// thought better of is still there on the way back.
     /// </remarks>
     public Dictionary<string, int> MemoryByPack { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

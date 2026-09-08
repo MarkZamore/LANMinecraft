@@ -31,13 +31,13 @@ public sealed class SupportReportWorldListTests : IDisposable
     public void AWorldWithABuild_IsListedUnderIt()
     {
         var paths = Prepare();
-        MakeWorld(paths, "Chebupeli", build: "LL8 Extended", owner: "anuvenn", holder: "MarkZamore");
+        MakeWorld(paths, "Chebupeli", build: "Build A", owner: "anuvenn", holder: "MarkZamore");
 
         var world = Assert.Single(SupportDiagnosticSnapshotBuilder.ReadWorlds(paths));
 
         Assert.Equal("Chebupeli", world.Name);
-        Assert.Equal("LL8 Extended", world.BuildName);
-        Assert.Equal("LL8 Extended", world.BuildRelativePath);
+        Assert.Equal("Build A", world.BuildName);
+        Assert.Equal("Build A", world.BuildRelativePath);
         Assert.Equal("anuvenn", world.OwnerName);
         Assert.Equal("MarkZamore", world.HolderName);
     }
@@ -80,7 +80,7 @@ public sealed class SupportReportWorldListTests : IDisposable
         var paths = Prepare();
         foreach (var name in new[] { "zulu", "alpha", "Mike" })
         {
-            MakeWorld(paths, name, build: "LL8 Extended", owner: "anuvenn", holder: "anuvenn");
+            MakeWorld(paths, name, build: "Build A", owner: "anuvenn", holder: "anuvenn");
         }
 
         var worlds = SupportDiagnosticSnapshotBuilder.ReadWorlds(paths);

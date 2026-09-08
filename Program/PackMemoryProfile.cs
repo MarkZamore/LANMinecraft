@@ -8,19 +8,20 @@ namespace Minecraft;
 /// their jars are, how much texture it ships, and which Minecraft it is for.
 ///
 /// The launcher runs whatever pack is put under Minecraft\Packs - vanilla
-/// 1.7.10 as readily as something twice the size of Limitless 8 - and what the
-/// game holds outside its heap is a property of that pack, not a constant.
-/// Nine hundred mods keep their class data, their threads and their atlases
-/// whatever the heap is set to; a bare vanilla client keeps almost none of it.
-/// So the sizing rules take one of these rather than a number of gigabytes.
+/// 1.7.10 as readily as something twice the size of the largest build here -
+/// and what the game holds outside its heap is a property of that pack, not a
+/// constant. Nine hundred mods keep their class data, their threads and their
+/// atlases whatever the heap is set to; a bare vanilla client keeps almost none
+/// of it. So the sizing rules take one of these rather than a number of
+/// gigabytes.
 /// </summary>
 /// <remarks>
 /// <see cref="ModCount"/> counts the mods the loader will load, which is not
 /// the number of files in the folder. Mods carry other mods inside themselves -
-/// Fabric API alone is dozens of them - and the loader loads every one. All The
-/// Fabric 3 is ninety-five jars and 287 mods; Limitless 8 is eight hundred and
-/// eighty-two jars and 1128. There is no ratio between the two: one pack has
-/// nearly twice as many mods as files, the other a quarter more.
+/// Fabric API alone is dozens of them - and the loader loads every one. A pack
+/// measured here is ninety-five jars and 287 mods; a larger one is eight
+/// hundred and eighty-two jars and 1128. There is no ratio between the two: the
+/// first has nearly twice as many mods as files, the second a quarter more.
 ///
 /// Counting files instead was measured getting it wrong by 1373 MB on a pack
 /// whose whole budget was 4096: the launcher promised four gigabytes, the game
@@ -137,11 +138,11 @@ public readonly record struct PackMemoryProfile(
 
         // Nested mods are the whole of the disagreement this used to have with
         // Measure: the bytes, the assets and the version already matched to the
-        // byte, and only the count moved - by 259 mods on Limitless 8, which is
-        // three gigabytes of suggested heap. A count the publisher took cannot
-        // be arrived at from a file list, because the ratio of nested to jars
-        // runs from 1.18 to 2.79 across the packs here and follows neither the
-        // loader nor the bytes.
+        // byte, and only the count moved - by 259 mods on the largest pack
+        // here, which is three gigabytes of suggested heap. A count the
+        // publisher took cannot be arrived at from a file list, because the
+        // ratio of nested to jars runs from 1.18 to 2.79 across the packs here
+        // and follows neither the loader nor the bytes.
         var loaded = publishedModCount is { } counted && counted >= jars ? counted : jars;
         return new PackMemoryProfile(loaded, modBytes, assetBytes, minecraftVersion, jars);
     }

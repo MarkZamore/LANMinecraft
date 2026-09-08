@@ -64,7 +64,7 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     /// A hook the bytecode refuses is not a reason to drop the skin hooks with
     /// it: those are in com.mojang.authlib, which no version obfuscates and no
     /// check of the game's own bytecode can speak for. Losing them together is
-    /// what left All The Fabric 3 with a default skin.
+    /// what left a whole pack with a default skin.
     /// </summary>
     [Fact]
     public void SkinsCanBeAskedForOnTheirOwn_WhenTheRestIsRefused()
@@ -92,7 +92,7 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     /// <summary>
     /// The library store is shared by every build on the machine, and a
     /// NeoForge pack leaves its own mappings in it. Reading a Fabric runtime
-    /// through them is how All The Fabric 3 came to believe its 1.18.2 was
+    /// through them is how a pack on 1.18.2 came to believe it was running
     /// 1.21.1: it then asked for the class 1.21.1 calls "arw", was handed the
     /// 1.18.2 class of that name - a datafixer - and the preflight refused it.
     /// The whole adapter was dropped, and the player lost their skin.
@@ -123,8 +123,8 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
     /// <summary>
     /// The same shared store holds another version's Minecraft, and a class
     /// name is not unique across versions. Taking the first jar that has a
-    /// class of the right name handed All The Fabric 3 the ShareToLanScreen out
-    /// of a 1.21.1 srg jar: right name, wrong insides, and a preflight that
+    /// class of the right name handed a pack on 1.18.2 the ShareToLanScreen
+    /// out of a 1.21.1 srg jar: right name, wrong insides, and a preflight that
     /// refused it and cost the pack its skin.
     /// </summary>
     [Fact]

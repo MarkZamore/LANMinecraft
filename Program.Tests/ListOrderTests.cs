@@ -64,16 +64,16 @@ public sealed class ListOrderTests
     {
         var builds = new[]
         {
-            Build("LL8 Extended"),
-            Build("All The Mods 10", installed: false),
-            Build("RPG Ars Nouveau"),
-            Build("All The Fabric 3", installed: false)
+            Build("Copper Age"),
+            Build("Build A", installed: false),
+            Build("Deep Roads"),
+            Build("Amber Sky", installed: false)
         };
 
         var ordered = ListOrder.Builds(builds).Select(build => build.RelativePath).ToArray();
 
         Assert.Equal(
-            ["All The Fabric 3", "All The Mods 10", "LL8 Extended", "RPG Ars Nouveau"],
+            ["Amber Sky", "Build A", "Copper Age", "Deep Roads"],
             ordered);
     }
 }

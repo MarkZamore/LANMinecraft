@@ -87,7 +87,7 @@ public sealed class WorldGenSettingsGuardTests
 
     private static string NewWorld()
     {
-        var path = Path.Combine(Path.GetTempPath(), "ll8-world-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(Path.GetTempPath(), "pack-world-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
     }

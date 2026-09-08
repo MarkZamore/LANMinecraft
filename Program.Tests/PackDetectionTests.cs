@@ -167,8 +167,8 @@ public sealed class PackDetectionTests : IDisposable
 
     /// <summary>
     /// Voting, not intersecting. Two jars exclude the very version their pack
-    /// runs on - real jars do this, and intersecting the ranges of Limitless 8
-    /// returns nothing at all over 754 of them.
+    /// runs on - real jars do this, and intersecting the ranges of a large
+    /// build returns nothing at all over 754 of them.
     /// </summary>
     [Fact]
     public void AFewModsExcludingTheRightVersion_DoNotVetoIt()

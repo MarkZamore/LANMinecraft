@@ -23,8 +23,8 @@ namespace Minecraft;
 ///
 /// Every rule here reads a <see cref="PackMemoryProfile"/> rather than a
 /// constant, because the same launcher runs vanilla on an old version and packs
-/// heavier than Limitless 8 on new ones, and those do not need the same room to
-/// a factor of eight.
+/// heavier than anything measured here on new ones, and those do not need the
+/// same room to a factor of eight.
 ///
 /// The machine has a say in one thing beside its installed memory: the card.
 /// What does not fit in video memory the driver keeps in system memory instead,
@@ -37,10 +37,10 @@ namespace Minecraft;
 /// a <see cref="MeasuredMemoryProfile"/> for the pair, and it wins: it is the
 /// room the game was seen holding rather than the room a model says it should,
 /// and it already contains the card, the drivers and this Windows, so nothing
-/// is added to it for any of them. Limitless 8 on a 24 GB budget was estimated
-/// at 12 GB beside its heap - eight for the pack, four for an eight gigabyte
-/// card - and left with a 12 GB heap it filled to 11.5. Measured at 7533 MB, it
-/// keeps 9 and plays in 15.
+/// is added to it for any of them. A 1128-mod pack on a 24 GB budget was
+/// estimated at 12 GB beside its heap - eight for the pack, four for an eight
+/// gigabyte card - and left with a 12 GB heap it filled to 11.5. Measured at
+/// 7533 MB, it keeps 9 and plays in 15.
 /// </summary>
 public static class MemorySizingService
 {
@@ -55,13 +55,13 @@ public static class MemorySizingService
     /// </summary>
     /// <remarks>
     /// It was sixteen, and sixteen was written down when the only thing anyone
-    /// had seen a large heap do was pause. Then Limitless 8 was watched at the
-    /// number this file recommends for it - 1128 mods, which the per-mod rule
-    /// below turns into a 12 GB heap - and that heap was not large, it was
-    /// full: spark reported 11.5 GB of the 12 in use, AllTheLeaks warned at
-    /// 95%, and the full collections that came of it ran for 2.2 seconds. The
-    /// pauses the old ceiling was protecting anyone from are what a heap this
-    /// tight produces, not what a roomy one does.
+    /// had seen a large heap do was pause. Then a 1128-mod pack was watched at
+    /// the number this file recommends for it - the 12 GB heap the per-mod rule
+    /// below turns that count into - and that heap was not large, it was full:
+    /// spark reported 11.5 GB of the 12 in use, AllTheLeaks warned at 95%, and
+    /// the full collections that came of it ran for 2.2 seconds. The pauses the
+    /// old ceiling was protecting anyone from are what a heap this tight
+    /// produces, not what a roomy one does.
     ///
     /// So sixteen is only thirty per cent above the pack the whole model was
     /// calibrated on, and the next pack up would meet the ceiling rather than
@@ -86,21 +86,21 @@ public static class MemorySizingService
     private const double UnseenPackShareOfMachine = 2d / 3d;
 
     // The pack-weight model, in megabytes. Calibrated against the one pack that
-    // has been measured: Limitless 8, 1128 mods and 1.9 GB of jars, held almost
-    // eight gigabytes outside a twelve gigabyte heap. The terms are what that
-    // memory is made of, so the numbers carry to a pack of another shape: a
-    // base every client pays, a per-mod cost (classes, mixins, threads), a
-    // share of the jar bytes (class data and the models inside them), and a
-    // share of the texture the pack ships loose.
+    // has been measured: 1128 mods and 1.9 GB of jars, which held almost eight
+    // gigabytes outside a twelve gigabyte heap. The terms are what that memory
+    // is made of, so the numbers carry to a pack of another shape: a base every
+    // client pays, a per-mod cost (classes, mixins, threads), a share of the
+    // jar bytes (class data and the models inside them), and a share of the
+    // texture the pack ships loose.
     //
     // The per-mod numbers look oddly precise because they are the old ones
     // divided by 1.279. They were fitted when a "mod" meant a file in the mods
     // folder, and a mod is not a file: mods carry other mods inside themselves,
-    // and Limitless 8's 882 files are 1128 mods. Dividing by its own ratio
-    // leaves that pack's answers exactly where they were measured, and lets
-    // every other pack be counted the way the loader counts it. All The Fabric 3
-    // is 95 files and 287 mods, and counting files under-charged it by 1373 MB
-    // of the 1129 it went over its budget by.
+    // and that pack's 882 files are 1128 mods. Dividing by its own ratio leaves
+    // that pack's answers exactly where they were measured, and lets every
+    // other pack be counted the way the loader counts it. A Fabric pack of 95
+    // files is 287 mods, and counting files under-charged it by 1373 MB of the
+    // 1129 it went over its budget by.
     private const int NativeBaseMb = 1024;
     private const int OlderMinecraftNativeBaseMb = 768;
     private const double NativePerModMb = 3.909;
@@ -119,9 +119,9 @@ public static class MemorySizingService
     // every mod brings its own textures, models and entity skins; and a
     // resource or shader pack is texture almost entirely, which the card holds
     // uncompressed and mipmapped - several times the bytes it takes on disk.
-    // Limitless 8 comes to eleven and a half gigabytes: a 16 GB card holds it,
-    // an 8 GB card holds two thirds of it and the driver keeps the rest in
-    // system memory.
+    // The pack this was calibrated on comes to eleven and a half gigabytes: a
+    // 16 GB card holds it, an 8 GB card holds two thirds of it and the driver
+    // keeps the rest in system memory.
     private const int VideoBaseMb = 2048;
     private const int OlderMinecraftVideoBaseMb = 512;
     private const double VideoPerModMb = 7.819;

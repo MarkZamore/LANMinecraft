@@ -38,9 +38,9 @@ public sealed class PeerArrivalNotifierTests
         var notifier = new PeerArrivalNotifier(() => _now);
 
         // The first look says who was already here. Nobody in it is news.
-        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "Build A")]));
         _now = _now.AddSeconds(2);
-        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+        Assert.Empty(notifier.Observe([InLauncher(FriendId, "Kazak"), InBuild(OtherId, "anuvenn", "Build A")]));
     }
 
     /// <summary>
@@ -53,13 +53,13 @@ public sealed class PeerArrivalNotifierTests
     {
         var notifier = Settled();
 
-        Assert.Empty(notifier.Observe([InBuild(OtherId, "anuvenn", "LL8 Extended")]));
+        Assert.Empty(notifier.Observe([InBuild(OtherId, "anuvenn", "Build A")]));
 
         // And having been recorded, a build they move to afterwards is news.
         _now = _now.AddSeconds(2);
         Assert.Equal(
-            "Зашёл в TerraFirma Rebirth",
-            Assert.Single(notifier.Observe([InBuild(OtherId, "anuvenn", "TerraFirma Rebirth")])).Body);
+            "Зашёл в Build B",
+            Assert.Single(notifier.Observe([InBuild(OtherId, "anuvenn", "Build B")])).Body);
     }
 
     /// <summary>
@@ -128,11 +128,11 @@ public sealed class PeerArrivalNotifierTests
         notifier.Observe([InLauncher(FriendId, "Kazak")]);
         _now = _now.AddSeconds(2);
 
-        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]);
+        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]);
 
-        Assert.Equal(new PeerNotice("Kazak", "Зашёл в LL8 Extended"), Assert.Single(notices));
+        Assert.Equal(new PeerNotice("Kazak", "Зашёл в Build A"), Assert.Single(notices));
         _now = _now.AddSeconds(2);
-        Assert.Empty(notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]));
+        Assert.Empty(notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]));
     }
 
     /// <summary>
@@ -144,7 +144,7 @@ public sealed class PeerArrivalNotifierTests
     {
         var notifier = Settled();
         var idle = InLauncher(FriendId, "Kazak");
-        idle.PackName = "TerraFirma Rebirth";
+        idle.PackName = "Build B";
 
         Assert.Equal("Зашёл в LANMinecraft", Assert.Single(notifier.Observe([idle])).Body);
         _now = _now.AddSeconds(2);
@@ -155,26 +155,26 @@ public sealed class PeerArrivalNotifierTests
     public void ChangingBuild_IsAnnouncedAgain()
     {
         var notifier = Settled();
-        notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]);
+        notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]);
         _now = _now.AddSeconds(2);
 
-        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "TerraFirma Rebirth")]);
+        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "Build B")]);
 
-        Assert.Equal("Зашёл в TerraFirma Rebirth", Assert.Single(notices).Body);
+        Assert.Equal("Зашёл в Build B", Assert.Single(notices).Body);
     }
 
     [Fact]
     public void LeavingAndStartingTheSameBuildAgain_IsAnnouncedAgain()
     {
         var notifier = Settled();
-        notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]);
+        notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]);
         _now = _now.AddSeconds(2);
         notifier.Observe([InLauncher(FriendId, "Kazak")]);
         _now = _now.AddSeconds(2);
 
-        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]);
+        var notices = notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]);
 
-        Assert.Equal("Зашёл в LL8 Extended", Assert.Single(notices).Body);
+        Assert.Equal("Зашёл в Build A", Assert.Single(notices).Body);
     }
 
     /// <summary>
@@ -190,14 +190,14 @@ public sealed class PeerArrivalNotifierTests
         Assert.Single(notifier.Observe([InLauncher(FriendId, "Kazak")]));
         _now = _now.AddSeconds(2);
         Assert.Equal(
-            "Зашёл в LL8 Extended",
-            Assert.Single(notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")])).Body);
+            "Зашёл в Build A",
+            Assert.Single(notifier.Observe([InBuild(FriendId, "Kazak", "Build A")])).Body);
 
         _now = _now.AddMinutes(3);
         Assert.Empty(notifier.Observe([]));
 
         _now = _now.AddSeconds(2);
-        Assert.Empty(notifier.Observe([InBuild(FriendId, "Kazak", "LL8 Extended")]));
+        Assert.Empty(notifier.Observe([InBuild(FriendId, "Kazak", "Build A")]));
     }
 
     [Fact]

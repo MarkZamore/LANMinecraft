@@ -150,7 +150,7 @@ public final class PortableIdentityPreflight {
         // required: PublishCommand said it inline until 1.19.4, so on an older
         // Minecraft the launcher does not name it at all. Demanding it here
         // failed the whole preflight, and a failed preflight is no adapter -
-        // which cost All The Fabric 3 its skins and its stable UUID over a line
+        // which cost an older pack its skins and its stable UUID over a line
         // of chat.
         if (isConfigured("publishSuccessMethods")) {
             requireMethod(publishCommand, "publishSuccessMethods", 1);

@@ -67,12 +67,12 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             {
                 PlayerName = "anuvenn",
                 PersonaName = "Anu",
-                PackName = "All The Fabric 3",
+                PackName = "Build A",
                 Release = 312,
                 State = SteamPresenceCodec.StateInGame
             },
             "pack-hash");
-        Assert.Equal("All The Fabric 3 на 312", peer.StatusText);
+        Assert.Equal("Build A на 312", peer.StatusText);
 
         // A launcher older than these fields names neither, and is still in the
         // launcher rather than nowhere. A peer of its own, because a number
@@ -97,12 +97,12 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             Presence() with
             {
                 PlayerName = "anuvenn",
-                PackName = "LL8 Extended",
+                PackName = "Build A",
                 Release = 312,
                 State = SteamPresenceCodec.StateInGame
             },
             "pack-hash");
-        Assert.Equal("LL8 Extended на 312", peer.StatusText);
+        Assert.Equal("Build A на 312", peer.StatusText);
 
         // The launcher is gone; the directory hands back what they last said.
         peer.Apply(
@@ -111,12 +111,12 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
                 SteamId = peer.SteamId,
                 PersonaName = "Anu",
                 IsOutsideLauncher = true,
-                PackName = "LL8 Extended",
+                PackName = "Build A",
                 Release = 312
             },
             "pack-hash");
 
-        Assert.Equal("LL8 Extended на 312", peer.StatusText);
+        Assert.Equal("Build A на 312", peer.StatusText);
         Assert.False(peer.IsCompatible);
     }
 

@@ -11,8 +11,8 @@ namespace Minecraft.Tests;
 /// skins, so a launcher skin never is: authlib answers "Signature is missing
 /// from textures payload" and hands back nothing. The game then asks a second
 /// time without the demand - but only for its own player, never for anyone
-/// else. That is exactly what two players saw on All The Fabric 3: each their
-/// own skin and a stranger in a default one across the table.
+/// else. That is exactly what two players saw on one world: each their own
+/// skin and a stranger in a default one across the table.
 ///
 /// The demand is lowered on the one class this needs no mappings for, and only
 /// for the profiles the launcher has a skin for, which by then carry that skin

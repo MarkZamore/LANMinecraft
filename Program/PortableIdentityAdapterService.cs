@@ -128,8 +128,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             // fit this runtime. Finding that out is not a reason to refuse to
             // start the pack - it is the reason to start it without them, which
             // is what happens when the configuration could not be built at all.
-            // It used to stop the launch and put the failure on screen, and All
-            // The Fabric 3 met that as a dialog it could not get past: the
+            // It used to stop the launch and put the failure on screen, and a
+            // 1.18.2 pack met that as a dialog it could not get past: the
             // adapter was built for Java 21 and 1.18.2 runs on 17, so the check
             // could not even load.
             var refusal = await PreflightAsync(configuration).ConfigureAwait(false);
@@ -146,8 +146,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 // Asked without looking at what failed, because "skins only" is
                 // not the bare set: it still carries the hook that opens a world
                 // to the network, whose class lives in Minecraft like any other.
-                // Reading the flag instead of retrying is what let All The
-                // Fabric 3 fall straight through to giving up.
+                // Reading the flag instead of retrying is what let that pack
+                // fall straight through to giving up.
                 _logger.Warn(
                     $"The UUID hooks do not fit Minecraft {runtime.Descriptor.MinecraftVersion} " +
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +

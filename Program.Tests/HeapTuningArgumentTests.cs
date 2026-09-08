@@ -173,7 +173,8 @@ public sealed class HeapTuningArgumentTests
     /// were chosen against a four gigabyte heap; the same percentages against
     /// sixteen give a young generation of 3.2 to 6.5 GB, and a collection that
     /// has to evacuate six gigabytes cannot meet a fifty millisecond goal
-    /// however it is asked to. Measured: 202 ms on All The Fabric 3 at sixteen.
+    /// however it is asked to. Measured: 202 ms on a heavily modded build at
+    /// sixteen.
     /// </summary>
     [Theory]
     [InlineData(4 * 1024, 20, 40)]    // where the percentages came from: unchanged

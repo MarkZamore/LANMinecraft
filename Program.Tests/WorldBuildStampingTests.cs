@@ -39,14 +39,14 @@ public sealed class WorldBuildStampingTests : IDisposable
         var started = DateTimeOffset.UtcNow;
         var played = CreateWorld("Chebupeli", openedAt: started.AddMinutes(1));
 
-        var stamped = service.StampPlayedWorlds(_root, Context("LL8 Extended"), started);
+        var stamped = service.StampPlayedWorlds(_root, Context("Build A"), started);
 
         Assert.Equal(["Chebupeli"], stamped);
         var metadata = service.Read(played);
         Assert.NotNull(metadata);
-        Assert.Equal("LL8 Extended", metadata!.BuildRelativePath);
-        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "LL8 Extended"));
-        Assert.False(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "ATM10"));
+        Assert.Equal("Build A", metadata!.BuildRelativePath);
+        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "Build A"));
+        Assert.False(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "Build B"));
     }
 
     /// <summary>
@@ -60,7 +60,7 @@ public sealed class WorldBuildStampingTests : IDisposable
         var started = DateTimeOffset.UtcNow;
         var untouched = CreateWorld("Elsewhere", openedAt: started.AddMinutes(-30));
 
-        var stamped = service.StampPlayedWorlds(_root, Context("LL8 Extended"), started);
+        var stamped = service.StampPlayedWorlds(_root, Context("Build A"), started);
 
         Assert.Empty(stamped);
         Assert.Null(service.Read(untouched));
@@ -76,12 +76,12 @@ public sealed class WorldBuildStampingTests : IDisposable
         var service = new WorldMetadataService();
         var started = DateTimeOffset.UtcNow;
         var world = CreateWorld("Chebupeli", openedAt: started.AddMinutes(1));
-        service.EnsureMetadata(world, Context("LL8 Extended"));
+        service.EnsureMetadata(world, Context("Build A"));
 
-        var stamped = service.StampPlayedWorlds(_root, Context("ATM10"), started);
+        var stamped = service.StampPlayedWorlds(_root, Context("Build B"), started);
 
         Assert.Empty(stamped);
-        Assert.Equal("LL8 Extended", service.Read(world)!.BuildRelativePath);
+        Assert.Equal("Build A", service.Read(world)!.BuildRelativePath);
     }
 
     /// <summary>
@@ -109,7 +109,7 @@ public sealed class WorldBuildStampingTests : IDisposable
         File.WriteAllText(Path.Combine(path, "session.lock"), "x");
         File.SetLastWriteTimeUtc(Path.Combine(path, "session.lock"), started.AddMinutes(1).UtcDateTime);
 
-        Assert.Empty(service.StampPlayedWorlds(_root, Context("LL8 Extended"), started));
+        Assert.Empty(service.StampPlayedWorlds(_root, Context("Build A"), started));
     }
 
     private string CreateWorld(string name, DateTimeOffset openedAt)
