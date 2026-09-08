@@ -209,8 +209,8 @@ public sealed class WorldSteamSchemaTests : IDisposable
         {
             schemaVersion,
             worldId = Guid.NewGuid().ToString("D"),
-            buildName = "Infinity",
-            buildRelativePath = "Infinity",
+            buildName = "Some Build",
+            buildRelativePath = "Some Build",
             packHash = new string('a', 64),
             createdAtUtc = DateTimeOffset.UtcNow,
             markedBy = "Minecraft.exe",

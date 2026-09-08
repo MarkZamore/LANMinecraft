@@ -599,8 +599,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     /// back there, and the next sync must retire it.
     /// </summary>
     [Theory]
-    [InlineData("Infinity")]
-    [InlineData("InfinityPack")]
+    [InlineData("FormerName")]
+    [InlineData("FormerRepo")]
     public async Task Marker_LegacyRepoInDefaultPack_IsHealedAndRewritten(string legacyRepo)
     {
         var mod = new PackFile("mods/foo-1.0.jar", Encoding.UTF8.GetBytes("mod-one"));
@@ -638,19 +638,19 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     {
         var packDir = PackDir(DefaultPack);
         Directory.CreateDirectory(packDir);
-        WriteMarker(packDir, "SomebodyElse", "Infinity", "nightly");
+        WriteMarker(packDir, "SomebodyElse", "OtherRepo", "nightly");
         using var httpClient = new HttpClient(new RecordingHandler(_ =>
             throw new InvalidOperationException("Network must not be used.")));
         var service = CreateService(httpClient);
 
         Assert.Equal(
-            new PackSyncSource("SomebodyElse", "Infinity", "nightly"),
+            new PackSyncSource("SomebodyElse", "OtherRepo", "nightly"),
             service.TryResolveSource(DefaultPack));
 
         service.EnsureDefaultSourceMarker(DefaultPack);
 
         Assert.Equal(
-            new PackSyncSource("SomebodyElse", "Infinity", "nightly"),
+            new PackSyncSource("SomebodyElse", "OtherRepo", "nightly"),
             service.TryResolveSource(DefaultPack));
     }
 

@@ -131,7 +131,7 @@ public sealed class BugReportCompletenessTests : IDisposable
     {
         paths = CreatePaths("sender");
         var transport = network.CreateTransport(SenderSteamId, "Sender");
-        var instance = paths.CombineUnderInstances("Infinity");
+        var instance = paths.CombineUnderInstances("Some Build");
         Directory.CreateDirectory(Path.Combine(instance, "logs"));
         Directory.CreateDirectory(Path.Combine(instance, "crash-reports"));
         instanceDirectory = instance;
