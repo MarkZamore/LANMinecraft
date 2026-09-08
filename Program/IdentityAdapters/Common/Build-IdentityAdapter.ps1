@@ -133,7 +133,7 @@ try {
 
     # The oldest Java any pack this adapter reaches is started on. It used to
     # say 21, which was true of the one pack the adapter ran in - and then the
-    # adapter started reaching every pack, and All The Fabric 3 refused to start
+    # adapter started reaching every pack, and a 1.18.2 pack refused to start
     # at all: 1.18.2 runs on Java 17, and a class file built for 21 will not
     # load there. Java 8 is the real floor the launcher ships (1.7 to 1.16 packs
     # get it), and this cannot reach it yet: the agent implements the

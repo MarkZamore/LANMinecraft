@@ -40,13 +40,13 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void TheSavesFolder_BecomesOneLinkToThisBuildsWorlds()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
+        MakeWorldIn("Build A", "Chebupeli");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.True(IsLink(Saves));
         Assert.Equal(
-            Path.GetFullPath(Path.Combine(Worlds, "LL8 Extended")),
+            Path.GetFullPath(Path.Combine(Worlds, "Build A")),
             Path.GetFullPath(new DirectoryInfo(Saves).LinkTarget!));
         Assert.True(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
     }
@@ -58,9 +58,9 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void EveryWorldTheGameOpens_IsARealDirectory()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
+        MakeWorldIn("Build A", "Chebupeli");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.False(IsLink(Path.Combine(Saves, "Chebupeli")));
     }
@@ -68,25 +68,25 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void OnlyTheWorldsOfThisBuild_AreVisible()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
-        MakeWorldIn("ATM10", "Sky Factory");
+        MakeWorldIn("Build A", "Chebupeli");
+        MakeWorldIn("Build B", "Sky Factory");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.True(Directory.Exists(Path.Combine(Saves, "Chebupeli")));
         Assert.False(Directory.Exists(Path.Combine(Saves, "Sky Factory")));
         // And the other build's world is untouched where it lives.
-        Assert.True(File.Exists(Path.Combine(Worlds, "ATM10", "Sky Factory", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build B", "Sky Factory", "level.dat")));
     }
 
     [Fact]
     public void AWorldLyingFlat_MovesIntoItsBuildsFolder()
     {
-        MakeFlatWorld("Chebupeli", "LL8 Extended");
+        MakeFlatWorld("Chebupeli", "Build A");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "Chebupeli", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "Chebupeli", "level.dat")));
         Assert.False(Directory.Exists(Path.Combine(Worlds, "Chebupeli")));
     }
 
@@ -101,7 +101,7 @@ public sealed class SavesFolderTests : IDisposable
     {
         MakeFlatWorld("hand-dropped", build: null);
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         var loose = Path.Combine(Worlds, "hand-dropped");
         Assert.True(File.Exists(Path.Combine(loose, "level.dat")));
@@ -121,20 +121,20 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void TheOldPerWorldLayout_IsReplacedWithoutLosingWorlds()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
+        MakeWorldIn("Build A", "Chebupeli");
         Directory.CreateDirectory(Saves);
         SavesFolderService.CreateJunction(
-            Path.Combine(Saves, "Chebupeli"), Path.Combine(Worlds, "LL8 Extended", "Chebupeli"));
+            Path.Combine(Saves, "Chebupeli"), Path.Combine(Worlds, "Build A", "Chebupeli"));
         Directory.CreateDirectory(Path.Combine(Saves, "Sky Factory"));
         MakeInstanceWorld("Made Here");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.True(IsLink(Saves));
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "Made Here", "level.dat")));
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "Chebupeli", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "Made Here", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "Chebupeli", "level.dat")));
         // The withdrawn name held nothing and is not carried over.
-        Assert.False(Directory.Exists(Path.Combine(Worlds, "LL8 Extended", "Sky Factory")));
+        Assert.False(Directory.Exists(Path.Combine(Worlds, "Build A", "Sky Factory")));
     }
 
     [Fact]
@@ -142,10 +142,10 @@ public sealed class SavesFolderTests : IDisposable
     {
         MakeInstanceWorld("New World");
 
-        var changes = new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        var changes = new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.Equal(1, changes.Adopted);
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "New World", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "New World", "level.dat")));
         Assert.True(File.Exists(Path.Combine(Saves, "New World", "level.dat")));
     }
 
@@ -158,15 +158,15 @@ public sealed class SavesFolderTests : IDisposable
     public void TwoBuildsBothMakingANewWorld_KeepTheirOwn()
     {
         MakeInstanceWorld("New World");
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         var other = Path.Combine(_root, "other");
         Directory.CreateDirectory(Path.Combine(other, "saves", "New World"));
         File.WriteAllBytes(Path.Combine(other, "saves", "New World", "level.dat"), new byte[16]);
-        new SavesFolderService().Prepare(Worlds, other, "ATM10");
+        new SavesFolderService().Prepare(Worlds, other, "Build B");
 
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "New World", "level.dat")));
-        Assert.True(File.Exists(Path.Combine(Worlds, "ATM10", "New World", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "New World", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build B", "New World", "level.dat")));
     }
 
     /// <summary>
@@ -182,7 +182,7 @@ public sealed class SavesFolderTests : IDisposable
         File.WriteAllBytes(lockPath, new byte[1]);
         using var held = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        var changes = new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        var changes = new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.Equal(0, changes.Adopted);
         Assert.True(File.Exists(Path.Combine(world, "level.dat")));
@@ -199,24 +199,24 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void WhatTheGameWritesThroughTheLink_LandsInTheWorld()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        MakeWorldIn("Build A", "Chebupeli");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         File.WriteAllText(Path.Combine(Saves, "Chebupeli", "written.txt"), "through");
 
         Assert.Equal(
             "through",
-            File.ReadAllText(Path.Combine(Worlds, "LL8 Extended", "Chebupeli", "written.txt")));
+            File.ReadAllText(Path.Combine(Worlds, "Build A", "Chebupeli", "written.txt")));
     }
 
     [Fact]
     public void PreparingTwice_IsQuietTheSecondTime()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
+        MakeWorldIn("Build A", "Chebupeli");
         var service = new SavesFolderService();
-        service.Prepare(Worlds, Instance, "LL8 Extended");
+        service.Prepare(Worlds, Instance, "Build A");
 
-        var again = service.Prepare(Worlds, Instance, "LL8 Extended");
+        var again = service.Prepare(Worlds, Instance, "Build A");
 
         Assert.Equal(new SavesFolderService.SavesChanges(0, 0, 0), again);
         Assert.True(File.Exists(Path.Combine(Saves, "Chebupeli", "level.dat")));
@@ -225,16 +225,16 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void SwitchingBuilds_PointsTheLinkSomewhereElse_WithoutMovingAnything()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
-        MakeWorldIn("ATM10", "Sky Factory");
+        MakeWorldIn("Build A", "Chebupeli");
+        MakeWorldIn("Build B", "Sky Factory");
         var service = new SavesFolderService();
-        service.Prepare(Worlds, Instance, "LL8 Extended");
+        service.Prepare(Worlds, Instance, "Build A");
 
-        service.Prepare(Worlds, Instance, "ATM10");
+        service.Prepare(Worlds, Instance, "Build B");
 
         Assert.True(File.Exists(Path.Combine(Saves, "Sky Factory", "level.dat")));
         Assert.False(Directory.Exists(Path.Combine(Saves, "Chebupeli")));
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "Chebupeli", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "Chebupeli", "level.dat")));
     }
 
     /// <summary>
@@ -247,7 +247,7 @@ public sealed class SavesFolderTests : IDisposable
         Directory.CreateDirectory(Saves);
         File.WriteAllText(Path.Combine(Saves, "not-a-world.txt"), "mine");
 
-        new SavesFolderService().Prepare(Worlds, Instance, "LL8 Extended");
+        new SavesFolderService().Prepare(Worlds, Instance, "Build A");
 
         Assert.False(IsLink(Saves));
         Assert.True(File.Exists(Path.Combine(Saves, "not-a-world.txt")));
@@ -256,9 +256,9 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void Enumerate_FindsWorldsInBothLayouts()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
+        MakeWorldIn("Build A", "Chebupeli");
         MakeFlatWorld("older", build: null);
-        Directory.CreateDirectory(Path.Combine(Worlds, "LL8 Extended", "not-a-world"));
+        Directory.CreateDirectory(Path.Combine(Worlds, "Build A", "not-a-world"));
 
         var found = WorldLocations.Enumerate(Worlds).Select(Path.GetFileName).OrderBy(n => n).ToList();
 
@@ -268,20 +268,20 @@ public sealed class SavesFolderTests : IDisposable
     [Fact]
     public void TheShellOfAWorldDeletedInTheGame_IsSweptUp()
     {
-        MakeWorldIn("LL8 Extended", "Chebupeli");
-        var shell = Path.Combine(Worlds, "LL8 Extended", "gone");
+        MakeWorldIn("Build A", "Chebupeli");
+        var shell = Path.Combine(Worlds, "Build A", "gone");
         Directory.CreateDirectory(Path.Combine(shell, "region"));
 
         PackInstanceService.CleanupEmptyWorldPlaceholders(Worlds);
 
         Assert.False(Directory.Exists(shell));
-        Assert.True(File.Exists(Path.Combine(Worlds, "LL8 Extended", "Chebupeli", "level.dat")));
+        Assert.True(File.Exists(Path.Combine(Worlds, "Build A", "Chebupeli", "level.dat")));
     }
 
     [Fact]
     public void AWorldWithAnythingInIt_IsNeverSweptUp()
     {
-        var kept = Path.Combine(Worlds, "LL8 Extended", "kept");
+        var kept = Path.Combine(Worlds, "Build A", "kept");
         Directory.CreateDirectory(kept);
         File.WriteAllText(Path.Combine(kept, "something.txt"), "x");
 

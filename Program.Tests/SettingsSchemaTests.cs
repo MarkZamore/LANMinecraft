@@ -36,7 +36,7 @@ public sealed class SettingsSchemaTests : IDisposable
           "maxMemoryGb": 128,
           "memorySettingIsWholeGame": true,
           "memoryChosenByPlayer": true,
-          "clientRelativePath": "E10"
+          "clientRelativePath": "Some Build"
         }
         """);
 
@@ -175,7 +175,7 @@ public sealed class SettingsSchemaTests : IDisposable
     /// <remarks>
     /// One number for every pack was wrong in both directions at once: it sent
     /// a heavy pack's twelve gigabytes to a pack built for a laptop, and the
-    /// laptop pack's five to Limitless 8, and whichever the player fixed last
+    /// laptop pack's five to the heavy one, and whichever the player fixed last
     /// was the only one that was right.
     /// </remarks>
     [Fact]

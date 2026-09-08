@@ -26,7 +26,7 @@ public readonly record struct MemorySession(
     DateTimeOffset When)
 {
     /// <summary>
-    /// The shortest session worth believing. Limitless 8 takes about a minute
+    /// The shortest session worth believing. A large pack takes about a minute
     /// to reach the menu with its 882 jars, and a client that has not opened a
     /// world yet has not built a single chunk buffer - which is most of what
     /// lives beside the heap. Ten minutes is twenty of the thirty-second

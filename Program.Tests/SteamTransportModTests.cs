@@ -70,8 +70,8 @@ public sealed class SteamTransportModTests
     [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
     [InlineData(PackLoaderKind.NeoForge, "26.3", null)]
     [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
-    // Forge, which used to be refused outright. 1.20.1 is All the Mods 9,
-    // 1.19.2 is Enigmatica 9 and StoneBlock 3.
+    // Forge, which used to be refused outright. Both versions still carry
+    // packs people play.
     [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
     [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
     [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]

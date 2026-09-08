@@ -16,14 +16,14 @@ public sealed class WorldBuildOwnershipTests
     public void AWorldOfThisBuild_IsOffered()
     {
         Assert.True(WorldMetadataService.BelongsToBuild(Current, Current));
-        Assert.True(WorldMetadataService.BelongsToBuild("ATM10", "ATM10"));
+        Assert.True(WorldMetadataService.BelongsToBuild("Build A", "Build A"));
     }
 
     [Fact]
     public void AWorldOfAnotherBuild_IsNotOffered()
     {
-        Assert.False(WorldMetadataService.BelongsToBuild("ATM10", Current));
-        Assert.False(WorldMetadataService.BelongsToBuild(Current, "ATM10"));
+        Assert.False(WorldMetadataService.BelongsToBuild("Build A", Current));
+        Assert.False(WorldMetadataService.BelongsToBuild(Current, "Build A"));
     }
 
     /// <summary>
@@ -34,9 +34,9 @@ public sealed class WorldBuildOwnershipTests
     /// pack that is renamed leaves the worlds of its old name behind.
     /// </summary>
     [Theory]
-    [InlineData("Infinity")]
-    [InlineData("LL8")]
-    [InlineData("ATM10")]
+    [InlineData("Former Name")]
+    [InlineData("Old Build")]
+    [InlineData("Renamed Build")]
     public void AWorldOfAFormerName_BelongsToNobodyButThatName(string former)
     {
         Assert.False(WorldMetadataService.BelongsToBuild(former, Current));
@@ -54,24 +54,24 @@ public sealed class WorldBuildOwnershipTests
     public void AWorldWithoutARecordedBuild_IsOfferedEverywhere(string? recorded)
     {
         Assert.True(WorldMetadataService.BelongsToBuild(recorded, Current));
-        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "ATM10"));
+        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "Build A"));
     }
 
     [Theory]
-    [InlineData("ATM10\\")]
-    [InlineData("/ATM10")]
-    [InlineData(" ATM10 ")]
-    [InlineData("atm10")]
+    [InlineData("Build A\\")]
+    [InlineData("/Build A")]
+    [InlineData(" Build A ")]
+    [InlineData("build a")]
     public void SlashesAndCaseDoNotDecideIt(string recorded)
     {
-        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "ATM10"));
+        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "Build A"));
         Assert.False(WorldMetadataService.BelongsToBuild(recorded, Current));
     }
 
     [Fact]
     public void WithNoBuildSelected_NothingIsHidden()
     {
-        Assert.True(WorldMetadataService.BelongsToBuild("ATM10", null));
-        Assert.True(WorldMetadataService.BelongsToBuild("ATM10", ""));
+        Assert.True(WorldMetadataService.BelongsToBuild("Build A", null));
+        Assert.True(WorldMetadataService.BelongsToBuild("Build A", ""));
     }
 }

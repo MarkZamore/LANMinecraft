@@ -102,11 +102,11 @@ internal sealed class IdentityAdapterMappingService
     /// mappings and a Minecraft new enough to have the classes they name. The
     /// skin hooks patch com.mojang.authlib, which no loader obfuscates and no
     /// mappings describe. Refusing both because the first cannot be had was
-    /// costing the second for no reason: All The Fabric 3 is named in
-    /// intermediary rather than TSRG2, and is 1.18.2, and RPG Ars Nouveau has
+    /// costing the second for no reason: an older Fabric build is named in
+    /// intermediary rather than TSRG2, and is 1.18.2, and another build has
     /// mappings but is 1.20.1 - neither has PlayerSkin, which arrived later.
-    /// (Intermediary is read since the third spelling went in; before that All
-    /// The Fabric 3 had no names this could read at all.)
+    /// (Intermediary is read since the third spelling went in; before that an
+    /// older Fabric build had no names this could read at all.)
     /// Neither could show a skin, and the skin never needed either.
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
@@ -583,7 +583,7 @@ internal sealed class IdentityAdapterMappingService
     /// On a world two friends opened to each other it stops nothing and costs
     /// something: half a second of packets not arriving over a Steam relay is
     /// enough to make the next one look like a leap, and the guest is thrown
-    /// backwards for his own connection. Measured on All The Fabric 3 with
+    /// backwards for his own connection. Measured on a 287-mod build with
     /// chunk pacing already in and its queue never once backed up - the ground
     /// was arriving fine and he was still being pulled back twice in four
     /// minutes.
@@ -1108,7 +1108,7 @@ internal sealed class IdentityAdapterMappingService
     /// Scoped to the runtime on purpose, twice over. The library store is
     /// shared by every build on the machine, and this used to take the first
     /// tsrg2 file anywhere under it: the day a NeoForge 1.21.1 pack put its
-    /// merged mappings there, All The Fabric 3 began reading its own 1.18.2
+    /// merged mappings there, another build began reading its own 1.18.2
     /// under 1.21.1's names. It then believed it could hook everything, asked
     /// for the class 1.21.1 calls "arw", and was handed the 1.18.2 class of
     /// that name - a block-entity datafixer. The preflight refused it, the

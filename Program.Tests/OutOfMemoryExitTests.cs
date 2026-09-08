@@ -118,9 +118,9 @@ public sealed class OutOfMemoryExitTests
     [InlineData(8)]
     public void AnEightGigabyteLaptop_CannotBeAdvisedIntoAKitchenSinkPack(int reportedGb)
     {
-        // All The Mods 10, measured: 476 jars in its mods folder, 621 mods once
-        // the ones nested inside them are counted, 1323 MiB of jars. A real
-        // kitchen-sink pack rather than a shape invented for the test.
+        // Measured on a kitchen-sink pack: 476 jars in its mods folder, 621
+        // mods once the ones nested inside them are counted, 1323 MiB of jars.
+        // A pack somebody plays rather than a shape invented for the test.
         var pack = new PackMemoryProfile(621, 1_386_772_253, 0, "1.21.1");
         var installed = (ulong)reportedGb * 1024 * 1024 * 1024;
         var offerable = MemorySizingService.GetAllowedHeapGb(installed);
@@ -156,10 +156,10 @@ public sealed class OutOfMemoryExitTests
 
     /// <summary>
     /// And every session leaves behind the one measurement the whole memory
-    /// model has been short of. It rests on a single pack - Limitless 8, 874
-    /// jars, about eight gigabytes outside a twelve gigabyte heap - and every
-    /// other pack is an extrapolation from it, including the arithmetic that
-    /// decides whether a machine is offered a pack at all. The subtraction is
+    /// model has been short of. It rests on a single pack - 874 jars, about
+    /// eight gigabytes outside a twelve gigabyte heap - and every other pack
+    /// is an extrapolation from it, including the arithmetic that decides
+    /// whether a machine is offered a pack at all. The subtraction is
     /// honest because -Xms is set equal to -Xmx, so the heap is committed and
     /// what stands above it is the room beside it.
     /// </summary>

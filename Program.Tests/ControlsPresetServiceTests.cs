@@ -18,8 +18,8 @@ public sealed class ControlsPresetServiceTests : IDisposable
 
     public ControlsPresetServiceTests()
     {
-        _pack = Path.Combine(_root, "Packs", "LL8");
-        _instance = Path.Combine(_root, "Instances", "LL8");
+        _pack = Path.Combine(_root, "Packs", "Build A");
+        _instance = Path.Combine(_root, "Instances", "Build A");
         Directory.CreateDirectory(_pack);
         Directory.CreateDirectory(_instance);
     }
@@ -33,7 +33,7 @@ public sealed class ControlsPresetServiceTests : IDisposable
     public void Parse_ReadsMappingsAndSkipsComments()
     {
         const string text = """
-            # LL8 controls preset
+            # controls preset
             # --- Minecraft ---
             key_key.forward:key.keyboard.w
             key_key.sneak:key.keyboard.left.shift  # held
@@ -247,7 +247,9 @@ public sealed class ControlsPresetServiceTests : IDisposable
     [Fact]
     public void ThePackPreset_ParsesWhenTheRepositoryIsAvailable()
     {
-        var packRepo = Path.GetFullPath(Path.Combine(FindRepositoryRoot(), "..", "LL8 Extended"));
+        var packRepo = Path.GetFullPath(
+            Path.Combine(
+                FindRepositoryRoot(), "..", PortablePackSyncService.KnownPacks[0].RelativePath));
         var preset = Path.Combine(packRepo, "launcher", "controls-preset.txt");
         if (!File.Exists(preset)) return;
 

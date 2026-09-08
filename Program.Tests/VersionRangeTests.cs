@@ -22,7 +22,7 @@ public sealed class VersionRangeTests
     [InlineData("[1.21,)", "1.20.1", false)]
     [InlineData("[1.21,1.22)", "1.21.1", true)]
     [InlineData("[1.21,1.22)", "1.22", false)]
-    // The space is real: fifty jars in Limitless 8 write it this way.
+    // The space is real: fifty jars in one big pack write it this way.
     [InlineData("[1.21.1, 1.22)", "1.21.1", true)]
     [InlineData("[47,)", "47.3.0", true)]
     // The half-open range whose author meant "1.21.x" and excluded 1.21.1.
@@ -38,7 +38,7 @@ public sealed class VersionRangeTests
     [InlineData("1.18.x", "1.19", false)]
     [InlineData("~1.18.2", "1.18.9", true)]
     [InlineData("~1.18.2", "1.19", false)]
-    // A real string from All The Fabric 3, trailing hyphen included.
+    // A real string out of a Fabric pack, trailing hyphen included.
     [InlineData("~1.18.2-", "1.18.2", true)]
     [InlineData("*", "1.21.1", true)]
     [InlineData("1.18.2", "1.18.2", true)]

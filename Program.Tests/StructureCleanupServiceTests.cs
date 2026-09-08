@@ -47,13 +47,13 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void ARuntimeForABuildThatIsGone_Goes()
     {
-        Pack("LL8 Extended");
-        Runtime("LL8 Extended", PackRuntimeService.RuntimeCacheGeneration);
+        Pack("Some Build");
+        Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration);
         Runtime("Some Pack Nobody Has", PackRuntimeService.RuntimeCacheGeneration);
 
         StructureCleanupService.Run(_paths);
 
-        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "LL8 Extended")));
+        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Build")));
         Assert.False(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Pack Nobody Has")));
     }
 
@@ -65,8 +65,8 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void ARuntimeForABuildTheLauncherStillOffers_Stays()
     {
-        Pack("LL8 Extended");
         var offered = PortablePackSyncService.KnownPacks[0].RelativePath;
+        Pack(offered);
         Runtime(offered, PackRuntimeService.RuntimeCacheGeneration);
         Directory.Delete(Path.Combine(_paths.Packs, offered), recursive: true);
 
@@ -82,11 +82,11 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void WithNoPacksReadableAtAll_NothingIsRemoved()
     {
-        Runtime("LL8 Extended", PackRuntimeService.RuntimeCacheGeneration);
+        Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration);
         Directory.Delete(_paths.Packs, recursive: true);
 
         Assert.Equal(0, StructureCleanupService.Run(_paths));
-        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "LL8 Extended")));
+        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Build")));
     }
 
     /// <summary>
@@ -96,8 +96,8 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void TheGameABuildKeptForItself_GoesOnceItsStateIsOutOfDate()
     {
-        Pack("LL8 Extended");
-        var runtime = Runtime("LL8 Extended", PackRuntimeService.RuntimeCacheGeneration - 1);
+        Pack("Some Build");
+        var runtime = Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration - 1);
         foreach (var root in new[] { "assets", "libraries", "versions", "runtime", "resources" })
         {
             Write(Path.Combine(runtime, root, "deep", "file.bin"), "x");
@@ -119,8 +119,8 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void ABuildPreparedAgainstTheSharedStore_IsLeftAlone()
     {
-        Pack("LL8 Extended");
-        var runtime = Runtime("LL8 Extended", PackRuntimeService.RuntimeCacheGeneration);
+        Pack("Some Build");
+        var runtime = Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration);
         Write(Path.Combine(runtime, "natives", "lwjgl.dll"), "dll");
 
         Assert.Equal(0, StructureCleanupService.Run(_paths));
@@ -135,8 +135,8 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void ARuntimeWithADamagedState_IsLeftAlone()
     {
-        Pack("LL8 Extended");
-        var runtime = Path.Combine(_paths.Runtimes, "LL8 Extended");
+        Pack("Some Build");
+        var runtime = Path.Combine(_paths.Runtimes, "Some Build");
         Write(Path.Combine(runtime, ".portable-runtime.json"), "{ not json");
         Write(Path.Combine(runtime, "assets", "objects", "ab", "file"), "x");
 
@@ -152,7 +152,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void WorldsAreNeverTouched_EvenForABuildThatIsGone()
     {
-        Pack("LL8 Extended");
+        Pack("Some Build");
         Runtime("Removed Pack", PackRuntimeService.RuntimeCacheGeneration);
         var world = Path.Combine(_paths.Worlds, "Removed Pack", "Дом", "level.dat");
         Write(world, "world");
@@ -170,7 +170,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void WhatItCannotNameIsLeftWhereItIs()
     {
-        Pack("LL8 Extended");
+        Pack("Some Build");
         var stranger = Path.Combine(_paths.Service, "SomethingElse", "file.txt");
         var personal = Path.Combine(_paths.Personal, "settings.json");
         Write(stranger, "not ours");
@@ -186,7 +186,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
     [Fact]
     public void RunningTwiceIsHarmless()
     {
-        Pack("LL8 Extended");
+        Pack("Some Build");
         Runtime("Gone", PackRuntimeService.RuntimeCacheGeneration);
 
         Assert.Equal(1, StructureCleanupService.Run(_paths));

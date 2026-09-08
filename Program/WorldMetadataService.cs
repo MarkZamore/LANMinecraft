@@ -38,7 +38,8 @@ public sealed class WorldMetadataService
     /// unlabelled one, so the filter that hides another build's worlds then
     /// compared that fresh label against the build that had just written it and
     /// always matched. A world was claimed by whichever build opened its list
-    /// first, and an LL8 world showed up under ATM10 for exactly that reason.
+    /// first, and a world of one build showed up under another for exactly
+    /// that reason.
     /// The build is only decided by playing the world - see
     /// <see cref="StampPlayedWorlds"/>.
     /// </param>

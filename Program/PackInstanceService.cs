@@ -937,7 +937,7 @@ public sealed class PackInstanceService : IDisposable
     /// dropped without a word.
     ///
     /// That is not a corner: it is what changing a number does. Zeroing six
-    /// teleport delays in All The Fabric 3's own build turned "2" into "0" and
+    /// teleport delays in one build's own config turned "2" into "0" and
     /// "3" into "0", six times, in a file whose length did not move by a byte -
     /// and the pack shipped it four times over two days while every launcher
     /// quietly kept the old one, including a file the pack had explicitly

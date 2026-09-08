@@ -23,7 +23,7 @@ public sealed class PackMemoryProfileTests : IDisposable
     [Fact]
     public void APackFolder_IsWeighedByWhatTheGameWillLoad()
     {
-        var pack = Path.Combine(_root, "Limitless");
+        var pack = Path.Combine(_root, "Some Build");
         WriteFile(Path.Combine(pack, "mods", "one.jar"), 3 * 1024 * 1024);
         // Packs that keep one mods folder per loader version put jars a level
         // down; those load like any other.
@@ -162,11 +162,11 @@ public sealed class PackMemoryProfileTests : IDisposable
     }
 
     /// <summary>
-    /// The point of the whole thing. Create &amp; Ars is 88 jars and All The
-    /// Mods-sized packs are hundreds; before this, neither was weighed until it
-    /// was installed and both were offered two thirds of the machine - so the
-    /// small one asked for more than the large one, which is what a player sees
-    /// and disbelieves.
+    /// The point of the whole thing. A light pack is 88 jars and a kitchen-sink
+    /// one is hundreds; before this, neither was weighed until it was installed
+    /// and both were offered two thirds of the machine - so the small one asked
+    /// for more than the large one, which is what a player sees and
+    /// disbelieves.
     /// </summary>
     [Fact]
     public void TheSmallPack_NowAsksForLessThanTheLargeOne()

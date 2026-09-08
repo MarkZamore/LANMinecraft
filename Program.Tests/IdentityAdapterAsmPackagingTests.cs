@@ -199,8 +199,8 @@ public sealed class IdentityAdapterAsmPackagingTests
     /// </summary>
     /// <remarks>
     /// It said 21, which was true while the adapter ran in one pack on 1.21.1.
-    /// Then it started reaching every pack, and All The Fabric 3 would not
-    /// start at all: 1.18.2 runs on Java 17, and a class file built for 21 does
+    /// Then it started reaching every pack, and a build on 1.18.2 would not
+    /// start at all: that runs on Java 17, and a class file built for 21 does
     /// not load there - the launcher's own preflight died on
     /// UnsupportedClassVersionError and put it on screen as a dialog there was
     /// no way past. Java 8 is the real floor the launcher ships, and the agent

@@ -75,7 +75,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
             paths.LogFile,
             Path.Combine(paths.Worlds, "Chebupeli", "level.dat"),
             Path.Combine(paths.Personal, "Backups", "Chebupeli-2026-08-15", "level.dat"),
-            Path.Combine(paths.Personal, "Instances", "Infinity", "options.txt"),
+            Path.Combine(paths.Personal, "Instances", "Some Build", "options.txt"),
             Path.Combine(paths.BugReports, "20260816-120000-76561198256236531-abcd1234", "README.md")
         };
         foreach (var path in kept) WriteFile(path, "keep");
@@ -135,7 +135,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         var live = new string('a', 64);
         var orphan = new string('b', 64);
         WriteFile(
-            Path.Combine(paths.Runtimes, "Infinity", ".portable-runtime.json"),
+            Path.Combine(paths.Runtimes, "Some Build", ".portable-runtime.json"),
             JsonSerializer.Serialize(new { descriptorHash = live }));
         WriteFile(Path.Combine(paths.Launcher, "IdentityAdapters", live, "adapter.jar"), "live");
         WriteFile(Path.Combine(paths.Launcher, "IdentityAdapters", orphan, "adapter.jar"), "orphan");
@@ -174,7 +174,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     public void PackJavaFromBeforeItWasShared_IsGone_AndMojangsIsNot()
     {
         var paths = CreatePaths();
-        var components = Path.Combine(paths.Runtimes, "LL8 Extended", "runtime", "windows-x64");
+        var components = Path.Combine(paths.Runtimes, "Some Build", "runtime", "windows-x64");
         var ours = Path.Combine(components, "java-21", "bin", "javaw.exe");
         var mojang = Path.Combine(components, "java-runtime-delta", "bin", "javaw.exe");
         var legacy = Path.Combine(components, "jre-legacy", "bin", "java.exe");
@@ -196,7 +196,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     public void ABuildWithOnlyMojangsJava_IsUntouched()
     {
         var paths = CreatePaths();
-        var components = Path.Combine(paths.Runtimes, "RPG Ars Nouveau", "runtime", "windows-x64");
+        var components = Path.Combine(paths.Runtimes, "Another Build", "runtime", "windows-x64");
         var mojang = Path.Combine(components, "java-runtime-gamma", "bin", "javaw.exe");
         WriteFile(mojang, "exe");
 

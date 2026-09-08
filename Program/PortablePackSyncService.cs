@@ -241,7 +241,7 @@ public sealed partial class PortablePackSyncService
     ///
     /// The manifest names every file with its size, so the mod jars can be
     /// counted and weighed without fetching one of them. What it cannot say is
-    /// how many mods those jars carry inside themselves - Limitless 8's 882
+    /// how many mods those jars carry inside themselves - a large build's 882
     /// files are 1128 mods - so this under-counts, and knowingly: an answer a
     /// little low for a pack that is about to be downloaded and weighed
     /// properly is worth having, and two thirds of the machine never was.
@@ -829,10 +829,10 @@ public sealed partial class PortablePackSyncService
     /// and nothing else is.
     ///
     /// Only what registers blocks and items, which is mods and one other thing:
-    /// a KubeJS startup script. Limitless 8 creates tnp:limitless_sword and
-    /// tnp:gunpowder_block in kubejs/startup_scripts, and to a save those are
-    /// not different from a mod's - the script going away turns placed blocks
-    /// to air and empties them out of chests just the same. A datapack or a
+    /// a KubeJS startup script. One build creates a sword and a block of its
+    /// own in kubejs/startup_scripts, and to a save those are not different
+    /// from a mod's - the script going away turns placed blocks to air and
+    /// empties them out of chests just the same. A datapack or a
     /// resource pack going away only changes how a world looks or what can be
     /// made in it, and a warning that fires for those stops being believed
     /// before it is needed. A first install has an empty state and so reports
@@ -880,8 +880,8 @@ public sealed partial class PortablePackSyncService
     /// with a digit.
     /// </summary>
     /// <remarks>
-    /// Measured against the 882 jars of Limitless 8 and the 95 of All The
-    /// Fabric 3, which between them carry every shape their authors use:
+    /// Measured against the 882 jars of one build and the 95 of an older
+    /// Fabric build, which between them carry every shape their authors use:
     /// AE2-Things-1.4.2-beta, AdvancedAE-1.6.11-1.21.1,
     /// AdChimneys-1.21.1-11.1.8.0-NeoForge-build.1029,
     /// connector-2.0.0-beta.17+1.21.1-full. All four keep their name and lose

@@ -465,7 +465,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
     /// for the launcher to read and the UUID hooks cannot be placed. The skin
     /// hooks never needed them - they are all in com.mojang.authlib, which no
     /// loader obfuscates - and refusing them along with the rest is what left
-    /// All The Fabric 3 without a skin.
+    /// those packs without a skin.
     /// </summary>
     [Fact]
     public void ARuntimeWithoutMappings_StillGetsItsSkins()
@@ -517,9 +517,10 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
 
     /// <summary>
     /// And so does a runtime whose mappings are there but do not describe the
-    /// classes the UUID hooks need. This is RPG Ars Nouveau: 1.20.1 has no
-    /// net/minecraft/client/resources/PlayerSkin, which arrived in 1.20.2, so
-    /// the whole adapter used to be refused over a class the skin never touches.
+    /// classes the UUID hooks need. This is any pack on 1.20.1: that version
+    /// has no net/minecraft/client/resources/PlayerSkin, which arrived in
+    /// 1.20.2, so the whole adapter used to be refused over a class the skin
+    /// never touches.
     /// </summary>
     [Fact]
     public void AMinecraftTooOldForTheUuidHooks_StillGetsItsSkins()
@@ -748,11 +749,11 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         // the session service as isWhitelistedDomain through 2.1.28, as
         // isAllowedTextureDomain from 2.3.31 to 3.16.29, and moved to
         // TextureUrlChecker at 3.18.38. Naming only the last of the three is
-        // what left every pack before Minecraft 1.19.4 - All The Fabric 3 among
-        // them - unable to show a skin at all: the class the launcher went
-        // looking for is not in those versions. None of this comes from the
-        // runtime's mappings, because com.mojang.authlib is never obfuscated,
-        // which is why this one patch is the same on every loader.
+        // what left every pack before Minecraft 1.19.4 unable to show a skin
+        // at all: the class the launcher went looking for is not in those
+        // versions. None of this comes from the runtime's mappings, because
+        // com.mojang.authlib is never obfuscated, which is why this one patch
+        // is the same on every loader.
         Assert.Equal(
             "com/mojang/authlib/yggdrasil/TextureUrlChecker," +
             "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",

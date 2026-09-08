@@ -34,7 +34,7 @@ public sealed class SupportReportModListTests : IDisposable
             pack: ["alpha.jar", "beta.jar", "gamma.jar"],
             instance: ["alpha.jar", "beta.jar", "gamma.jar"]);
 
-        var mods = SupportDiagnosticSnapshotBuilder.ReadMods(paths, "LL8 Extended");
+        var mods = SupportDiagnosticSnapshotBuilder.ReadMods(paths, "Build A");
 
         Assert.Equal(["alpha.jar", "beta.jar", "gamma.jar"], mods.Select(mod => mod.FileName));
     }
@@ -48,7 +48,7 @@ public sealed class SupportReportModListTests : IDisposable
     {
         var paths = Prepare(pack: ["alpha.jar"], instance: ["alpha.jar"], instanceFiller: 4096);
 
-        var mod = Assert.Single(SupportDiagnosticSnapshotBuilder.ReadMods(paths, "LL8 Extended"));
+        var mod = Assert.Single(SupportDiagnosticSnapshotBuilder.ReadMods(paths, "Build A"));
 
         Assert.Equal(4096, mod.Size);
     }
@@ -59,7 +59,7 @@ public sealed class SupportReportModListTests : IDisposable
     {
         var paths = Prepare(pack: ["only-pack.jar"], instance: ["only-instance.jar"]);
 
-        var mods = SupportDiagnosticSnapshotBuilder.ReadMods(paths, "LL8 Extended");
+        var mods = SupportDiagnosticSnapshotBuilder.ReadMods(paths, "Build A");
 
         Assert.Equal(["only-instance.jar", "only-pack.jar"], mods.Select(mod => mod.FileName));
     }
@@ -68,8 +68,8 @@ public sealed class SupportReportModListTests : IDisposable
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
-        Write(Path.Combine(paths.CombineUnderPacks("LL8 Extended"), "mods"), pack, 16);
-        Write(Path.Combine(paths.CombineUnderInstances("LL8 Extended"), "mods"), instance, instanceFiller);
+        Write(Path.Combine(paths.CombineUnderPacks("Build A"), "mods"), pack, 16);
+        Write(Path.Combine(paths.CombineUnderInstances("Build A"), "mods"), instance, instanceFiller);
         return paths;
     }
 

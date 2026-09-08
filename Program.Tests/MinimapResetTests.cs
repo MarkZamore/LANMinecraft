@@ -69,7 +69,7 @@ public sealed class MinimapResetTests
     [Fact]
     public void APackThatAsksForNothing_ChangesNothing()
     {
-        var root = Path.Combine(Path.GetTempPath(), "ll8-map-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "pack-map-" + Guid.NewGuid().ToString("N"));
         var pack = Path.Combine(root, "pack");
         var instance = Path.Combine(root, "instance");
         Directory.CreateDirectory(Path.Combine(pack, "launcher"));
@@ -89,7 +89,7 @@ public sealed class MinimapResetTests
 
     private static (string Pack, string Instance, string Root) NewPair(string token)
     {
-        var root = Path.Combine(Path.GetTempPath(), "ll8-map-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "pack-map-" + Guid.NewGuid().ToString("N"));
         var pack = Path.Combine(root, "pack");
         var instance = Path.Combine(root, "instance");
         Directory.CreateDirectory(Path.Combine(pack, "launcher"));

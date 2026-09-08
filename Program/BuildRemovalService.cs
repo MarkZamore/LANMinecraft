@@ -89,8 +89,8 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         // still has its worlds lying flat in the root of Worlds, and looking
         // only at the folder found none of them: the window offered "and its
         // worlds", the player agreed, and the worlds stayed. A build withdrawn
-        // from the list, as RPG Ars Nouveau was, can never be launched again and
-        // so could never migrate at all.
+        // from the list can never be launched again and so could never migrate
+        // at all.
         var worldDirectories = new List<string>();
         var packFolder = WorldLocations.ForBuild(_paths.Worlds, build);
         var worlds = 0;

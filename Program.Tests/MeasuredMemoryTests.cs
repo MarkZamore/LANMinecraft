@@ -7,7 +7,7 @@ namespace Minecraft.Tests;
 /// it should take.
 ///
 /// The model is one pack weighed once, and it was measured being wrong on the
-/// pack it was fitted to: Limitless 8 on a 24 GB budget was charged 12 GB
+/// pack it was fitted to: that pack on a 24 GB budget was charged 12 GB
 /// beside its heap - eight for the pack and four for an eight gigabyte card -
 /// and the 12 GB heap that left it was 11.5 GB full, with AllTheLeaks warning
 /// at 95% and full collections of 2.2 seconds. The launcher had the right
@@ -23,7 +23,7 @@ public sealed class MeasuredMemoryTests : IDisposable
 
     public void Dispose() => TempTree.Delete(_root);
 
-    /// <summary>Limitless 8: 1128 mods, 1.9 GB of jars, and the texture beside them.</summary>
+    /// <summary>The measured pack: 1128 mods, 1.9 GB of jars, and the texture beside them.</summary>
     private static PackMemoryProfile BigModpack =>
         new(1128, 1959L * 1024 * 1024, 115L * 1024 * 1024, "1.21.1");
 
@@ -109,7 +109,7 @@ public sealed class MeasuredMemoryTests : IDisposable
         store.Remember("Infinity", new VideoMemoryProfile(16), 32, TheLoggedSession);
 
         Assert.True(store.Recall("Infinity", new VideoMemoryProfile(16), 32).IsKnown);
-        Assert.False(store.Recall("Limitless8", new VideoMemoryProfile(16), 32).IsKnown);
+        Assert.False(store.Recall("Odyssey", new VideoMemoryProfile(16), 32).IsKnown);
         Assert.False(store.Recall("Infinity", new VideoMemoryProfile(8), 32).IsKnown);
         Assert.False(store.Recall("Infinity", new VideoMemoryProfile(16), 16).IsKnown);
         // A card nobody could read is its own machine: the sizing charges it
@@ -186,8 +186,8 @@ public sealed class MeasuredMemoryTests : IDisposable
     }
 
     /// <summary>
-    /// The whole point, in the numbers the player has: a 24 GB budget on
-    /// Limitless 8.
+    /// The whole point, in the numbers the player has: a 24 GB budget on the
+    /// pack the model was fitted to.
     ///
     /// Estimated, the card decides everything. An eight gigabyte card is
     /// charged the four gigabytes the pack outgrows it by on top of the pack's
@@ -261,7 +261,7 @@ public sealed class MeasuredMemoryTests : IDisposable
     /// <summary>
     /// The evening this rule was rewritten. A sixteen gigabyte card commits its
     /// own size in system memory whether or not a texture is in it, so a
-    /// twenty-six minute session of Limitless 8 was written down as holding
+    /// twenty-six minute session of a big pack was written down as holding
     /// 14135 MB beside its heap while 2853 MB of it was resident. Read as an
     /// answer, that turned a 24 GB budget into an 8 GB heap - half of what the
     /// same launcher had given the same pack the day before.

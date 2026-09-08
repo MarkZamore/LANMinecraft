@@ -2173,7 +2173,7 @@ public partial class MainWindow : Window
     /// number for every pack and merely froze the launcher's suggestion; with a
     /// number per pack it meant that clicking near the box - or the window
     /// losing focus at all - stamped whatever was showing as this pack's answer
-    /// for ever. All The Fabric 3 was pinned at four gigabytes that way, on a
+    /// for ever. A 287-mod build was pinned at four gigabytes that way, on a
     /// machine where the launcher would have offered five, and it ran out of
     /// them while generating a world. A number the player types is written down
     /// by <see cref="MemoryTextBox_TextChanged"/> on the keystroke that types
@@ -2707,7 +2707,7 @@ public partial class MainWindow : Window
     /// Weighs the pack that is selected - its mods, their bytes, the texture it
     /// ships - and puts the field back to the number that belongs to it: the one
     /// the player last set here, or what the pack asks for where they never set
-    /// one. Vanilla on an old version and a pack heavier than Limitless 8 are
+    /// one. Vanilla on an old version and a pack of nine hundred jars are
     /// both packs here, and they are why the number is not shared between them.
     /// </summary>
     private void RefreshPackMemory()

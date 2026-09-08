@@ -9,8 +9,8 @@ namespace Minecraft.Tests;
 /// every world that had none, and the filter that hides another build's worlds
 /// then compared that fresh label against the build that had just written it -
 /// so it always matched, every world showed in every build, and whichever build
-/// opened its list first owned the world from then on. That is why a world from
-/// LL8 Extended turned up under ATM10.
+/// opened its list first owned the world from then on. That is why a world
+/// made in one build turned up under another.
 /// </summary>
 public sealed class WorldBuildClaimTests : IDisposable
 {
@@ -34,14 +34,14 @@ public sealed class WorldBuildClaimTests : IDisposable
         var service = new WorldMetadataService();
         var world = CreateWorld("Chebupeli");
 
-        var metadata = service.EnsureMetadata(world, Context("ATM10"), claimBuild: false);
+        var metadata = service.EnsureMetadata(world, Context("Build A"), claimBuild: false);
 
         Assert.NotNull(metadata);
         Assert.Equal(string.Empty, metadata!.BuildRelativePath);
         // Unattributed means shown everywhere, which is the deliberate fallback -
         // hiding a world nobody can place would be losing it.
-        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "ATM10"));
-        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "LL8 Extended"));
+        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "Build A"));
+        Assert.True(WorldMetadataService.BelongsToBuild(metadata.BuildRelativePath, "Build B"));
     }
 
     /// <summary>
@@ -54,7 +54,7 @@ public sealed class WorldBuildClaimTests : IDisposable
         var service = new WorldMetadataService();
         var world = CreateWorld("Chebupeli");
 
-        var metadata = service.EnsureMetadata(world, Context("ATM10"), claimBuild: false);
+        var metadata = service.EnsureMetadata(world, Context("Build A"), claimBuild: false);
 
         Assert.Equal("anuvenn", metadata!.OwnerIdentityName);
         Assert.False(string.IsNullOrWhiteSpace(metadata.WorldId));
@@ -70,15 +70,15 @@ public sealed class WorldBuildClaimTests : IDisposable
         var service = new WorldMetadataService();
         var started = DateTimeOffset.UtcNow;
         var world = CreateWorld("Chebupeli", playedAt: started.AddMinutes(1));
-        service.EnsureMetadata(world, Context("ATM10"), claimBuild: false);
+        service.EnsureMetadata(world, Context("Build A"), claimBuild: false);
 
-        var stamped = service.StampPlayedWorlds(_root, Context("LL8 Extended"), started);
+        var stamped = service.StampPlayedWorlds(_root, Context("Build B"), started);
 
         Assert.Equal(["Chebupeli"], stamped);
         var recorded = service.Read(world)!.BuildRelativePath;
-        Assert.Equal("LL8 Extended", recorded);
-        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "LL8 Extended"));
-        Assert.False(WorldMetadataService.BelongsToBuild(recorded, "ATM10"));
+        Assert.Equal("Build B", recorded);
+        Assert.True(WorldMetadataService.BelongsToBuild(recorded, "Build B"));
+        Assert.False(WorldMetadataService.BelongsToBuild(recorded, "Build A"));
     }
 
     /// <summary>
@@ -90,12 +90,12 @@ public sealed class WorldBuildClaimTests : IDisposable
         var service = new WorldMetadataService();
         var started = DateTimeOffset.UtcNow;
         var world = CreateWorld("Chebupeli", playedAt: started.AddMinutes(1));
-        service.StampPlayedWorlds(_root, Context("LL8 Extended"), started);
+        service.StampPlayedWorlds(_root, Context("Build B"), started);
 
-        service.EnsureMetadata(world, Context("ATM10"), claimBuild: false);
-        service.EnsureMetadata(world, Context("ATM10"));
+        service.EnsureMetadata(world, Context("Build A"), claimBuild: false);
+        service.EnsureMetadata(world, Context("Build A"));
 
-        Assert.Equal("LL8 Extended", service.Read(world)!.BuildRelativePath);
+        Assert.Equal("Build B", service.Read(world)!.BuildRelativePath);
     }
 
     private string CreateWorld(string name, DateTimeOffset? playedAt = null)

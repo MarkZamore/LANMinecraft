@@ -5,29 +5,29 @@ namespace Minecraft.Tests;
 /// <summary>
 /// The number a player sets is the Java heap and goes to -Xmx untouched. What
 /// the game takes on top of it belongs to the pack, not to the launcher - a
-/// vanilla client holds about a gigabyte outside its heap, and Limitless 8,
+/// vanilla client holds about a gigabyte outside its heap, and a big pack,
 /// measured, held almost eight above a twelve gigabyte one - so that room comes
 /// out of the largest heap the field will accept. Every rule here is therefore
 /// asked about a pack, and the same field serves vanilla on an old version and
-/// something heavier than Limitless 8 on a new one.
+/// something heavier than any pack the launcher has met on a new one.
 /// </summary>
 public sealed class MemorySizingTests
 {
     private static ulong Gb(int value) => (ulong)value * 1024 * 1024 * 1024;
     private static long Mb(int value) => (long)value * 1024 * 1024;
 
-    /// <summary>Limitless 8 as it stands: 874 jars, 1.9 GB of them, and the texture beside them.</summary>
-    // Limitless 8, the one pack these rules were measured against: 882 jars in
-    // its mods folder and 1128 mods once the ones nested inside those jars are
-    // counted, which is what the loader loads and what the sizing charges for.
-    // This number used to be the file count, and the constants were fitted to
-    // it; both moved together, so every expectation below is the same
-    // measurement it always was.
+    /// <summary>The measured pack as it stands: 874 jars, 1.9 GB of them, and the texture beside them.</summary>
+    // The one pack these rules were measured against: 882 jars in its mods
+    // folder and 1128 mods once the ones nested inside those jars are counted,
+    // which is what the loader loads and what the sizing charges for. This
+    // number used to be the file count, and the constants were fitted to it;
+    // both moved together, so every expectation below is the same measurement
+    // it always was.
     private static PackMemoryProfile BigModpack => new(1128, Mb(1959), Mb(115), "1.21.1");
     private static PackMemoryProfile Vanilla => new(0, 0, 0, "1.21.1");
     private static PackMemoryProfile OldVanilla => new(0, 0, 0, "1.7.10");
     private static PackMemoryProfile SmallModpack => new(60, Mb(180), Mb(40), "1.20.1");
-    private static PackMemoryProfile HeavierThanLimitless => new(1500, Mb(4000), Mb(500), "1.22");
+    private static PackMemoryProfile HeavierThanBigModpack => new(1500, Mb(4000), Mb(500), "1.22");
 
     [Theory]
     [InlineData(8, 5)]
@@ -157,24 +157,25 @@ public sealed class MemorySizingTests
     }
 
     /// <summary>
-    /// Weight decides, in that order: nothing, a small pack, Limitless 8, and
-    /// something twice its size on a newer version. A pack heavier than any the
-    /// launcher has met is sized by the same arithmetic, not by a ceiling.
+    /// Weight decides, in that order: nothing, a small pack, the one the model
+    /// was measured on, and something twice its size on a newer version. A pack
+    /// heavier than any the launcher has met is sized by the same arithmetic,
+    /// not by a ceiling.
     /// </summary>
     [Fact]
     public void HeavierPacks_AskForMore_InOrder()
     {
-        var reserves = new[] { Vanilla, SmallModpack, BigModpack, HeavierThanLimitless }
+        var reserves = new[] { Vanilla, SmallModpack, BigModpack, HeavierThanBigModpack }
             .Select(pack => MemorySizingService.GetNativeReserveGb(pack))
             .ToList();
 
         Assert.Equal(reserves.OrderBy(value => value), reserves);
         Assert.True(
-            MemorySizingService.GetNativeReserveGb(HeavierThanLimitless) >
+            MemorySizingService.GetNativeReserveGb(HeavierThanBigModpack) >
             MemorySizingService.GetNativeReserveGb(BigModpack),
-            "a pack heavier than Limitless 8 must be given more room than it");
+            "a heavier pack must be given more room than the one the model was measured on");
         Assert.True(
-            MemorySizingService.GetRecommendedMemoryGb(HeavierThanLimitless, Gb(64)) >
+            MemorySizingService.GetRecommendedMemoryGb(HeavierThanBigModpack, Gb(64)) >
             MemorySizingService.GetRecommendedMemoryGb(BigModpack, Gb(64)));
     }
 
@@ -252,7 +253,7 @@ public sealed class MemorySizingTests
         Assert.Equal(0, MemorySizingService.GetVideoSpillGb(SmallModpack, smallCard));
         Assert.True(MemorySizingService.GetVideoSpillGb(BigModpack, smallCard) > 0);
         Assert.True(
-            MemorySizingService.GetVideoSpillGb(HeavierThanLimitless, smallCard) >=
+            MemorySizingService.GetVideoSpillGb(HeavierThanBigModpack, smallCard) >=
             MemorySizingService.GetVideoSpillGb(BigModpack, smallCard),
             "a heavier pack must not ask the card for less");
 
@@ -301,7 +302,7 @@ public sealed class MemorySizingTests
         Assert.Equal(expected, MemorySizingService.GetAllowedHeapGb(Gb(installedGb)));
         foreach (var pack in new[]
                  {
-                     PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanLimitless
+                     PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanBigModpack
                  })
         {
             // The pack model, the card and the measurement all have answers
@@ -369,7 +370,7 @@ public sealed class MemorySizingTests
     {
         foreach (var pack in new[]
                  {
-                     PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanLimitless
+                     PackMemoryProfile.Unknown, OldVanilla, Vanilla, SmallModpack, BigModpack, HeavierThanBigModpack
                  })
         {
             var allowed = MemorySizingService.GetAllowedHeapGb(Gb(installedGb));

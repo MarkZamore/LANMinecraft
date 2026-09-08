@@ -197,8 +197,8 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     }
 
     /// <summary>
-    /// A KubeJS startup script registers real blocks and items - Limitless 8
-    /// creates tnp:limitless_sword in one - so losing it costs a world exactly
+    /// A KubeJS startup script registers real blocks and items - a build can
+    /// add a whole sword of its own in one - so losing it costs a world exactly
     /// what losing a mod does. A resource pack does not, and saying so about
     /// one would spend the warning on a change of texture.
     /// </summary>

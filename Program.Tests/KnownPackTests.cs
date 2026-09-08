@@ -46,97 +46,37 @@ public sealed class KnownPackTests
         Assert.Equal(names.Count, names.Distinct().Count());
     }
 
+    /// <summary>
+    /// The builds are offered side by side and each fetches from its own
+    /// release. Two entries pointing at one release would pour the same files
+    /// into two folders and call them different builds.
+    /// </summary>
     [Fact]
-    public void AllTheMods10IsOffered()
+    public void EveryOfferedBuildFetchesFromItsOwnRelease()
     {
-        var source = PortablePackSyncService.KnownSourceFor("All The Mods 10");
-        Assert.NotNull(source);
-        Assert.Equal("MarkZamore", source!.Owner);
-        Assert.Equal("All-The-Mods-10", source.Repo);
-        Assert.Equal("pack-latest", source.Tag);
+        var sources = PortablePackSyncService.KnownPacks
+            .Select(pack => $"{pack.Source.Owner}/{pack.Source.Repo}/{pack.Source.Tag}")
+            .Select(source => source.ToLowerInvariant())
+            .ToList();
+        Assert.Equal(sources.Count, sources.Distinct().Count());
     }
 
     /// <summary>
-    /// Withdrawn on 31 August 2026. A name left in the list is a name the
-    /// launcher offers and then cannot fetch, which reads to a player as a
-    /// broken download rather than a build that is no longer made.
+    /// A name the list does not carry is not offered: nothing answers for it,
+    /// and a folder called that is a pack of somebody's own as far as the
+    /// launcher is concerned. An offered name the launcher cannot fetch reads
+    /// to a player as a broken download rather than as a build that is not
+    /// made any more.
     /// </summary>
     [Fact]
-    public void TheBrokenScriptEnhancedIsNoLongerOffered()
+    public void ANameNobodyKnowsIsNotOffered()
     {
-        Assert.Null(PortablePackSyncService.KnownSourceFor("The Broken Script Enhanced"));
+        const string unlisted = "Some Build";
+
+        Assert.Null(PortablePackSyncService.KnownSourceFor(unlisted));
         Assert.DoesNotContain(
             PortablePackSyncService.KnownPacks,
-            pack => pack.RelativePath.Contains("Broken Script", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Withdrawn on 6 September 2026 at the owner's word, repository and all.
-    /// A name left here is a name the launcher offers before the folder
-    /// exists, so it would go on offering a build that nothing can fetch.
-    /// </summary>
-    [Fact]
-    public void AllTheFabric3IsNoLongerOffered()
-    {
-        Assert.Null(PortablePackSyncService.KnownSourceFor("All The Fabric 3"));
-        Assert.DoesNotContain(
-            PortablePackSyncService.KnownPacks,
-            pack => pack.RelativePath.Contains("Fabric", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Withdrawn on 1 September 2026, the same way The Broken Script Enhanced
-    /// was: the repository is gone, so a name left in this list would be a name
-    /// the launcher offers and then cannot fetch. An instance somebody already
-    /// has keeps working - the sync says it could not check for updates and
-    /// plays the local copy - but nothing downloads it again.
-    /// </summary>
-    [Fact]
-    public void RpgArsNouveauIsNoLongerOffered()
-    {
-        Assert.Null(PortablePackSyncService.KnownSourceFor("RPG Ars Nouveau"));
-        Assert.DoesNotContain(
-            PortablePackSyncService.KnownPacks,
-            pack => pack.RelativePath.Contains("RPG", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Withdrawn on 6 September 2026 alongside All The Fabric 3, repository
-    /// and all. It was offered under a short name because the build list is
-    /// one narrow column and "Create &amp; Ars Arcane Awakened" was cut off in
-    /// it; neither name answers for anything now.
-    /// </summary>
-    [Fact]
-    public void CreateAndArsIsNoLongerOffered()
-    {
-        Assert.Null(PortablePackSyncService.KnownSourceFor("C&A Arcane Awakened"));
-        Assert.DoesNotContain(
-            PortablePackSyncService.KnownPacks,
-            pack => pack.RelativePath.Contains("Arcane", StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// And the long name it was offered under for one release answers for
-    /// nothing: a name in this list is a name the launcher will fetch, and that
-    /// repository no longer answers to it.
-    /// </summary>
-    [Fact]
-    public void TheLongCreateAndArsNameIsNotOffered()
-    {
-        Assert.Null(PortablePackSyncService.KnownSourceFor("Create & Ars Arcane Awakened"));
-    }
-
-    /// <summary>
-    /// The names that were dropped are dropped: nothing answers for them, and a
-    /// folder still called one of them is a pack of somebody's own as far as
-    /// the launcher is concerned.
-    /// </summary>
-    [Theory]
-    [InlineData("ATM10")]
-    [InlineData("E10")]
-    public void ARetiredNameIsNotOffered(string retired)
-    {
-        Assert.Null(PortablePackSyncService.KnownSourceFor(retired));
+            pack => pack.RelativePath.Equals(unlisted, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -154,12 +94,15 @@ public sealed class KnownPackTests
         Assert.Null(PortablePackSyncService.KnownSourceFor(name));
     }
 
-    [Theory]
-    [InlineData("all the mods 10")]
-    [InlineData("All The Mods 10\\")]
-    [InlineData(" All The Mods 10 ")]
-    public void SlashesAndCaseDoNotHideAKnownPack(string name)
+    [Fact]
+    public void SlashesAndCaseDoNotHideAKnownPack()
     {
-        Assert.NotNull(PortablePackSyncService.KnownSourceFor(name));
+        var known = PortablePackSyncService.KnownPacks[0].RelativePath;
+        string[] written = [known.ToLowerInvariant(), known + "\\", $" {known} "];
+
+        foreach (var name in written)
+        {
+            Assert.True(PortablePackSyncService.KnownSourceFor(name) is not null, name);
+        }
     }
 }

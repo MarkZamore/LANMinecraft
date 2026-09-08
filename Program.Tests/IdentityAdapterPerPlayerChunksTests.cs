@@ -248,7 +248,7 @@ public sealed class IdentityAdapterPerPlayerChunksTests : IDisposable
         Assert.Equal("true", properties["perPlayerChunksEnabled"]);
         Assert.Equal("getViewDistance,c", properties["clientViewDistanceMethods"]);
         // Without this the whole feature would have stayed off on every version
-        // before 1.20.1 - All The Fabric 3 among them.
+        // before 1.20.1.
         Assert.Equal("getLevel,x", properties["serverLevelMethods"]);
     }
 
