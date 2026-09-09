@@ -119,7 +119,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
-        ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); ReportStartupTrace(); };
+        ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); _framePainted = true; ReportStartupTrace(); };
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
@@ -149,25 +149,53 @@ public partial class MainWindow : Window
             _paths.Ensure();
             LogCleanupService.RotateLauncherLog(_paths);
             _logger = new Logger(_paths.LogFile);
+            // Subscribed here rather than after the first frame: the preset
+            // check below already writes a line, and the panel in the window
+            // should show the whole log, not the part that came after it.
+            _logger.LineWritten += line => PostToUi(() => AppendLog(line));
             StartupTrace.Mark("журнал");
             // A name too long for its field walks itself so the whole of it can
             // be read; it holds still while the field is being edited. It is
             // built here rather than in the constructor because it reports what
             // it measures, and there is no logger to report to until now.
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
-            LoadChangelog();
-            ShowSidePanel(news: false);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
             StartupTrace.Mark("настройки");
-            _logger.LineWritten += line => PostToUi(() => AppendLog(line));
+            // The four the first frame cannot do without: the builds list and
+            // the pack hash it asks for, the worlds list, and the preset the
+            // button reports on. All four are field assignments that cost
+            // nothing; the other eleven wait until the window is up.
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
+            _worldMetadata = new WorldMetadataService();
+            _controlsPreset = new ControlsPresetService(_logger);
+            LoadSettingsIntoUi();
+            RefreshBuilds();
+            RefreshControlsPresetStatus();
+            RefreshWorlds();
+            RefreshMemoryText(saveIfChanged: false);
+            RefreshUi();
+            SetState("Ready");
+            StartupTrace.Mark("кадр");
+
+            // Everything above is what the window has to show to be right.
+            // WPF raises Loaded from inside Show(), so until this yield the
+            // player has no window at all; Background sits below Render, so
+            // the frame is painted first and the rest of the launcher is
+            // built behind it. Task.Yield would not do: its continuation
+            // comes back at Normal, which outranks Render, and nothing would
+            // change.
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            // The window can be closed in that gap, and closing disposes the
+            // token this method goes on to use.
+            if (_shutdownStarted) return;
+
+            LoadChangelog();
+            ShowSidePanel(news: false);
             _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
             _transferPacing = _transferPacingStore.Load();
-            _worldMetadata = new WorldMetadataService();
-            _controlsPreset = new ControlsPresetService(_logger);
             _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
             _optionsDefaults = new OptionsDefaultsService(_logger);
             _minimapReset = new MinimapResetService(_logger);
@@ -189,7 +217,7 @@ public partial class MainWindow : Window
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
             _packRuntimes = new PackRuntimeService(_paths, _logger);
-            _waypointSync = new WaypointSyncService(_paths, _logger, _worldMetadata, _peerTransport);
+            _waypointSync = new WaypointSyncService(_paths, _logger, RequireWorldMetadata(), _peerTransport);
             _skinService = new SkinService(_paths, _logger, _peerTransport);
             _identityRegistry = new PortableIdentityRegistryService(_paths, _logger);
             await _skinService.StartAsync(_lifetimeCts.Token);
@@ -202,7 +230,7 @@ public partial class MainWindow : Window
             // This one picks it up, so the button says "Игра запущена" instead
             // of offering a second client over the first.
             _minecraft.AdoptRunningClients();
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, _worldMetadata, _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
+            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, RequireWorldMetadata(), _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
                 runtimeOptions: null,
                 confirmation: new WpfWorldTransferConfirmation(this));
             _bugReports = new BugReportService(
@@ -237,12 +265,7 @@ public partial class MainWindow : Window
                 RefreshWorlds();
                 RefreshUi();
             });
-            LoadSettingsIntoUi();
-            RefreshBuilds();
-            RefreshControlsPresetStatus();
             RefreshPackMemory();
-            RefreshMemoryText(saveIfChanged: true);
-            RefreshWorlds();
             InitializeUpdateUi();
             InitializeRuntimeProgressUi();
             // Every control that a state decides - the preset button above all -
@@ -257,7 +280,6 @@ public partial class MainWindow : Window
                 _ = RefreshLauncherDataAsync(startupBuild.RelativePath);
             }
             _uiTimer.Start();
-            SetState("Ready");
             // Housekeeping nobody waits for: last week's logs, files this
             // launcher used to write, runtimes for builds that are gone. It
             // walks the instances folder and what the single-file host left
@@ -280,6 +302,7 @@ public partial class MainWindow : Window
             });
             StartupTrace.Mark("интерфейс");
             _logger.Info("Minecraft portable launcher started.");
+            _startupFinished = true;
             ReportStartupTrace();
             await RefreshPackHashAsync(_lifetimeCts.Token);
             await StartNetworkingAsync();
@@ -295,14 +318,19 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool _framePainted;
+    private bool _startupFinished;
     private bool _startupTraceReported;
 
-    /// <summary>Writes the one startup line, at whichever of the two
-    /// moments comes second: the first paint, or the end of the work the
-    /// window needs. Both are needed because either can be later.</summary>
+    /// <summary>
+    /// Writes the one startup line, once, when both halves have happened:
+    /// the frame is on screen and the work behind it is done. Either can
+    /// be the later one, and reporting on the first would lose whichever
+    /// marks the other still had to make.
+    /// </summary>
     private void ReportStartupTrace()
     {
-        if (_startupTraceReported || _logger is null) return;
+        if (_startupTraceReported || !_framePainted || !_startupFinished || _logger is null) return;
         _startupTraceReported = true;
         _logger.Info("Старт: " + StartupTrace.Describe());
     }

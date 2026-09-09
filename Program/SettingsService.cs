@@ -197,7 +197,16 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
-            var pack = MeasurePack(settings.ClientRelativePath);
+            // Weighing the pack means opening every jar in it, which on a
+            // full build is most of a second and is paid again the first time
+            // the mods folder changes - that is, after every pack update, on
+            // the launch where the player is already waiting. Almost no file
+            // needs the answer: one that carries a number of its own is read
+            // through arithmetic about the machine, not the pack. So it is
+            // asked for only where it is genuinely used, and the window gets
+            // the weight from RefreshPackMemory afterwards, off the UI thread.
+            PackMemoryProfile? weighed = null;
+            PackMemoryProfile Pack() => weighed ??= MeasurePack(settings.ClientRelativePath);
             // The number has meant two things and now means the first of them
             // again. It was the Java heap; for a while it was everything the
             // game may take, marked by memorySettingIsWholeGame; and it is the
@@ -210,11 +219,21 @@ public sealed class SettingsService
                 !HasJsonProperty(json, "memorySettingIsTheHeap") &&
                 HasJsonProperty(json, "memorySettingIsWholeGame"))
             {
-                CarryBudgetsAcrossToHeaps(settings, pack);
+                // This one really does need it: the migration runs once and
+                // the flag below closes it for good, so a wrong number here
+                // is a wrong number for ever.
+                CarryBudgetsAcrossToHeaps(settings, Pack());
             }
             settings.MemorySettingIsTheHeap = true;
+            // A file that already holds a number is clamped by what the
+            // machine has, which the pack does not enter into; only a file
+            // without one is given a recommendation, and that is worked out
+            // from the pack.
             settings = ApplyFallbacks(
-                settings, pack, MeasuredMemory, useRecommendedMemory: !hasConfiguredMemory);
+                settings,
+                hasConfiguredMemory ? PackMemoryProfile.Unknown : Pack(),
+                MeasuredMemory,
+                useRecommendedMemory: !hasConfiguredMemory);
             // Whose number is it, and which pack was it for? Up to schema 12
             // there was one answer for every pack, kept under a flag; a file
             // written then is read once and its number becomes the answer for
