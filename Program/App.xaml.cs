@@ -74,6 +74,10 @@ public partial class App : Application
             }
         }
 
+        // The file behind this path may have been replaced since the shell
+        // last looked at it, and it draws the icon from what it looked at.
+        ShellIconCache.AnnounceRunningExecutable();
+
         var window = new MainWindow();
         MainWindow = window;
         // A second press of the icon is a request for this window, not for
