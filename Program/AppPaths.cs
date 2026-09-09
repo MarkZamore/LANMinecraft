@@ -83,6 +83,10 @@ public sealed class AppPaths
     /// <summary>Copies of per-world documents taken before this build first rewrites them.</summary>
     public string IdentityBackups => Path.Combine(Personal, "Backups", "Identity");
     public string PackHashesFile => Path.Combine(Personal, "pack-hashes.json");
+
+    /// <summary>What each pack was last counted as carrying inside its own
+    /// jars; see <see cref="PackWeightCache"/>.</summary>
+    public string PackWeightsFile => Path.Combine(Personal, "pack-weights.json");
     public string WindowPlacementFile => Path.Combine(Personal, "window-placement.json");
     public string MinecraftWindowPlacementFile => Path.Combine(Personal, "minecraft-window-placement.json");
     public string SkinRegistryFile => Path.Combine(Personal, "skin-profiles.properties");

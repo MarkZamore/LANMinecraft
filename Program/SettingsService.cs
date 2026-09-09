@@ -52,7 +52,8 @@ public sealed class SettingsService
 
         try
         {
-            PackMemory = PackMemoryProfile.Measure(_paths.CombineUnderPacks(relativePath));
+            PackMemory = PackMemoryProfile.Measure(
+                _paths.CombineUnderPacks(relativePath), _paths.PackWeightsFile);
         }
         catch (InvalidOperationException)
         {
@@ -164,7 +165,8 @@ public sealed class SettingsService
     {
         try
         {
-            return PackMemoryProfile.Measure(_paths.CombineUnderPacks(relativePath));
+            return PackMemoryProfile.Measure(
+                _paths.CombineUnderPacks(relativePath), _paths.PackWeightsFile);
         }
         catch (InvalidOperationException)
         {

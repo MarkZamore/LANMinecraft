@@ -12,6 +12,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        StartupTrace.Mark("рантайм");
 
         // Before anything that can fail. An error the launcher does not catch
         // is still the launcher's to show: without these, Windows draws it, and
@@ -74,11 +75,14 @@ public partial class App : Application
             }
         }
 
+        StartupTrace.Mark("предстарт");
+
         // The file behind this path may have been replaced since the shell
         // last looked at it, and it draws the icon from what it looked at.
         ShellIconCache.AnnounceRunningExecutable();
 
         var window = new MainWindow();
+        StartupTrace.Mark("окно");
         MainWindow = window;
         // A second press of the icon is a request for this window, not for
         // another one, and the guard is what carries the request across.
@@ -91,6 +95,7 @@ public partial class App : Application
             window.Topmost = false;
         });
         window.Show();
+        StartupTrace.Mark("показ");
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

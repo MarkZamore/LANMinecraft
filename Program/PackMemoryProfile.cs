@@ -59,7 +59,10 @@ public readonly record struct PackMemoryProfile(
     /// Everything else - configs, scripts, saves - never reaches memory in a
     /// size worth counting.
     /// </summary>
-    public static PackMemoryProfile Measure(string packDirectory)
+    /// <param name="weightsFile">Where the count of jars inside jars is kept
+    /// between runs. Null asks for it to be worked out now, which is what the
+    /// tests and the launch itself do.</param>
+    public static PackMemoryProfile Measure(string packDirectory, string? weightsFile = null)
     {
         try
         {
@@ -73,7 +76,7 @@ public readonly record struct PackMemoryProfile(
             var assets =
                 MeasureFiles(Path.Combine(packDirectory, "resourcepacks"), extension: null).Bytes +
                 MeasureFiles(Path.Combine(packDirectory, "shaderpacks"), extension: null).Bytes;
-            var loaded = mods.Count + CountNestedMods(modsRoot, mods.Count, mods.Bytes);
+            var loaded = mods.Count + CountNestedMods(modsRoot, mods.Count, mods.Bytes, weightsFile);
             return new PackMemoryProfile(
                 loaded, mods.Bytes, assets, ReadMinecraftVersion(packDirectory), mods.Count);
         }
@@ -179,37 +182,35 @@ public readonly record struct PackMemoryProfile(
     /// exists, and counting it would mean opening every nested one as well -
     /// several hundred more archives for a handful of mods.
     /// </remarks>
-    private static int CountNestedMods(string modsRoot, int jarCount, long jarBytes)
+    private static int CountNestedMods(string modsRoot, int jarCount, long jarBytes, string? weightsFile)
     {
         if (!Directory.Exists(modsRoot)) return 0;
 
         var key = $"{modsRoot}|{jarCount}|{jarBytes}";
         if (NestedCounts.TryGetValue(key, out var cached)) return cached;
+        // The same pack, unchanged since the last run: the walk below is the
+        // longest thing between a double-click and a window, and its answer
+        // cannot have moved while the jars did not.
+        var remembered = PackWeightCache.Recall(weightsFile, key);
+        if (remembered is int known)
+        {
+            NestedCounts[key] = known;
+            return known;
+        }
 
-        var nested = 0;
+        int nested;
         try
         {
-            foreach (var jar in Directory.EnumerateFiles(modsRoot, "*.jar", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    using var archive = ZipFile.OpenRead(jar);
-                    foreach (var entry in archive.Entries)
-                    {
-                        var name = entry.FullName;
-                        if (name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) &&
-                            (name.StartsWith("META-INF/jars/", StringComparison.OrdinalIgnoreCase) ||
-                             name.StartsWith("META-INF/jarjar/", StringComparison.OrdinalIgnoreCase)))
-                        {
-                            nested++;
-                        }
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
-                {
-                    // A jar that will not open carries nothing anyone can count.
-                }
-            }
+            // Seven hundred archives, opened one after another, is the better
+            // part of a second that the player spends looking at no window at
+            // all. Each one is read on its own and nothing is shared but the
+            // total, so they are read at once instead; the work is waiting on
+            // the disk, not on the processor, which is exactly the shape this
+            // helps. The order they finish in does not matter: it is a sum.
+            nested = Directory.EnumerateFiles(modsRoot, "*.jar", SearchOption.AllDirectories)
+                .AsParallel()
+                .Select(CountNestedModsIn)
+                .Sum();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -217,7 +218,35 @@ public readonly record struct PackMemoryProfile(
         }
 
         NestedCounts[key] = nested;
+        PackWeightCache.Remember(weightsFile, key, nested);
         return nested;
+    }
+
+    /// <summary>The jars one archive carries at its top level, or none if it
+    /// will not open.</summary>
+    private static int CountNestedModsIn(string jar)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(jar);
+            var nested = 0;
+            foreach (var entry in archive.Entries)
+            {
+                var name = entry.FullName;
+                if (name.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) &&
+                    (name.StartsWith("META-INF/jars/", StringComparison.OrdinalIgnoreCase) ||
+                     name.StartsWith("META-INF/jarjar/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    nested++;
+                }
+            }
+            return nested;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            // A jar that will not open carries nothing anyone can count.
+            return 0;
+        }
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> NestedCounts =

@@ -43,6 +43,7 @@
       The file gets bigger for it. That is the trade, and it is not close.
     -->
     <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <PublishReadyToRun>true</PublishReadyToRun>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <PublishDir>..\</PublishDir>
