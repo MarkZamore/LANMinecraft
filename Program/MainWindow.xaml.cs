@@ -119,6 +119,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
+        ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); ReportStartupTrace(); };
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this, ClientAspect());
         BuildComboBox.ItemsSource = _builds;
@@ -146,8 +147,9 @@ public partial class MainWindow : Window
         {
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
-            LogCleanupService.RunCleanup(_paths);
+            LogCleanupService.RotateLauncherLog(_paths);
             _logger = new Logger(_paths.LogFile);
+            StartupTrace.Mark("журнал");
             // A name too long for its field walks itself so the whole of it can
             // be read; it holds still while the field is being edited. It is
             // built here rather than in the constructor because it reports what
@@ -155,14 +157,9 @@ public partial class MainWindow : Window
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
             LoadChangelog();
             ShowSidePanel(news: false);
-            DeprecatedFileCleanupService.Run(_paths, _logger);
-            // And the structural pass: runtimes for builds that are gone, and
-            // the copies of the game a build kept before the game was shared.
-            // It runs after the one above because that one is what removes the
-            // folders this one would otherwise have to reason about.
-            StructureCleanupService.Run(_paths, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
+            StartupTrace.Mark("настройки");
             _logger.LineWritten += line => PostToUi(() => AppendLog(line));
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
@@ -181,7 +178,9 @@ public partial class MainWindow : Window
             _steamClient.StatusChanged += (_, status) => PostToUi(() => ApplySteamStatus(status));
             _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
+            StartupTrace.Mark("сервисы");
             await ConnectSteamAndBindIdentityAsync();
+            StartupTrace.Mark("steam");
             _peerTransport = new SteamPeerTransport(_steamClient, _logger);
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
             _peerDirectory = new SteamPeerDirectory(_steamClient, _peerTransport, _logger);
@@ -259,7 +258,29 @@ public partial class MainWindow : Window
             }
             _uiTimer.Start();
             SetState("Ready");
+            // Housekeeping nobody waits for: last week's logs, files this
+            // launcher used to write, runtimes for builds that are gone. It
+            // walks the instances folder and what the single-file host left
+            // in the temp directory, a third of a second on a full
+            // installation, and it used to do that walk before the window
+            // existed. The order between the two passes is kept: the second
+            // reasons about folders the first is what removes.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    LogCleanupService.RunCleanup(_paths, rotateLauncherLog: false);
+                    DeprecatedFileCleanupService.Run(_paths, _logger);
+                    StructureCleanupService.Run(_paths, _logger);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn("Housekeeping did not finish: " + ex.Message);
+                }
+            });
+            StartupTrace.Mark("интерфейс");
             _logger.Info("Minecraft portable launcher started.");
+            ReportStartupTrace();
             await RefreshPackHashAsync(_lifetimeCts.Token);
             await StartNetworkingAsync();
             _startupComplete = true;
@@ -272,6 +293,18 @@ public partial class MainWindow : Window
             NoticeDialog.Show(this, "Лаунчер не смог запуститься", ex.Message);
             Close();
         }
+    }
+
+    private bool _startupTraceReported;
+
+    /// <summary>Writes the one startup line, at whichever of the two
+    /// moments comes second: the first paint, or the end of the work the
+    /// window needs. Both are needed because either can be later.</summary>
+    private void ReportStartupTrace()
+    {
+        if (_startupTraceReported || _logger is null) return;
+        _startupTraceReported = true;
+        _logger.Info("Старт: " + StartupTrace.Describe());
     }
 
     private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)

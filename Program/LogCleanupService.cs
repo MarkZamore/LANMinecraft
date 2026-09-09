@@ -29,9 +29,22 @@ public static class LogCleanupService
     private static readonly string[] SessionDiagnosticDirectories = ["logs", "debug", "crash-reports"];
     private const string DiscardedGameLogPattern = "debug-*.log.gz";
 
-    public static void RunCleanup(AppPaths paths)
+    /// <summary>
+    /// Moves the last run's log aside so this run writes a fresh one. It has
+    /// to happen before the logger opens the file, which is why it is not
+    /// left to <see cref="RunCleanup"/> with the rest of the housekeeping.
+    /// </summary>
+    public static void RotateLauncherLog(AppPaths paths)
     {
+        ArgumentNullException.ThrowIfNull(paths);
         CleanupLauncherLog(paths.LogFile);
+    }
+
+    /// <param name="rotateLauncherLog">False once the logger holds the file:
+    /// the log is moved aside before a run, never during one.</param>
+    public static void RunCleanup(AppPaths paths, bool rotateLauncherLog = true)
+    {
+        if (rotateLauncherLog) CleanupLauncherLog(paths.LogFile);
         CleanupMinecraftGeneratedFiles(paths.Personal);
         CleanupInstanceGeneratedFiles(paths.Instances);
         try
