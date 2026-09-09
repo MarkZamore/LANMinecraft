@@ -59,6 +59,16 @@
           The mod has no switch of its own for it.
         -->
         <Logger level="INFO" name="blur"/>
+        <!--
+          Myotus writes a DEBUG line for every class it looks at while it
+          scans annotations - seventy-nine thousand of them in one launch,
+          more than a third of the whole debug file. They are published from
+          the render thread, and when the disk is busy the ring buffer fills
+          and that thread stops in it: a game that looks frozen on the
+          terrain screen was waiting for room to write a log line nobody
+          reads. The mod has no switch of its own.
+        -->
+        <Logger level="INFO" name="me.myogoo.myotus"/>
         <Logger level="INFO" name="net.minecraft.server.MinecraftServer"/>
         <Root level="INFO">
             <AppenderRef ref="SysOut" level="INFO"/>
