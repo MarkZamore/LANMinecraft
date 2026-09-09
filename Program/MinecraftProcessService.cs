@@ -626,6 +626,14 @@ public sealed class MinecraftProcessService
             // sees first. A JVM that exits on the spot never shows either, and
             // the launcher says what happened instead.
             "-XX:+ExitOnOutOfMemoryError",
+            // And a picture of the heap on the way out. A pack that runs out
+            // of memory says which mod was running and nothing about what was
+            // holding the gigabytes, and every guess after that is a guess: a
+            // whole evening went on inferring four gigabytes that one dump
+            // names in five minutes. It is written before the JVM's parting
+            // line, so the exit above does not cost it.
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            $"-XX:HeapDumpPath={EnsureHeapDumpDirectory(gameDir)}",
             // Every collection, with its length, into the same log the adapter
             // writes its own minute report to - so a pause and a tick that
             // went missing can be read against each other without lining up
@@ -1121,12 +1129,42 @@ public sealed class MinecraftProcessService
         internal const string FileName = "launcher-console.log";
 
         /// <summary>Enough for any startup; a session that talks more than this loses the oldest.</summary>
-        private const long MaximumFileBytes = 4L * 1024 * 1024;
+        private const long MaximumFileBytes = 16L * 1024 * 1024;
 
         private readonly Lock _gate = new();
         private readonly StringBuilder _lines = new();
         private StreamWriter? _file;
         private long _written;
+
+        /// <summary>
+        /// Moves the last run's console aside before this one takes the name.
+        /// The file holds the collector's own log, which is the only record of
+        /// how a heap filled, and a launch after a crash used to erase exactly
+        /// the run somebody was about to read. Five are kept; they are small.
+        /// </summary>
+        private static void KeepThePreviousOne(string logs)
+        {
+            try
+            {
+                var current = Path.Combine(logs, FileName);
+                if (File.Exists(current))
+                {
+                    var stamp = File.GetLastWriteTime(current).ToString(
+                        "yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+                    File.Move(current, Path.Combine(logs, $"launcher-console-{stamp}.log"), overwrite: true);
+                }
+                var kept = Directory.GetFiles(logs, "launcher-console-*.log");
+                Array.Sort(kept, StringComparer.Ordinal);
+                for (var i = 0; i < kept.Length - 5; i++)
+                {
+                    File.Delete(kept[i]);
+                }
+            }
+            catch
+            {
+                // Losing the previous copy is not worth failing a launch over.
+            }
+        }
 
         /// <summary>Starts the file copy; failure to open one is never fatal to a launch.</summary>
         public void MirrorTo(string gameDirectory)
@@ -1135,6 +1173,7 @@ public sealed class MinecraftProcessService
             {
                 var logs = Path.Combine(gameDirectory, "logs");
                 Directory.CreateDirectory(logs);
+                KeepThePreviousOne(logs);
                 var writer = new StreamWriter(
                     new FileStream(
                         Path.Combine(logs, FileName),
@@ -1363,6 +1402,24 @@ public sealed class MinecraftProcessService
                 throw new InvalidDataException($"Pack preparation is required: unresolved pack.mcmeta placeholders in {Path.GetFileName(jarPath)}.");
             }
         }
+    }
+
+    /// <summary>
+    /// Where the JVM writes the heap if it runs out of memory. The flag takes
+    /// a path and does not make the folder, so an absent one costs the dump.
+    /// </summary>
+    private static string EnsureHeapDumpDirectory(string gameDir)
+    {
+        var directory = Path.Combine(gameDir, "crash-heaps");
+        try
+        {
+            Directory.CreateDirectory(directory);
+        }
+        catch
+        {
+            // A dump nobody can write is one line in the log, not a failed launch.
+        }
+        return directory;
     }
 
     private void EnsureModernFixShutdownWorkaround(string gameDir)
