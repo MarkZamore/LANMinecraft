@@ -70,6 +70,11 @@ public sealed partial class PortablePackSyncService
         new(
             "TerraFirma Rebirth",
             new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")),
+        // Plain Minecraft on the newest version there is, with a recipe viewer
+        // and nothing else. It is the only build here that brings no client jar
+        // of its own: the launcher fetches Mojang's for the version its manifest
+        // names, so the whole download is one megabyte.
+        new("Minecraft 26.2", new PackSyncSource("MarkZamore", "Minecraft-26.2", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
