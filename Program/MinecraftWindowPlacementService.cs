@@ -295,6 +295,28 @@ public sealed class MinecraftWindowPlacementService
         }
     }
 
+    /// <summary>
+    /// Whether the process shows any window at all, owned dialogs included.
+    /// </summary>
+    /// <remarks>
+    /// Process.MainWindowHandle skips owned windows, and the dialog a Java
+    /// program opens with no parent - the one a fatal error reports itself in -
+    /// is owned by a hidden shared frame, so a process showing nothing but that
+    /// dialog would look windowless to it.
+    /// </remarks>
+    internal static bool HasVisibleWindow(int processId)
+    {
+        var found = false;
+        EnumWindows((window, parameter) =>
+        {
+            if (!IsWindowVisible(window)) return true;
+            if (GetWindowThreadProcessId(window, out var ownerProcessId) == 0 || ownerProcessId != processId) return true;
+            found = true;
+            return false;
+        }, nint.Zero);
+        return found;
+    }
+
     private static nint FindMinecraftWindow(int processId)
     {
         nint bestWindow = nint.Zero;
