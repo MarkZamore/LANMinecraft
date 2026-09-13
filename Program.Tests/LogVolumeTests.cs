@@ -51,6 +51,146 @@ public sealed class LogVolumeTests : IDisposable
         Assert.True(File.Exists(latest));
     }
 
+    /// <summary>
+    /// e4steam writes when it accepts a guest, closes a bridge or loses a
+    /// session at DEBUG, and only the debug copy keeps DEBUG. Throwing that copy
+    /// away used to throw away the only account of why a guest fell out of a world.
+    /// </summary>
+    [Fact]
+    public void TheE4steamLinesOfTheDebugCopy_OutliveIt()
+    {
+        var paths = CreatePaths();
+        var instance = paths.CombineUnderInstances("Some Build");
+        var logs = Path.Combine(instance, "logs");
+        Directory.CreateDirectory(logs);
+        var debug = Path.Combine(logs, "debug.log");
+        File.WriteAllLines(debug,
+        [
+            "[13Sep2026 20:35:01.000] [Render thread/DEBUG] [net.minecraft.client/]: noise",
+            "[13Sep2026 20:35:02.000] [e4steam-steam-runtime/DEBUG] [e4steam/]: Accepted Steam session for known lobby peer",
+            "[13Sep2026 20:35:03.000] [e4steam-steam-runtime/WARN] [e4steam/]: Steam Networking Messages session failed",
+            "java.io.IOException: bridge closed",
+            "\tat link.e4steam.SteamRuntime.run(SteamRuntime.java:120)",
+            "[13Sep2026 20:35:04.000] [Render thread/DEBUG] [net.minecraft.client/]: more noise",
+        ]);
+
+        LogCleanupService.RetainRecentSessionDiagnostics(instance);
+
+        Assert.False(File.Exists(debug));
+        var kept = File.ReadAllLines(Path.Combine(logs, LogCleanupService.E4steamPreviousLogName))
+            .Where(line => !line.StartsWith("[launcher]", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(4, kept.Length);
+        Assert.Contains(kept, line => line.Contains("Accepted Steam session", StringComparison.Ordinal));
+        Assert.Contains(kept, line => line.StartsWith("\tat link.e4steam", StringComparison.Ordinal));
+        Assert.DoesNotContain(kept, line => line.Contains("noise", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The loader names e4steam in lines that are not e4steam's - every pack it
+    /// sorts, every mixin config it applies - and those lines run to megabytes.
+    /// Only what e4steam itself wrote is worth keeping.
+    /// </summary>
+    [Fact]
+    public void LinesThatOnlyMentionE4steam_AreNotKept()
+    {
+        var logs = CreateLogs(out var instance);
+        File.WriteAllLines(Path.Combine(logs, "debug.log"),
+        [
+            "[13Sep2026 20:35:01.000] [main/DEBUG] [mixin/]: Mixing config e4steam.mixins.json",
+            "[13Sep2026 20:35:01.000] [Worker-Main-2/INFO] [villagerapi/]: Created new filesystem for mod pack: e4steam",
+            "[13Sep2026 20:35:01.000] [Render thread/DEBUG] [net.fabricmc/]: Final sorting result: vanilla, mod/e4steam, mod/emi",
+        ]);
+
+        LogCleanupService.RetainRecentSessionDiagnostics(instance);
+
+        Assert.False(File.Exists(Path.Combine(logs, LogCleanupService.E4steamPreviousLogName)));
+    }
+
+    /// <summary>
+    /// The loader rolls debug.log into debug-1.log.gz on every start, so the
+    /// session a guest fell out of is often already an archive by the time the
+    /// launcher sweeps.
+    /// </summary>
+    [Fact]
+    public void TheRolledDebugArchives_AreReadToo()
+    {
+        var logs = CreateLogs(out var instance);
+        WriteGzip(Path.Combine(logs, "debug-2.log.gz"),
+            "[12Sep2026 21:00:00.000] [e4steam-steam-runtime/DEBUG] [e4steam/]: OLDEST_MARKER");
+        WriteGzip(Path.Combine(logs, "debug-1.log.gz"),
+            "[13Sep2026 19:00:00.000] [e4steam-steam-runtime/WARN] [e4steam/]: ARCHIVED_MARKER");
+        File.WriteAllLines(Path.Combine(logs, "debug.log"),
+            ["[13Sep2026 20:35:01.000] [Render thread/DEBUG] [net.minecraft.client/]: noise"]);
+
+        LogCleanupService.RetainRecentSessionDiagnostics(instance);
+
+        var kept = File.ReadAllText(Path.Combine(logs, LogCleanupService.E4steamPreviousLogName));
+        Assert.Contains("ARCHIVED_MARKER", kept, StringComparison.Ordinal);
+        Assert.True(
+            kept.IndexOf("OLDEST_MARKER", StringComparison.Ordinal) < kept.IndexOf("ARCHIVED_MARKER", StringComparison.Ordinal),
+            "The oldest archive has to come first.");
+        Assert.False(File.Exists(Path.Combine(logs, "debug-1.log.gz")));
+    }
+
+    /// <summary>
+    /// Players restart the game once or twice to try again before anybody sends
+    /// a report; the session that went wrong must still be there when they do.
+    /// </summary>
+    [Fact]
+    public void Sessions_AreAddedToTheRecord_NotReplaced()
+    {
+        var logs = CreateLogs(out var instance);
+        File.WriteAllLines(Path.Combine(logs, "debug.log"),
+            ["[13Sep2026 20:00:00.000] [e4steam-steam-runtime/WARN] [e4steam/]: FIRST_SESSION_MARKER"]);
+        LogCleanupService.RetainRecentSessionDiagnostics(instance);
+        File.WriteAllLines(Path.Combine(logs, "debug.log"),
+            ["[13Sep2026 21:00:00.000] [e4steam-steam-runtime/DEBUG] [e4steam/]: SECOND_SESSION_MARKER"]);
+        LogCleanupService.RetainRecentSessionDiagnostics(instance);
+
+        var kept = File.ReadAllText(Path.Combine(logs, LogCleanupService.E4steamPreviousLogName));
+        Assert.Contains("FIRST_SESSION_MARKER", kept, StringComparison.Ordinal);
+        Assert.Contains("SECOND_SESSION_MARKER", kept, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A launcher restarted over a game still playing sweeps that instance too,
+    /// and the debug log it would read is a session not finished yet.
+    /// </summary>
+    [Fact]
+    public void ADebugLogTheGameStillWrites_IsLeftAlone()
+    {
+        var logs = CreateLogs(out var instance);
+        var debug = Path.Combine(logs, "debug.log");
+        File.WriteAllLines(debug,
+            ["[13Sep2026 20:00:00.000] [e4steam-steam-runtime/WARN] [e4steam/]: LIVE_SESSION_MARKER"]);
+
+        using (new FileStream(debug, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        {
+            LogCleanupService.RetainRecentSessionDiagnostics(instance);
+        }
+
+        Assert.True(File.Exists(debug));
+        Assert.False(File.Exists(Path.Combine(logs, LogCleanupService.E4steamPreviousLogName)));
+    }
+
+    private string CreateLogs(out string instance)
+    {
+        var paths = CreatePaths();
+        instance = paths.CombineUnderInstances("Some Build");
+        var logs = Path.Combine(instance, "logs");
+        Directory.CreateDirectory(logs);
+        return logs;
+    }
+
+    private static void WriteGzip(string path, params string[] lines)
+    {
+        using var file = File.Create(path);
+        using var gzip = new System.IO.Compression.GZipStream(file, System.IO.Compression.CompressionLevel.Fastest);
+        using var writer = new StreamWriter(gzip);
+        foreach (var line in lines) writer.WriteLine(line);
+    }
+
     [Fact]
     public void InstanceDiagnostics_StayInsideTheirBudget()
     {

@@ -29,6 +29,12 @@ public static class LogCleanupService
     private static readonly string[] SessionDiagnosticDirectories = ["logs", "debug", "crash-reports"];
     private const string DiscardedGameLogPattern = "debug-*.log.gz";
 
+    /// <summary>The e4steam lines of the last debug.log, kept after the log itself is discarded.</summary>
+    internal const string E4steamPreviousLogName = "e4steam-previous.log";
+
+    /// <summary>A whole evening of e4steam lines fits; a runaway loop of them does not fill the budget.</summary>
+    private const int E4steamKeptChars = 2 * 1024 * 1024;
+
     /// <summary>
     /// Moves the last run's log aside so this run writes a fresh one. It has
     /// to happen before the logger opens the file, which is why it is not
@@ -348,6 +354,11 @@ public static class LogCleanupService
     private static void DiscardGameDebugLogs(string logsDirectory)
     {
         if (!Directory.Exists(logsDirectory)) return;
+        // A launcher restarted over a game still playing sweeps its instance
+        // too; that session's debug log is still being written, and neither
+        // its e4steam lines nor the file itself are finished yet.
+        if (IsHeldByTheGame(Path.Combine(logsDirectory, "debug.log"))) return;
+        KeepE4steamLines(logsDirectory);
         foreach (var name in DiscardedGameLogNames)
         {
             DeleteFile(Path.Combine(logsDirectory, name));
@@ -355,6 +366,62 @@ public static class LogCleanupService
         foreach (var file in EnumerateFilesSafe(logsDirectory, DiscardedGameLogPattern, SearchOption.TopDirectoryOnly))
         {
             DeleteFile(file.FullName);
+        }
+    }
+
+    /// <summary>
+    /// Writes down what e4steam said before the debug copies that hold it go;
+    /// see <see cref="E4steamLogLines"/>. Nothing else in those copies is kept.
+    /// </summary>
+    /// <remarks>
+    /// Sessions are added to the record rather than replacing it: the one worth
+    /// reading is the one a guest fell out of, and by the time a report is sent
+    /// the players have usually restarted the game once or twice to try again.
+    /// The oldest lines go first once the record is full.
+    /// </remarks>
+    private static void KeepE4steamLines(string logsDirectory)
+    {
+        var sources = E4steamLogLines.DebugLogsOldestFirst(logsDirectory);
+        if (sources.Count == 0) return;
+        try
+        {
+            var lines = E4steamLogLines.Read(sources, E4steamKeptChars);
+            if (lines.Count == 0) return;
+
+            var record = Path.Combine(logsDirectory, E4steamPreviousLogName);
+            var ended = File.GetLastWriteTime(sources[^1]);
+            var all = new List<string>();
+            if (File.Exists(record)) all.AddRange(E4steamLogLines.ReadTail(record, E4steamKeptChars));
+            all.Add($"[launcher] --- session last written {ended:yyyy-MM-dd HH:mm} ---");
+            all.AddRange(lines);
+
+            long size = all.Sum(line => (long)line.Length + 1);
+            var skip = 0;
+            while (size > E4steamKeptChars && skip < all.Count)
+            {
+                size -= all[skip].Length + 1;
+                skip++;
+            }
+            File.WriteAllLines(record, all.Skip(skip), new UTF8Encoding(false));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // The session still happened; only this record of it is missing.
+        }
+    }
+
+    /// <summary>Whether the game still has the file open for writing.</summary>
+    private static bool IsHeldByTheGame(string path)
+    {
+        if (!File.Exists(path)) return false;
+        try
+        {
+            using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
         }
     }
 

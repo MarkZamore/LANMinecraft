@@ -34,6 +34,29 @@ public interface ISteamApiFacade
 
     /// <summary>Presence keys Steam holds for a friend, whatever their origin.</summary>
     int GetFriendRichPresenceKeyCount(ulong steamId64);
+
+    /// <summary>
+    /// Steam's own account of its connection to its servers: lost, failed to
+    /// come back, or back. Raised on the thread that runs callbacks.
+    /// </summary>
+    event Action<SteamServerConnectionChange>? ServerConnectionChanged;
+}
+
+/// <summary>One change in the Steam client's connection to Steam's servers.</summary>
+/// <param name="Connected">True when the servers are back.</param>
+/// <param name="Result">Steam's EResult for a loss; 1 (OK) when connected.</param>
+/// <param name="StillRetrying">Whether Steam says it keeps trying by itself.</param>
+public readonly record struct SteamServerConnectionChange(bool Connected, int Result, bool StillRetrying)
+{
+    /// <summary>
+    /// The account signed in on another computer. Steam does not sign back in
+    /// by itself after this one; the player has to.
+    /// </summary>
+    public bool SignedInElsewhere =>
+        !Connected &&
+        Result is (int)EResult.k_EResultLoggedInElsewhere
+            or (int)EResult.k_EResultLogonSessionReplaced
+            or (int)EResult.k_EResultAlreadyLoggedInElsewhere;
 }
 
 /// <summary>The production implementation; the only place that links Steamworks.NET.</summary>
@@ -53,6 +76,11 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
     public const string NoOverlayVariable = "SteamNoOverlayUIDrawing";
 
     private bool _initialized;
+    private Callback<SteamServersConnected_t>? _serversConnected;
+    private Callback<SteamServersDisconnected_t>? _serversDisconnected;
+    private Callback<SteamServerConnectFailure_t>? _serverConnectFailure;
+
+    public event Action<SteamServerConnectionChange>? ServerConnectionChanged;
 
     public bool Initialize(out string failureReason)
     {
@@ -72,8 +100,19 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
             if (!_initialized)
             {
                 failureReason = string.IsNullOrWhiteSpace(message) ? result.ToString() : message;
+                return false;
             }
-            return _initialized;
+
+            // Registered once per facade: a retry initialises Steam again
+            // without shutting it down first, and a second registration would
+            // deliver every change twice. Shutdown releases them.
+            _serversConnected ??= Callback<SteamServersConnected_t>.Create(_ =>
+                ServerConnectionChanged?.Invoke(new SteamServerConnectionChange(true, (int)EResult.k_EResultOK, false)));
+            _serversDisconnected ??= Callback<SteamServersDisconnected_t>.Create(lost =>
+                ServerConnectionChanged?.Invoke(new SteamServerConnectionChange(false, (int)lost.m_eResult, true)));
+            _serverConnectFailure ??= Callback<SteamServerConnectFailure_t>.Create(failed =>
+                ServerConnectionChanged?.Invoke(new SteamServerConnectionChange(false, (int)failed.m_eResult, failed.m_bStillRetrying)));
+            return true;
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
@@ -86,6 +125,12 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
     {
         if (!_initialized) return;
         _initialized = false;
+        _serversConnected?.Dispose();
+        _serversDisconnected?.Dispose();
+        _serverConnectFailure?.Dispose();
+        _serversConnected = null;
+        _serversDisconnected = null;
+        _serverConnectFailure = null;
         SteamAPI.Shutdown();
     }
 
