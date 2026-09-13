@@ -103,6 +103,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     private readonly Func<BugReportContext> _contextProvider;
     private readonly Func<CancellationToken, Task<SupportEnvironmentSnapshot>>? _environmentProvider;
     private readonly TimeProvider _timeProvider;
+    private readonly Func<string?> _steamLogsDirectoryProvider;
 
     public BugReportService(
         AppPaths paths,
@@ -111,7 +112,8 @@ public sealed class BugReportService : IPortableProtocolHandler
         Func<string?> instanceDirectoryProvider,
         Func<BugReportContext> contextProvider,
         Func<CancellationToken, Task<SupportEnvironmentSnapshot>>? environmentProvider = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Func<string?>? steamLogsDirectoryProvider = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -121,6 +123,7 @@ public sealed class BugReportService : IPortableProtocolHandler
         _contextProvider = contextProvider ?? throw new ArgumentNullException(nameof(contextProvider));
         _environmentProvider = environmentProvider;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _steamLogsDirectoryProvider = steamLogsDirectoryProvider ?? SteamClientLogs.FindDirectory;
         _sanitizer = SupportLogSanitizer.CreateDefault(paths);
     }
 
@@ -330,6 +333,9 @@ public sealed class BugReportService : IPortableProtocolHandler
         string? environmentJson)
     {
         var entries = new List<(string Name, string Path, int MaxBytes)>();
+        // Entries put together from several files, or picked out of one, rather
+        // than the end of a single log.
+        var gathered = new List<(string Name, Func<IEnumerable<string>> Lines)>();
         if (File.Exists(_paths.LogFile))
         {
             entries.Add(("launcher/logs.log", _paths.LogFile, MaxLiveLogTailBytes));
@@ -363,6 +369,16 @@ public sealed class BugReportService : IPortableProtocolHandler
                 if (File.Exists(debug))
                 {
                     entries.Add(("game/debug.log", debug, MaxSupportingLogTailBytes));
+                }
+
+                // Why a guest fell out of a world is in what e4steam said about its
+                // sessions, and that sits at DEBUG inside a log whose last two
+                // megabytes are usually something else entirely.
+                var e4steamPrevious = Path.Combine(logs, LogCleanupService.E4steamPreviousLogName);
+                var debugLogs = E4steamLogLines.DebugLogsOldestFirst(logs);
+                if (debugLogs.Count > 0 || File.Exists(e4steamPrevious))
+                {
+                    gathered.Add(("game/e4steam.log", () => E4steamReportLines(debugLogs, e4steamPrevious)));
                 }
                 foreach (var archived in Directory.EnumerateFiles(logs, "*.log.gz")
                              .Select(path => new FileInfo(path))
@@ -405,6 +421,19 @@ public sealed class BugReportService : IPortableProtocolHandler
             }
         }
 
+        var steamLogs = _steamLogsDirectoryProvider();
+        var connection = steamLogs is null ? null : Path.Combine(steamLogs, SteamClientLogs.ConnectionLogName);
+        if (connection is not null && File.Exists(connection))
+        {
+            gathered.Add(("steam/connection_log.txt", () => SteamClientLogs.RecentConnectionLines(
+                connection, _timeProvider.GetLocalNow().DateTime, TimeSpan.FromDays(1), MaxSupportingLogTailBytes,
+                context.SteamId64.Value)));
+        }
+        else
+        {
+            _logger.Info("The Steam client's connection log was not found; the report goes without it.");
+        }
+
         var written = new List<string>();
         using (var zip = ZipFile.Open(archivePath, ZipArchiveMode.Create))
         {
@@ -419,6 +448,20 @@ public sealed class BugReportService : IPortableProtocolHandler
                 try
                 {
                     var text = ReadSanitizedTail(path, maxBytes);
+                    if (text.Length == 0) continue;
+                    WriteTextEntry(zip, name, text);
+                    written.Add(name);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warn($"Bug report could not include {name}: {ex.Message}");
+                }
+            }
+            foreach (var (name, lines) in gathered)
+            {
+                try
+                {
+                    var text = SanitizeLines(lines());
                     if (text.Length == 0) continue;
                     WriteTextEntry(zip, name, text);
                     written.Add(name);
@@ -474,6 +517,38 @@ public sealed class BugReportService : IPortableProtocolHandler
             .AppendLine("--- what the player wrote ---")
             .AppendLine(NormalizeMessage(message))
             .ToString();
+
+    /// <summary>Lines put together for a report, through the same sanitiser as every log.</summary>
+    private string SanitizeLines(IEnumerable<string> lines)
+    {
+        var builder = new StringBuilder();
+        foreach (var line in lines)
+        {
+            var sanitized = _sanitizer.SanitizeLine(line);
+            if (sanitized is not null) builder.AppendLine(sanitized);
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// What e4steam said in the session before this one - kept when its debug
+    /// log was cleared - and in this one, in that order.
+    /// </summary>
+    private static IEnumerable<string> E4steamReportLines(IReadOnlyList<string> debugLogs, string previous)
+    {
+        var lines = new List<string>();
+        if (File.Exists(previous))
+        {
+            lines.Add("[launcher] --- earlier sessions, kept when their debug logs were cleared ---");
+            lines.AddRange(E4steamLogLines.ReadTail(previous, MaxSupportingLogTailBytes / 2));
+        }
+        if (debugLogs.Count > 0)
+        {
+            lines.Add("[launcher] --- the debug logs still here ---");
+            lines.AddRange(E4steamLogLines.Read(debugLogs, MaxSupportingLogTailBytes / 2));
+        }
+        return lines;
+    }
 
     /// <summary>
     /// The end of a log, sanitised. A crash is explained by the last pages, and
@@ -696,6 +771,8 @@ public sealed class BugReportService : IPortableProtocolHandler
             .AppendLine("- `game/latest.log` - the game session, sanitised; a long one keeps its start and its end")
             .AppendLine("- `game/launcher-console.log` - what the game printed before its own logging existed")
             .AppendLine("- `game/debug.log` - the game's debug log, when the pack keeps one")
+            .AppendLine("- `game/e4steam.log` - what e4steam said about Steam sessions, this session and the one before")
+            .AppendLine("- `steam/connection_log.txt` - the Steam client's own record of its servers, last day")
             .AppendLine("- `crash-reports/` - crash reports from the last day, if any")
             .AppendLine("- `jvm/` - hs_err files, when the Java runtime itself died")
             .ToString();

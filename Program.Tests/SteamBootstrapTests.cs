@@ -173,6 +173,211 @@ public sealed class SteamBootstrapTests : IDisposable
     }
 
     /// <summary>
+    /// A network blip takes Steam off its servers while Steam itself keeps
+    /// running, and Steam is back within seconds. The launcher used to end its
+    /// session on the first such blip and stayed without Steam until somebody
+    /// pressed Retry - which a guest found out about by being unable to play.
+    /// </summary>
+    [Fact]
+    public async Task WhenSteamServersDrop_WhileSteamRuns_TheSessionWaitsAndComesBackByItself()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 3, true));
+        api.LoggedOn = false;
+        var waiting = await reconnecting;
+        Assert.False(waiting.IsReady);
+        Assert.Equal("MarkZamore", waiting.PersonaName);
+        Assert.Equal(SteamClientService.ReconnectingMessage, waiting.Message);
+
+        // Retry while it waits must not start a second session over the first.
+        var retried = await service.StartAsync(CancellationToken.None);
+        Assert.Equal(SteamAvailability.Reconnecting, retried.Availability);
+
+        var ready = WaitFor(service, SteamAvailability.Ready);
+        api.LoggedOn = true;
+        var back = await ready;
+        Assert.True(back.IsReady);
+        Assert.Equal(76561198000000001UL, back.SteamId64);
+        Assert.Equal(1, api.InitializeCount);
+        Assert.Equal(0, api.ShutdownCount);
+    }
+
+    [Fact]
+    public async Task WhenTheSteamProcessGoes_TheSessionStillEnds()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+        api.SteamRunning = false;
+        api.LoggedOn = false;
+
+        Assert.Equal(SteamClientService.SteamLostMessage, (await ended).Message);
+    }
+
+    [Fact]
+    public async Task SignedInOnAnotherComputer_TheWaitSaysSo()
+    {
+        // Steam does not come back from this by itself; the player has to.
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 6, false));
+        api.LoggedOn = false;
+
+        Assert.Equal(SteamClientService.LoggedInElsewhereMessage, (await reconnecting).Message);
+    }
+
+    [Fact]
+    public async Task SignedBackInAsAnotherAccount_TheSessionEnds()
+    {
+        // The profile played as and who may connect belong to the old account.
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 3, true));
+        api.LoggedOn = false;
+        await reconnecting;
+
+        var ended = WaitFor(service, SteamAvailability.NotLoggedIn);
+        api.SteamId = 76561198000000002;
+        api.LoggedOn = true;
+
+        Assert.Equal(SteamClientService.AccountChangedMessage, (await ended).Message);
+    }
+
+    /// <summary>
+    /// A Steam that restarted between two checks also answers "running, not
+    /// signed in", but it never said it lost its servers, and the session the
+    /// launcher holds belongs to the old process. Waiting for it would wait
+    /// forever with nothing to press.
+    /// </summary>
+    [Fact]
+    public async Task NotSignedIn_WithoutSteamReportingLostServers_EndsTheSessionAsBefore()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+        api.LoggedOn = false;
+
+        Assert.Equal(SteamClientService.SteamLostMessage, (await ended).Message);
+    }
+
+    [Fact]
+    public async Task WaitingTooLong_EndsTheSession_SoRetryStartsAgain()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        await using var service = new SteamClientService(
+            api, livenessCheckInterval: TimeSpan.FromMilliseconds(20), reconnectLimit: TimeSpan.FromMilliseconds(200));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 3, true));
+        api.LoggedOn = false;
+        await reconnecting;
+
+        Assert.Equal(SteamClientService.ReconnectTimedOutMessage, (await ended).Message);
+
+        // The button that is back now does start a new session.
+        api.LoggedOn = true;
+        var retried = await service.StartAsync(CancellationToken.None);
+        Assert.True(retried.IsReady);
+    }
+
+    [Fact]
+    public async Task WhileWaiting_TheFriendListIsKept()
+    {
+        // The friend list decides who may connect; a Steam away from its
+        // servers knows no friends, and emptying the list would refuse them all.
+        var api = new FakeSteamApi
+        {
+            SteamRunning = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(76561198000000002, "anuvenn", true, 0));
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
+
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 3, true));
+        api.LoggedOn = false;
+        await reconnecting;
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+
+        Assert.Single(service.Friends);
+    }
+
+    [Theory]
+    [InlineData(6, true)]
+    [InlineData(34, true)]
+    [InlineData(50, true)]
+    [InlineData(3, false)]
+    public void WhichLossesMeanTheAccountIsInUseElsewhere(int result, bool elsewhere)
+    {
+        Assert.Equal(elsewhere, new SteamServerConnectionChange(false, result, false).SignedInElsewhere);
+    }
+
+    private static Task<SteamClientStatus> WaitFor(SteamClientService service, SteamAvailability availability)
+    {
+        var seen = new TaskCompletionSource<SteamClientStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.StatusChanged += (_, status) =>
+        {
+            if (status.Availability == availability) seen.TrySetResult(status);
+        };
+        return seen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
     /// Shutting the Steam API down while the callback thread is inside it is a
     /// native crash on exit, which a player reads as "the launcher crashed".
     /// </summary>
@@ -281,7 +486,8 @@ internal sealed class FakeSteamApi : ISteamApiFacade
 
     public void InitRelayNetworkAccess() => RelayInitialized = Initialized;
 
-    public IReadOnlyList<SteamFriendInfo> GetFriends() => Initialized ? FriendList : [];
+    /// <summary>Like Steam's own: a client away from its servers knows no friends.</summary>
+    public IReadOnlyList<SteamFriendInfo> GetFriends() => Initialized && LoggedOn ? FriendList : [];
 
     public bool SetRichPresence(string key, string? value)
     {
@@ -300,4 +506,10 @@ internal sealed class FakeSteamApi : ISteamApiFacade
 
     public int GetFriendRichPresenceKeyCount(ulong steamId64) =>
         Initialized ? FriendPresence.Keys.Count(entry => entry.SteamId64 == steamId64) : 0;
+
+    public event Action<SteamServerConnectionChange>? ServerConnectionChanged;
+
+    /// <summary>What Steam's own callback would say about its servers.</summary>
+    public void RaiseServerConnectionChanged(SteamServerConnectionChange change) =>
+        ServerConnectionChanged?.Invoke(change);
 }

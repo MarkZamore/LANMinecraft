@@ -196,7 +196,7 @@ public sealed class PortabilityTests
     public void NoLauncherCode_ReachesOutsideTheFolder()
     {
         var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(ProgramDirectory(), "*.cs", SearchOption.AllDirectories))
+        foreach (var file in ProgramFiles("*.cs"))
         {
             var name = Path.GetFileName(file);
             if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
@@ -269,11 +269,34 @@ public sealed class PortabilityTests
     /// write put in any of those would be as real as one in a service class.
     /// </summary>
     private static IEnumerable<string> LauncherSources() =>
-        new[] { "*.cs", "*.ps1", "*.java", "*.csproj" }
-            .SelectMany(pattern =>
-                Directory.EnumerateFiles(ProgramDirectory(), pattern, SearchOption.AllDirectories))
+        new[] { "*.cs", "*.ps1", "*.java", "*.csproj" }.SelectMany(ProgramFiles);
+
+    /// <summary>What the build writes rather than what somebody wrote.</summary>
+    private static readonly HashSet<string> BuildOutputFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "obj", "bin", "Build"
+    };
+
+    /// <summary>
+    /// The launcher's own files, without walking into build output.
+    /// </summary>
+    /// <remarks>
+    /// Program/Build is where the identity adapter stages its classes, and a
+    /// build running beside the tests creates and deletes those folders while
+    /// this walks: a release once failed on "Access to the path ... is denied"
+    /// for a stage folder that was being removed. None of it is in git.
+    /// </remarks>
+    private static IEnumerable<string> ProgramFiles(string pattern)
+    {
+        var root = ProgramDirectory();
+        var walk = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+        return Directory.EnumerateFiles(root, pattern, SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateDirectories(root)
+                .Where(directory => !BuildOutputFolders.Contains(Path.GetFileName(directory)))
+                .SelectMany(directory => Directory.EnumerateFiles(directory, pattern, walk)))
             .Where(file => !file.Contains(
                 $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+    }
 
     private static string ProgramDirectory()
     {

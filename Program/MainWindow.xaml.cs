@@ -203,7 +203,7 @@ public partial class MainWindow : Window
                 new SteamworksApiFacade(),
                 new SteamNativeLibraryService(_paths, _logger),
                 _logger);
-            _steamClient.StatusChanged += (_, status) => PostToUi(() => ApplySteamStatus(status));
+            _steamClient.StatusChanged += (_, status) => PostToUi(() => OnSteamStatusChanged(status));
             _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             StartupTrace.Mark("сервисы");
@@ -2011,6 +2011,36 @@ public partial class MainWindow : Window
         }
     }
 
+    private SteamAvailability _lastSteamAvailability = SteamAvailability.NotStarted;
+
+    /// <summary>
+    /// Every change the Steam session makes on its own, including the ones no
+    /// button caused: a blip that takes Steam off its servers and back.
+    /// </summary>
+    private void OnSteamStatusChanged(SteamClientStatus status)
+    {
+        var previous = _lastSteamAvailability;
+        _lastSteamAvailability = status.Availability;
+        ApplySteamStatus(status);
+        if (_startupComplete && IsIdentityBound &&
+            SteamRecoveryPolicy.ShouldRestartNetworking(previous, status.Availability))
+        {
+            _ = RestartNetworkingAfterSteamReturnedAsync();
+        }
+    }
+
+    private async Task RestartNetworkingAfterSteamReturnedAsync()
+    {
+        try
+        {
+            await StartNetworkingAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn($"Network play did not come back after Steam reconnected: {ex.Message}");
+        }
+    }
+
     /// <summary>Re-runs the whole Steam handshake after the player fixes Steam.</summary>
     private async void RetrySteamButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2036,6 +2066,16 @@ public partial class MainWindow : Window
         if (settled)
         {
             SteamPersonaText.Text = status.PersonaName;
+            SteamPersonaText.ToolTip = null;
+            SteamPersonaText.Visibility = Visibility.Visible;
+            RetrySteamButton.Visibility = Visibility.Collapsed;
+        }
+        else if (status.Availability == SteamAvailability.Reconnecting && IsIdentityBound)
+        {
+            // Nothing to press: Steam is retrying by itself, and the launcher
+            // comes back with it. The name stays, the reason is on hover.
+            SteamPersonaText.Text = status.PersonaName;
+            SteamPersonaText.ToolTip = status.Message;
             SteamPersonaText.Visibility = Visibility.Visible;
             RetrySteamButton.Visibility = Visibility.Collapsed;
         }
