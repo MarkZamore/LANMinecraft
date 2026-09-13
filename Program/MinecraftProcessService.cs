@@ -804,12 +804,17 @@ public sealed class MinecraftProcessService
             var heldMemory = WatchMemoryAsync(process, watchingMemory.Token);
             using var adoptingWorlds = new CancellationTokenSource();
             var adopted = AdoptClosedWorldsAsync(gameDir, adoptingWorlds.Token);
+            var endedByLauncher = false;
+            using var watchingShutdown = new CancellationTokenSource();
+            var hungShutdown = EndHungShutdownAsync(process, gameDir, watchingShutdown.Token);
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
             }
             finally
             {
+                watchingShutdown.Cancel();
+                endedByLauncher = await hungShutdown.ConfigureAwait(false);
                 adoptingWorlds.Cancel();
                 await adopted.ConfigureAwait(false);
                 watchingMemory.Cancel();
@@ -823,17 +828,21 @@ public sealed class MinecraftProcessService
                 // reported the exit code and nobody kept what the process said
                 // on its way out. Everything known about it goes to the log the
                 // moment it happens.
-                ReportUnexpectedExit(process, startupOutput, gameDir, heapGb);
+                // A process the launcher ended after the game had finished is not
+                // a crash, and what it said on its way out is not a crash report.
+                if (!endedByLauncher) ReportUnexpectedExit(process, startupOutput, gameDir, heapGb);
                 // The pipes are done; what they carried is on disk for a report.
                 startupOutput.Close();
                 // Published before any cleanup so the launch method never has
                 // to read the Process object this monitor is about to dispose.
-                TryPublishExitCode(process, exitCode);
+                if (endedByLauncher) exitCode.TrySetResult(0);
+                else TryPublishExitCode(process, exitCode);
                 placementCancellation.Cancel();
                 await placementTask.ConfigureAwait(false);
             }
             await _waypointSync.FlushAsync().ConfigureAwait(false);
-            await _packInstances.CleanupGeneratedLocalArtifactsAsync(packRelativePath, process.ExitCode == 0).ConfigureAwait(false);
+            await _packInstances.CleanupGeneratedLocalArtifactsAsync(
+                packRelativePath, process.ExitCode == 0 || endedByLauncher).ConfigureAwait(false);
         }
         catch (ArgumentException)
         {
@@ -856,6 +865,69 @@ public sealed class MinecraftProcessService
             {
                 NotifyClientRunningChanged(false);
             }
+        }
+    }
+
+    /// <summary>
+    /// How often latest.log is looked at for main having finished. Reading its
+    /// last 64 KB this often costs nothing, and a hung game waits twenty
+    /// seconds anyway.
+    /// </summary>
+    private static readonly TimeSpan ShutdownCheckInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Ends a game that finished shutting down and could not end by itself;
+    /// see <see cref="ClientShutdownHang"/>. True when it did.
+    /// </summary>
+    /// <remarks>
+    /// The one-game-at-a-time rule is not loosened by this: the game still
+    /// counts as running until its process is really gone, and the monitor
+    /// that releases it is the same one as before. What changes is that a
+    /// process the game itself had already finished with no longer holds that
+    /// rule forever. Nothing here may throw: this runs beside the monitor, and
+    /// a watch that fails must never cost the cleanup after the game.
+    /// </remarks>
+    private async Task<bool> EndHungShutdownAsync(Process process, string gameDir, CancellationToken token)
+    {
+        DateTime started;
+        try
+        {
+            started = process.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or SystemException)
+        {
+            // Already gone, or not a process this launcher may look at: either
+            // way there is nothing to watch.
+            return false;
+        }
+
+        var latestLog = Path.Combine(gameDir, "logs", "latest.log");
+        try
+        {
+            return await ClientShutdownHang.EndWhenStuckAsync(
+                mainFinished: () => ClientShutdownHang.LatestLogShowsMainFinished(latestLog, started),
+                hasExited: () => process.HasExited,
+                hasWindow: () => MinecraftWindowPlacementService.HasVisibleWindow(process.Id),
+                end: () =>
+                {
+                    _logger.Info(
+                        $"Minecraft finished shutting down {ClientShutdownHang.EndAfter.TotalSeconds:0} seconds ago, " +
+                        $"but process {process.Id} is still there. Ending it, as the game's own watchdog meant to.");
+                    process.Kill(entireProcessTree: true);
+                },
+                utcNow: () => DateTime.UtcNow,
+                pollInterval: ShutdownCheckInterval,
+                token: token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The game ended by itself, which is the usual way.
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"A game that could not end by itself could not be ended either: {ex.Message}");
+            return false;
         }
     }
 
