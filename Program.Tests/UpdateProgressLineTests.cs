@@ -52,37 +52,28 @@ public class UpdateProgressLineTests
     }
 
     /// <summary>
-    /// Nothing spills over the "Обновить" button beside it. The text is centred
-    /// over the bar with nothing to wrap or trim it, so a line too wide does not
-    /// shrink - it runs out over its neighbour.
+    /// Wrapping keeps the entire caption readable within the bar, without
+    /// spilling over the "Обновить" button beside it, even in a snapped window.
     /// </summary>
-    [Fact]
-    public void EveryLine_FitsTheBar()
+    [Theory]
+    [InlineData(464, 321)]
+    [InlineData(581, 681)]
+    [InlineData(582, 681)]
+    [InlineData(851, 681)]
+    [InlineData(852, 681)]
+    [InlineData(944, 1001)]
+    public void EveryLine_FitsTheBarAtEachLayoutWidth(double width, double height)
     {
         var lines = EveryLine();
 
-        var (available, widest, needed) = WindowCanvasTests.OnAStaThread(() =>
+        WindowCanvasTests.OnAStaThread(() =>
         {
             var window = WindowCanvasTests.LoadWindow();
-            var content = (FrameworkElement)window.Content;
-            content.Measure(new Size(window.Width, double.PositiveInfinity));
-            content.Arrange(new Rect(new Point(0, 0), content.DesiredSize));
-            content.UpdateLayout();
-
-            var bar = (ProgressBar)window.FindName("UpdateProgressBar")!;
-            var text = (TextBlock)window.FindName("UpdateProgressText")!;
-            var measured = lines
-                .Select(line => (line, width: Width(text, line)))
-                .OrderByDescending(pair => pair.width)
-                .First();
-            return (bar.ActualWidth, measured.line, measured.width);
+            WindowCanvasTests.AssertProgressLinesFit(
+                window, new Size(width, height),
+                "UpdateProgressBar", "UpdateProgressText", "UpdateButton", lines);
+            return true;
         });
-
-        Assert.True(available > 0, "the update bar measured to nothing; the layout pass did not run");
-        Assert.True(
-            needed <= available,
-            $"\"{widest}\" needs {needed:0.#}px and the bar is {available:0.#}px wide; " +
-            "it would spill sideways over the Обновить button");
     }
 
     /// <summary>
@@ -138,10 +129,4 @@ public class UpdateProgressLineTests
         Assert.Equal(TimeSpan.FromSeconds(9), UpdateProgressLine.Estimate(10, 100, 10));
     }
 
-    private static double Width(TextBlock text, string line)
-    {
-        text.Text = line;
-        text.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        return text.DesiredSize.Width;
-    }
 }

@@ -1,6 +1,6 @@
-﻿using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Interop;
 
@@ -8,31 +8,16 @@ namespace Minecraft;
 
 public sealed class WindowPlacementService
 {
-    // A cache generation, not a data format: it is bumped to throw the cached
-    // work away and redo it, so it is deliberately independent of
-    // PortableFormat's version - a release must not cost every player a
-    // re-download for an unrelated change.
+    // Keep the old placement file: freely resizable windows can use the same
+    // rectangle that the earlier, fixed-aspect window left behind.
     private const int CacheGeneration = 1;
+    private const uint ShowHidden = 0;
     private const uint ShowNormal = 1;
     private const uint ShowMaximized = 3;
     private const uint RestoreToMaximized = 0x0002;
     private const uint MonitorDefaultToNearest = 0x00000002;
-    private const int WmSizing = 0x0214;
-    private const int SizingLeft = 1;
-    private const int SizingRight = 2;
-    private const int SizingTop = 3;
-    private const int SizingTopLeft = 4;
-    private const int SizingTopRight = 5;
-    private const int SizingBottom = 6;
-    private const int SizingBottomLeft = 7;
-    private const int GwlStyle = -16;
-    private const int WsMaximizeBox = 0x00010000;
-    private const uint SwpNoMove = 0x0002;
-    private const uint SwpNoZOrder = 0x0004;
+    private const uint DefaultDpi = 96;
     private readonly string _placementFile;
-    private double _clientAspect = 1;
-    private int _chromeWidth;
-    private int _chromeHeight;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -44,89 +29,22 @@ public sealed class WindowPlacementService
     }
 
     /// <summary>
-    /// Restores where the window was and keeps its shape. The canvas behind the
-    /// Viewbox has one shape, and any other is empty bands, so the window is held
-    /// to that ratio while it is dragged.
+    /// Restores the window's independent dimensions and state. Windows keeps
+    /// ownership of resizing, maximising and Snap through its normal frame.
     /// </summary>
-    public void Apply(Window window, double clientAspect)
+    public void Apply(Window window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        if (!double.IsFinite(clientAspect) || clientAspect <= 0) clientAspect = 1;
-        _clientAspect = clientAspect;
         window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-
         var saved = TryRead();
-        window.SourceInitialized += (_, _) =>
+        if (new WindowInteropHelper(window).Handle != IntPtr.Zero)
         {
-            KeepAspect(window);
-            if (saved is not null) ApplyAfterSourceInitialized(window, saved);
-        };
-    }
-
-    /// <summary>
-    /// Holds the window to the shape of the canvas while it is dragged, and takes
-    /// the maximise button away - a maximised window is the shape of the screen.
-    /// </summary>
-    private void KeepAspect(Window window)
-    {
-        var handle = new WindowInteropHelper(window).Handle;
-        if (handle == IntPtr.Zero) return;
-        SetWindowLong(handle, GwlStyle, GetWindowLong(handle, GwlStyle) & ~WsMaximizeBox);
-        MeasureChrome(handle);
-        if (!GetWindowRect(handle, out var outer)) return;
-        // The size in the markup is a starting point; the ratio settles the rest.
-        var fitted = FitOuterSize(
-            outer.Right - outer.Left, outer.Bottom - outer.Top,
-            SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
-        SetWindowPos(handle, IntPtr.Zero, 0, 0, fitted.Width, fitted.Height, SwpNoMove | SwpNoZOrder);
-        HwndSource.FromHwnd(handle)?.AddHook(AspectSizingHook);
-    }
-
-    /// <summary>
-    /// The outer size whose client area keeps the ratio. The edge being dragged
-    /// decides which side leads: a vertical edge sets the height, a horizontal
-    /// one sets the width, and a corner follows the width.
-    /// </summary>
-    internal static (int Width, int Height) FitOuterSize(
-        int width, int height, int edge, double clientAspect, int chromeWidth, int chromeHeight)
-    {
-        if (!double.IsFinite(clientAspect) || clientAspect <= 0) return (width, height);
-        if (edge is SizingTop or SizingBottom)
-        {
-            var clientHeight = Math.Max(1, height - chromeHeight);
-            return ((int)Math.Round(clientHeight * clientAspect) + chromeWidth, height);
+            ApplyAfterSourceInitialized(window, saved);
         }
-
-        var clientWidth = Math.Max(1, width - chromeWidth);
-        return (width, (int)Math.Round(clientWidth / clientAspect) + chromeHeight);
-    }
-
-    private IntPtr AspectSizingHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (message != WmSizing) return IntPtr.Zero;
-        var rect = Marshal.PtrToStructure<NativeRect>(lParam);
-        var edge = (int)wParam;
-        var fitted = FitOuterSize(
-            rect.Right - rect.Left, rect.Bottom - rect.Top, edge, _clientAspect, _chromeWidth, _chromeHeight);
-        if (fitted.Width == rect.Right - rect.Left && fitted.Height == rect.Bottom - rect.Top) return IntPtr.Zero;
-
-        // Grow or shrink away from the edge being dragged, so the opposite
-        // edge - the one the player is not holding - is the one that moves.
-        if (edge is SizingLeft or SizingTopLeft or SizingBottomLeft) rect.Left = rect.Right - fitted.Width;
-        else rect.Right = rect.Left + fitted.Width;
-        if (edge is SizingTop or SizingTopLeft or SizingTopRight) rect.Top = rect.Bottom - fitted.Height;
-        else rect.Bottom = rect.Top + fitted.Height;
-        Marshal.StructureToPtr(rect, lParam, false);
-        handled = true;
-        return (IntPtr)1;
-    }
-
-    /// <summary>Title bar and borders: the part the client area does not get.</summary>
-    private void MeasureChrome(IntPtr handle)
-    {
-        if (!GetWindowRect(handle, out var outer) || !GetClientRect(handle, out var client)) return;
-        _chromeWidth = (outer.Right - outer.Left) - (client.Right - client.Left);
-        _chromeHeight = (outer.Bottom - outer.Top) - (client.Bottom - client.Top);
+        else
+        {
+            window.SourceInitialized += (_, _) => ApplyAfterSourceInitialized(window, saved);
+        }
     }
 
     public void Save(Window window)
@@ -135,26 +53,26 @@ public sealed class WindowPlacementService
         try
         {
             var handle = new WindowInteropHelper(window).Handle;
-            if (handle == IntPtr.Zero)
-            {
-                return;
-            }
+            if (handle == IntPtr.Zero) return;
 
             var placement = WindowPlacement.Create();
-            if (!GetWindowPlacement(handle, ref placement))
-            {
-                return;
-            }
-
+            if (!GetWindowPlacement(handle, ref placement)) return;
             var bounds = placement.NormalPosition;
-            if (!IsValid(bounds))
-            {
-                return;
-            }
-
             var restoreMaximized = placement.ShowCommand == ShowMaximized ||
                                    (IsMinimized(placement.ShowCommand) &&
                                     (placement.Flags & RestoreToMaximized) != 0);
+
+            // Snap can keep a separate restore rectangle. Remember the size the
+            // player actually sees, while a maximised/minimised window keeps
+            // its restore bounds rather than the monitor or an icon rectangle.
+            if (!restoreMaximized && !IsMinimized(placement.ShowCommand) &&
+                GetWindowRect(handle, out var screenBounds) &&
+                TryGetMonitor(screenBounds, out _, out var monitorInfo))
+            {
+                bounds = ToWorkspaceCoordinates(screenBounds, monitorInfo.MonitorArea, monitorInfo.WorkArea);
+            }
+            if (!IsValid(bounds)) return;
+
             var state = new SavedWindowPlacement
             {
                 CacheGeneration = CacheGeneration,
@@ -164,7 +82,6 @@ public sealed class WindowPlacementService
                 Bottom = bounds.Bottom,
                 Maximized = restoreMaximized
             };
-
             Directory.CreateDirectory(Path.GetDirectoryName(_placementFile)!);
             AtomicFile.WriteAllText(_placementFile, JsonSerializer.Serialize(state, _jsonOptions));
         }
@@ -174,51 +91,53 @@ public sealed class WindowPlacementService
         }
     }
 
-    private void ApplyAfterSourceInitialized(Window window, SavedWindowPlacement saved)
+    private static void ApplyAfterSourceInitialized(Window window, SavedWindowPlacement? saved)
     {
         try
         {
             var handle = new WindowInteropHelper(window).Handle;
-            var dpiScale = Math.Max(1d, GetDpiForWindow(handle) / 96d);
-            // A placement saved under an older shape comes back in this one.
-            var fitted = FitOuterSize(
-                saved.Right - saved.Left, saved.Bottom - saved.Top,
-                SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
-            var bounds = ClampToNearestWorkArea(new NativeRect
+            if (handle == IntPtr.Zero) return;
+            NativeRect bounds;
+            if (saved is not null)
             {
-                Left = saved.Left,
-                Top = saved.Top,
-                Right = saved.Left + fitted.Width,
-                Bottom = saved.Top + fitted.Height
-            },
-            (int)Math.Ceiling(window.MinWidth * dpiScale),
-            (int)Math.Ceiling(window.MinHeight * dpiScale));
-            if (!IsValid(bounds))
+                bounds = saved.Bounds;
+            }
+            else if (!GetWindowRect(handle, out bounds))
             {
                 return;
             }
+            if (!TryGetMonitor(bounds, out var monitor, out var monitorInfo)) return;
 
-            // The clamp trims each side on its own, so the shape is settled once
-            // more afterwards: the height follows the width, unless that is what
-            // did not fit, in which case the width follows the height.
-            var height = bounds.Bottom - bounds.Top;
-            var shaped = FitOuterSize(
-                bounds.Right - bounds.Left, height, SizingRight, _clientAspect, _chromeWidth, _chromeHeight);
-            if (shaped.Height > height)
+            // WINDOWPLACEMENT uses workspace coordinates. Monitor work areas
+            // use screen coordinates, so compare only after converting, and
+            // convert back before handing the result to SetWindowPlacement.
+            if (saved is not null)
             {
-                shaped = FitOuterSize(
-                    shaped.Width, height, SizingBottom, _clientAspect, _chromeWidth, _chromeHeight);
+                bounds = ToScreenCoordinates(bounds, monitorInfo.MonitorArea, monitorInfo.WorkArea);
             }
-            bounds.Right = bounds.Left + shaped.Width;
-            bounds.Bottom = bounds.Top + shaped.Height;
+            var dpi = DpiOf(monitor, handle);
+            bounds = ClampToWorkArea(bounds, monitorInfo.WorkArea,
+                MinimumPixels(window.MinWidth, dpi), MinimumPixels(window.MinHeight, dpi));
+            if (saved is null)
+            {
+                bounds = CenterInWorkArea(bounds, monitorInfo.WorkArea);
+            }
+            if (!IsValid(bounds)) return;
 
             var placement = WindowPlacement.Create();
-            // A maximised window is the shape of the screen, not of the canvas;
-            // it comes back at its normal size.
-            placement.ShowCommand = ShowNormal;
-            placement.NormalPosition = bounds;
+            // SourceInitialized runs before WPF shows the window. Do not show
+            // or activate it early; WPF applies WindowState when Show follows.
+            placement.ShowCommand = window.IsVisible
+                ? saved?.Maximized == true ? ShowMaximized : ShowNormal
+                : ShowHidden;
+            placement.NormalPosition = ToWorkspaceCoordinates(bounds, monitorInfo.MonitorArea, monitorInfo.WorkArea);
             window.WindowStartupLocation = WindowStartupLocation.Manual;
-            SetWindowPlacement(handle, ref placement);
+            if (!SetWindowPlacement(handle, ref placement))
+            {
+                window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                return;
+            }
+            window.WindowState = saved?.Maximized == true ? WindowState.Maximized : WindowState.Normal;
         }
         catch
         {
@@ -230,27 +149,11 @@ public sealed class WindowPlacementService
     {
         try
         {
-            if (!File.Exists(_placementFile))
-            {
-                return null;
-            }
-
-            var saved = JsonSerializer.Deserialize<SavedWindowPlacement>(
-                File.ReadAllText(_placementFile),
-                _jsonOptions);
-            if (saved is null || saved.CacheGeneration != CacheGeneration)
-            {
-                return null;
-            }
-
-            var bounds = new NativeRect
-            {
-                Left = saved.Left,
-                Top = saved.Top,
-                Right = saved.Right,
-                Bottom = saved.Bottom
-            };
-            return IsValid(bounds) ? saved : null;
+            if (!File.Exists(_placementFile)) return null;
+            var saved = JsonSerializer.Deserialize<SavedWindowPlacement>(File.ReadAllText(_placementFile), _jsonOptions);
+            return saved is not null && saved.CacheGeneration == CacheGeneration && IsValid(saved.Bounds)
+                ? saved
+                : null;
         }
         catch
         {
@@ -258,38 +161,67 @@ public sealed class WindowPlacementService
         }
     }
 
-    private static NativeRect ClampToNearestWorkArea(NativeRect bounds, int minimumWidth, int minimumHeight)
+    private static bool TryGetMonitor(NativeRect bounds, out IntPtr monitor, out MonitorInfo info)
     {
-        var monitor = MonitorFromRect(ref bounds, MonitorDefaultToNearest);
-        if (monitor == IntPtr.Zero)
-        {
-            return bounds;
-        }
+        monitor = MonitorFromRect(ref bounds, MonitorDefaultToNearest);
+        info = MonitorInfo.Create();
+        return monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info);
+    }
 
-        var monitorInfo = MonitorInfo.Create();
-        if (!GetMonitorInfo(monitor, ref monitorInfo))
-        {
-            return bounds;
-        }
+    private static uint DpiOf(IntPtr monitor, IntPtr window)
+    {
+        // The source HWND may still be on the first monitor. Use the monitor
+        // receiving the restored window, including when its old screen is gone.
+        if (GetDpiForMonitor(monitor, 0, out var dpi, out _) == 0 && dpi > 0) return dpi;
+        dpi = GetDpiForWindow(window);
+        return dpi > 0 ? dpi : DefaultDpi;
+    }
 
-        var workWidth = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
-        var workHeight = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
-        var width = Math.Clamp(bounds.Right - bounds.Left, Math.Min(minimumWidth, workWidth), workWidth);
-        var height = Math.Clamp(bounds.Bottom - bounds.Top, Math.Min(minimumHeight, workHeight), workHeight);
-        var left = Math.Clamp(bounds.Left, monitorInfo.WorkArea.Left, monitorInfo.WorkArea.Right - width);
-        var top = Math.Clamp(bounds.Top, monitorInfo.WorkArea.Top, monitorInfo.WorkArea.Bottom - height);
+    internal static int MinimumPixels(double minimumDip, uint dpi) =>
+        (int)Math.Clamp(Math.Ceiling(minimumDip * (dpi > 0 ? dpi : DefaultDpi) / DefaultDpi), 1, int.MaxValue);
+
+    internal static NativeRect ClampToWorkArea(NativeRect bounds, NativeRect workArea, int minimumWidth, int minimumHeight)
+    {
+        if (!IsValid(workArea)) return bounds;
+        var workWidth = (long)workArea.Right - workArea.Left;
+        var workHeight = (long)workArea.Bottom - workArea.Top;
+        var width = Math.Clamp((long)bounds.Right - bounds.Left, Math.Clamp(minimumWidth, 1L, workWidth), workWidth);
+        var height = Math.Clamp((long)bounds.Bottom - bounds.Top, Math.Clamp(minimumHeight, 1L, workHeight), workHeight);
+        var left = Math.Clamp(bounds.Left, workArea.Left, workArea.Right - width);
+        var top = Math.Clamp(bounds.Top, workArea.Top, workArea.Bottom - height);
         return new NativeRect
         {
-            Left = left,
-            Top = top,
-            Right = left + width,
-            Bottom = top + height
+            Left = (int)left,
+            Top = (int)top,
+            Right = (int)(left + width),
+            Bottom = (int)(top + height)
         };
     }
 
-    private static bool IsValid(NativeRect bounds) =>
-        bounds.Right > bounds.Left && bounds.Bottom > bounds.Top;
+    private static NativeRect CenterInWorkArea(NativeRect bounds, NativeRect workArea)
+    {
+        var width = bounds.Right - bounds.Left;
+        var height = bounds.Bottom - bounds.Top;
+        var left = workArea.Left + (workArea.Right - workArea.Left - width) / 2;
+        var top = workArea.Top + (workArea.Bottom - workArea.Top - height) / 2;
+        return new NativeRect { Left = left, Top = top, Right = left + width, Bottom = top + height };
+    }
 
+    internal static NativeRect ToScreenCoordinates(NativeRect bounds, NativeRect monitorArea, NativeRect workArea) =>
+        Offset(bounds, workArea.Left - monitorArea.Left, workArea.Top - monitorArea.Top);
+
+    internal static NativeRect ToWorkspaceCoordinates(NativeRect bounds, NativeRect monitorArea, NativeRect workArea) =>
+        Offset(bounds, monitorArea.Left - workArea.Left, monitorArea.Top - workArea.Top);
+
+    private static NativeRect Offset(NativeRect bounds, int x, int y) => new()
+    {
+        Left = checked(bounds.Left + x),
+        Top = checked(bounds.Top + y),
+        Right = checked(bounds.Right + x),
+        Bottom = checked(bounds.Bottom + y)
+    };
+
+    private static bool IsValid(NativeRect bounds) => bounds.Right > bounds.Left && bounds.Bottom > bounds.Top;
     private static bool IsMinimized(uint showCommand) => showCommand is 2 or 6 or 7 or 11;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -306,26 +238,14 @@ public sealed class WindowPlacementService
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr window);
 
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetClientRect(IntPtr window, out NativeRect rect);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter,
-        int x, int y, int width, int height, uint flags);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong(IntPtr window, int index);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
-    private static extern int SetWindowLong(IntPtr window, int index, int value);
-
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
 
@@ -337,7 +257,7 @@ public sealed class WindowPlacementService
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect
+    internal struct NativeRect
     {
         public int Left;
         public int Top;
@@ -355,13 +275,10 @@ public sealed class WindowPlacementService
         public NativePoint MaximumPosition;
         public NativeRect NormalPosition;
 
-        public static WindowPlacement Create() => new()
-        {
-            Length = (uint)Marshal.SizeOf<WindowPlacement>()
-        };
+        public static WindowPlacement Create() => new() { Length = (uint)Marshal.SizeOf<WindowPlacement>() };
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MonitorInfo
     {
         public uint Size;
@@ -369,10 +286,7 @@ public sealed class WindowPlacementService
         public NativeRect WorkArea;
         public uint Flags;
 
-        public static MonitorInfo Create() => new()
-        {
-            Size = (uint)Marshal.SizeOf<MonitorInfo>()
-        };
+        public static MonitorInfo Create() => new() { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
     }
 
     private sealed class SavedWindowPlacement
@@ -383,5 +297,7 @@ public sealed class WindowPlacementService
         public int Right { get; set; }
         public int Bottom { get; set; }
         public bool Maximized { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public NativeRect Bounds => new() { Left = Left, Top = Top, Right = Right, Bottom = Bottom };
     }
 }

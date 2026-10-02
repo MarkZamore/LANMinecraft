@@ -1,472 +1,570 @@
-﻿<Window x:Class="Minecraft.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:local="clr-namespace:Minecraft"
-        Title="LANMinecraft" Width="720" Height="540" MinWidth="600" MinHeight="300"
-        WindowStartupLocation="CenterScreen"
-        Style="{DynamicResource WindowStyle}"
-        Icon="Minecraft.ico" Loaded="Window_Loaded" Closing="Window_Closing">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:local="clr-namespace:Minecraft"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="Minecraft.MainWindow"
+    Title="LANMinecraft"
+    Width="{DynamicResource Size.WindowWidth}"
+    Height="{DynamicResource Size.WindowHeight}"
+    MinWidth="{DynamicResource Size.WindowMinWidth}"
+    MinHeight="{DynamicResource Size.WindowMinHeight}"
+    WindowStartupLocation="CenterScreen"
+    Style="{DynamicResource WindowStyle}"
+    Icon="Minecraft.ico"
+    Loaded="Window_Loaded"
+    Closing="Window_Closing"
+    ResizeMode="CanResize"
+    WindowStyle="SingleBorderWindow"
+    UseLayoutRounding="True">
     <Window.Resources>
-        <!-- What one row of each list shows. Values read left, like the labels. -->
         <DataTemplate x:Key="BuildItemTemplate">
-            <TextBlock Text="{Binding Name}"/>
+            <TextBlock Text="{Binding Name}"
+                TextTrimming="CharacterEllipsis"
+                ToolTip="{Binding Name}"
+                Margin="{StaticResource Gap.Right3}" />
         </DataTemplate>
         <DataTemplate x:Key="WorldItemTemplate">
-            <TextBlock Text="{Binding DisplayName}"/>
+            <TextBlock Text="{Binding DisplayName}"
+                TextTrimming="CharacterEllipsis"
+                ToolTip="{Binding DisplayName}"
+                Margin="{StaticResource Gap.Right3}" />
         </DataTemplate>
         <DataTemplate x:Key="PeerItemTemplate">
-            <TextBlock Text="{Binding DisplayName}"/>
+            <TextBlock Text="{Binding DisplayName}"
+                TextTrimming="CharacterEllipsis"
+                ToolTip="{Binding DisplayName}"
+                Margin="{StaticResource Gap.Right3}" />
         </DataTemplate>
         <DataTemplate x:Key="DiagnosticTargetItemTemplate">
-            <TextBlock Text="{Binding DisplayName}" ToolTip="{Binding DisplayName}"/>
+            <TextBlock Text="{Binding DisplayName}"
+                TextTrimming="CharacterEllipsis"
+                ToolTip="{Binding DisplayName}"
+                Margin="{StaticResource Gap.Right3}" />
         </DataTemplate>
-        <!-- One version in "Что нового": a heading and one paragraph. -->
         <DataTemplate x:Key="ChangelogEntryTemplate">
             <StackPanel Margin="{StaticResource Gap.Below3}">
-                <TextBlock Text="{Binding Title}" Style="{StaticResource EmphasisTextStyle}" VerticalAlignment="Top"/>
-                <TextBlock Text="{Binding Text}" Style="{StaticResource ParagraphTextStyle}" Margin="{StaticResource Gap.Above1}"/>
+                <TextBlock Text="{Binding Title}" Style="{StaticResource EmphasisTextStyle}" VerticalAlignment="Top" />
+                <TextBlock Text="{Binding Text}"
+                    Style="{StaticResource ParagraphTextStyle}"
+                    Margin="{StaticResource Gap.Above1}" />
             </StackPanel>
         </DataTemplate>
     </Window.Resources>
-
-    <Viewbox Stretch="Uniform" StretchDirection="Both">
-        <Grid x:Name="RootGrid" Width="820" Height="574" Margin="{StaticResource Gap.Canvas}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1*"/>
-                <ColumnDefinition Width="1*"/>
-                <ColumnDefinition Width="{StaticResource Size.HistoryColumn}"/>
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <!-- A few pixels of slack: the canvas is fixed at what the left
-                     column needs, so this row is all but invisible. It is here
-                     because the version history beside it spans these rows, and
-                     without a star row to hand its overflow to the rows above
-                     would stretch to fit the whole history. -->
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-
-            <!-- The button is also the progress bar: while the pack and the game are
-                 being prepared, the fill draws inside it under the stage text; once
-                 the game is up, it is the disabled button that says so. -->
-            <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below4}">
-                <Button x:Name="PlayButton" Click="PlayButton_Click"
-                        Style="{StaticResource PrimaryButtonStyle}"
-                        ToolTipService.ShowOnDisabled="True">
-                    <Grid>
-                        <ProgressBar x:Name="PlayProgressBar" Minimum="0" Maximum="100"
-                                     Style="{StaticResource PlayProgressBarStyle}"
-                                     Visibility="Collapsed"/>
-                        <TextBlock x:Name="PlayButtonText" Text="Играть"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Grid>
-                </Button>
-            </Grid>
-
-            <!-- Two halves of equal width: on the left who you are and what you
-                 play, on the right how it looks, how much memory it may use and
-                 the pack's key layout. -->
-            <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below4}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="1*"/>
-                    <ColumnDefinition Width="1*"/>
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.Right2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Имя" Style="{StaticResource LabelTextStyle}"/>
-                    <!-- A new launcher invents no name, so the field is empty
-                         until the player types one or Steam offers one, and the
-                         hint says so rather than leaving a blank box. -->
-                    <Grid Grid.Column="1" Margin="{StaticResource Gap.Right2}">
-                        <TextBox x:Name="PlayerNameTextBox"
-                                 MaxLength="16"
-                                 IsReadOnly="True"
-                                 TextChanged="PlayerNameTextBox_TextChanged"
-                                 PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
-                                 DataObject.Pasting="PlayerNameTextBox_Pasting"
-                                 LostFocus="PlayerNameTextBox_LostFocus"
-                                 KeyDown="PlayerNameTextBox_KeyDown"/>
-                        <TextBlock Text="Ник не задан"
-                                   VerticalAlignment="Center"
-                                   Margin="{StaticResource Pad.FieldText}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Text, ElementName=PlayerNameTextBox}" Value="">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                    <Button Grid.Column="2" x:Name="ChangePlayerNameButton"
-                            Content="Изменить" Click="ChangePlayerNameButton_Click"/>
-                </Grid>
-
-                <Grid Grid.Row="1" Grid.Column="0" Margin="{StaticResource Gap.Above2Right2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Сборка" Style="{StaticResource LabelTextStyle}"/>
-                    <Grid Grid.Column="1">
-                        <local:CenteredDropDown x:Name="BuildComboBox"
-                                                ItemTemplate="{StaticResource BuildItemTemplate}"
-                                                SelectionChanged="BuildComboBox_SelectionChanged"/>
-                        <TextBlock x:Name="BuildPlaceholderText"
-                                   Text="Нет сборок"
-                                   Style="{StaticResource PlaceholderTextStyle}"
-                                   Visibility="Collapsed"/>
-                    </Grid>
-                </Grid>
-
-                <Grid Grid.Row="0" Grid.Column="1" Margin="{StaticResource Gap.Left2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="{StaticResource Size.NumberField}"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <Button Grid.Column="0" x:Name="SkinButton" Content="Скин" Click="SkinButton_Click"/>
-                    <TextBlock Grid.Column="1" Text="RAM" Style="{StaticResource LabelTextStyle}" Margin="{StaticResource Gap.Left3Right2}"/>
-                    <TextBox Grid.Column="2" x:Name="MemoryTextBox" FontSize="{StaticResource Font.SizeInput}" TextAlignment="Center"
-                             PreviewTextInput="MemoryTextBox_PreviewTextInput"
-                             TextChanged="MemoryTextBox_TextChanged"
-                             DataObject.Pasting="MemoryTextBox_Pasting"
-                             LostFocus="MemoryTextBox_LostFocus" KeyDown="MemoryTextBox_KeyDown"/>
-                    <TextBlock Grid.Column="3" Text="ГБ" Style="{StaticResource LabelTextStyle}" Margin="{StaticResource Gap.Left2}"/>
-                </Grid>
-
-                <!-- Left to right: what this row does to the build, what the
-                     build weighs, and what can be written into it. The preset
-                     takes whatever the other two leave, so the row has no gap
-                     in the middle of it. -->
-                <Grid Grid.Row="1" Grid.Column="1" Margin="{StaticResource Gap.Left2Above2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="{StaticResource Size.EstimateColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <!-- The only irreversible thing in the window, so it is the
-                         only red on it - and red on the glyph alone, on an
-                         ordinary surface. It is square, the height of the row,
-                         and it says what it does in a tooltip rather than in
-                         words that would take the space the button beside it
-                         needs. The icon takes its colour from the button's
-                         Foreground, so the disabled state greys it with
-                         everything else instead of fading it out. -->
-                    <Button Grid.Column="0" x:Name="DeleteBuildButton"
-                            Width="{StaticResource Size.Control}"
-                            Padding="{StaticResource Pad.None}"
-                            Foreground="{StaticResource Brush.Danger}"
-                            Click="DeleteBuildButton_Click"
-                            IsEnabled="False"
-                            ToolTipService.ShowOnDisabled="True">
-                        <Path Width="{StaticResource Size.Icon}"
-                              Height="{StaticResource Size.Icon}"
-                              Stretch="Uniform"
-                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                              Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z"/>
-                    </Button>
-                    <TextBlock Grid.Column="1" x:Name="MemoryEstimateText"
-                               Style="{StaticResource LabelTextStyle}"
-                               TextTrimming="CharacterEllipsis"
-                               Margin="{StaticResource Gap.Left2}"/>
-                    <!-- One press writes the pack's key layout into the game's
-                         options, and the button stays quiet until something -
-                         the player in game, or the pack - changes what is
-                         there. -->
-                    <Button Grid.Column="2" x:Name="ControlsPresetButton"
-                            Content="Пресет управления"
-                            Margin="{StaticResource Gap.Left2}"
-                            Click="ControlsPresetButton_Click"
-                            IsEnabled="False"
-                            ToolTipService.ShowOnDisabled="True"/>
-                </Grid>
-            </Grid>
-
-            <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below2}">
-                <TextBlock Text="Передача мира" Style="{StaticResource SectionTitleStyle}"/>
-                <Grid Margin="{StaticResource Gap.Below2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Мир" Style="{StaticResource LabelTextStyle}"/>
-                    <Grid Grid.Column="1">
-                        <local:CenteredDropDown x:Name="WorldComboBox"
-                                                ItemTemplate="{StaticResource WorldItemTemplate}"
-                                                SelectionChanged="WorldComboBox_SelectionChanged"/>
-                        <TextBlock x:Name="WorldPlaceholderText"
-                                   Text="Нет миров для передачи"
-                                   Style="{StaticResource PlaceholderTextStyle}"
-                                   Visibility="Collapsed"/>
-                    </Grid>
-                    <!-- The build's delete button again, and beside the list
-                         rather than at the head of the row: this one acts on
-                         what the list has selected, so it belongs at the end
-                         the selection is at. Red on the glyph alone, and what it
-                         does is in a tooltip rather than in words that would
-                         take the width the list needs. -->
-                    <Button Grid.Column="2" x:Name="DeleteWorldButton"
-                            Width="{StaticResource Size.Control}"
-                            Margin="{StaticResource Gap.Left2}"
-                            Padding="{StaticResource Pad.None}"
-                            Foreground="{StaticResource Brush.Danger}"
-                            Click="DeleteWorldButton_Click"
-                            IsEnabled="False"
-                            ToolTipService.ShowOnDisabled="True">
-                        <Path Width="{StaticResource Size.Icon}"
-                              Height="{StaticResource Size.Icon}"
-                              Stretch="Uniform"
-                              Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                              Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z"/>
-                    </Button>
-                </Grid>
+    <Grid Margin="{StaticResource Gap.Canvas}" x:Name="RootGrid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*" MinWidth="{StaticResource Size.MainColumnMin}" />
+            <ColumnDefinition Width="1*"
+                MinWidth="{StaticResource Size.SidePanelMin}"
+                MaxWidth="{StaticResource Size.SidePanelMax}" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="1" Margin="{StaticResource Gap.Below4}" x:Name="PlayArea">
+            <Button x:Name="PlayButton"
+                Click="PlayButton_Click"
+                Style="{StaticResource PrimaryButtonStyle}"
+                ToolTipService.ShowOnDisabled="True">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Игрок" Style="{StaticResource LabelTextStyle}"/>
-                    <Grid Grid.Column="1">
-                        <local:CenteredDropDown x:Name="OnlinePlayerComboBox"
-                                                ItemTemplate="{StaticResource PeerItemTemplate}"
-                                                SelectionChanged="TransferSelectionChanged"/>
-                        <TextBlock x:Name="OnlinePlayerPlaceholderText"
-                                   Text="Нет игроков в сети"
-                                   Style="{StaticResource PlaceholderTextStyle}"
-                                   Visibility="Collapsed"/>
-                    </Grid>
+                    <ProgressBar x:Name="PlayProgressBar"
+                        Minimum="0"
+                        Maximum="100"
+                        Style="{StaticResource PlayProgressBarStyle}"
+                        Visibility="Collapsed" />
+                    <TextBlock x:Name="PlayButtonText"
+                        Text="Играть"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        TextWrapping="Wrap"
+                        TextAlignment="Center" />
                 </Grid>
-            </StackPanel>
-
-            <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below4}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0" x:Name="TransferProgressArea" IsEnabled="False">
-                    <ProgressBar x:Name="TransferProgressBar" Minimum="0" Maximum="100"
-                                 Foreground="{StaticResource Brush.ProgressTrack}"/>
-                    <TextBlock x:Name="TransferProgressText" Text="В ожидании мира"
-                               Style="{StaticResource ProgressTextStyle}"/>
-                </Grid>
-                <Button Grid.Column="1" x:Name="TransferButton" Content="Передать"
-                        Click="TransferButton_Click" Margin="{StaticResource Gap.Left2}"
-                        MinWidth="{StaticResource Size.ButtonMin}"/>
-            </Grid>
-
-            <!-- The report sits with the things a player does, between sending a
-                 world and the bars that show what the launcher is doing. -->
-            <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below4}">
-                <TextBlock Text="Сообщить о проблеме" Style="{StaticResource SectionTitleStyle}"/>
-                <Grid Margin="{StaticResource Gap.Below2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Кому" Style="{StaticResource LabelTextStyle}"/>
-                    <Grid Grid.Column="1">
-                        <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
-                                                ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}"/>
-                        <TextBlock x:Name="DiagnosticLogTargetPlaceholderText"
-                                   Text="Нет игроков в сети"
-                                   Style="{StaticResource PlaceholderTextStyle}"
-                                   Visibility="Collapsed"/>
-                    </Grid>
-                    <Button Grid.Column="2" x:Name="SendBugReportButton" Content="Отправить"
-                            Click="SendBugReportButton_Click" Margin="{StaticResource Gap.Left2}"
-                            MinWidth="{StaticResource Size.ButtonMin}"/>
-                </Grid>
-                <Grid Margin="{StaticResource Gap.Below2}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Описание" Style="{StaticResource LabelTextStyle}"
-                               VerticalAlignment="Top" Margin="{StaticResource Gap.Above2}"/>
-                    <Grid Grid.Column="1">
-                        <TextBox x:Name="BugReportMessageTextBox"
-                                 Height="{StaticResource Size.TextArea}"
-                                 Padding="{StaticResource Pad.Text}"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 VerticalContentAlignment="Top"
-                                 MaxLength="4000"/>
-                        <TextBlock Text="Что случилось (необязательно)"
-                                   VerticalAlignment="Top"
-                                   Margin="{StaticResource Pad.FieldText}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Text, ElementName=BugReportMessageTextBox}" Value="">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                </Grid>
-                <!-- Two lines, always, and a field rather than a label: the
-                     launcher's own line about what it is doing used to be text
-                     nobody could select or scroll, so a message longer than the
-                     window was a message half read. It is the description box
-                     beside it in everything but the writing - read-only, under
-                     the same left column, and the whole of it is still on
-                     hover. Fixed height because the canvas is measured with it
-                     empty, and a line that grew would push the footer out of
-                     the window. -->
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Статус" Style="{StaticResource LabelTextStyle}"
-                               VerticalAlignment="Top" Margin="{StaticResource Gap.Above2}"/>
-                    <TextBox Grid.Column="1" x:Name="DiagnosticLogStatusText"
-                             Height="{StaticResource Size.StatusArea}"
-                             Padding="{StaticResource Pad.Text}"
-                             IsReadOnly="True"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto"
-                             VerticalContentAlignment="Top"
-                             ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
-                </Grid>
-            </StackPanel>
-
-            <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="{StaticResource Gap.Below2}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0">
-                    <ProgressBar x:Name="UpdateProgressBar" Minimum="0" Maximum="100"
-                                 Foreground="{StaticResource Brush.ProgressTrack}"/>
-                    <TextBlock x:Name="UpdateProgressText" Text="Проверка обновлений"
-                               Style="{StaticResource ProgressTextStyle}"/>
-                </Grid>
-                <Button Grid.Column="1" x:Name="UpdateButton" Content="Обновить"
-                        Click="UpdateButton_Click" Margin="{StaticResource Gap.Left2}"
-                        MinWidth="{StaticResource Size.ButtonMin}" IsEnabled="False"/>
-            </Grid>
-
-            <!-- The right column has two faces and one place: the assistant, which
-                 every launch opens on, and the version history. The button in the
-                 footer swaps them and the heading says which one is showing. Its
-                 star row is bounded by the canvas's fixed height, which is what
-                 makes either face scroll instead of growing off the bottom. -->
-            <Grid Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="{StaticResource Gap.Left5}">
+            </Button>
+        </Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+            ClipToBounds="True"
+            Margin="{StaticResource Gap.Below4}"
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalContentAlignment="Stretch"
+            HorizontalContentAlignment="Stretch"
+            x:Name="BodyScroll"
+            Grid.Row="1"
+            Grid.Column="0"
+            Grid.ColumnSpan="1">
+            <Grid x:Name="BodyGrid">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" x:Name="SidePanelTitle" Text="AI-помощник"
-                           Style="{StaticResource SectionTitleStyle}"/>
+                <Grid x:Name="MainPanel" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="1"
+                        Margin="{StaticResource Gap.Below4}"
+                        x:Name="SettingsGrid">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1*" />
+                            <ColumnDefinition Width="1*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="0" />
+                            <RowDefinition Height="0" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.Right2}" x:Name="NameSettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Имя" Style="{StaticResource LabelTextStyle}" />
+                            <Grid Grid.Column="1" Margin="{StaticResource Gap.Right2}">
+                                <TextBox x:Name="PlayerNameTextBox"
+                                    MaxLength="16"
+                                    IsReadOnly="True"
+                                    TextChanged="PlayerNameTextBox_TextChanged"
+                                    PreviewTextInput="PlayerNameTextBox_PreviewTextInput"
+                                    DataObject.Pasting="PlayerNameTextBox_Pasting"
+                                    LostFocus="PlayerNameTextBox_LostFocus"
+                                    KeyDown="PlayerNameTextBox_KeyDown" />
+                                <TextBlock Text="Ник не задан"
+                                    VerticalAlignment="Center"
+                                    Margin="{StaticResource Pad.FieldText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=PlayerNameTextBox}"
+                                                    Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                            <Button Grid.Column="2"
+                                x:Name="ChangePlayerNameButton"
+                                Content="Изменить"
+                                Click="ChangePlayerNameButton_Click" />
+                        </Grid>
+                        <Grid Grid.Row="1"
+                            Grid.Column="0"
+                            Margin="{StaticResource Gap.Above2Right2}"
+                            x:Name="BuildSettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Сборка" Style="{StaticResource LabelTextStyle}" />
+                            <Grid Grid.Column="1">
+                                <local:CenteredDropDown x:Name="BuildComboBox"
+                                    ItemTemplate="{StaticResource BuildItemTemplate}"
+                                    SelectionChanged="BuildComboBox_SelectionChanged" />
+                                <TextBlock x:Name="BuildPlaceholderText"
+                                    Text="Нет сборок"
+                                    Style="{StaticResource PlaceholderTextStyle}"
+                                    Visibility="Collapsed" />
+                            </Grid>
+                        </Grid>
+                        <Grid Grid.Row="0" Grid.Column="1" Margin="{StaticResource Gap.Left2}" x:Name="MemorySettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="{StaticResource Size.NumberField}" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" x:Name="SkinButton" Content="Скин" Click="SkinButton_Click" />
+                            <TextBlock Grid.Column="1"
+                                Text="RAM"
+                                Style="{StaticResource LabelTextStyle}"
+                                Margin="{StaticResource Gap.Left3Right2}" />
+                            <TextBox Grid.Column="2"
+                                x:Name="MemoryTextBox"
+                                FontSize="{StaticResource Font.SizeInput}"
+                                TextAlignment="Center"
+                                PreviewTextInput="MemoryTextBox_PreviewTextInput"
+                                TextChanged="MemoryTextBox_TextChanged"
+                                DataObject.Pasting="MemoryTextBox_Pasting"
+                                LostFocus="MemoryTextBox_LostFocus"
+                                KeyDown="MemoryTextBox_KeyDown" />
+                            <TextBlock Grid.Column="3"
+                                Text="ГБ"
+                                Style="{StaticResource LabelTextStyle}"
+                                Margin="{StaticResource Gap.Left2}" />
+                        </Grid>
+                        <Grid Grid.Row="1"
+                            Grid.Column="1"
+                            Margin="{StaticResource Gap.Left2Above2}"
+                            x:Name="PresetSettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="{StaticResource Size.EstimateColumn}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                x:Name="DeleteBuildButton"
+                                Width="{StaticResource Size.Control}"
+                                Padding="{StaticResource Pad.None}"
+                                Foreground="{StaticResource Brush.Danger}"
+                                Click="DeleteBuildButton_Click"
+                                IsEnabled="False"
+                                ToolTipService.ShowOnDisabled="True">
+                                <Path Width="{StaticResource Size.Icon}"
+                                    Height="{StaticResource Size.Icon}"
+                                    Stretch="Uniform"
+                                    Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                    Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z" />
+                            </Button>
+                            <TextBlock Grid.Column="1"
+                                x:Name="MemoryEstimateText"
+                                Style="{StaticResource LabelTextStyle}"
+                                TextTrimming="CharacterEllipsis"
+                                Margin="{StaticResource Gap.Left2}" />
+                            <Button Grid.Column="2"
+                                x:Name="ControlsPresetButton"
+                                Content="Пресет управления"
+                                Margin="{StaticResource Gap.Left2}"
+                                Click="ControlsPresetButton_Click"
+                                IsEnabled="False"
+                                ToolTipService.ShowOnDisabled="True" />
+                        </Grid>
+                    </Grid>
+                    <StackPanel Grid.Row="1"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="1"
+                        Margin="{StaticResource Gap.Below2}"
+                        x:Name="WorldTransferPanel">
+                        <TextBlock Text="Передача мира" Style="{StaticResource SectionTitleStyle}" />
+                        <Grid Margin="{StaticResource Gap.Below2}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Мир" Style="{StaticResource LabelTextStyle}" />
+                            <Grid Grid.Column="1">
+                                <local:CenteredDropDown x:Name="WorldComboBox"
+                                    ItemTemplate="{StaticResource WorldItemTemplate}"
+                                    SelectionChanged="WorldComboBox_SelectionChanged" />
+                                <TextBlock x:Name="WorldPlaceholderText"
+                                    Text="Нет миров для передачи"
+                                    Style="{StaticResource PlaceholderTextStyle}"
+                                    Visibility="Collapsed" />
+                            </Grid>
+                            <Button Grid.Column="2"
+                                x:Name="DeleteWorldButton"
+                                Width="{StaticResource Size.Control}"
+                                Margin="{StaticResource Gap.Left2}"
+                                Padding="{StaticResource Pad.None}"
+                                Foreground="{StaticResource Brush.Danger}"
+                                Click="DeleteWorldButton_Click"
+                                IsEnabled="False"
+                                ToolTipService.ShowOnDisabled="True">
+                                <Path Width="{StaticResource Size.Icon}"
+                                    Height="{StaticResource Size.Icon}"
+                                    Stretch="Uniform"
+                                    Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                    Data="F0 M6.6 1.5 H9.4 A0.6 0.6 0 0 1 10 2.1 V3.9 H6 V2.1 A0.6 0.6 0 0 1 6.6 1.5 Z M2.9 3.9 H13.1 A0.7 0.7 0 0 1 13.1 5.3 H2.9 A0.7 0.7 0 0 1 2.9 3.9 Z M4.3 6.1 H11.7 L11.05 13.7 A1.5 1.5 0 0 1 9.55 15 H6.45 A1.5 1.5 0 0 1 4.95 13.7 Z M6.5 7.6 H7.5 V13.2 H6.5 Z M8.5 7.6 H9.5 V13.2 H8.5 Z" />
+                            </Button>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Игрок" Style="{StaticResource LabelTextStyle}" />
+                            <Grid Grid.Column="1">
+                                <local:CenteredDropDown x:Name="OnlinePlayerComboBox"
+                                    ItemTemplate="{StaticResource PeerItemTemplate}"
+                                    SelectionChanged="TransferSelectionChanged" />
+                                <TextBlock x:Name="OnlinePlayerPlaceholderText"
+                                    Text="Нет игроков в сети"
+                                    Style="{StaticResource PlaceholderTextStyle}"
+                                    Visibility="Collapsed" />
+                            </Grid>
+                        </Grid>
+                    </StackPanel>
+                    <Grid Grid.Row="2"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="1"
+                        Margin="{StaticResource Gap.Below4}"
+                        x:Name="TransferArea">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid Grid.Column="0" x:Name="TransferProgressArea" IsEnabled="False">
+                            <ProgressBar x:Name="TransferProgressBar"
+                                Minimum="0"
+                                Maximum="100"
+                                Foreground="{StaticResource Brush.ProgressTrack}" />
+                            <TextBlock x:Name="TransferProgressText"
+                                Text="В ожидании мира"
+                                Style="{StaticResource ProgressTextStyle}" />
+                        </Grid>
+                        <Button Grid.Column="1"
+                            x:Name="TransferButton"
+                            Content="Передать"
+                            Click="TransferButton_Click"
+                            Margin="{StaticResource Gap.Left2}"
+                            MinWidth="{StaticResource Size.ButtonMin}" />
+                    </Grid>
+                    <Grid Grid.Row="3"
+                        Grid.Column="0"
+                        Grid.ColumnSpan="1"
+                        Margin="{StaticResource Gap.None}"
+                        x:Name="ReportPanel">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Сообщить о проблеме"
+                            Style="{StaticResource SectionTitleStyle}"
+                            Grid.Row="0"
+                            Grid.Column="0"
+                            Grid.ColumnSpan="1" />
+                        <Grid Margin="{StaticResource Gap.Below2}" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Кому" Style="{StaticResource LabelTextStyle}" />
+                            <Grid Grid.Column="1">
+                                <local:CenteredDropDown x:Name="DiagnosticLogTargetComboBox"
+                                    ItemTemplate="{StaticResource DiagnosticTargetItemTemplate}" />
+                                <TextBlock x:Name="DiagnosticLogTargetPlaceholderText"
+                                    Text="Нет игроков в сети"
+                                    Style="{StaticResource PlaceholderTextStyle}"
+                                    Visibility="Collapsed" />
+                            </Grid>
+                            <Button Grid.Column="2"
+                                x:Name="SendBugReportButton"
+                                Content="Отправить"
+                                Click="SendBugReportButton_Click"
+                                Margin="{StaticResource Gap.Left2}"
+                                MinWidth="{StaticResource Size.ButtonMin}" />
+                        </Grid>
+                        <Grid Margin="{StaticResource Gap.Below2}" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                Text="Описание"
+                                Style="{StaticResource LabelTextStyle}"
+                                VerticalAlignment="Top"
+                                Margin="{StaticResource Gap.Above2}" />
+                            <Grid Grid.Column="1">
+                                <TextBox x:Name="BugReportMessageTextBox"
+                                    Padding="{StaticResource Pad.Text}"
+                                    AcceptsReturn="True"
+                                    TextWrapping="Wrap"
+                                    VerticalScrollBarVisibility="Auto"
+                                    VerticalContentAlignment="Top"
+                                    MaxLength="4000"
+                                    MinHeight="{StaticResource Size.TextArea}" />
+                                <TextBlock Text="Что случилось (необязательно)"
+                                    VerticalAlignment="Top"
+                                    Margin="{StaticResource Pad.FieldText}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=BugReportMessageTextBox}"
+                                                    Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </Grid>
+                        <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                Text="Статус"
+                                Style="{StaticResource LabelTextStyle}"
+                                VerticalAlignment="Top"
+                                Margin="{StaticResource Gap.Above2}" />
+                            <TextBox Grid.Column="1"
+                                x:Name="DiagnosticLogStatusText"
+                                Height="{StaticResource Size.StatusArea}"
+                                Padding="{StaticResource Pad.Text}"
+                                IsReadOnly="True"
+                                TextWrapping="Wrap"
+                                VerticalScrollBarVisibility="Auto"
+                                VerticalContentAlignment="Top"
+                                ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        </Grid>
+                    </Grid>
+                </Grid>
+                <Border Visibility="Collapsed"
+                    Height="{StaticResource Size.SidePanelHeight}"
+                    Margin="{StaticResource Gap.Above4}"
+                    x:Name="InlineSideHost"
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Grid.ColumnSpan="1" />
+            </Grid>
+        </ScrollViewer>
+        <Border Margin="{StaticResource Gap.Left5}"
+            x:Name="WideSideHost"
+            Grid.Row="0"
+            Grid.Column="1"
+            Grid.ColumnSpan="1"
+            Grid.RowSpan="2">
+            <Grid x:Name="SidePanel">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0"
+                    x:Name="SidePanelTitle"
+                    Text="AI-помощник"
+                    Style="{StaticResource SectionTitleStyle}" />
                 <Grid Grid.Row="1" Margin="{StaticResource Gap.Below2}">
                     <Grid x:Name="ChangelogPanel" Visibility="Collapsed">
                         <ScrollViewer x:Name="ChangelogScroll"
-                                      VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      Padding="{StaticResource Gap.Right3}">
+                            VerticalScrollBarVisibility="Auto"
+                            HorizontalScrollBarVisibility="Disabled"
+                            Padding="{StaticResource Gap.Right3}">
                             <ItemsControl x:Name="ChangelogList"
-                                          ItemTemplate="{StaticResource ChangelogEntryTemplate}"
-                                          Focusable="False"/>
+                                ItemTemplate="{StaticResource ChangelogEntryTemplate}"
+                                Focusable="False" />
                         </ScrollViewer>
                         <TextBlock x:Name="ChangelogUnavailableText"
-                                   Text="История изменений недоступна"
-                                   Style="{StaticResource CaptionTextStyle}"
-                                   VerticalAlignment="Top"
-                                   Visibility="Collapsed"/>
+                            Text="История изменений недоступна"
+                            Style="{StaticResource CaptionTextStyle}"
+                            VerticalAlignment="Top"
+                            Visibility="Collapsed" />
                     </Grid>
-                    <!-- The assistant is still a promise: the field and the button
-                         are there, and they say so themselves rather than leaving
-                         a player to press and wonder. -->
                     <Grid x:Name="ChatPanel">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="AI-помощник, обученный на твоей сборке Minecraft"
-                                   Style="{StaticResource ParagraphTextStyle}"
-                                   TextAlignment="Center" VerticalAlignment="Center"
-                                   Margin="{StaticResource Gap.Right3}"/>
+                        <TextBlock Grid.Row="0"
+                            Text="AI-помощник, обученный на твоей сборке Minecraft"
+                            Style="{StaticResource ParagraphTextStyle}"
+                            TextAlignment="Center"
+                            VerticalAlignment="Center"
+                            Margin="{StaticResource Gap.Right3}" />
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" x:Name="ChatMessageTextBox"
-                                     Text="Пока не работает :("
-                                     IsReadOnly="True" IsEnabled="False"/>
-                            <Button Grid.Column="1" x:Name="ChatSendButton" Content="Отправить"
-                                    Margin="{StaticResource Gap.Left2}" IsEnabled="False"
-                                    MinWidth="{StaticResource Size.ButtonMin}"/>
+                            <TextBox Grid.Column="0"
+                                x:Name="ChatMessageTextBox"
+                                Text="Пока не работает :("
+                                IsReadOnly="True"
+                                IsEnabled="False" />
+                            <Button Grid.Column="1"
+                                x:Name="ChatSendButton"
+                                Content="Отправить"
+                                Margin="{StaticResource Gap.Left2}"
+                                IsEnabled="False"
+                                MinWidth="{StaticResource Size.ButtonMin}" />
                         </Grid>
                     </Grid>
                 </Grid>
             </Grid>
-
-            <!-- The footer is one line of one size: the name on the left, the
-                 switch on the right, both centred on the same row. Steam moved
-                 up under the chat field, where its button can line up with
-                 something. -->
-            <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2"
-                        Orientation="Horizontal" HorizontalAlignment="Left"
-                        VerticalAlignment="Center">
-                <TextBlock Text="Лучше TLauncher"/>
-            </StackPanel>
-            <!-- The right end of the footer, in the news column's own width so
-                 that "Steam:" starts where the panel above it starts. The
-                 switch keeps the corner it has always had - it is named for
-                 what pressing it brings, not for what is on screen - and the
-                 button that retries Steam sits directly to its left. -->
-            <Grid Grid.Row="7" Grid.Column="2" Margin="{StaticResource Gap.Left5}">
+        </Border>
+        <Grid x:Name="FooterGrid" Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="1*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="1" Margin="{StaticResource Gap.Below2}" x:Name="UpdateArea">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}"/>
-                    <TextBlock x:Name="SteamPersonaText" Visibility="Collapsed"/>
-                </StackPanel>
-                <Button Grid.Column="1" x:Name="RetrySteamButton" Content="Повторить"
-                        Margin="{StaticResource Gap.Right2}"
-                        MinWidth="{StaticResource Size.ButtonMin}"
-                        Click="RetrySteamButton_Click"/>
-                <Button Grid.Column="2" x:Name="SidePanelToggleButton" Content="Новости"
-                        Click="SidePanelToggleButton_Click"
-                        HorizontalAlignment="Right" MinWidth="{StaticResource Size.ButtonMin}"/>
+                <Grid Grid.Column="0">
+                    <ProgressBar x:Name="UpdateProgressBar"
+                        Minimum="0"
+                        Maximum="100"
+                        Foreground="{StaticResource Brush.ProgressTrack}" />
+                    <TextBlock x:Name="UpdateProgressText"
+                        Text="Проверка обновлений"
+                        Style="{StaticResource ProgressTextStyle}" />
+                </Grid>
+                <Button Grid.Column="1"
+                    x:Name="UpdateButton"
+                    Content="Обновить"
+                    Click="UpdateButton_Click"
+                    Margin="{StaticResource Gap.Left2}"
+                    MinWidth="{StaticResource Size.ButtonMin}"
+                    IsEnabled="False" />
             </Grid>
-
-            <Grid Visibility="Collapsed">
-                <TextBlock x:Name="PackHashText"/>
-                <TextBlock x:Name="TransferStatusText"/>
-                <TextBox x:Name="LogTextBox"/>
+            <StackPanel Grid.Row="1"
+                Grid.Column="0"
+                Grid.ColumnSpan="1"
+                Orientation="Horizontal"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Center"
+                x:Name="FooterMotto">
+                <TextBlock Text="Лучше TLauncher" />
+            </StackPanel>
+            <Grid Grid.Row="1"
+                Grid.Column="1"
+                Margin="{StaticResource Gap.Left5}"
+                x:Name="FooterActions"
+                Grid.ColumnSpan="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}" Grid.Column="0" />
+                    <TextBlock x:Name="SteamPersonaText"
+                        Visibility="Collapsed"
+                        Grid.Column="1"
+                        TextTrimming="CharacterEllipsis" />
+                </Grid>
+                <Button Grid.Column="1"
+                    x:Name="RetrySteamButton"
+                    Content="Повторить"
+                    Margin="{StaticResource Gap.Right2}"
+                    MinWidth="{StaticResource Size.ButtonMin}"
+                    Click="RetrySteamButton_Click" />
+                <Button Grid.Column="2"
+                    x:Name="SidePanelToggleButton"
+                    Content="Новости"
+                    Click="SidePanelToggleButton_Click"
+                    HorizontalAlignment="Right"
+                    MinWidth="{StaticResource Size.ButtonMin}" />
             </Grid>
         </Grid>
-    </Viewbox>
+        <Grid Visibility="Collapsed">
+            <TextBlock x:Name="PackHashText" />
+            <TextBlock x:Name="TransferStatusText" />
+            <TextBox x:Name="LogTextBox" />
+        </Grid>
+    </Grid>
 </Window>

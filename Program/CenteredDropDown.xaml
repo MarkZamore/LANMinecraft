@@ -5,6 +5,19 @@
              MinHeight="{DynamicResource Size.Control}"
              Focusable="False"
              PreviewKeyDown="ControlRoot_PreviewKeyDown">
+    <UserControl.Style>
+        <Style TargetType="UserControl">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource Font.Family}"/>
+            <Setter Property="FontSize" Value="{DynamicResource Font.SizeBody}"/>
+            <Setter Property="FontWeight" Value="{DynamicResource Font.WeightBody}"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Style>
     <!-- The launcher's drop-down: a surface like every other control, the
          chosen value reading left like every other value, and a list below on
          the same surface. Colours and sizes are the tokens in App.xaml, named
