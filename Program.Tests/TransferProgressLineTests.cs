@@ -9,11 +9,9 @@ namespace Minecraft.Tests;
 /// <summary>
 /// The words on the world-transfer bar, and whether they fit on it.
 ///
-/// The bar is a fixed width inside a fixed canvas and the text is centred over
-/// it with nothing to trim or wrap it, so a line that grew too long would not
-/// shrink or clip - it would spill sideways over the Передать button. That is
-/// the risk in writing an estimate on it, and it is measured here with the
-/// launcher's own control, style and typeface rather than guessed at.
+/// The bar stretches with the window and its caption can wrap. The real
+/// controls and bundled typeface have to keep even the longest estimate
+/// inside the bar, clear of the button beside it, at every layout width.
 /// </summary>
 public sealed class TransferProgressLineTests
 {
@@ -167,8 +165,14 @@ public sealed class TransferProgressLineTests
     /// line is not one to pick by eye: every combination worth worrying about
     /// is measured and the widest of them has to fit.
     /// </summary>
-    [Fact]
-    public void TheWidestLineItCanWrite_FitsTheBar()
+    [Theory]
+    [InlineData(464, 321)]
+    [InlineData(581, 681)]
+    [InlineData(582, 681)]
+    [InlineData(851, 681)]
+    [InlineData(852, 681)]
+    [InlineData(944, 1001)]
+    public void EveryLine_FitsTheBarAtEachLayoutWidth(double width, double height)
     {
         // Every label the transfer publishes, on either side of it, so the
         // longest one is covered without anybody having to pick it out.
@@ -198,28 +202,14 @@ public sealed class TransferProgressLineTests
                     .Distinct()
                     .ToList();
 
-        var (available, widest, needed) = WindowCanvasTests.OnAStaThread(() =>
+        WindowCanvasTests.OnAStaThread(() =>
         {
             var window = WindowCanvasTests.LoadWindow();
-            var content = (FrameworkElement)window.Content;
-            content.Measure(new Size(window.Width, double.PositiveInfinity));
-            content.Arrange(new Rect(new Point(0, 0), content.DesiredSize));
-            content.UpdateLayout();
-
-            var bar = (Grid)window.FindName("TransferProgressArea")!;
-            var text = (TextBlock)window.FindName("TransferProgressText")!;
-            var measured = lines
-                .Select(line => (line, width: Width(text, line)))
-                .OrderByDescending(pair => pair.width)
-                .First();
-            return (bar.ActualWidth, measured.line, measured.width);
+            WindowCanvasTests.AssertProgressLinesFit(
+                window, new Size(width, height),
+                "TransferProgressArea", "TransferProgressText", "TransferButton", lines);
+            return true;
         });
-
-        Assert.True(available > 0, "the transfer bar measured to nothing; the layout pass did not run");
-        Assert.True(
-            needed <= available,
-            $"\"{widest}\" needs {needed:0.#}px and the bar is {available:0.#}px wide; " +
-            "it would spill sideways over the Передать button");
     }
 
     /// <summary>
@@ -268,10 +258,4 @@ public sealed class TransferProgressLineTests
         }
     }
 
-    private static double Width(TextBlock text, string content)
-    {
-        text.Text = content;
-        text.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        return text.DesiredSize.Width;
-    }
 }

@@ -7,11 +7,9 @@ namespace Minecraft;
 /// </summary>
 /// <remarks>
 /// It was a system MessageBox, which put a light Windows dialog in the system
-/// font on top of a dark launcher in Montserrat - and at a size that could not
-/// match, because the launcher draws its canvas through a Viewbox and a
-/// MessageBox draws at face value. Now it is a window of ours, on the owner's
-/// own scale, and it says which file it found the difference in rather than
-/// asking the player to take the change on trust.
+/// font on top of a dark launcher in Montserrat. Now it is a window of ours,
+/// using the same text tokens, and it says which file it found the difference
+/// in rather than asking the player to take the change on trust.
 /// </remarks>
 public partial class ControlsPresetConfirmationDialog : Window
 {

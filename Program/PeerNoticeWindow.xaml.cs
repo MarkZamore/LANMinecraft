@@ -34,8 +34,8 @@ public partial class PeerNoticeWindow : Window
         Owner = owner;
         TitleText.Text = notice.Title;
         BodyText.Text = notice.Body;
-        // The launcher's canvas is drawn smaller than its size says, and a
-        // notice standing beside it has to be lettered on the same scale.
+        // Notices use the launcher's native text tokens; a narrow launcher
+        // must not make a screen-corner notice harder to read.
         Loaded += (_, _) =>
         {
             DialogScale.MatchOwner(this, NoticeSurface);

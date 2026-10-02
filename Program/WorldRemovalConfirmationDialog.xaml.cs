@@ -23,9 +23,8 @@ public partial class WorldRemovalConfirmationDialog : Window
         QuestionText.Text = $"Вы точно хотите удалить мир «{displayName}»?";
         ExplanationText.Text =
             "Мир удалится с диска вместе со всем, что в нём построено, и вернуть его будет неоткуда.";
-        // The launcher is a canvas in a Viewbox, so its text is drawn smaller
-        // than its size says. Without this the same token gives a bigger
-        // letter here than in the window behind.
+        // Keep the text at its native size and fit the current monitor's work
+        // area, even when Windows DPI scaling leaves little room.
         Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
     }
 

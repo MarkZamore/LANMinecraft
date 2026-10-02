@@ -107,21 +107,15 @@ public partial class MainWindow : Window
     private ControlsPresetStatus _controlsPresetStatus;
     private string? _controlsPresetStamp;
 
-    /// <summary>The shape of the canvas the Viewbox scales, margins included.</summary>
-    private double ClientAspect()
-    {
-        var width = RootGrid.Width + RootGrid.Margin.Left + RootGrid.Margin.Right;
-        var height = RootGrid.Height + RootGrid.Margin.Top + RootGrid.Margin.Bottom;
-        return height > 0 ? width / height : 1;
-    }
-
     public MainWindow()
     {
         InitializeComponent();
+        SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
+        BodyScroll.SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         DarkTitleBar.Apply(this);
         ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); _framePainted = true; ReportStartupTrace(); };
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
-        _windowPlacement.Apply(this, ClientAspect());
+        _windowPlacement.Apply(this);
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
         WorldComboBox.ItemsSource = _worlds;
@@ -143,6 +137,7 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        AdaptiveLauncherLayout.Apply(this);
         try
         {
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
@@ -2066,7 +2061,7 @@ public partial class MainWindow : Window
         if (settled)
         {
             SteamPersonaText.Text = status.PersonaName;
-            SteamPersonaText.ToolTip = null;
+            SteamPersonaText.ToolTip = status.PersonaName;
             SteamPersonaText.Visibility = Visibility.Visible;
             RetrySteamButton.Visibility = Visibility.Collapsed;
         }
@@ -2075,7 +2070,7 @@ public partial class MainWindow : Window
             // Nothing to press: Steam is retrying by itself, and the launcher
             // comes back with it. The name stays, the reason is on hover.
             SteamPersonaText.Text = status.PersonaName;
-            SteamPersonaText.ToolTip = status.Message;
+            SteamPersonaText.ToolTip = status.PersonaName + Environment.NewLine + status.Message;
             SteamPersonaText.Visibility = Visibility.Visible;
             RetrySteamButton.Visibility = Visibility.Collapsed;
         }

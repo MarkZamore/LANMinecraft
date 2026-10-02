@@ -246,16 +246,21 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         // before the bars that show what the launcher itself is doing.
         var panel = title.Parent;
         Assert.NotNull(panel);
-        Assert.Equal("0", (string?)panel.Attribute("Grid.Column"));
-        Assert.Equal("2", (string?)panel.Attribute("Grid.ColumnSpan"));
+        Assert.Equal("ReportPanel", (string?)panel.Attribute(x + "Name"));
         var transferRow = RowOf(document.Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "TransferButton"));
-        var updateRow = RowOf(document.Descendants(presentation + "ProgressBar")
-            .Single(element => (string?)element.Attribute(x + "Name") == "UpdateProgressBar"));
         var reportRow = RowOf(panel);
-        Assert.True(
-            transferRow < reportRow && reportRow < updateRow,
-            $"transfer row {transferRow}, report row {reportRow}, update row {updateRow}");
+        Assert.True(transferRow < reportRow,
+            $"transfer row {transferRow}, report row {reportRow}");
+        var body = document.Descendants(presentation + "ScrollViewer")
+            .Single(element => (string?)element.Attribute(x + "Name") == "BodyScroll");
+        Assert.Contains(body, panel.Ancestors());
+        var footer = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "FooterGrid");
+        var update = document.Descendants(presentation + "ProgressBar")
+            .Single(element => (string?)element.Attribute(x + "Name") == "UpdateProgressBar");
+        Assert.Contains(footer, update.Ancestors());
+        Assert.True(RowOf(body) < RowOf(footer));
     }
 
     /// <summary>
@@ -277,7 +282,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Descendants(presentation + "TextBlock")
             .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "SidePanelTitle");
         Assert.NotNull(title);
-        Assert.Equal("2", (string?)title.Parent?.Attribute("Grid.Column"));
+        Assert.Equal("SidePanel", (string?)title.Parent?.Attribute(x + "Name"));
         // The launcher opens on the assistant, so that is the heading it wears.
         Assert.Equal("AI-помощник", (string?)title.Attribute("Text"));
 
@@ -367,12 +372,11 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     /// <summary>
-    /// The version history fills the left column exactly: it spans every row but
-    /// the footer, so the two columns end together and the list scrolls instead
-    /// of stretching the window.
+    /// The main body scrolls between the pinned Play button and footer. A single
+    /// side panel can use either the right host or the host below the main body.
     /// </summary>
     [Fact]
-    public void MainWindowXaml_LetsTheChangelogSpanEveryRowButTheFooter()
+    public void MainWindowXaml_ProvidesSeparateWideAndInlineHostsForOneSidePanel()
     {
         var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
         XNamespace presentation =
@@ -387,17 +391,24 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Elements(presentation + "Grid.RowDefinitions")
             .Single()
             .Elements()
-            .Count();
-        var column = document
-            .Descendants(presentation + "Grid")
-            .Single(element => (string?)element.Attribute("Grid.Column") == "2" &&
-                               element.Attribute("Grid.RowSpan") is not null);
-
-        Assert.Equal(rows - 1, int.Parse((string)column.Attribute("Grid.RowSpan")!,
-            System.Globalization.CultureInfo.InvariantCulture));
-        var footerRow = RowOf(document.Descendants(presentation + "Button")
-            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelToggleButton"));
-        Assert.Equal(rows - 1, footerRow);
+            .Select(row => (string?)row.Attribute("Height"))
+            .ToArray();
+        Assert.Equal(new[] { "Auto", "*", "Auto" }, rows);
+        var wideHost = document.Descendants(presentation + "Border")
+            .Single(element => (string?)element.Attribute(x + "Name") == "WideSideHost");
+        var inlineHost = document.Descendants(presentation + "Border")
+            .Single(element => (string?)element.Attribute(x + "Name") == "InlineSideHost");
+        Assert.Equal("1", (string?)wideHost.Attribute("Grid.Column"));
+        Assert.Equal("2", (string?)wideHost.Attribute("Grid.RowSpan"));
+        Assert.Equal("1", (string?)inlineHost.Attribute("Grid.Row"));
+        Assert.Contains(inlineHost.Ancestors(), ancestor => (string?)ancestor.Attribute(x + "Name") == "BodyScroll");
+        Assert.Equal("2", (string?)document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "FooterGrid")
+            .Attribute("Grid.Row"));
+        foreach (var name in new[] { "SidePanel", "ChatPanel", "ChangelogPanel", "ChangelogList", "ChatMessageTextBox", "ChatSendButton" })
+        {
+            Assert.Single(document.Descendants(), element => (string?)element.Attribute(x + "Name") == name);
+        }
     }
 
     /// <summary>
@@ -415,14 +426,8 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         XNamespace x =
             "http://schemas.microsoft.com/winfx/2006/xaml";
 
-        var settings = document
-            .Descendants()
-            .Single(element => (string?)element.Attribute(x + "Name") == "PlayerNameTextBox")
-            .Ancestors(presentation + "Grid")
-            .First(grid => grid.Elements(presentation + "Grid.ColumnDefinitions").Any());
-        // The name row is itself a grid; the halves are its parent.
-        settings = settings.Ancestors(presentation + "Grid")
-            .First(grid => grid.Elements(presentation + "Grid.ColumnDefinitions").Any());
+        var settings = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SettingsGrid");
         var widths = settings
             .Elements(presentation + "Grid.ColumnDefinitions")
             .Single()
