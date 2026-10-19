@@ -380,10 +380,6 @@ public partial class MainWindow : Window
         }
         finally
         {
-            if (_paths is not null)
-            {
-                LogCleanupService.ScheduleCurrentExtractionCleanup(_paths, Environment.ProcessId);
-            }
             try
             {
                 if (_updateService is not null)
@@ -1728,7 +1724,9 @@ public partial class MainWindow : Window
             Title = "Выберите скин Minecraft",
             Filter = "PNG (*.png)|*.png",
             CheckFileExists = true,
-            Multiselect = false
+            Multiselect = false,
+            AddToRecent = false,
+            RestoreDirectory = true
         };
         if (dialog.ShowDialog(this) != true)
         {
@@ -2070,7 +2068,9 @@ public partial class MainWindow : Window
             // Nothing to press: Steam is retrying by itself, and the launcher
             // comes back with it. The name stays, the reason is on hover.
             SteamPersonaText.Text = status.PersonaName;
-            SteamPersonaText.ToolTip = status.PersonaName + Environment.NewLine + status.Message;
+            SteamPersonaText.ToolTip = status.Message == SteamClientService.LoggedInElsewhereMessage
+                ? "Войдите в Steam снова: аккаунт открыт на другом компьютере."
+                : "Связь потеряна; подключение восстановится автоматически.";
             SteamPersonaText.Visibility = Visibility.Visible;
             RetrySteamButton.Visibility = Visibility.Collapsed;
         }
@@ -2087,7 +2087,13 @@ public partial class MainWindow : Window
     /// </summary>
     private void SetSteamMessage(string message)
     {
-        RetrySteamButton.ToolTip = string.IsNullOrWhiteSpace(message) ? null : message;
+        RetrySteamButton.ToolTip = string.IsNullOrWhiteSpace(message) ? null : _steamClient?.Status.Availability switch
+        {
+            SteamAvailability.SteamNotRunning => "Запустите Steam и повторите подключение.",
+            SteamAvailability.NotLoggedIn => "Войдите в Steam и повторите подключение.",
+            SteamAvailability.Starting => "Выполняется подключение к Steam.",
+            _ => "Проверьте Steam и повторите подключение."
+        };
         RetrySteamButton.Visibility = Visibility.Visible;
         SteamPersonaText.Visibility = Visibility.Collapsed;
     }
@@ -2861,7 +2867,7 @@ public partial class MainWindow : Window
     {
         _memoryEstimateWaitStep = 0;
         MemoryEstimateText.Text = "от .";
-        MemoryEstimateText.ToolTip = "Лаунчер взвешивает сборку, чтобы прикинуть память.";
+        MemoryEstimateText.ToolTip = "Расчёт памяти для выбранной сборки.";
         _memoryEstimateWait ??= new DispatcherTimer(
             TimeSpan.FromMilliseconds(250),
             DispatcherPriority.Normal,
@@ -2880,9 +2886,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// What the Skin button says on hover, the way the memory field does: the
-    /// rule for the file, and - where the pack is old enough for it to matter -
-    /// what this pack's Minecraft will make of the skin that is chosen.
+    /// The selected version's supported skin dimensions and file size limit.
     /// </summary>
     private void RefreshSkinHint()
     {
@@ -2956,9 +2960,7 @@ public partial class MainWindow : Window
         var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
             PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
         MemoryEstimateText.Text = $"от {estimateGb} ГБ";
-        MemoryEstimateText.ToolTip =
-            $"Оценка: столько памяти лаунчер советует этой сборке - {estimateGb} ГБ кучи. " +
-            "Число в поле рядом ваше и остаётся вашим.";
+        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки.";
     }
 
     /// <summary>
@@ -2982,24 +2984,14 @@ public partial class MainWindow : Window
         var measured = MeasuredForMemory();
         var reserveGb = MemorySizingService.GetNativeReserveGb(pack, video, measured);
         var allowedHeapGb = MemorySizingService.GetAllowedHeapGb();
-        var tooltip =
-            $"Столько памяти получит куча Java - ровно {heapGb} ГБ, это же число покажет игра по F3. " +
-            $"Сверх кучи игра займёт ещё около {reserveGb} ГБ: классы модов, скомпилированный код " +
-            $"и буферы Sodium, итого около {heapGb + reserveGb} ГБ. " +
-            $"Больше {allowedHeapGb} ГБ здесь не поставить - остальное оставлено системе.";
+        var tooltip = $"Память игры: {heapGb} ГБ + около {reserveGb} ГБ дополнительно; максимум {allowedHeapGb} ГБ.";
         // Where there is a measurement it is the whole answer, card included,
         // so the card is not named twice: the driver's copy is already inside
         // the number the game was seen holding.
         var videoSpillGb = MemorySizingService.GetVideoSpillGb(pack, video);
-        if (measured.IsKnown)
+        if (!measured.IsKnown && videoSpillGb > 0)
         {
-            tooltip += " Запас сверх кучи здесь не оценка, а замер: игра занимала около " +
-                $"{measured.AtMostMb} МБ сверх кучи за последние сессии на этой машине.";
-        }
-        else if (videoSpillGb > 0)
-        {
-            tooltip += $" У видеокарты {video.DedicatedGb} ГБ, сборке этого мало, и около " +
-                $"{videoSpillGb} ГБ текстур драйвер держит в оперативной - потолок здесь ниже на столько же.";
+            tooltip = $"Выделено {heapGb} ГБ; нехватка видеопамяти займёт ещё {videoSpillGb} ГБ ОЗУ (максимум {allowedHeapGb} ГБ).";
         }
         MemoryTextBox.ToolTip = tooltip;
     }
@@ -3110,11 +3102,7 @@ public partial class MainWindow : Window
         // or a game that has the options file open.
         var preset = _controlsPresetStatus;
         ControlsPresetButton.IsEnabled = preset.HasPreset && !preset.IsApplied && !_minecraftRunning;
-        // A build with no layout of its own says nothing at all: the button is
-        // simply dead, the way a control is for a feature a build does not
-        // have. The other two quiet states are worth explaining - the game is
-        // holding the file, or the layout is already in place - because there
-        // the button would otherwise look broken.
+        // Explain each disabled preset state without changing its availability.
         // The delete button belongs to a build that is actually on the disk:
         // a name the list only offers has nothing to remove, and a game that is
         // running is holding the very files this would delete.
@@ -3123,7 +3111,7 @@ public partial class MainWindow : Window
         DeleteBuildButton.ToolTip = !installed
             ? "Эта сборка ещё не скачана"
             : _minecraftRunning
-                ? "Игра запущена - файлы сборки сейчас у неё"
+                ? "Сначала закройте игру."
                 : "Удалить сборку с компьютера";
         // The same three states for the world beside it, and the same reason for
         // each: nothing chosen, the game is holding it, or it can go.
@@ -3132,18 +3120,15 @@ public partial class MainWindow : Window
         DeleteWorldButton.ToolTip = !worldChosen
             ? "Мир не выбран"
             : _minecraftRunning
-                ? "Игра запущена - мир сейчас у неё"
+                ? "Сначала закройте игру."
                 : "Удалить выбранный мир с компьютера";
         ControlsPresetButton.ToolTip = !preset.HasPreset
-            ? null
+            ? "У сборки нет пресета управления."
             : _minecraftRunning
-                ? "Игра запущена - настройки управления сейчас у неё"
+                ? "Сначала закройте игру."
                 : preset.IsApplied
-                    ? "Пресет применён - настройки управления совпадают со сборкой"
-                    // A lit button says what it found: the first line of the
-                    // preset the game does not have. Otherwise the only answer
-                    // to "but I applied it already" is six hundred lines by hand.
-                    : $"Заменить настройки управления раскладкой сборки без конфликтов. Отличается: {preset.FirstDifference}";
+                    ? "Пресет управления уже применён."
+                    : "Применить настройки управления сборки.";
         // A list with nothing to choose between is not a control, it is a
         // label that opens. One world is the answer already; the drop-down
         // stays readable and stays selected, it just stops pretending there is

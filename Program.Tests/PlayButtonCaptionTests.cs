@@ -1,24 +1,58 @@
-﻿using System.Globalization;
-using System.IO;
-using System.Text.RegularExpressions;
-using System.Windows;
+﻿using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using Minecraft;
 
 namespace Minecraft.Tests;
 
-/// <summary>
-/// The play button holds its caption on a canvas that never changes: no
-/// wrapping, no trimming, so a caption too wide is cut mid-letter and nothing
-/// says it happened. Every caption the preparation can show is measured here
-/// with the real font files, at the real size, against the real button width.
-/// </summary>
+/// <summary>Preparation captions wrap inside the section-width button without clipping its text or progress.</summary>
 public sealed class PlayButtonCaptionTests
 {
     // The widest numbers the formatter can produce: just under the gigabyte
     // rollover, both halves at once, with a three-digit speed beside them.
     private const long JustUnderAGigabyte = (1024L * 1024 * 1024) - 1;
     private const double FastDownload = 123.45 * 1024 * 1024;
+
+    [Fact]
+    public void ThePlaySurface_StaysReferenceBlueWhilePreparingAndMutesOnlyWhenDisabled()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var button = Assert.IsType<Button>(window.FindName("PlayButton"));
+            var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
+            var progress = Assert.IsType<ProgressBar>(window.FindName("PlayProgressBar"));
+            var size = new Size(968, 633);
+            // A different Windows accent must not recolour the explicitly blue action.
+            window.Resources["Brush.Accent"] = new SolidColorBrush(Colors.Magenta);
+            button.IsEnabled = true;
+            WindowCanvasTests.LayoutWindow(window, size);
+            var surface = Assert.IsType<Border>(button.Template.FindName("Surface", button));
+            var blue = Color.FromRgb(0x60, 0xCD, 0xFF);
+            Assert.Equal(blue, Assert.IsType<SolidColorBrush>(surface.Background).Color);
+            Assert.Equal(Colors.Black, Assert.IsType<SolidColorBrush>(text.Foreground).Color);
+
+            button.IsHitTestVisible = false;
+            progress.Visibility = Visibility.Visible;
+            progress.Value = 50;
+            text.Text = "Проверка сборки";
+            WindowCanvasTests.LayoutWindow(window, size);
+            Assert.True(button.IsEnabled);
+            Assert.Equal(blue, Assert.IsType<SolidColorBrush>(surface.Background).Color);
+            Assert.Equal(Colors.Black, Assert.IsType<SolidColorBrush>(text.Foreground).Color);
+            Assert.Equal(0, Assert.IsType<SolidColorBrush>(progress.Background).Color.A);
+
+            button.IsHitTestVisible = true;
+            button.IsEnabled = false;
+            progress.Visibility = Visibility.Collapsed;
+            WindowCanvasTests.LayoutWindow(window, size);
+            Assert.Equal(Assert.IsType<SolidColorBrush>(window.FindResource("Brush.SurfaceDisabled")).Color,
+                Assert.IsType<SolidColorBrush>(surface.Background).Color);
+            Assert.Equal(Assert.IsType<SolidColorBrush>(window.FindResource("Brush.TextDisabled")).Color,
+                Assert.IsType<SolidColorBrush>(text.Foreground).Color);
+            return true;
+        });
+    }
 
     public static TheoryData<string> EveryCaption()
     {
@@ -38,11 +72,34 @@ public sealed class PlayButtonCaptionTests
     [MemberData(nameof(EveryCaption))]
     public void EveryCaption_FitsInsideTheButton(string caption)
     {
-        var width = Measure(caption);
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var button = Assert.IsType<Button>(window.FindName("PlayButton"));
+            var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
+            text.Text = caption;
+            button.IsHitTestVisible = false;
+            WindowCanvasTests.LayoutWindow(window, new Size(968, 633));
 
-        Assert.True(
-            width <= PlayButtonCaption.MaxWidth,
-            $"'{caption}' draws {width:0.#} px of the {PlayButtonCaption.MaxWidth} px the button has; it would be cut mid-letter");
+            Assert.Equal((FontFamily)window.FindResource("Font.Family"), text.FontFamily);
+            Assert.Equal((FontWeight)window.FindResource("Font.WeightEmphasis"), text.FontWeight);
+            Assert.Equal((double)window.FindResource("Font.SizeDisplay"), text.FontSize);
+            Assert.Equal(TextWrapping.Wrap, text.TextWrapping);
+            Assert.Equal(Assert.IsType<Grid>(window.FindName("PlayArea")).ColumnDefinitions[0].ActualWidth, button.ActualWidth, 3);
+            Assert.Equal(Assert.IsType<Grid>(window.FindName("BodyGrid")).ActualWidth, button.ActualWidth, 3);
+            var bounds = text.TransformToAncestor(button)
+                .TransformBounds(new Rect(new Point(), text.RenderSize));
+            Assert.True(bounds.Left >= button.BorderThickness.Left - 0.5 &&
+                bounds.Right <= button.ActualWidth - button.BorderThickness.Right + 0.5,
+                $"'{caption}' runs outside the button horizontally: {bounds}");
+            Assert.True(bounds.Top >= button.BorderThickness.Top - 0.5 &&
+                bounds.Bottom <= button.ActualHeight - button.BorderThickness.Bottom + 0.5,
+                $"'{caption}' runs outside the button vertically: {bounds}");
+            var requiredHeight = text.DesiredSize.Height;
+            Assert.True(text.ActualHeight >= requiredHeight - 0.5,
+                $"'{caption}' needs {requiredHeight} DIP, but only {text.ActualHeight} DIP is visible");
+            return true;
+        });
     }
 
     /// <summary>
@@ -107,48 +164,4 @@ public sealed class PlayButtonCaptionTests
         yield return PlayButtonCaption.For(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1), 0);
     }
 
-    private static double Measure(string text)
-    {
-        var program = FindProgramDirectory();
-        var fonts = new Uri(Path.Combine(program, "Fonts") + Path.DirectorySeparatorChar);
-        var typeface = new Typeface(
-            // "./#Montserrat" is what Fonts.GetFontFamilies actually reports at a
-            // directory uri; "#Montserrat" resolves to nothing and silently
-            // measures a fallback about a tenth narrower, which is a guard that
-            // passes captions the button would cut.
-            new FontFamily(fonts, "./#Montserrat, Segoe UI"),
-            FontStyles.Normal,
-            FontWeights.Light,
-            FontStretches.Normal);
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight,
-            typeface,
-            DisplayFontSize(program),
-            Brushes.Black,
-            pixelsPerDip: 1);
-        return formatted.WidthIncludingTrailingWhitespace;
-    }
-
-    /// <summary>The caption's size is a token; the test reads it rather than repeating it.</summary>
-    private static double DisplayFontSize(string program)
-    {
-        var app = File.ReadAllText(Path.Combine(program, "App.xaml"));
-        var match = Regex.Match(app, @"x:Key=""Font\.SizeDisplay""[^>]*>([0-9.]+)<");
-        Assert.True(match.Success, "App.xaml should still define Font.SizeDisplay");
-        return double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-    }
-
-    private static string FindProgramDirectory()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            var candidate = Path.Combine(current.FullName, "Program");
-            if (File.Exists(Path.Combine(candidate, "App.xaml"))) return candidate;
-            current = current.Parent;
-        }
-        throw new DirectoryNotFoundException("Program directory was not found");
-    }
 }

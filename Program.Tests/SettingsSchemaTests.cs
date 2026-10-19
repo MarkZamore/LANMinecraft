@@ -3,8 +3,8 @@
 namespace Minecraft.Tests;
 
 /// <summary>
-/// Settings are re-saved on every load, so the first launch of a new build
-/// rewrites the file in its own shape. What is pinned here is that this never
+/// Settings are normalised on every load, so the first launch of a new build
+/// can rewrite the file in its own shape. What is pinned here is that this never
 /// costs the player anything they configured, whatever else the file contains.
 /// </summary>
 public sealed class SettingsSchemaTests : IDisposable

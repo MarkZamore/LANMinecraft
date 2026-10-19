@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 
 namespace Minecraft.Tests;
 
@@ -14,7 +13,6 @@ public sealed class NameMarqueeTests
 {
     // The name field in the launcher is about this wide.
     private const double Wide = 96;
-    private const double Tall = 30;
 
     /// <summary>The walk is paced by distance, so a longer tail takes longer.</summary>
     [Fact]
@@ -63,7 +61,7 @@ public sealed class NameMarqueeTests
     [Fact]
     public void AName_ThatFits_DoesNotMove()
     {
-        var walking = OnAStaThread(() =>
+        var walking = WindowCanvasTests.OnAStaThread(() =>
         {
             var field = Field("Oskar");
             var marquee = new NameMarquee(field);
@@ -78,7 +76,7 @@ public sealed class NameMarqueeTests
     [Fact]
     public void AName_ThatDoesNotFit_WalksItsHiddenTail()
     {
-        var (walking, tail, hidden) = OnAStaThread(() =>
+        var (walking, tail, hidden) = WindowCanvasTests.OnAStaThread(() =>
         {
             var field = Field("MarkZamoreLongest");
             var marquee = new NameMarquee(field);
@@ -96,7 +94,7 @@ public sealed class NameMarqueeTests
     [Fact]
     public void Editing_StopsTheWalk()
     {
-        var (walkingWhileEditing, offset) = OnAStaThread(() =>
+        var (walkingWhileEditing, offset) = WindowCanvasTests.OnAStaThread(() =>
         {
             var field = Field("MarkZamoreLongest");
             var marquee = new NameMarquee(field);
@@ -115,49 +113,11 @@ public sealed class NameMarqueeTests
     /// </summary>
     private static TextBox Field(string name)
     {
-        var program = Path.GetDirectoryName(FindRepositoryFile("Program", "MainWindow.xaml"))!;
-        var fonts = new Uri(Path.Combine(program, "Fonts") + Path.DirectorySeparatorChar);
-        var field = new TextBox
-        {
-            Text = name,
-            FontFamily = new FontFamily(fonts, "./#Montserrat, Segoe UI"),
-            FontSize = 12,
-            IsReadOnly = true,
-        };
+        var window = WindowCanvasTests.LoadWindow();
+        var field = Assert.IsType<TextBox>(window.FindName("PlayerNameTextBox"));
+        field.Text = name;
         field.Width = Wide;
-        field.Measure(new Size(Wide, Tall));
-        field.Arrange(new Rect(0, 0, Wide, Tall));
-        field.UpdateLayout();
+        WindowCanvasTests.LayoutWindow(window, new Size(968, 633));
         return field;
-    }
-
-    /// <summary>WPF objects belong to a single-threaded apartment; xUnit's is not one.</summary>
-    private static T OnAStaThread<T>(Func<T> work)
-    {
-        T result = default!;
-        Exception? failure = null;
-        var thread = new Thread(() =>
-        {
-            try { result = work(); }
-            catch (Exception ex) { failure = ex; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromMinutes(1)), "the field did not measure in a minute");
-        if (failure is not null) throw new InvalidOperationException("The field could not be measured.", failure);
-        return result;
-    }
-
-    private static string FindRepositoryFile(params string[] relativeParts)
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            var candidate = relativeParts.Aggregate(current.FullName, Path.Combine);
-            if (File.Exists(candidate)) return candidate;
-            current = current.Parent;
-        }
-
-        throw new FileNotFoundException($"Repository file was not found: {Path.Combine(relativeParts)}");
     }
 }

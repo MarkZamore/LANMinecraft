@@ -82,8 +82,7 @@ public sealed class WindowPlacementService
                 Bottom = bounds.Bottom,
                 Maximized = restoreMaximized
             };
-            Directory.CreateDirectory(Path.GetDirectoryName(_placementFile)!);
-            AtomicFile.WriteAllText(_placementFile, JsonSerializer.Serialize(state, _jsonOptions));
+            AtomicFile.WriteAllTextIfChanged(_placementFile, JsonSerializer.Serialize(state, _jsonOptions));
         }
         catch
         {

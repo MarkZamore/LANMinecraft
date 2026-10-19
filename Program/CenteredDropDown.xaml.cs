@@ -38,7 +38,9 @@ public partial class CenteredDropDown : UserControl
 
     public CenteredDropDown()
     {
+        ControlMotion.Initialize();
         InitializeComponent();
+        Loaded += (_, _) => ControlMotion.TurnChevron(DropDownChevron, DropDownPopup.IsOpen, animate: false);
     }
 
     public IEnumerable? ItemsSource
@@ -95,6 +97,7 @@ public partial class CenteredDropDown : UserControl
 
     private void DropDownPopup_Opened(object? sender, EventArgs e)
     {
+        ControlMotion.TurnChevron(DropDownChevron, expanded: true, animate: IsLoaded);
         ItemsList.SelectedItem = SelectedItem;
         if (SelectedItem is not null)
         {
@@ -105,6 +108,7 @@ public partial class CenteredDropDown : UserControl
 
     private void DropDownPopup_Closed(object? sender, EventArgs e)
     {
+        ControlMotion.TurnChevron(DropDownChevron, expanded: false, animate: IsLoaded);
         DropDownButton.IsChecked = false;
     }
 

@@ -409,7 +409,7 @@ public sealed class MemorySizingTests
 
         var window = ReadRepositoryFile("Program", "MainWindow.xaml.cs");
         Assert.Contains("MemoryTextBox.ToolTip =", window, StringComparison.Ordinal);
-        Assert.Contains("это же число покажет игра по F3", window, StringComparison.Ordinal);
+        Assert.Contains("Память игры: {heapGb} ГБ", window, StringComparison.Ordinal);
 
         // The card belongs to the same sum, and to all three places that do it:
         // the number the launcher suggests, the number the field explains and

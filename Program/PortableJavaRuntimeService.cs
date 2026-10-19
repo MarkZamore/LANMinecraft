@@ -755,14 +755,15 @@ public sealed partial class PortableJavaRuntimeService
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var argument in MinecraftProcessService.JavaCompatibilityArguments)
+        using var processFiles = PortableJavaEnvironment.CreateToolScope(
+            startInfo, Path.Combine(_paths.Personal, "Temp"));
+        foreach (var argument in MinecraftProcessService.CompatibilityArgumentsFor(_pin.MajorVersion))
         {
             startInfo.ArgumentList.Add(argument);
         }
         startInfo.ArgumentList.Add("-version");
 
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Java runtime flag probe could not be started.");
+        var process = processFiles.Start();
         // Both pipes drain concurrently while waiting; a synchronous ReadToEnd
         // first would hang past the timeout on a stalled java.exe and deadlock
         // if a user-global JAVA_TOOL_OPTIONS floods the other pipe.
@@ -770,13 +771,8 @@ public sealed partial class PortableJavaRuntimeService
         var standardOutput = process.StandardOutput.ReadToEndAsync();
         if (!process.WaitForExit((int)FlagProbeTimeout.TotalMilliseconds))
         {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-            {
-            }
+            _ = processFiles.Stop();
+            PortableJavaEnvironment.ObserveOutputCompletion(standardError, standardOutput);
             throw new TimeoutException("Java runtime flag probe timed out.");
         }
         process.WaitForExit();

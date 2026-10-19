@@ -71,55 +71,6 @@ public static class LogCleanupService
         CleanupRenamedExtractionRoots();
     }
 
-    public static void ScheduleCurrentExtractionCleanup(AppPaths paths, int processId)
-    {
-        var extractionDir = FindCurrentExtractionDirectory();
-        if (string.IsNullOrWhiteSpace(extractionDir)) return;
-
-        try
-        {
-            var escapedExtractionDir = extractionDir.Replace("'", "''", StringComparison.Ordinal);
-            var command = "$ErrorActionPreference = 'SilentlyContinue'\r\n" +
-                          $"$processId = {processId}\r\n" +
-                          $"$extractionDir = '{escapedExtractionDir}'\r\n" +
-                          "function Test-ExtractionInUse {\r\n" +
-                          $"  foreach ($candidate in @(Get-Process -Name '{ExecutableName}' -ErrorAction SilentlyContinue)) {{\r\n" +
-                          "    if ($candidate.Id -eq $processId) { continue }\r\n" +
-                          "    try {\r\n" +
-                          "      foreach ($module in @($candidate.Modules)) {\r\n" +
-                          "        if ($module.FileName.StartsWith($extractionDir, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }\r\n" +
-                          "      }\r\n" +
-                          "    } catch { return $true }\r\n" +
-                          "  }\r\n" +
-                          "  return $false\r\n" +
-                          "}\r\n" +
-                          "Wait-Process -Id $processId -Timeout 120\r\n" +
-                          "Start-Sleep -Seconds 15\r\n" +
-                          "if (Test-ExtractionInUse) { exit 0 }\r\n" +
-                          "if (-not (Get-Process -Id $processId)) {\r\n" +
-                          "  for ($attempt = 0; $attempt -lt 20 -and (Test-Path -LiteralPath $extractionDir); $attempt++) {\r\n" +
-                          "    Start-Sleep -Milliseconds 500\r\n" +
-                          "    Remove-Item -LiteralPath $extractionDir -Recurse -Force\r\n" +
-                          "  }\r\n" +
-                          "}\r\n" +
-                          "$extractionParent = Split-Path -Parent $extractionDir\r\n" +
-                          "if ((Test-Path -LiteralPath $extractionParent) -and -not (Get-ChildItem -LiteralPath $extractionParent -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $extractionParent -Force }\r\n";
-            var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand {encodedCommand}",
-                WorkingDirectory = paths.Personal,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
-        }
-        catch
-        {
-        }
-    }
-
     private static void CleanupLauncherLog(string launcherLogPath)
     {
         var directory = Path.GetDirectoryName(launcherLogPath);
@@ -429,8 +380,15 @@ public static class LogCleanupService
     {
         var root = GetExtractionRoot();
         if (!Directory.Exists(root)) return;
-        var inUse = FindExtractionDirectoriesInUse(root);
-        if (inUse is null) return;
+        PruneExtractionCache(root, FindExtractionDirectoriesInUse(root, ExecutableName));
+    }
+
+    /// <summary>Keeps the current bundle for the next launch and any other
+    /// bundle a running copy still uses. An unreadable process means no sweep.</summary>
+    internal static void PruneExtractionCache(string root, IReadOnlySet<string>? directoriesInUse)
+    {
+        if (directoriesInUse is null || !Directory.Exists(root)) return;
+        var inUse = new HashSet<string>(directoriesInUse.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
         foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
         {
             if (inUse.Contains(Path.GetFullPath(directory))) continue;
@@ -439,11 +397,11 @@ public static class LogCleanupService
         TryDeleteDirectoryIfEmpty(root);
     }
 
-    private static HashSet<string>? FindExtractionDirectoriesInUse(string root)
+    private static HashSet<string>? FindExtractionDirectoriesInUse(string root, string processName)
     {
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var rootWithSlash = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var process in Process.GetProcessesByName(ExecutableName))
+        foreach (var process in Process.GetProcessesByName(processName))
         {
             using (process)
             {
@@ -465,24 +423,6 @@ public static class LogCleanupService
         return directories;
     }
 
-    private static string? FindCurrentExtractionDirectory()
-    {
-        var root = GetExtractionRoot();
-        var rootWithSlash = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        try
-        {
-            foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
-            {
-                var directory = GetExtractionDirectory(root, rootWithSlash, module.FileName);
-                if (directory is not null) return directory;
-            }
-        }
-        catch
-        {
-        }
-        return null;
-    }
-
     private static string? GetExtractionDirectory(string root, string rootWithSlash, string? modulePath)
     {
         if (string.IsNullOrWhiteSpace(modulePath)) return null;
@@ -494,8 +434,15 @@ public static class LogCleanupService
         return string.IsNullOrWhiteSpace(directoryName) ? null : Path.GetFullPath(Path.Combine(root, directoryName));
     }
 
-    private static string GetExtractionRoot() =>
-        Path.Combine(Path.GetTempPath(), ".net", ExecutableName);
+    private static string GetExtractionBaseDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR");
+        return string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(Path.GetTempPath(), ".net")
+            : Path.GetFullPath(configured);
+    }
+
+    private static string GetExtractionRoot() => Path.Combine(GetExtractionBaseDirectory(), ExecutableName);
 
     /// <summary>
     /// The single-file host extracts under a directory named after the
@@ -503,17 +450,17 @@ public static class LogCleanupService
     /// </summary>
     private static void CleanupRenamedExtractionRoots()
     {
-        var dotNetRoot = Path.Combine(Path.GetTempPath(), ".net");
+        var dotNetRoot = GetExtractionBaseDirectory();
         if (!Directory.Exists(dotNetRoot)) return;
         foreach (var directory in Directory.EnumerateDirectories(dotNetRoot, "*", SearchOption.TopDirectoryOnly))
         {
             var name = Path.GetFileName(directory);
             if (string.Equals(name, ExecutableName, StringComparison.OrdinalIgnoreCase) ||
-                !name.StartsWith("Minecraft", StringComparison.OrdinalIgnoreCase))
+                !string.Equals(name, "Minecraft", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
-            DeleteDirectory(directory);
+            PruneExtractionCache(directory, FindExtractionDirectoriesInUse(directory, name));
         }
     }
 

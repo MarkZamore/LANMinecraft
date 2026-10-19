@@ -45,16 +45,16 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}"/>
+
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfacePressed}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
+                                <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceDisabled}"/>
@@ -81,13 +81,19 @@
                                   ContentTemplate="{Binding ItemTemplate, ElementName=ControlRoot}"
                                   HorizontalAlignment="Stretch"
                                   VerticalAlignment="Center"
-                                  Margin="{DynamicResource Pad.Text}"/>
-                <TextBlock Text="⌄"
-                           Foreground="{DynamicResource Brush.TextMuted}"
-                           HorizontalAlignment="Right"
-                           VerticalAlignment="Center"
-                           Margin="{DynamicResource Gap.Right2}"
-                           IsHitTestVisible="False"/>
+                                  Margin="{DynamicResource Pad.DropDownText}"/>
+                <Path x:Name="DropDownChevron"
+                      Width="{DynamicResource Size.ChevronWidth}"
+                      Height="{DynamicResource Size.ChevronHeight}"
+                      Data="M 0,0 L 5,5 L 10,0"
+                      Stroke="{DynamicResource Brush.Text}"
+                      StrokeThickness="{DynamicResource Size.GlyphStroke}"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                      HorizontalAlignment="Right" VerticalAlignment="Center"
+                      Margin="{DynamicResource Gap.Right3}"
+                      RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                    <Path.RenderTransform><RotateTransform Angle="-90"/></Path.RenderTransform>
+                </Path>
             </Grid>
         </ToggleButton>
 
@@ -101,10 +107,11 @@
             <Border Width="{Binding ActualWidth, ElementName=ControlRoot}"
                     MaxHeight="{DynamicResource Size.PopupMax}"
                     Margin="{DynamicResource Gap.Above1}"
-                    Background="{DynamicResource Brush.Surface}"
-                    BorderBrush="{DynamicResource Brush.BorderStrong}"
+                    Background="{DynamicResource Brush.Popup}"
+                    BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="{DynamicResource Border.Control}"
-                    CornerRadius="{DynamicResource Radius.Control}"
+                    CornerRadius="{DynamicResource Radius.Panel}"
+                    Padding="{DynamicResource Pad.Popup}"
                     SnapsToDevicePixels="True">
                 <ListBox x:Name="ItemsList"
                          ItemsSource="{Binding ItemsSource, ElementName=ControlRoot}"

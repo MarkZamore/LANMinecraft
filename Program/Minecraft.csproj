@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -50,13 +50,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Match the reference application's early D3D dirty-region workaround.
+         The CLR applies this before WPF initializes its rendering cache;
+         single-file publishing embeds it without runtime file/registry writes. -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles"
+                                    Value="true" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="Minecraft.ico" />
-    <!-- The launcher's typeface: Montserrat Light for text, Medium for emphasis
-         (SIL Open Font License; the licence rides along in Fonts\OFL.txt). Both
-         faces are addressed as one family through Font.Family in App.xaml. -->
-    <Resource Include="Fonts\Montserrat-Light.ttf" />
-    <Resource Include="Fonts\Montserrat-Medium.ttf" />
-    <None Include="Fonts\OFL.txt" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
     <!-- Keeps the game from writing a full DEBUG copy of every session; see

@@ -1,55 +1,71 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
 namespace Minecraft;
 
-/// <summary>
-/// One notice about another player, drawn by the launcher in the corner of the
-/// screen.
-/// </summary>
-/// <remarks>
-/// Not a Windows notification, and deliberately not. A real one needs the shell
-/// to record an identity for the application - two keys under the current user,
-/// both naming the path of the executable - and it writes them the first time a
-/// notification is shown, whichever library asks for it. The launcher runs from
-/// a folder the player chose and is meant to leave that folder and nothing
-/// else, so it draws its own instead. The cost is honest and worth saying: this
-/// is not kept in the notification centre, and it will not be seen over a game
-/// running full screen.
-/// </remarks>
+/// <summary>A nonactivating native toast; exclusive fullscreen presentation remains controlled by Windows/the game.</summary>
 public partial class PeerNoticeWindow : Window
 {
-    /// <summary>How long a notice stands before it goes on its own.</summary>
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(7);
-
     private readonly DispatcherTimer _timer;
+    private HwndSource? _source;
+    private Size? _available;
     private bool _closing;
 
-    internal PeerNoticeWindow(Window owner, PeerNotice notice)
+    internal PeerNoticeWindow(Window themeSource, PeerNotice notice)
     {
-        InitializeComponent();
+        ArgumentNullException.ThrowIfNull(themeSource);
         ArgumentNullException.ThrowIfNull(notice);
-        Owner = owner;
+        // Share explicit theme resources, without making this an owned native window.
+        // Windows automatically hides owned windows when their owner is minimized.
+        Resources = themeSource.Resources;
+        InitializeComponent();
         TitleText.Text = notice.Title;
         BodyText.Text = notice.Body;
-        // Notices use the launcher's native text tokens; a narrow launcher
-        // must not make a screen-corner notice harder to read.
-        Loaded += (_, _) =>
-        {
-            DialogScale.MatchOwner(this, NoticeSurface);
-            // Nothing in the launcher appears at full strength out of nowhere,
-            // and a notice least of all: it arrives on its own, over whatever
-            // the player was looking at.
-            Fade(to: 1, duration: "Motion.NoticeRise", then: null);
-        };
         _timer = new DispatcherTimer { Interval = Lifetime };
         _timer.Tick += (_, _) => Dismiss();
-        _timer.Start();
+        Loaded += (_, _) =>
+        {
+            Fade(to: 1, duration: "Motion.NoticeRise", then: null);
+            _timer.Start();
+        };
     }
 
-    /// <summary>Takes the notice away, once, whatever asked.</summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var handle = new WindowInteropHelper(this).Handle;
+        PeerNoticeNative.MakeNonactivating(handle);
+        _source = HwndSource.FromHwnd(handle);
+        _source?.AddHook(WindowMessage);
+    }
+
+    private static IntPtr WindowMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != 0x21) return IntPtr.Zero; // WM_MOUSEACTIVATE
+        handled = true;
+        return new IntPtr(3); // MA_NOACTIVATE: clicks dismiss without taking the game's focus.
+    }
+
+    internal void FitToArea(Size available)
+    {
+        if (_available == available) return;
+        _available = available;
+        if (Content is ScrollViewer viewer && ReferenceEquals(viewer.Content, NoticeSurface))
+        {
+            viewer.Content = null;
+            Content = NoticeSurface;
+        }
+        NoticeSurface.Width = (double)FindResource("Size.NoticeWidth");
+        NoticeSurface.MaxWidth = double.PositiveInfinity;
+        DialogScale.FitToClientArea(this, NoticeSurface, available);
+        UpdateLayout();
+    }
+
     internal void Dismiss()
     {
         if (_closing) return;
@@ -58,11 +74,6 @@ public partial class PeerNoticeWindow : Window
         Fade(to: 0, duration: "Motion.NoticeFade", then: Close);
     }
 
-    /// <summary>
-    /// Goes now, without the fade. For the launcher closing: an animation that
-    /// outlives the dispatcher never finishes, and the window would be left
-    /// standing over an application that has gone.
-    /// </summary>
     internal void CloseNow()
     {
         _closing = true;
@@ -71,16 +82,24 @@ public partial class PeerNoticeWindow : Window
         Close();
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        _source?.RemoveHook(WindowMessage);
+        _source = null;
+        base.OnClosed(e);
+    }
+
     private void Fade(double to, string duration, Action? then)
     {
-        var length = Application.Current?.TryFindResource(duration) as Duration?;
-        if (length is null)
+        var length = TryFindResource(duration) as Duration?;
+        if (length is null || !SystemParameters.ClientAreaAnimation)
         {
+            BeginAnimation(OpacityProperty, null);
             Opacity = to;
             then?.Invoke();
             return;
         }
-
         var animation = new DoubleAnimation(to, length.Value);
         if (then is not null) animation.Completed += (_, _) => then();
         BeginAnimation(OpacityProperty, animation);

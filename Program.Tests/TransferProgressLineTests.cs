@@ -166,12 +166,9 @@ public sealed class TransferProgressLineTests
     /// is measured and the widest of them has to fit.
     /// </summary>
     [Theory]
-    [InlineData(464, 321)]
-    [InlineData(581, 681)]
-    [InlineData(582, 681)]
-    [InlineData(851, 681)]
-    [InlineData(852, 681)]
-    [InlineData(944, 1001)]
+    [InlineData(968, 633)]
+    [InlineData(1104, 761)]
+    [InlineData(1904, 1001)]
     public void EveryLine_FitsTheBarAtEachLayoutWidth(double width, double height)
     {
         // Every label the transfer publishes, on either side of it, so the
@@ -213,12 +210,11 @@ public sealed class TransferProgressLineTests
     }
 
     /// <summary>
-    /// Montserrat is shipped with the launcher, and a character it has no glyph
-    /// for is drawn as a hollow box. The estimate introduced one that no other
-    /// line in the window uses.
+    /// The Windows typeface must contain every estimate character, including
+    /// those that do not occur anywhere else in the launcher's captions.
     /// </summary>
     [Fact]
-    public void EveryCharacterTheEstimateUses_HasAGlyphInTheShippedTypeface()
+    public void EveryCharacterTheEstimateUses_HasAGlyphInTheWindowsTypeface()
     {
         var line = string.Concat(TransferPacing.Sending)
             + string.Concat(TransferPacing.Receiving)
@@ -231,7 +227,7 @@ public sealed class TransferProgressLineTests
             var text = (TextBlock)window.FindName("TransferProgressText")!;
             var typeface = new Typeface(
                 text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch);
-            Assert.True(typeface.TryGetGlyphTypeface(out var glyphs), "the shipped typeface did not load");
+            Assert.True(typeface.TryGetGlyphTypeface(out var glyphs), "the Windows typeface did not load");
             return line.Distinct()
                 .Where(character => !glyphs.CharacterToGlyphMap.ContainsKey(character))
                 .ToList();

@@ -1,6 +1,7 @@
 ﻿using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -11,67 +12,41 @@ using System.Windows.Threading;
 namespace Minecraft.Tests;
 
 /// <summary>
-/// Measures the responsive launcher with its own controls and bundled font.
+/// Measures the responsive launcher with its own controls and Windows font.
 /// A finite client area is essential: measuring at infinity hides clipping
 /// and prevents ScrollViewer from establishing a real viewport.
 /// </summary>
 public sealed class WindowCanvasTests
 {
     [Theory]
-    [InlineData(464, 321, false, true)]
-    [InlineData(581, 681, false, true)]
-    [InlineData(582, 681, false, false)]
-    [InlineData(704, 501, false, false)]
-    [InlineData(851, 681, false, false)]
-    [InlineData(852, 681, true, false)]
-    [InlineData(944, 1001, true, false)]
-    [InlineData(1904, 1001, true, false)]
-    public void TheLayout_ReflowsWithoutShrinkingOrLosingControls(
-        double width, double height, bool wide, bool compact)
+    [InlineData(968, 633)]
+    [InlineData(1104, 761)]
+    [InlineData(1248, 761)]
+    [InlineData(1904, 1001)]
+    public void TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable(double width, double height)
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
+            ExpandSections(window);
+            Element<Button>(window, "ChangePlayerNameButton").Content = "Сохранить";
             LayoutWindow(window, new Size(width, height));
             var root = Element<Grid>(window, "RootGrid");
-            var main = Element<Grid>(window, "MainPanel");
-            var side = Element<Grid>(window, "SidePanel");
             var body = Element<ScrollViewer>(window, "BodyScroll");
             var bodyGrid = Element<Grid>(window, "BodyGrid");
+            var side = Element<Border>(window, "SidePanelCard");
+            AssertColumnRatio(root);
+            Assert.Equal(24, root.ColumnDefinitions[1].ActualWidth, 3);
+            Assert.True(double.IsPositiveInfinity(root.MaxWidth));
+            AssertWidthWithinOnePhysicalPixel(width - root.Margin.Left - root.Margin.Right, root.ActualWidth, root);
+            Assert.Equal(2, Grid.GetColumn(side));
+            Assert.True(Bounds(side, root).Left >= Bounds(body, root).Right + 23.5);
             var settings = Element<Grid>(window, "SettingsGrid");
-            var host = Element<Border>(window, wide ? "WideSideHost" : "InlineSideHost");
-
-            Assert.Same(host, VisualTreeHelper.GetParent(side));
-            var mainBounds = Bounds(main, root);
-            var sideBounds = Bounds(side, root);
-            if (wide)
-            {
-                Assert.True(sideBounds.Left >= mainBounds.Right,
-                    $"the side panel overlaps the main controls at {width} DIP");
-                Assert.True(sideBounds.Top < mainBounds.Bottom);
-            }
-            else
-            {
-                Assert.True(sideBounds.Top >= mainBounds.Bottom,
-                    $"the side panel must follow the main controls at {width} DIP");
-            }
-
-            var rowNames = new[] { "NameSettingsRow", "BuildSettingsRow", "MemorySettingsRow", "PresetSettingsRow" };
-            var rows = rowNames.Select(name => Element<Grid>(window, name)).ToArray();
-            if (compact)
-            {
-                Assert.Equal(new[] { 0, 1, 2, 3 }, rows.Select(Grid.GetRow).ToArray());
-                Assert.All(rows, row => Assert.Equal(0, Grid.GetColumn(row)));
-                Assert.Equal(4, settings.RowDefinitions.Count);
-            }
-            else
-            {
-                Assert.Equal(new[] { 0, 1, 0, 1 }, rows.Select(Grid.GetRow).ToArray());
-                Assert.Equal(new[] { 0, 0, 1, 1 }, rows.Select(Grid.GetColumn).ToArray());
-            }
-
-            // Every body control stays within the horizontal extent. Vertical
-            // overflow is deliberate and remains reachable through BodyScroll.
+            Assert.Equal(2, settings.RowDefinitions.Count);
+            var rows = new[] { "NameSettingsRow", "BuildSettingsRow", "MemorySettingsRow", "PresetSettingsRow" }
+                .Select(name => Element<Grid>(window, name)).ToArray();
+            Assert.Equal(new[] { 0, 1, 0, 1 }, rows.Select(Grid.GetRow));
+            Assert.Equal(new[] { 0, 0, 1, 1 }, rows.Select(Grid.GetColumn));
             string[] bodyControls =
             [
                 "PlayerNameTextBox", "ChangePlayerNameButton", "BuildComboBox", "SkinButton",
@@ -84,179 +59,449 @@ public sealed class WindowCanvasTests
             {
                 var element = Element<FrameworkElement>(window, name);
                 var bounds = Bounds(element, bodyGrid);
-                Assert.Equal(Visibility.Visible, element.Visibility);
                 Assert.True(element.ActualWidth > 0 && element.ActualHeight > 0, $"{name} has no usable size");
                 Assert.True(bounds.Left >= -0.5 && bounds.Right <= bodyGrid.ActualWidth + 0.5,
-                    $"{name} is clipped horizontally at {width} DIP: {bounds}, body width {bodyGrid.ActualWidth}");
-                var reachableHeight = Math.Max(body.ExtentHeight, body.ViewportHeight);
-                Assert.True(bounds.Top >= -0.5 && bounds.Bottom <= reachableHeight + 0.5,
-                    $"{name} lies outside the reachable content: {bounds}, height {reachableHeight}");
+                    $"{name} is clipped at {width} DIP: {bounds}; body width {bodyGrid.ActualWidth}");
+                Assert.True(bounds.Bottom <= Math.Max(body.ExtentHeight, body.ViewportHeight) + 0.5);
             }
-            Assert.True(body.ViewportHeight > 0 && body.ViewportWidth > 0);
-            Assert.True(body.ScrollableWidth <= 0.5, "the launcher must not require horizontal scrolling");
-
-            var play = Element<Button>(window, "PlayButton");
+            Assert.True(Element<TextBox>(window, "PlayerNameTextBox").ActualWidth >= 95.5);
+            Assert.True(body.ScrollableWidth <= 0.5);
             var footer = Element<Grid>(window, "FooterGrid");
-            Assert.True(Bounds(play, root).Top >= -0.5);
-            Assert.True(Bounds(footer, root).Bottom <= root.ActualHeight + 0.5,
-                "the pinned footer runs out of the client area");
-            Assert.True(Bounds(body, root).Bottom <= Bounds(footer, root).Top + 0.5);
-            foreach (var name in new[] { "UpdateButton", "RetrySteamButton", "SidePanelToggleButton" })
+            Assert.True(Bounds(footer, root).Bottom <= root.ActualHeight + 0.5);
+            var update = Element<Grid>(window, "UpdateArea");
+            Assert.True(Bounds(body, root).Bottom <= Bounds(update, root).Top + 0.5);
+            Assert.True(Bounds(update, root).Bottom <= Bounds(footer, root).Top + 0.5);
+            AssertSidebarUpdateAlignment(window);
+            foreach (var name in new[] { "UpdateButton", "RetrySteamButton", "SidePanelToggleButton", "ChatSendButton" })
             {
                 var bounds = Bounds(Element<FrameworkElement>(window, name), root);
-                Assert.True(bounds.Left >= -0.5 && bounds.Right <= root.ActualWidth + 0.5,
-                    $"the footer control {name} is clipped at {width} DIP");
+                Assert.True(bounds.Left >= -0.5 && bounds.Right <= root.ActualWidth + 0.5, $"{name} is clipped");
                 Assert.True(bounds.Bottom <= root.ActualHeight + 0.5);
             }
-
             var player = Element<TextBox>(window, "PlayerNameTextBox");
             Assert.Equal((double)window.FindResource("Font.SizeBody"), player.FontSize);
             var transform = player.TransformToAncestor(root);
             Assert.Equal(100, transform.Transform(new Point(100, 0)).X - transform.Transform(new Point(0, 0)).X, 3);
+            AssertStretchedActions(window);
             return true;
         });
     }
 
     [Fact]
-    public void TheWindow_CanResizeToASnapFriendlyMinimum()
+    public void FirstLaunch_UsesTheMinimumAndAllHeadersFitWithoutScrolling()
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            Assert.Equal(480, window.MinWidth);
-            Assert.Equal(360, window.MinHeight);
+            Assert.Equal(984, window.Width);
+            Assert.Equal(672, window.Height);
+            Assert.Equal(window.Width, window.MinWidth);
+            Assert.Equal(window.Height, window.MinHeight);
+            Assert.Equal(window.MinWidth * 28, window.MinHeight * 41);
             Assert.Equal(ResizeMode.CanResize, window.ResizeMode);
-            var root = Element<Grid>(window, "RootGrid");
-            Assert.True(double.IsNaN(root.Width) && double.IsNaN(root.Height));
+            Assert.True(double.IsNaN(Element<Grid>(window, "RootGrid").Width));
             Assert.DoesNotContain("<Viewbox", File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml")), StringComparison.Ordinal);
+            LayoutWindow(window, new Size(968, 633));
+            foreach (var name in SectionNames)
+            {
+                var section = Element<Expander>(window, name);
+                Assert.False(section.IsExpanded);
+                Assert.Equal(Element<Button>(window, "PlayButton").ActualHeight, section.ActualHeight, 3);
+            }
+            Assert.True(Element<ScrollViewer>(window, "BodyScroll").ScrollableHeight <= 0.5);
+            return true;
+        });
+    }
+
+    [Theory]
+    [InlineData(968, 633)]
+    [InlineData(1904, 1001)]
+    public void TheStatus_RemainsBeforeTheSectionsAtTheirFullWidthAndPreservesTheReportDraft(double width, double height)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var size = new Size(width, height);
+            var report = Element<TextBox>(window, "BugReportMessageTextBox");
+            report.Text = "Черновик описания сохраняется отдельно от состояния";
+            report.Select(3, 9);
+            var status = Element<TextBox>(window, "DiagnosticLogStatusText");
+            status.Text = "Подготовка диагностического отчёта";
+            LayoutWindow(window, size);
+            var bodyGrid = Element<Grid>(window, "BodyGrid");
+            var area = Element<Grid>(window, "DiagnosticStatusArea");
+            var settings = Element<Grid>(window, "SettingsGrid");
+            var transfer = Element<Expander>(window, "WorldTransferExpander");
+            Assert.True(status.IsReadOnly);
+            Assert.False(transfer.IsExpanded);
+            Assert.True(status.ActualHeight > 0);
+            AssertWidthWithinOnePhysicalPixel(transfer.ActualWidth, status.ActualWidth, status);
+            Assert.True(Bounds(area, bodyGrid).Top >= Bounds(settings, bodyGrid).Bottom);
+            Assert.True(Bounds(area, bodyGrid).Bottom <= Bounds(transfer, bodyGrid).Top);
+            ExpandSections(window);
+            LayoutWindow(window, size);
+            Assert.Equal("Подготовка диагностического отчёта", status.Text);
+            Assert.Equal("Черновик описания сохраняется отдельно от состояния", report.Text);
+            Assert.Equal(3, report.SelectionStart);
+            Assert.Equal(9, report.SelectionLength);
+            return true;
+        });
+    }
+
+    [Theory]
+    [InlineData(968, 633, 1)]
+    [InlineData(968, 633, 1.25)]
+    [InlineData(968, 633, 1.5)]
+    [InlineData(968, 633, 2)]
+    [InlineData(1104, 761, 1)]
+    [InlineData(1104, 761, 1.25)]
+    [InlineData(1104, 761, 1.5)]
+    [InlineData(1104, 761, 2)]
+    [InlineData(1904, 1001, 1)]
+    [InlineData(1904, 1001, 1.25)]
+    [InlineData(1904, 1001, 1.5)]
+    [InlineData(1904, 1001, 2)]
+    public void ClosedSectionFrames_MatchThePlayButtonHeightAtEverySizeAndDpi(double width, double height, double scale)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var dpi = new DpiScale(scale, scale);
+            var content = (FrameworkElement)window.Content;
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi(content, dpi);
+            LayoutWindow(window, new Size(width, height));
+            // Templates create new visual children during the first measure.
+            // Apply the requested DPI again so the controls and their templates
+            // are measured at that scale rather than the host's native DPI.
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi(content, dpi);
+            LayoutWindow(window, new Size(width, height));
+            var play = Element<Button>(window, "PlayButton");
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(play).DpiScaleY, 6);
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(Element<Grid>(window, "PlayArea")).DpiScaleY, 6);
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(Element<Grid>(window, "BodyGrid")).DpiScaleY, 6);
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(Element<Border>(window, "SidePanelCard")).DpiScaleY, 6);
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(Element<ProgressBar>(window, "UpdateProgressBar")).DpiScaleY, 6);
+            AssertSidebarUpdateAlignment(window);
+            foreach (var name in SectionNames)
+            {
+                var section = Element<Expander>(window, name);
+                var header = Assert.IsAssignableFrom<FrameworkElement>(section.Template.FindName("HeaderToggle", section));
+                Assert.False(section.IsExpanded);
+                Assert.Equal(scale, VisualTreeHelper.GetDpi(section).DpiScaleY, 6);
+                Assert.Equal(scale, VisualTreeHelper.GetDpi(header).DpiScaleY, 6);
+                Assert.Equal(play.ActualHeight, section.ActualHeight, 3);
+                AssertWidthWithinOnePhysicalPixel(play.ActualWidth, section.ActualWidth, section);
+            }
+            AssertStretchedActions(window);
+            ExpandSections(window);
+            LayoutWindow(window, new Size(width, height));
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi(content, dpi);
+            LayoutWindow(window, new Size(width, height));
+            foreach (var name in SectionNames)
+                AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Element<Expander>(window, name).ActualWidth, play);
+            AssertStretchedActions(window);
+            Assert.True(Element<ScrollViewer>(window, "BodyScroll").ScrollableWidth <= 0.5);
             return true;
         });
     }
 
     [Fact]
-    public void AShortWindow_KeepsTheEntireBodyReachableByScrolling()
+    public void TheSidebar_RemainsVisibleWhileLeftSectionsCollapseAndItsFaceChanges()
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            var size = new Size(464, 321);
+            var size = new Size(968, 633);
+            var card = Element<Border>(window, "SidePanelCard");
+            var title = Element<TextBlock>(window, "SidePanelTitle");
+            var chat = Element<Grid>(window, "ChatPanel");
+            var news = Element<Grid>(window, "ChangelogPanel");
+            LayoutWindow(window, size);
+            var height = card.ActualHeight;
+            foreach (var expanded in new[] { true, false })
+            {
+                foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = expanded;
+                foreach (var showNews in new[] { true, false })
+                {
+                    chat.Visibility = showNews ? Visibility.Collapsed : Visibility.Visible;
+                    news.Visibility = showNews ? Visibility.Visible : Visibility.Collapsed;
+                    title.Text = showNews ? "Что нового" : "AI-помощник";
+                    LayoutWindow(window, size);
+                    Assert.Same(card, window.FindName("SidePanelCard"));
+                    Assert.Equal(height, card.ActualHeight, 3);
+                    Assert.True(title.ActualWidth > 0 && title.ActualHeight >= 31.5);
+                    Assert.True((showNews ? news : chat).ActualHeight > 200);
+                    var root = Element<Grid>(window, "RootGrid");
+                    Assert.True(Bounds(card, root).Bottom <= Bounds(Element<Grid>(window, "FooterGrid"), root).Top + 0.5);
+                }
+            }
+            return true;
+        });
+    }
+
+    [Fact]
+    public void TheScrollbarThumb_FitsItsShortTrackSlotAtEveryPositionAndOnHover()
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var root = new Grid { Width = 64, Height = 264, UseLayoutRounding = true, Resources = window.Resources };
+            var bar = new ScrollBar
+            {
+                Orientation = Orientation.Vertical,
+                Width = (double)window.FindResource("Size.Scrollbar"),
+                Height = 240,
+                Maximum = 1_000_000,
+                ViewportSize = 240,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            root.Children.Add(bar);
+            void Layout()
+            {
+                root.Measure(new Size(64, 264));
+                root.Arrange(new Rect(0, 0, 64, 264));
+                root.UpdateLayout();
+            }
+            Layout();
+            var track = Assert.IsType<Track>(bar.Template.FindName("PART_Track", bar));
+            var thumb = track.Thumb;
+            thumb.ApplyTemplate();
+            var grip = Assert.IsType<Border>(thumb.Template.FindName("Grip", thumb));
+            var mouseOverKey = Assert.IsType<DependencyPropertyKey>(typeof(UIElement)
+                .GetField("IsMouseOverPropertyKey", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(null));
+            foreach (var value in new[] { 0d, 500_000d, 1_000_000d })
+            foreach (var hovered in new[] { false, true })
+            {
+                bar.Value = value;
+                bar.SetValue(mouseOverKey, hovered);
+                Layout();
+                var slot = LayoutInformation.GetLayoutSlot(thumb).Height;
+                Assert.InRange(slot, 0.01, 12);
+                Assert.Equal(slot, thumb.ActualHeight, 3);
+                Assert.Equal(slot, grip.ActualHeight, 3);
+                Assert.Equal((double)window.FindResource(hovered ? "Size.ScrollThumbExpanded" : "Size.ScrollThumb"),
+                    grip.ActualWidth, 3);
+                var clip = VisualTreeHelper.GetClip(thumb);
+                Assert.True(clip is null || clip.Bounds.Height >= thumb.ActualHeight - 0.001,
+                    $"Thumb cap is clipped at value {value}, hover {hovered}: slot {slot}, clip {clip?.Bounds}");
+            }
+            return true;
+        });
+    }
+
+    [Theory]
+    [InlineData(968, 1)]
+    [InlineData(968, 1.25)]
+    [InlineData(968, 1.5)]
+    [InlineData(968, 2)]
+    [InlineData(1904, 1)]
+    [InlineData(1904, 1.25)]
+    [InlineData(1904, 1.5)]
+    [InlineData(1904, 2)]
+    public void TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody(double width, double scale)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var root = Element<Grid>(window, "RootGrid");
+            var body = Element<ScrollViewer>(window, "BodyScroll");
+            var bar = Element<ScrollBar>(window, "BodyScrollBar");
+            var play = Element<Button>(window, "PlayButton");
+            var size = new Size(width, 633);
+            var dpi = new DpiScale(scale, scale);
+            void Layout()
+            {
+                LayoutWindow(window, size);
+                VisualTreeHelper.SetRootDpi(window, dpi);
+                VisualTreeHelper.SetRootDpi(root, dpi);
+                DrainDispatcher();
+                LayoutWindow(window, size);
+            }
+            Layout();
+            Assert.Equal(Visibility.Collapsed, bar.Visibility);
+            ExpandSections(window);
+            Layout();
+            Assert.True(body.ScrollableHeight > 0);
+            Assert.Equal(Visibility.Visible, bar.Visibility);
+            Assert.Same(body, ScrollBarBridge.GetTarget(bar));
+            Assert.Null(body.Template.FindName("PART_VerticalScrollBar", body));
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(bar).DpiScaleY, 6);
+            var playBounds = Bounds(play, root);
+            var barBounds = Bounds(bar, root);
+            Assert.Equal(playBounds.Top, barBounds.Top, 3);
+            Assert.Equal(Bounds(body, root).Bottom, barBounds.Bottom, 3);
+            Assert.True(barBounds.Left >= playBounds.Right + 3.5);
+            Assert.True(barBounds.Right <= Bounds(Element<Border>(window, "SidePanelCard"), root).Left - 23.5);
+            AssertStretchedActions(window);
+
+            var middle = body.ScrollableHeight / 2;
+            bar.SetCurrentValue(RangeBase.ValueProperty, middle);
+            Layout();
+            Assert.Equal(middle, body.VerticalOffset, 3);
+            Assert.Equal(body.VerticalOffset, bar.Value, 3);
+            body.ScrollToTop();
+            Layout();
+            Assert.Equal(0, bar.Value, 3);
+            Assert.True(ScrollBar.PageDownCommand.CanExecute(null, bar));
+            ScrollBar.PageDownCommand.Execute(null, bar);
+            Layout();
+            Assert.True(body.VerticalOffset > 0);
+            ScrollBar.PageUpCommand.Execute(null, bar);
+            Layout();
+            Assert.Equal(0, body.VerticalOffset, 3);
+            var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+            bar.RaiseEvent(wheel);
+            Layout();
+            Assert.True(wheel.Handled);
+            if (SystemParameters.WheelScrollLines != 0) Assert.True(body.VerticalOffset > 0);
+            body.LineDown();
+            Layout();
+            Assert.Equal(body.VerticalOffset, bar.Value, 3);
+            Assert.Equal(playBounds, Bounds(play, root));
+            Assert.True(body.ScrollableWidth <= 0.5);
+            foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = false;
+            Layout();
+            Assert.Equal(Visibility.Collapsed, bar.Visibility);
+            Assert.Equal(0, body.VerticalOffset, 3);
+            Assert.Equal(playBounds, Bounds(play, root));
+            return true;
+        });
+    }
+
+    [Fact]
+    public void CollapsingASection_ReleasesItsHeightAndPreservesInput()
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var size = new Size(968, 633);
+            var report = Element<TextBox>(window, "BugReportMessageTextBox");
+            report.Text = "Описание сохраняется после сворачивания";
+            report.Select(3, 7);
+            ExpandSections(window);
+            LayoutWindow(window, size);
+            var body = Element<ScrollViewer>(window, "BodyScroll");
+            var expandedHeight = body.ExtentHeight;
+            var expandedSectionsHeight = SectionNames.Sum(name => Element<Expander>(window, name).ActualHeight);
+            foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = false;
+            LayoutWindow(window, size);
+            var collapsedSectionsHeight = SectionNames.Sum(name => Element<Expander>(window, name).ActualHeight);
+            Assert.True(collapsedSectionsHeight < expandedSectionsHeight - 250);
+            Assert.True(body.ExtentHeight < expandedHeight);
+            Assert.True(body.ScrollableHeight <= 0.5);
+            foreach (var viewport in new[] { new Size(1904, 1001), size })
+            {
+                LayoutWindow(window, viewport);
+                Assert.Same(report, window.FindName("BugReportMessageTextBox"));
+                Assert.Equal("Описание сохраняется после сворачивания", report.Text);
+                Assert.Equal(3, report.SelectionStart);
+                Assert.Equal(7, report.SelectionLength);
+                Assert.All(SectionNames, name => Assert.False(Element<Expander>(window, name).IsExpanded));
+            }
+            return true;
+        });
+    }
+
+    [Fact]
+    public void TheMinimumExpandedWindow_KeepsTheEndOfTheBodyReachable()
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            ExpandSections(window);
+            var size = new Size(968, 633);
             LayoutWindow(window, size);
             var body = Element<ScrollViewer>(window, "BodyScroll");
             Assert.True(body.ScrollableHeight > 0);
             body.ScrollToEnd();
             LayoutWindow(window, size);
+            DrainDispatcher();
             Assert.Equal(body.ScrollableHeight, body.VerticalOffset, 1);
-            var side = Bounds(Element<Grid>(window, "SidePanel"), body);
-            Assert.True(side.Bottom <= body.ActualHeight + 0.5,
-                "scrolling to the end must expose the lower edge of the side panel");
+            Assert.True(Bounds(Element<Expander>(window, "ReportExpander"), body).Bottom <= body.ActualHeight + 0.5);
+            Assert.True(Bounds(Element<TextBox>(window, "BugReportMessageTextBox"), body).Top >= -0.5);
             return true;
         });
     }
 
     [Fact]
-    public void ChangingLayout_PreservesTheControlsAndTheirState()
+    public void ExtraWindowSpace_ExpandsTheRequestedActionsWhileTheEditorStaysFinite()
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            var player = Element<TextBox>(window, "PlayerNameTextBox");
+            ExpandSections(window);
+            LayoutWindow(window, new Size(968, 633));
             var report = Element<TextBox>(window, "BugReportMessageTextBox");
-            var side = Element<Grid>(window, "SidePanel");
-            player.Text = "MarkZamore";
-            report.Text = "Описание проблемы остается при смене размера";
-            Element<Grid>(window, "ChangelogPanel").Visibility = Visibility.Visible;
-            Element<Grid>(window, "ChatPanel").Visibility = Visibility.Collapsed;
-            foreach (var size in new[] { new Size(944, 681), new Size(464, 321), new Size(704, 501), new Size(944, 1001) })
-            {
-                LayoutWindow(window, size);
-                Assert.Same(player, window.FindName("PlayerNameTextBox"));
-                Assert.Same(report, window.FindName("BugReportMessageTextBox"));
-                Assert.Same(side, window.FindName("SidePanel"));
-                Assert.Equal("MarkZamore", player.Text);
-                Assert.Equal("Описание проблемы остается при смене размера", report.Text);
-                Assert.Equal(Visibility.Visible, Element<Grid>(window, "ChangelogPanel").Visibility);
-                Assert.Equal(Visibility.Collapsed, Element<Grid>(window, "ChatPanel").Visibility);
-            }
-            return true;
-        });
-    }
-
-    [Fact]
-    public void MoreHeight_ExpandsTheReportAndSidePanelWhileControlsKeepTheirSize()
-    {
-        OnAStaThread(() =>
-        {
-            var window = LoadWindow();
-            var report = Element<TextBox>(window, "BugReportMessageTextBox");
-            var play = Element<Button>(window, "PlayButton");
-            var side = Element<Grid>(window, "SidePanel");
-            LayoutWindow(window, new Size(944, 681));
             var reportHeight = report.ActualHeight;
-            var playHeight = play.ActualHeight;
-            var sideHeight = side.ActualHeight;
-            LayoutWindow(window, new Size(944, 1001));
-            Assert.True(report.ActualHeight > reportHeight + 200,
-                "additional height should make the report useful instead of leaving a blank band");
-            Assert.True(side.ActualHeight > sideHeight + 200);
-            Assert.Equal(playHeight, play.ActualHeight, 3);
-            Assert.Equal((double)window.FindResource("Font.SizeBody"), report.FontSize);
+            var sideHeight = Element<Grid>(window, "SidePanel").ActualHeight;
+            LayoutWindow(window, new Size(1904, 1401));
+            Assert.Equal(reportHeight, report.ActualHeight, 3);
+            Assert.Equal(120, report.ActualHeight, 3);
+            Assert.True(Element<Grid>(window, "SidePanel").ActualHeight > sideHeight + 200);
+            AssertStretchedActions(window);
+            Assert.Equal(96, Element<Button>(window, "SendBugReportButton").ActualWidth, 3);
             return true;
         });
     }
 
     [Fact]
-    public void TheNativeClient_ReflowsAfterMaximizeAndRestoreWithoutLosingSelection()
+    public void TheNativeClient_MaximizesAndRestoresWithoutChangingColumnsOrSelection()
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            // Exercise the real HWND while keeping the test invisible and
-            // inactive. Content measurements alone cannot catch a stale root
-            // width keeping the wide columns after a native restore.
-            window.Width = 720;
-            window.Height = 540;
             window.Opacity = 0;
             window.ShowActivated = false;
             window.ShowInTaskbar = false;
             window.SourceInitialized += (_, _) =>
             {
                 var handle = new WindowInteropHelper(window).Handle;
-                const int extendedStyleIndex = -20;
-                const int noActivate = 0x08000000;
-                _ = SetWindowLong(handle, extendedStyleIndex, GetWindowLong(handle, extendedStyleIndex) | noActivate);
+                _ = SetWindowLong(handle, -20, GetWindowLong(handle, -20) | 0x08000000);
             };
             window.SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(window);
             var foreground = GetForegroundWindow();
             window.Activated += (_, _) => { if (foreground != 0) _ = SetForegroundWindow(foreground); };
             try
             {
+                ExpandSections(window);
                 window.Show();
                 SettleNativeLayout(window);
+                AssertNativeClientLayout(window);
+                var handle = new WindowInteropHelper(window).Handle;
                 var report = Element<TextBox>(window, "BugReportMessageTextBox");
                 report.Text = "Сохранить выделенный текст после изменения окна";
                 report.Select(10, 10);
                 FocusManager.SetFocusedElement(window, report);
-                var inlineHost = Element<Border>(window, "InlineSideHost");
-                var wideHost = Element<Border>(window, "WideSideHost");
                 var side = Element<Grid>(window, "SidePanel");
-                Assert.Same(inlineHost, VisualTreeHelper.GetParent(side));
-
-                window.WindowState = WindowState.Maximized;
-                if (foreground != 0) _ = SetForegroundWindow(foreground);
-                SettleNativeLayout(window);
-                Assert.Same(wideHost, VisualTreeHelper.GetParent(side));
-                window.WindowState = WindowState.Normal;
-                if (foreground != 0) _ = SetForegroundWindow(foreground);
-                SettleNativeLayout(window);
-                Assert.Equal(720, window.Width, 1);
-                Assert.Same(inlineHost, VisualTreeHelper.GetParent(side));
-                Assert.True(Element<Grid>(window, "RootGrid").ActualWidth < 820,
-                    "restoring a narrow native window must release the wide column minimums");
-
-                window.Width = 960;
-                SettleNativeLayout(window);
-                Assert.Same(wideHost, VisualTreeHelper.GetParent(side));
-                Assert.Equal("Сохранить выделенный текст после изменения окна", report.Text);
+                foreach (var state in new[] { WindowState.Maximized, WindowState.Normal, WindowState.Maximized, WindowState.Normal })
+                {
+                    // Use the system commands used by the native caption,
+                    // rather than only WPF's managed WindowState setter.
+                    _ = SendMessage(handle, 0x0112, state == WindowState.Maximized ? 0xF030 : 0xF120, 0);
+                    if (foreground != 0) _ = SetForegroundWindow(foreground);
+                    SettleNativeLayout(window);
+                    Assert.Equal(state, window.WindowState);
+                    AssertNativeClientLayout(window);
+                    var root = Element<Grid>(window, "RootGrid");
+                    AssertColumnRatio(root);
+                    Assert.Same(side, window.FindName("SidePanel"));
+                    Assert.True(Element<Expander>(window, "ReportExpander").IsExpanded);
+                }
+                var dpi = VisualTreeHelper.GetDpi(window);
+                foreach (var size in new[] { new Size(1140, 800), new Size(984, 672) })
+                {
+                    Assert.True(SetWindowPos(handle, 0, 0, 0,
+                        (int)Math.Round(size.Width * dpi.DpiScaleX), (int)Math.Round(size.Height * dpi.DpiScaleY),
+                        0x0002 | 0x0004 | 0x0010)); // keep position, z-order and activation
+                    SettleNativeLayout(window);
+                    AssertNativeClientLayout(window);
+                }
+                Assert.Equal(984, window.Width, 1);
                 Assert.Equal(10, report.SelectionStart);
                 Assert.Equal(10, report.SelectionLength);
                 Assert.Same(report, FocusManager.GetFocusedElement(window));
@@ -271,14 +516,15 @@ public sealed class WindowCanvasTests
     }
 
     [Theory]
-    [InlineData(944, 681)]
-    [InlineData(704, 501)]
-    [InlineData(464, 321)]
+    [InlineData(968, 633)]
+    [InlineData(1104, 761)]
+    [InlineData(1904, 1001)]
     public void ALongReport_ScrollsInsideItsFieldWithoutGrowingThePage(double width, double height)
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
+            ExpandSections(window);
             var size = new Size(width, height);
             LayoutWindow(window, size);
             var report = Element<TextBox>(window, "BugReportMessageTextBox");
@@ -294,7 +540,7 @@ public sealed class WindowCanvasTests
             Assert.True(report.ExtentHeight > report.ViewportHeight);
             report.ScrollToEnd();
             DrainDispatcher();
-            Assert.True(report.VerticalOffset > 0, "the long description must have its own scrollable viewport");
+            Assert.True(report.VerticalOffset > 0);
             return true;
         });
     }
@@ -309,12 +555,13 @@ public sealed class WindowCanvasTests
         OnAStaThread(() =>
         {
             var window = LoadWindow();
+            ExpandSections(window);
             var dropdown = Element<CenteredDropDown>(window, controlName);
             const string caption = "Выбранный элемент для проверки цвета";
             var item = new { Name = caption, DisplayName = caption };
             dropdown.ItemsSource = new[] { item };
             dropdown.SelectedItem = item;
-            var size = new Size(944, 681);
+            var size = new Size(968, 633);
             LayoutWindow(window, size);
             DrainDispatcher();
             LayoutWindow(window, size);
@@ -324,7 +571,6 @@ public sealed class WindowCanvasTests
             Assert.Equal((double)window.FindResource("Font.SizeBody"), text.FontSize);
             Assert.Equal((FontFamily)window.FindResource("Font.Family"), text.FontFamily);
             Assert.Equal((FontWeight)window.FindResource("Font.WeightBody"), text.FontWeight);
-
             dropdown.IsEnabled = false;
             LayoutWindow(window, size);
             Assert.Equal(((SolidColorBrush)window.FindResource("Brush.TextDisabled")).Color,
@@ -332,6 +578,88 @@ public sealed class WindowCanvasTests
             Assert.Equal(caption, text.Text);
             return true;
         });
+    }
+
+    private static readonly string[] SectionNames = ["WorldTransferExpander", "ReportExpander"];
+
+    private static void AssertSidebarUpdateAlignment(Window window)
+    {
+        var root = Element<Grid>(window, "RootGrid");
+        var cardBottom = Bounds(Element<Border>(window, "SidePanelCard"), root).Bottom;
+        Assert.Equal(Bounds(Element<Grid>(window, "UpdateArea"), root).Bottom, cardBottom, 3);
+        Assert.Equal(Bounds(Element<ProgressBar>(window, "UpdateProgressBar"), root).Bottom, cardBottom, 3);
+        Assert.Equal(Bounds(Element<Button>(window, "UpdateButton"), root).Bottom, cardBottom, 3);
+    }
+
+    private static void AssertNativeClientLayout(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        Assert.True(GetClientRect(handle, out var client));
+        var dpi = VisualTreeHelper.GetDpi(window);
+        Assert.Equal(GetDpiForWindow(handle) / 96d, dpi.DpiScaleX, 6);
+        Assert.Equal(GetDpiForWindow(handle) / 96d, dpi.DpiScaleY, 6);
+        var root = Element<Grid>(window, "RootGrid");
+        // A correct 2:1 ratio alone can hide an entire old maximized layout
+        // retained inside a smaller HWND. Match the actual native client too.
+        AssertWidthWithinOnePhysicalPixel((client.Right - client.Left) / dpi.DpiScaleX,
+            root.RenderSize.Width + root.Margin.Left + root.Margin.Right, root);
+        Assert.InRange(Math.Abs((client.Bottom - client.Top) / dpi.DpiScaleY -
+            root.RenderSize.Height - root.Margin.Top - root.Margin.Bottom), 0, 1 / dpi.DpiScaleY + 0.000001);
+        foreach (var name in new[]
+        {
+            "PlayButton", "BodyScroll", "BodyScrollBar", "SidePanelCard", "ChatMessageTextBox", "ChatSendButton",
+            "UpdateArea", "UpdateButton", "FooterGrid", "SidePanelToggleButton"
+        })
+        {
+            var element = Element<FrameworkElement>(window, name);
+            if (element.Visibility != Visibility.Visible) continue;
+            var bounds = Bounds(element, root);
+            Assert.True(bounds.Left >= -0.5 && bounds.Top >= -0.5 &&
+                bounds.Right <= root.ActualWidth + 0.5 && bounds.Bottom <= root.ActualHeight + 0.5,
+                $"{name} lies outside native client content after resize: {bounds}; root {root.RenderSize}");
+        }
+        AssertSidebarUpdateAlignment(window);
+        AssertStretchedActions(window);
+    }
+
+    private static void AssertStretchedActions(Window window)
+    {
+        var play = Element<Button>(window, "PlayButton");
+        Assert.Equal(Element<Grid>(window, "PlayArea").ColumnDefinitions[0].ActualWidth, play.ActualWidth, 3);
+        AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "BodyGrid").ActualWidth, play.ActualWidth, play);
+        var skin = Element<Button>(window, "SkinButton");
+        Assert.Equal(Element<Grid>(window, "MemorySettingsRow").ColumnDefinitions[0].ActualWidth, skin.ActualWidth, 3);
+        var preset = Element<Button>(window, "ControlsPresetButton");
+        Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
+            preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);
+        Assert.All(new[] { play, skin, preset }, button =>
+        {
+            Assert.Equal(HorizontalAlignment.Stretch, button.HorizontalAlignment);
+            Assert.True(double.IsNaN(button.Width));
+            Assert.True(double.IsPositiveInfinity(button.MaxWidth));
+        });
+    }
+
+    private static void AssertWidthWithinOnePhysicalPixel(double expected, double actual, Visual visual)
+    {
+        // Grid star allocation and ScrollContentPresenter round independently.
+        // Their shared logical edge can differ by at most one device pixel.
+        var tolerance = 1 / VisualTreeHelper.GetDpi(visual).DpiScaleX + 0.000001;
+        Assert.InRange(Math.Abs(expected - actual), 0, tolerance);
+    }
+
+    private static void AssertColumnRatio(Grid root)
+    {
+        Assert.Equal(2, root.ColumnDefinitions[0].Width.Value);
+        Assert.Equal(1, root.ColumnDefinitions[2].Width.Value);
+        // Layout rounding may allocate one physical pixel to either star column.
+        var tolerance = 1.5 / VisualTreeHelper.GetDpi(root).DpiScaleX;
+        Assert.InRange(Math.Abs(root.ColumnDefinitions[0].ActualWidth - 2 * root.ColumnDefinitions[2].ActualWidth), 0, tolerance);
+    }
+
+    private static void ExpandSections(Window window)
+    {
+        foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = true;
     }
 
     private static void SettleNativeLayout(Window window)
@@ -369,6 +697,26 @@ public sealed class WindowCanvasTests
     private static extern int SetWindowLong(nint window, int index, int value);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(nint window, out NativeClientRect bounds);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint SendMessage(nint window, uint message, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeClientRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
     [DllImport("user32.dll")]
@@ -392,6 +740,7 @@ public sealed class WindowCanvasTests
     internal static void AssertProgressLinesFit(
         Window window, Size clientSize, string barName, string textName, string buttonName, IEnumerable<string> lines)
     {
+        ExpandSections(window);
         LayoutWindow(window, clientSize);
         var bar = Element<FrameworkElement>(window, barName);
         var text = Element<TextBlock>(window, textName);
@@ -450,11 +799,6 @@ public sealed class WindowCanvasTests
         xaml = xaml.Replace(@"Icon=""Minecraft.ico""", "");
         // A loose XAML resolves clr-namespace against the assembly parsing it.
         xaml = xaml.Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
-        // The typeface's pack URI is served only inside an Application; the
-        // same files are read from the repository, so the metrics are the real ones.
-        var fonts = new Uri(Path.Combine(program, "Fonts") + Path.DirectorySeparatorChar).AbsoluteUri;
-        resources = resources.Replace(
-            "pack://application:,,,/LANMinecraft;component/Fonts/#Montserrat", fonts + "#Montserrat");
         xaml = xaml.Replace("<Window.Resources>", "<Window.Resources>" + resources);
         return (Window)XamlReader.Parse(xaml);
     }
