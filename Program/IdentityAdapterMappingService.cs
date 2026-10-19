@@ -1657,7 +1657,7 @@ internal sealed class IdentityAdapterMappingService
         private sealed class JarHierarchy : IDisposable
         {
             private readonly ZipArchive? _archive;
-            private readonly Dictionary<string, IReadOnlyList<string>> _supers = new(StringComparer.Ordinal);
+            private readonly Dictionary<string, List<string>> _supers = new(StringComparer.Ordinal);
 
             public JarHierarchy(string jarPath)
             {
@@ -1689,7 +1689,7 @@ internal sealed class IdentityAdapterMappingService
                 }
             }
 
-            private IReadOnlyList<string> SupertypesRead(string className)
+            private List<string> SupertypesRead(string className)
             {
                 if (_supers.TryGetValue(className, out var cached)) return cached;
                 var found = ReadSupertypes(className);
@@ -1697,7 +1697,7 @@ internal sealed class IdentityAdapterMappingService
                 return found;
             }
 
-            private IReadOnlyList<string> ReadSupertypes(string className)
+            private List<string> ReadSupertypes(string className)
             {
                 if (_archive?.GetEntry(className + ".class") is not { } entry) return [];
                 try
@@ -1713,7 +1713,7 @@ internal sealed class IdentityAdapterMappingService
                 }
             }
 
-            private static IReadOnlyList<string> SupertypeNamesOf(byte[] data)
+            private static List<string> SupertypeNamesOf(byte[] data)
             {
                 var offset = 8;
                 var count = ReadUInt16(data, offset);

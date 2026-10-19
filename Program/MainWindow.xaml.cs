@@ -1291,7 +1291,7 @@ public partial class MainWindow : Window
         _sessionStartedUtc = null;
 
         var context = CreateWorldMetadataContext();
-        if (context is null || _paths is null) return;
+        if (context is null || _paths is not { } paths || _settings is not { } settings) return;
 
         try
         {
@@ -1303,10 +1303,10 @@ public partial class MainWindow : Window
             if (instance is not null)
             {
                 new SavesFolderService(_logger).Adopt(
-                    WorldLocations.ForBuild(_paths.Worlds, _settings.ClientRelativePath),
+                    WorldLocations.ForBuild(paths.Worlds, settings.ClientRelativePath),
                     instance);
             }
-            var stamped = RequireWorldMetadata().StampPlayedWorlds(_paths.Worlds, context, startedUtc);
+            var stamped = RequireWorldMetadata().StampPlayedWorlds(paths.Worlds, context, startedUtc);
             foreach (var world in stamped)
             {
                 _logger?.Info(

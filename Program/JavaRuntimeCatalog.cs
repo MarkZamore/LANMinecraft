@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace Minecraft;
 
 /// <summary>
@@ -27,7 +29,7 @@ internal static class JavaRuntimeCatalog
     /// </summary>
     public const int DefaultMajorVersion = 21;
 
-    private static IReadOnlyList<Uri> UrisFor(string releaseName, string repository, string archiveFileName) =>
+    private static ReadOnlyCollection<Uri> UrisFor(string releaseName, string repository, string archiveFileName) =>
         Array.AsReadOnly<Uri>(
         [
             new Uri(

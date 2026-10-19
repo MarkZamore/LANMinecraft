@@ -80,9 +80,9 @@ public static partial class SteamClientLogs
         if (handle == IntPtr.Zero) return null;
         try
         {
-            var size = 1024;
-            var buffer = new StringBuilder(size);
-            return QueryFullProcessImageName(handle, 0, buffer, ref size) ? buffer.ToString() : null;
+            var buffer = new char[1024];
+            var size = buffer.Length;
+            return QueryFullProcessImageName(handle, 0, buffer, ref size) ? new string(buffer, 0, size) : null;
         }
         finally
         {
@@ -148,7 +148,7 @@ public static partial class SteamClientLogs
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder name, ref int size);
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, [Out] char[] name, ref int size);
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

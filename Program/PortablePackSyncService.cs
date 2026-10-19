@@ -530,7 +530,7 @@ public sealed partial class PortablePackSyncService
     /// What to tell the player about mods this update took away, or null when
     /// it took none.
     /// </summary>
-    private static string? DescribeRemovedMods(IReadOnlyList<string> removed)
+    private static string? DescribeRemovedMods(List<string> removed)
     {
         if (removed.Count == 0) return null;
 

@@ -202,7 +202,7 @@ public static class SharedRuntimeStore
         }
     }
 
-    private static IEnumerable<string> EnumerateFilesSafe(string root)
+    private static string[] EnumerateFilesSafe(string root)
     {
         // Materialised on purpose: the walk and the deleting cannot be
         // interleaved over one lazy enumeration of the same tree.

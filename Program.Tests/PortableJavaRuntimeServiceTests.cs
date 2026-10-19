@@ -35,7 +35,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     /// real open handle rather than a stand-in for one.
     /// </remarks>
     [Fact]
-    public void AnInstallHeldOpenForAMoment_StillLandsInPlace()
+    public async Task AnInstallHeldOpenForAMoment_StillLandsInPlace()
     {
         var parent = Path.Combine(_root, "runtime");
         var stage = Path.Combine(parent, ".java-17.install.abc");
@@ -53,7 +53,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
 
         PortableJavaRuntimeService.PublishInstall(stage, installed);
 
-        released.GetAwaiter().GetResult();
+        await released;
         Assert.False(Directory.Exists(stage));
         Assert.True(File.Exists(Path.Combine(installed, "bin", "java.exe")));
     }

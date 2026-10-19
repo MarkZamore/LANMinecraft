@@ -26,7 +26,7 @@ public sealed class ControlsPresetMergeTwiceTests
         Assert.Equal(
             once.Split('\n').Count(line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal)),
             twice.Split('\n').Count(line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal)));
-        Assert.Single(twice.Split('\n').Where(line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal)));
+        Assert.Single(twice.Split('\n'), line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal));
     }
 
     /// <summary>A file that already carries a duplicate comes out with one line.</summary>
@@ -38,6 +38,6 @@ public sealed class ControlsPresetMergeTwiceTests
 
         var (merged, _) = ControlsPresetService.Merge(options, entries);
 
-        Assert.Single(merged.Split('\n').Where(line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal)));
+        Assert.Single(merged.Split('\n'), line => line.StartsWith("key_key.rsrifle.reload:", StringComparison.Ordinal));
     }
 }

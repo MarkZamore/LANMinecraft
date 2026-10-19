@@ -358,7 +358,7 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         }
     }
 
-    private static IEnumerable<string> EnumerateDirectoriesSafe(string root)
+    private static string[] EnumerateDirectoriesSafe(string root)
     {
         try
         {
