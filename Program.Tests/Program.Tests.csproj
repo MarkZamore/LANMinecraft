@@ -9,6 +9,9 @@
     <IsTestProject>true</IsTestProject>
     <AssemblyName>Minecraft.Tests</AssemblyName>
     <RootNamespace>Minecraft.Tests</RootNamespace>
+    <!-- Captures and disposable installations can contain very deep trees;
+         they are runtime evidence, never test source or project content. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);PortabilityAudit\Artifacts\**;TestResults\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +26,18 @@
   <ItemGroup>
     <ProjectReference Include="..\Program\Minecraft.csproj"
                       AdditionalProperties="SkipPortableIdentityAdapter=true" />
+    <ProjectReference Include="..\tools\PortabilityAuditHost\PortabilityAuditHost.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <!-- The wrapper builds Program first, then disables reference builds to keep
+       its real adapter intact. Still prepare the fresh-process probe in that
+       mode; ordinary dotnet test builds it through the project reference. -->
+  <Target Name="BuildRenderingProbeHost" AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' == 'false'">
+    <MSBuild Projects="..\tools\PortabilityAuditHost\PortabilityAuditHost.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);BuildProjectReferences=false;SkipPortableIdentityAdapter=true" />
+  </Target>
 
 </Project>

@@ -68,3 +68,10 @@ Program.Tests/TestResults/
 
 # Worktrees and scratch the agent harness keeps beside the repository.
 .claude/
+
+# Private Process Monitor captures and disposable audit installations
+/Program.Tests/PortabilityAudit/Artifacts/
+
+# Functional audit host build output
+/tools/**/bin/
+/tools/**/obj/

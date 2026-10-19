@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Optional mapping/bytecode and loader compatibility matrix. -->
+<RunSettings>
+  <RunConfiguration>
+    <TestCaseFilter>FullyQualifiedName~Minecraft.Tests.IdentityAdapter|FullyQualifiedName~Minecraft.Tests.PortableSkinSignatureTests|FullyQualifiedName~Minecraft.Tests.PortableIdentityRegistryTests|FullyQualifiedName~Minecraft.Tests.JavaRuntimeCatalogTests|FullyQualifiedName~Minecraft.Tests.SteamTransportModTests</TestCaseFilter>
+  </RunConfiguration>
+</RunSettings>

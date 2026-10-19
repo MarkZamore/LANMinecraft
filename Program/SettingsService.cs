@@ -224,7 +224,6 @@ public sealed class SettingsService
                 // is a wrong number for ever.
                 CarryBudgetsAcrossToHeaps(settings, Pack());
             }
-            settings.MemorySettingIsTheHeap = true;
             // A file that already holds a number is clamped by what the
             // machine has, which the pack does not enter into; only a file
             // without one is given a recommendation, and that is worked out
@@ -265,7 +264,7 @@ public sealed class SettingsService
     public void Save(AppSettings settings)
     {
         settings = ApplyFallbacks(settings, PackMemory, MeasuredMemory);
-        AtomicFile.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
+        AtomicFile.WriteAllTextIfChanged(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
 
     private static AppSettings ApplyFallbacks(
@@ -277,6 +276,9 @@ public sealed class SettingsService
         var settings = source ?? new AppSettings();
 
         settings.SchemaVersion = CurrentSchemaVersion;
+        // A save always writes the current meaning, including the very first
+        // defaults file. Leaving this false made the next launch rewrite it.
+        settings.MemorySettingIsTheHeap = true;
         settings.PlayerName = settings.PlayerName?.Trim() ?? "";
         settings.PreviousPlayerName = settings.PreviousPlayerName?.Trim() ?? "";
 

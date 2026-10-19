@@ -15,10 +15,8 @@ namespace Minecraft;
 /// <param name="Hold">The pause at each end, so the ends can be read.</param>
 internal readonly record struct MarqueeSchedule(TimeSpan Travel, TimeSpan Hold)
 {
-    // Reading pace, in device-independent pixels per second, at the size the
-    // canvas is drawn. Slow enough to read a name letter by letter; the whole
-    // window is scaled by its Viewbox, so a larger window walks it faster in
-    // real pixels, which is what the eye expects.
+    // Reading pace in device-independent pixels per second. Resizing changes
+    // the available field width, while the font and reading pace stay fixed.
     private const double PixelsPerSecond = 24;
     // A name may hide only a letter - "MarkZamore" hides seven pixels of itself -
     // and seven pixels crossed quickly is not motion, it is a flicker nobody

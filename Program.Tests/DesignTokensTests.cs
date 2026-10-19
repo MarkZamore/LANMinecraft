@@ -7,8 +7,8 @@ namespace Minecraft.Tests;
 
 /// <summary>
 /// The design system lives in App.xaml as tokens and in DESIGN.md as prose.
-/// These keep the two the same shape, keep the typeface reachable from the
-/// assembly, and keep raw colours and sizes out of the markup: a screen is
+/// These keep the two the same shape, keep the system typeface available,
+/// and keep raw colours and sizes out of the markup: a screen is
 /// styled by naming a token, never by writing a number.
 /// </summary>
 public sealed class DesignTokensTests
@@ -61,33 +61,25 @@ public sealed class DesignTokensTests
     }
 
     /// <summary>
-    /// The typeface is embedded as a WPF resource under the path the token
-    /// names, and the family holds both faces the system uses. The pack URI
-    /// itself is only served once an Application exists, which a test host
-    /// does not have, so the two halves are checked apart: the resource
-    /// stream in the assembly, and the family read from the same files.
+    /// The Fluent system family resolves without extracted font files or an
+    /// Application pack-URI server, including its regular and emphasis faces.
     /// </summary>
     [Fact]
-    public void Montserrat_IsEmbeddedInBothWeights()
+    public void FluentSystemTypeface_ResolvesWithoutBundledFonts()
     {
-        var assembly = typeof(ChangelogService).Assembly;
-        using var stream = assembly.GetManifestResourceStream("LANMinecraft.g.resources");
-        Assert.NotNull(stream);
-        using var reader = new System.Resources.ResourceReader(stream);
-        var embedded = reader.Cast<System.Collections.DictionaryEntry>().Select(entry => (string)entry.Key).ToArray();
-        Assert.Contains("fonts/montserrat-light.ttf", embedded);
-        Assert.Contains("fonts/montserrat-medium.ttf", embedded);
-
-        var fontsDirectory = Path.GetDirectoryName(FindRepositoryFile("Program", "Fonts", "Montserrat-Light.ttf"))!;
-        var families = Fonts.GetFontFamilies(new Uri(fontsDirectory + Path.DirectorySeparatorChar));
-        var montserrat = Assert.Single(families, family => family.Source.EndsWith("#Montserrat", StringComparison.Ordinal));
-        var weights = montserrat.GetTypefaces().Select(typeface => typeface.Weight).ToArray();
-        Assert.Contains(FontWeights.Light, weights);
-        Assert.Contains(FontWeights.Medium, weights);
-
-        // And the token names that family by the assembly, the way the launcher loads it.
-        var appXaml = File.ReadAllText(FindRepositoryFile("Program", "App.xaml"));
-        Assert.Contains("pack://application:,,,/LANMinecraft;component/Fonts/#Montserrat", appXaml, StringComparison.Ordinal);
+        var document = XDocument.Load(FindRepositoryFile("Program", "App.xaml"));
+        var familyName = document.Descendants(Presentation + "FontFamily")
+            .Single(element => (string?)element.Attribute(X + "Key") == "Font.Family").Value;
+        Assert.Equal("Segoe UI Variable Text, Segoe UI", familyName);
+        var family = new FontFamily(familyName);
+        foreach (var weight in new[] { FontWeights.Normal, FontWeights.SemiBold })
+        {
+            var typeface = new Typeface(family, FontStyles.Normal, weight, FontStretches.Normal);
+            Assert.True(typeface.TryGetGlyphTypeface(out var glyphs), $"System font unavailable: {weight}");
+            Assert.True(glyphs.CharacterToGlyphMap.ContainsKey('Я'), "The launcher requires Cyrillic glyphs.");
+        }
+        var project = File.ReadAllText(FindRepositoryFile("Program", "Minecraft.csproj"));
+        Assert.DoesNotContain("Montserrat", project, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -103,11 +95,12 @@ public sealed class DesignTokensTests
     [InlineData("ControlsPresetConfirmationDialog.xaml")]
     [InlineData("WorldRemovalConfirmationDialog.xaml")]
     [InlineData("NoticeDialog.xaml")]
+    [InlineData("PeerNoticeWindow.xaml")]
     public void TheMarkup_NamesTokensNotColours(string file)
     {
         var xaml = File.ReadAllText(FindRepositoryFile("Program", file));
 
-        Assert.DoesNotMatch(@"#[0-9A-Fa-f]{6}\b", xaml);
+        Assert.DoesNotMatch(@"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b", xaml);
         Assert.DoesNotContain("SystemColors", xaml, StringComparison.Ordinal);
         // Sizes and gaps are tokens too; a bare number on one of these is a
         // decision made outside the system. Window geometry (Width, Height,

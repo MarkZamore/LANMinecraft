@@ -41,39 +41,25 @@ public sealed class SkinCompatibilityTests : IDisposable
     [Fact]
     public void TheHint_AlwaysSaysWhatTheFileMustBe()
     {
-        foreach (var version in new[] { "1.7.10", "1.21.1" })
-        {
-            var hint = SkinCompatibility.Describe(version, skinPath: null);
-            Assert.Contains("PNG", hint, StringComparison.Ordinal);
-            Assert.Contains("64x32", hint, StringComparison.Ordinal);
-            Assert.Contains("МБ", hint, StringComparison.Ordinal);
-        }
+        Assert.Equal("PNG 64x32, до 8 МБ.", SkinCompatibility.Describe("1.7.10", skinPath: null));
+        Assert.Equal("PNG 64x64 или 64x32, до 8 МБ.", SkinCompatibility.Describe("1.21.1", skinPath: null));
     }
 
     /// <summary>
-    /// And an old pack is told about, by name, with the skin that is chosen
-    /// measured rather than assumed.
+    /// The hint lists only supported dimensions, independent of the chosen file.
     /// </summary>
     [Fact]
-    public void AnOldPack_IsToldAboutWithTheSkinThatIsChosen()
+    public void AnOldPack_OnlyListsItsSupportedDimensions()
     {
         Directory.CreateDirectory(_root);
         var square = WritePng("square.png", 64, 64);
         var legacy = WritePng("legacy.png", 64, 32);
 
-        var modern = SkinCompatibility.Describe("1.21.1", square);
-        Assert.DoesNotContain("покажется неправильно", modern, StringComparison.Ordinal);
-
-        var old = SkinCompatibility.Describe("1.7.10", square);
-        Assert.Contains("Minecraft 1.7.10", old, StringComparison.Ordinal);
-        Assert.Contains("64x64", old, StringComparison.Ordinal);
-        Assert.Contains("покажется неправильно", old, StringComparison.Ordinal);
-
-        // The same old pack with a skin it can actually read says the rule and
-        // stops there.
-        var fitting = SkinCompatibility.Describe("1.7.10", legacy);
-        Assert.Contains("только 64x32", fitting, StringComparison.Ordinal);
-        Assert.DoesNotContain("покажется неправильно", fitting, StringComparison.Ordinal);
+        Assert.Equal((64, 64), SkinCompatibility.MeasureSkin(square));
+        Assert.Equal((64, 32), SkinCompatibility.MeasureSkin(legacy));
+        Assert.Equal("PNG 64x64 или 64x32, до 8 МБ.", SkinCompatibility.Describe("1.21.1", square));
+        Assert.Equal("PNG 64x32, до 8 МБ.", SkinCompatibility.Describe("1.7.10", square));
+        Assert.Equal("PNG 64x32, до 8 МБ.", SkinCompatibility.Describe("1.7.10", legacy));
     }
 
     [Fact]

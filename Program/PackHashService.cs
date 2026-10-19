@@ -117,7 +117,7 @@ public sealed class PackHashService : IDisposable
             if (!Directory.Exists(directory)) continue;
             foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
             {
-                if (!ShouldSkip(file)) yield return file;
+                if (!ShouldSkip(Path.GetRelativePath(clientDir, file))) yield return file;
             }
         }
 
@@ -145,12 +145,12 @@ public sealed class PackHashService : IDisposable
     private void WriteCache(PackHashCache cache)
     {
         cache.SchemaVersion = CacheGeneration;
-        AtomicFile.WriteAllText(_paths.PackHashesFile, JsonSerializer.Serialize(cache, _jsonOptions));
+        AtomicFile.WriteAllTextIfChanged(_paths.PackHashesFile, JsonSerializer.Serialize(cache, _jsonOptions));
     }
 
-    private static bool ShouldSkip(string file)
+    private static bool ShouldSkip(string relativePath)
     {
-        var normalized = file.Replace('\\', '/');
+        var normalized = relativePath.Replace('\\', '/');
         return normalized.Contains("/logs/", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("/saves/", StringComparison.OrdinalIgnoreCase) ||
                normalized.Contains("/screenshots/", StringComparison.OrdinalIgnoreCase) ||

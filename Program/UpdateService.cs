@@ -960,12 +960,37 @@ public sealed partial class UpdateService
           } catch {}
         }
         function Get-Sha256([string]$Path) {
-          return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stream = [System.IO.File]::OpenRead($Path)
+          $algorithm = $null
+          try {
+            $algorithm = [System.Security.Cryptography.SHA256]::Create()
+            return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+          } finally {
+            if ($null -ne $algorithm) { $algorithm.Dispose() }
+            $stream.Dispose()
+          }
         }
         function Assert-File([string]$Path, [long]$Size, [string]$Sha256) {
           $file = Get-Item -LiteralPath $Path -ErrorAction Stop
           if ($file.Length -ne $Size) { throw "Update file size does not match the manifest." }
           if ((Get-Sha256 $Path) -ne $Sha256.ToLowerInvariant()) { throw "Update file SHA-256 does not match the manifest." }
+        }
+        function Quote-ProcessArgument([string]$Value) {
+          $escaped = [System.Text.RegularExpressions.Regex]::Replace($Value, '(\\*)"', '$1$1\"')
+          $escaped = [System.Text.RegularExpressions.Regex]::Replace($escaped, '(\\+)$', '$1$1')
+          return '"' + $escaped + '"'
+        }
+        function Start-Launcher([string]$Argument = "") {
+          $start = New-Object System.Diagnostics.ProcessStartInfo
+          $start.FileName = $ExePath
+          $start.UseShellExecute = $false
+          $start.WorkingDirectory = Split-Path -Parent $ExePath
+          $start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
+          if (-not [string]::IsNullOrEmpty($Argument)) {
+            $start.Arguments = Quote-ProcessArgument $Argument
+          }
+          $process = [System.Diagnostics.Process]::Start($start)
+          if ($null -ne $process) { $process.Dispose() }
         }
         function Restore-PreviousExecutable {
           if (-not (Test-Path -LiteralPath $BackupPath -PathType Leaf)) { return }
@@ -1007,9 +1032,7 @@ public sealed partial class UpdateService
           if (Test-Path -LiteralPath $RestartRequestPath) { Remove-Item -LiteralPath $RestartRequestPath -Force -ErrorAction SilentlyContinue }
           if ($restartRequested -and (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
             try {
-              Start-Process -FilePath $ExePath `
-                -ArgumentList ("--skip-prestart-update=" + $TargetCommitSha) `
-                -WorkingDirectory (Split-Path -Parent $ExePath)
+              Start-Launcher ("--skip-prestart-update=" + $TargetCommitSha)
             } catch {}
           }
           exit 1
@@ -1029,7 +1052,7 @@ public sealed partial class UpdateService
         $restartRequested = $RestartAfterInstall -eq 1 -or (Test-Path -LiteralPath $RestartRequestPath -PathType Leaf)
         if (Test-Path -LiteralPath $RestartRequestPath) { Remove-Item -LiteralPath $RestartRequestPath -Force -ErrorAction SilentlyContinue }
         if ($restartRequested) {
-          try { Start-Process -FilePath $ExePath -WorkingDirectory (Split-Path -Parent $ExePath) } catch { Log ("Updated application could not be started: " + $_.Exception.Message) }
+          try { Start-Launcher } catch { Log ("Updated application could not be started: " + $_.Exception.Message) }
         }
         """;
     }

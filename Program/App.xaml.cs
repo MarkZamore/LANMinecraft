@@ -9,9 +9,18 @@ public partial class App : Application
 
     private SingleInstanceGuard? _instanceGuard;
 
+    public App()
+    {
+        // Select the supported WPF renderer before InitializeComponent or any
+        // window creates a render target. This belongs only to this process;
+        // the separately launched Java client keeps its own graphics settings.
+        System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        WindowsThemeService.Initialize(this);
         StartupTrace.Mark("рантайм");
 
         // Before anything that can fail. An error the launcher does not catch

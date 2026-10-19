@@ -6,13 +6,10 @@ namespace Minecraft;
 /// The words shown inside the play button while a pack and its runtime are
 /// prepared.
 ///
-/// The button is a fixed 550 px on a canvas that never changes, its caption is
-/// drawn at the display size without wrapping or trimming, and anything wider
-/// is cut mid-letter with nothing to say it was. So a caption names the thing
-/// being worked on and, while bytes move, the numbers - "Сборка",
-/// "Java 21.0.12", "NeoForge" - and never a sentence about them. The pair of
-/// sizes carries one unit, taken from the total, because both halves are the
-/// same measure.
+/// Captions wrap inside the bounded play button. They name the work and its
+/// moving numbers - "Сборка", "Java 21.0.12", "NeoForge" - without a sentence
+/// around them. The pair of sizes carries one unit because both halves use
+/// the same measure.
 /// </summary>
 /// <remarks>
 /// The name is the whole of what a caption says, and it is why the bar may go
@@ -24,12 +21,6 @@ namespace Minecraft;
 /// </remarks>
 internal static class PlayButtonCaption
 {
-    /// <summary>
-    /// The widest a caption may draw: the play button spans both left columns
-    /// of the 820 px canvas (275 each) less one pixel of border a side.
-    /// </summary>
-    public const double MaxWidth = 548;
-
     /// <summary>The caption for one progress report, with the speed measured for it.</summary>
     public static string For(RuntimePreparationProgress progress, double bytesPerSecond)
     {

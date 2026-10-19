@@ -263,7 +263,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         return destination;
     }
 
-    private static async Task RunPreflightAsync(
+    private async Task RunPreflightAsync(
         string configuredJavaPath,
         string adapterPath,
         IReadOnlyDictionary<string, string> properties,
@@ -279,6 +279,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        using var processFiles = PortableJavaEnvironment.CreateToolScope(
+            startInfo, Path.Combine(_paths.Personal, "Temp"));
         foreach (var pair in properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             startInfo.ArgumentList.Add($"-Dminecraft.portable.identity.{pair.Key}={pair.Value}");
@@ -289,8 +291,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         startInfo.ArgumentList.Add(target.JarPath);
         startInfo.ArgumentList.Add(target.ClassName);
 
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Portable identity preflight process could not be started.");
+        var process = processFiles.Start();
         var standardOutput = process.StandardOutput.ReadToEndAsync(token);
         var standardError = process.StandardError.ReadToEndAsync(token);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -301,12 +302,14 @@ public sealed class PortableIdentityAdapterService : IDisposable
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
-            TryKill(process);
+            _ = await processFiles.StopAsync().ConfigureAwait(false);
+            PortableJavaEnvironment.ObserveOutputCompletion(standardOutput, standardError);
             throw new TimeoutException("Portable identity bytecode preflight timed out.");
         }
         catch
         {
-            TryKill(process);
+            _ = await processFiles.StopAsync().ConfigureAwait(false);
+            PortableJavaEnvironment.ObserveOutputCompletion(standardOutput, standardError);
             throw;
         }
 
@@ -321,7 +324,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         }
     }
 
-    private static async Task RunSkinSemanticPreflightAsync(
+    private async Task RunSkinSemanticPreflightAsync(
         string configuredJavaPath,
         string adapterPath,
         IReadOnlyDictionary<string, string> properties,
@@ -334,67 +337,59 @@ public sealed class PortableIdentityAdapterService : IDisposable
         var registeredUrl = $"http://127.0.0.1:{SkinService.PreferredHttpPort}/skin/{playerUuid}/{skinHash}";
         var unregisteredUrl = $"http://127.0.0.1:{SkinService.PreferredHttpPort}/skin/{playerUuid}/{otherHash}";
         const string officialUrl = "https://textures.minecraft.net/texture/portable-preflight";
-        var registryPath = Path.Combine(
-            Path.GetDirectoryName(adapterPath)!,
-            $".skin-preflight-{Guid.NewGuid():N}.properties");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = ResolveConsoleJava(configuredJavaPath),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        using var processFiles = PortableJavaEnvironment.CreateToolScope(
+            startInfo, Path.Combine(_paths.Personal, "Temp"));
+        var registryPath = Path.Combine(processFiles.RootDirectory, "skin-preflight.properties");
+        File.WriteAllText(
+            registryPath,
+            $"{playerUuid}|{skinHash}|classic|{registeredUrl}",
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        startInfo.ArgumentList.Add("-Dminecraft.portable.identity.enabled=true");
+        startInfo.ArgumentList.Add($"-Dminecraft.portable.skin.registry={registryPath}");
+        foreach (var pair in properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            startInfo.ArgumentList.Add($"-Dminecraft.portable.identity.{pair.Key}={pair.Value}");
+        }
+        startInfo.ArgumentList.Add($"-javaagent:{adapterPath}");
+        startInfo.ArgumentList.Add("-cp");
+        startInfo.ArgumentList.Add(adapterPath + Path.PathSeparator + target.JarPath);
+        startInfo.ArgumentList.Add("minecraft.portable.identity.PortableSkinPreflight");
+        startInfo.ArgumentList.Add(registeredUrl);
+        startInfo.ArgumentList.Add(unregisteredUrl);
+        startInfo.ArgumentList.Add(officialUrl);
 
+        var process = processFiles.Start();
+        var standardOutput = process.StandardOutput.ReadToEndAsync(token);
+        var standardError = process.StandardError.ReadToEndAsync(token);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
-            File.WriteAllText(
-                registryPath,
-                $"{playerUuid}|{skinHash}|classic|{registeredUrl}",
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = ResolveConsoleJava(configuredJavaPath),
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            startInfo.ArgumentList.Add("-Dminecraft.portable.identity.enabled=true");
-            startInfo.ArgumentList.Add($"-Dminecraft.portable.skin.registry={registryPath}");
-            foreach (var pair in properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-            {
-                startInfo.ArgumentList.Add($"-Dminecraft.portable.identity.{pair.Key}={pair.Value}");
-            }
-            startInfo.ArgumentList.Add($"-javaagent:{adapterPath}");
-            startInfo.ArgumentList.Add("-cp");
-            startInfo.ArgumentList.Add(adapterPath + Path.PathSeparator + target.JarPath);
-            startInfo.ArgumentList.Add("minecraft.portable.identity.PortableSkinPreflight");
-            startInfo.ArgumentList.Add(registeredUrl);
-            startInfo.ArgumentList.Add(unregisteredUrl);
-            startInfo.ArgumentList.Add(officialUrl);
-
-            using var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Portable skin preflight process could not be started.");
-            var standardOutput = process.StandardOutput.ReadToEndAsync(token);
-            var standardError = process.StandardError.ReadToEndAsync(token);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch
-            {
-                TryKill(process);
-                throw;
-            }
-
-            var output = (await standardOutput.ConfigureAwait(false)).Trim();
-            var error = (await standardError.ConfigureAwait(false)).Trim();
-            if (process.ExitCode != 0)
-            {
-                var details = string.Join(Environment.NewLine, new[] { output, error }.Where(value => value.Length > 0));
-                if (details.Length > 2000) details = details[^2000..];
-                throw new NotSupportedException(
-                    $"Portable skin behavior preflight failed for {Path.GetFileName(target.JarPath)}. " + details);
-            }
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
         }
-        finally
+        catch
         {
-            if (File.Exists(registryPath)) File.Delete(registryPath);
+            _ = await processFiles.StopAsync().ConfigureAwait(false);
+            PortableJavaEnvironment.ObserveOutputCompletion(standardOutput, standardError);
+            throw;
+        }
+
+        var output = (await standardOutput.ConfigureAwait(false)).Trim();
+        var error = (await standardError.ConfigureAwait(false)).Trim();
+        if (process.ExitCode != 0)
+        {
+            var details = string.Join(Environment.NewLine, new[] { output, error }.Where(value => value.Length > 0));
+            if (details.Length > 2000) details = details[^2000..];
+            throw new NotSupportedException(
+                $"Portable skin behavior preflight failed for {Path.GetFileName(target.JarPath)}. " + details);
         }
     }
 
@@ -497,17 +492,6 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-    }
-
-    private static void TryKill(Process process)
-    {
-        try
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-        }
     }
 
     public void Dispose()

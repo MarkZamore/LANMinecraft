@@ -53,12 +53,7 @@ public sealed class MinecraftProcessService
         string javaTempDir,
         string javaHome)
     {
-        environment["TEMP"] = javaTempDir;
-        environment["TMP"] = javaTempDir;
-        environment["USERPROFILE"] = javaHome;
-        environment["HOME"] = javaHome;
-        environment["APPDATA"] = Path.Combine(javaHome, "AppData", "Roaming");
-        environment["LOCALAPPDATA"] = Path.Combine(javaHome, "AppData", "Local");
+        PortableJavaEnvironment.ConfigureEnvironment(environment, javaTempDir, javaHome);
         environment.Remove(SteamworksApiFacade.NoOverlayVariable);
     }
 

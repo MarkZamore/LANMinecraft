@@ -272,10 +272,13 @@ public sealed class PackRuntimeService : IDisposable
         };
     }
 
-    private void CleanupTemporaryFiles(string packRelativePath)
+    internal void CleanupTemporaryFiles(string packRelativePath)
     {
         var runtimeDownloads = Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads");
         var temporaryRoot = Path.Combine(runtimeDownloads, SafePackName(packRelativePath));
+        // A helper whose termination could not be confirmed keeps its scope.
+        // Deleting this parent would bypass the scope's live-process guard.
+        if (PortableJavaEnvironment.HasRetainedToolScope(temporaryRoot)) return;
         TryDeleteDirectory(temporaryRoot);
         TryDeleteDirectoryIfEmpty(runtimeDownloads);
         TryDeleteDirectoryIfEmpty(Path.Combine(_paths.Personal, "Temp"));
@@ -1112,8 +1115,6 @@ internal static class OfficialLoaderInstaller
         CancellationToken token)
     {
         Directory.CreateDirectory(context.TemporaryRoot);
-        var javaTemp = Path.Combine(context.TemporaryRoot, "Java");
-        Directory.CreateDirectory(javaTemp);
         var profilesPath = Path.Combine(context.GameRoot, "launcher_profiles.json");
         var profilesBackup = File.Exists(profilesPath) ? File.ReadAllBytes(profilesPath) : null;
         AtomicFile.WriteAllText(
@@ -1133,16 +1134,13 @@ internal static class OfficialLoaderInstaller
                 StandardOutputEncoding = Utf8NoBom,
                 StandardErrorEncoding = Utf8NoBom
             };
-            startInfo.ArgumentList.Add($"-Djava.io.tmpdir={javaTemp}");
+            using var processFiles = PortableJavaEnvironment.CreateToolScope(startInfo, context.TemporaryRoot);
             startInfo.ArgumentList.Add("-jar");
             startInfo.ArgumentList.Add(installerPath);
             startInfo.ArgumentList.Add(installArgument);
             startInfo.ArgumentList.Add(context.GameRoot);
-            startInfo.Environment["TEMP"] = javaTemp;
-            startInfo.Environment["TMP"] = javaTemp;
 
-            using var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Loader installer process could not be started.");
+            var process = processFiles.Start();
             var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
             var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
             try
@@ -1151,8 +1149,8 @@ internal static class OfficialLoaderInstaller
             }
             catch (OperationCanceledException)
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                await Task.WhenAll(stdoutTask, stderrTask);
+                _ = await processFiles.StopAsync().ConfigureAwait(false);
+                PortableJavaEnvironment.ObserveOutputCompletion(stdoutTask, stderrTask);
                 throw;
             }
 

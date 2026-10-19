@@ -185,6 +185,23 @@ public sealed class WindowPlacementTests : IDisposable
     }
 
     [Fact]
+    public void Saving_an_unchanged_window_does_not_rewrite_its_placement()
+    {
+        WithWindow(null, (window, _, service) =>
+        {
+            var path = new AppPaths(_root).WindowPlacementFile;
+            service.Save(window);
+            File.SetLastWriteTimeUtc(path, new DateTime(2001, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+            var originalTime = File.GetLastWriteTimeUtc(path);
+
+            service.Save(window);
+
+            Assert.Equal(originalTime, File.GetLastWriteTimeUtc(path));
+            Assert.Empty(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+        });
+    }
+
+    [Fact]
     public void Saving_a_normal_window_remembers_its_current_rectangle()
     {
         WithWindow(null, (window, handle, service) =>

@@ -17,11 +17,11 @@
          canvas behind it, and so the whole notice can be faded in and out. -->
     <Border x:Name="NoticeSurface"
             Width="{StaticResource Size.NoticeWidth}"
-            Background="{StaticResource Brush.Surface}"
-            BorderBrush="{StaticResource Brush.BorderStrong}"
+            Background="{DynamicResource Brush.Popup}"
+            BorderBrush="{DynamicResource Brush.Border}"
             BorderThickness="{StaticResource Border.Control}"
-            CornerRadius="{StaticResource Radius.Primary}"
-            Padding="{StaticResource Gap.Canvas}">
+            CornerRadius="{StaticResource Radius.Panel}"
+            Padding="{StaticResource Pad.Panel}">
         <StackPanel>
             <!-- Who, then what: the name carries the weight because it is the
                  word a player is looking for. -->

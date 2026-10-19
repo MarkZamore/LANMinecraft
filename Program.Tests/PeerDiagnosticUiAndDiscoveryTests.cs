@@ -225,6 +225,13 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             element =>
                 (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText" &&
                 (string?)element.Attribute("IsReadOnly") == "True");
+        var status = document.Descendants(presentation + "TextBox")
+            .Single(element => (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText");
+        Assert.Empty(status.Ancestors(presentation + "Expander"));
+        var statusArea = status.Parent;
+        Assert.Equal("DiagnosticStatusArea", (string?)statusArea?.Attribute(x + "Name"));
+        Assert.Equal("MainPanel", (string?)statusArea?.Parent?.Attribute(x + "Name"));
+        Assert.Null(status.Attribute("Grid.Column"));
         Assert.Contains(
             document.Descendants(presentation + "Button"),
             element =>
@@ -244,12 +251,18 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         // The block sits with the things a player does: after sending a world,
         // before the bars that show what the launcher itself is doing.
-        var panel = title.Parent;
-        Assert.NotNull(panel);
-        Assert.Equal("ReportPanel", (string?)panel.Attribute(x + "Name"));
-        var transferRow = RowOf(document.Descendants(presentation + "Button")
-            .Single(element => (string?)element.Attribute(x + "Name") == "TransferButton"));
-        var reportRow = RowOf(panel);
+        var panel = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ReportPanel");
+        var reportSection = title.Ancestors(presentation + "Expander").Single();
+        Assert.Equal("ReportExpander", (string?)reportSection.Attribute(x + "Name"));
+        Assert.Contains(reportSection, panel.Ancestors());
+        var transferRow = RowOf(document.Descendants(presentation + "Expander")
+            .Single(element => (string?)element.Attribute(x + "Name") == "WorldTransferExpander"));
+        var settings = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SettingsGrid");
+        Assert.True(RowOf(settings) < RowOf(statusArea!));
+        Assert.True(RowOf(statusArea!) < transferRow);
+        var reportRow = RowOf(reportSection);
         Assert.True(transferRow < reportRow,
             $"transfer row {transferRow}, report row {reportRow}");
         var body = document.Descendants(presentation + "ScrollViewer")
@@ -259,8 +272,12 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "FooterGrid");
         var update = document.Descendants(presentation + "ProgressBar")
             .Single(element => (string?)element.Attribute(x + "Name") == "UpdateProgressBar");
-        Assert.Contains(footer, update.Ancestors());
-        Assert.True(RowOf(body) < RowOf(footer));
+        var updateArea = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "UpdateArea");
+        Assert.DoesNotContain(footer, update.Ancestors());
+        Assert.Equal("RootGrid", (string?)updateArea.Parent?.Attribute(x + "Name"));
+        Assert.True(RowOf(body) < RowOf(updateArea));
+        Assert.True(RowOf(updateArea) < RowOf(footer));
     }
 
     /// <summary>
@@ -282,7 +299,10 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Descendants(presentation + "TextBlock")
             .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "SidePanelTitle");
         Assert.NotNull(title);
-        Assert.Equal("SidePanel", (string?)title.Parent?.Attribute(x + "Name"));
+        var sideSection = title.Ancestors(presentation + "Border")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelCard");
+        Assert.Empty(title.Ancestors(presentation + "Expander"));
+        Assert.Equal("{StaticResource Font.SizeHeading}", (string?)title.Attribute("FontSize"));
         // The launcher opens on the assistant, so that is the heading it wears.
         Assert.Equal("AI-помощник", (string?)title.Attribute("Text"));
 
@@ -302,18 +322,28 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "ChatPanel");
         Assert.Equal("Collapsed", (string?)news.Attribute("Visibility"));
         Assert.Null(chat.Attribute("Visibility"));
-        Assert.Contains(title.Parent, news.Ancestors());
-        Assert.Contains(title.Parent, chat.Ancestors());
+        Assert.Contains(sideSection, news.Ancestors());
+        Assert.Contains(sideSection, chat.Ancestors());
 
-        // The assistant is a stub, and both of its controls are switched off.
+        // The transport is unavailable, but a draft remains editable and scrollable.
         var field = document
             .Descendants(presentation + "TextBox")
             .Single(element => (string?)element.Attribute(x + "Name") == "ChatMessageTextBox");
-        Assert.Equal("False", (string?)field.Attribute("IsEnabled"));
+        Assert.Null(field.Attribute("IsEnabled"));
+        Assert.Null(field.Attribute("IsReadOnly"));
+        Assert.Equal("True", (string?)field.Attribute("AcceptsReturn"));
+        Assert.Equal("Wrap", (string?)field.Attribute("TextWrapping"));
+        Assert.Equal("Auto", (string?)field.Attribute("VerticalScrollBarVisibility"));
         var send = document
             .Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "ChatSendButton");
-        Assert.Equal("False", (string?)send.Attribute("IsEnabled"));
+        Assert.Equal("{Binding IsActionEnabled, ElementName=ChatComposerControl}", (string?)send.Attribute("IsEnabled"));
+        Assert.Equal("{StaticResource ChatActionButtonStyle}", (string?)send.Attribute("Style"));
+        var composer = document.Descendants().Single(element =>
+            (string?)element.Attribute(x + "Name") == "ChatComposerControl");
+        Assert.Equal("False", (string?)composer.Attribute("IsServiceAvailable"));
+        Assert.Contains(composer, field.Ancestors());
+        Assert.Contains(composer, send.Ancestors());
 
         // The switch stands where the version number used to, and is named for
         // what pressing it brings rather than for what is on screen.
@@ -372,11 +402,10 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     }
 
     /// <summary>
-    /// The main body scrolls between the pinned Play button and footer. A single
-    /// side panel can use either the right host or the host below the main body.
+    /// The two action sections start closed while the sidebar stays visible in its own card.
     /// </summary>
     [Fact]
-    public void MainWindowXaml_ProvidesSeparateWideAndInlineHostsForOneSidePanel()
+    public void MainWindowXaml_KeepsTwoColumnsTwoCollapsedSectionsAndPersistentSidebar()
     {
         var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
         XNamespace presentation =
@@ -387,22 +416,48 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         var root = document
             .Descendants(presentation + "Grid")
             .Single(element => (string?)element.Attribute(x + "Name") == "RootGrid");
+        Assert.Null(root.Attribute("MaxWidth"));
+        var columns = root.Element(presentation + "Grid.ColumnDefinitions")!.Elements().ToArray();
+        Assert.Equal(new[] { "2*", "{StaticResource Size.ColumnGap}", "1*" },
+            columns.Select(column => (string?)column.Attribute("Width")));
+        Assert.All(columns, column =>
+        {
+            Assert.Null(column.Attribute("MinWidth"));
+            Assert.Null(column.Attribute("MaxWidth"));
+        });
         var rows = root
             .Elements(presentation + "Grid.RowDefinitions")
             .Single()
             .Elements()
             .Select(row => (string?)row.Attribute("Height"))
             .ToArray();
-        Assert.Equal(new[] { "Auto", "*", "Auto" }, rows);
-        var wideHost = document.Descendants(presentation + "Border")
-            .Single(element => (string?)element.Attribute(x + "Name") == "WideSideHost");
-        var inlineHost = document.Descendants(presentation + "Border")
-            .Single(element => (string?)element.Attribute(x + "Name") == "InlineSideHost");
-        Assert.Equal("1", (string?)wideHost.Attribute("Grid.Column"));
-        Assert.Equal("2", (string?)wideHost.Attribute("Grid.RowSpan"));
-        Assert.Equal("1", (string?)inlineHost.Attribute("Grid.Row"));
-        Assert.Contains(inlineHost.Ancestors(), ancestor => (string?)ancestor.Attribute(x + "Name") == "BodyScroll");
-        Assert.Equal("2", (string?)document.Descendants(presentation + "Grid")
+        Assert.Equal(new[] { "Auto", "*", "Auto", "Auto" }, rows);
+        var body = document.Descendants(presentation + "ScrollViewer")
+            .Single(element => (string?)element.Attribute(x + "Name") == "BodyScroll");
+        Assert.Equal("{StaticResource LauncherBodyScrollViewerStyle}", (string?)body.Attribute("Style"));
+        var bodyBar = document.Descendants(presentation + "ScrollBar")
+            .Single(element => (string?)element.Attribute(x + "Name") == "BodyScrollBar");
+        Assert.Equal("0", (string?)bodyBar.Attribute("Grid.Row"));
+        Assert.Equal("2", (string?)bodyBar.Attribute("Grid.RowSpan"));
+        Assert.Equal("{StaticResource Gap.Below4}", (string?)bodyBar.Attribute("Margin"));
+        Assert.Equal(2, document.Descendants(presentation + "Expander").Count());
+        foreach (var name in new[] { "WorldTransferExpander", "ReportExpander" })
+        {
+            var section = document.Descendants(presentation + "Expander")
+                .Single(element => (string?)element.Attribute(x + "Name") == name);
+            Assert.Equal("False", (string?)section.Attribute("IsExpanded"));
+        }
+        var side = document.Descendants(presentation + "Border")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelCard");
+        Assert.Equal("2", (string?)side.Attribute("Grid.Column"));
+        Assert.Equal("3", (string?)side.Attribute("Grid.RowSpan"));
+        var updateArea = document.Descendants(presentation + "Grid")
+            .Single(element => (string?)element.Attribute(x + "Name") == "UpdateArea");
+        Assert.Equal("2", (string?)updateArea.Attribute("Grid.Row"));
+        Assert.Equal((string?)updateArea.Attribute("Margin"), (string?)side.Attribute("Margin"));
+        Assert.DoesNotContain(document.Descendants(), element =>
+            (string?)element.Attribute(x + "Name") is "WideSideHost" or "InlineSideHost" or "SidePanelExpander");
+        Assert.Equal("3", (string?)document.Descendants(presentation + "Grid")
             .Single(element => (string?)element.Attribute(x + "Name") == "FooterGrid")
             .Attribute("Grid.Row"));
         foreach (var name in new[] { "SidePanel", "ChatPanel", "ChangelogPanel", "ChangelogList", "ChatMessageTextBox", "ChatSendButton" })
@@ -481,10 +536,15 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Null(delete.Attribute("Margin"));
         Assert.Equal("{StaticResource Gap.Left2}", (string?)estimate.Attribute("Margin"));
         Assert.Equal("{StaticResource Gap.Left2}", (string?)button.Attribute("Margin"));
-        Assert.Equal("{StaticResource Size.Control}", (string?)delete.Attribute("Width"));
-        Assert.Equal("{StaticResource Brush.Danger}", (string?)delete.Attribute("Foreground"));
+        Assert.Equal("{StaticResource IconActionButton}", (string?)delete.Attribute("Style"));
+        Assert.Null(delete.Attribute("Width"));
+        var deleteGlyph = Assert.Single(delete.Elements(presentation + "TextBlock"));
+        Assert.Equal("\uE74D", (string?)deleteGlyph.Attribute("Text"));
+        Assert.Equal("{StaticResource Font.Icons}", (string?)deleteGlyph.Attribute("FontFamily"));
+        Assert.Equal("{StaticResource Size.Icon}", (string?)deleteGlyph.Attribute("FontSize"));
+        Assert.Null(delete.Attribute("Foreground"));
         Assert.Equal("True", (string?)delete.Attribute("ToolTipService.ShowOnDisabled"));
-        // The red is on the glyph, never on the button: no Background is set.
+        // Destructive actions share the reference design's neutral icon-button surface.
         Assert.Null(delete.Attribute("Background"));
     }
 

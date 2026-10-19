@@ -97,6 +97,8 @@ jobs:
           # Restore is also the dependency audit: NuGetAudit in
           # Directory.Build.props turns a vulnerable package, direct or
           # transitive, into a restore error.
+          & dotnet restore tools\PortabilityAuditHost\PortabilityAuditHost.csproj -r win-x64 -p:Configuration=Debug
+          if ($LASTEXITCODE -ne 0) { throw "The updater test host could not be restored." }
           & dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release
           if ($LASTEXITCODE -ne 0) { throw "The launcher could not be restored." }
           & dotnet restore Program.Tests\Program.Tests.csproj -r win-x64 -p:Configuration=Release
@@ -142,8 +144,9 @@ jobs:
           # DEBUG-only code, so what is tested is what ships.
           $tests = Start-Job -Name 'tests' -ScriptBlock {
             param($workspace)
+            $ErrorActionPreference = 'Stop'
             Set-Location -LiteralPath $workspace
-            & dotnet test Program.Tests\Program.Tests.csproj -c Debug --no-restore
+            & .\Program.Tests\Test-Launcher.ps1 -Profile Release -Configuration Debug -NoRestore
             if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
           } -ArgumentList $env:GITHUB_WORKSPACE
 

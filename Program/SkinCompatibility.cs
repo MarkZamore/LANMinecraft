@@ -65,30 +65,11 @@ public static class SkinCompatibility
     }
 
     /// <summary>
-    /// What the Skin button says on hover: the rule for the file, and what the
-    /// pack in the box will make of the one that is chosen.
+    /// The supported file dimensions and size limit for the selected version.
     /// </summary>
     public static string Describe(string? minecraftVersion, string? skinPath)
     {
-        var rule =
-            "Скин - PNG шириной ровно 64 пикселя: столько читают все версии. Более крупный старые " +
-            "обрезают по левому верхнему углу, а с 1.17 игра его вовсе отбрасывает. " +
-            "Размер 64x64 для современного формата или 64x32 для старого. " +
-            $"Не больше {SkinService.MaxSkinBytes / (1024 * 1024)} МБ: файл уходит по Steam всем, кто играет рядом.";
-
-        if (ReadsModernSkins(minecraftVersion)) return rule;
-
-        var version = string.IsNullOrWhiteSpace(minecraftVersion) ? "этой версии" : $"Minecraft {minecraftVersion}";
-        var warning =
-            $" Выбранная сборка на {version}: квадратные скины и тонкая модель появились в {FirstModernVersion}, " +
-            "и здесь подойдёт только 64x32.";
-
-        var measured = MeasureSkin(skinPath);
-        if (measured is { } size && size.Height == size.Width)
-        {
-            warning += $" Выбранный сейчас - {size.Width}x{size.Height}, и на этой сборке он покажется неправильно.";
-        }
-
-        return rule + warning;
+        var dimensions = ReadsModernSkins(minecraftVersion) ? "64x64 или 64x32" : "64x32";
+        return $"PNG {dimensions}, до {SkinService.MaxSkinBytes / (1024 * 1024)} МБ.";
     }
 }

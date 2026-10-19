@@ -32,7 +32,7 @@ public sealed class DialogLayoutTests
 
             Assert.Same(panel, dialog.Content);
             Assert.Equal(520, panel.Width);
-            Assert.Equal(12, text.FontSize);
+            Assert.Equal((double)dialog.FindResource("Font.SizeBody"), text.FontSize);
             Assert.True(panel.LayoutTransform.Value.IsIdentity);
             return true;
         });
@@ -65,7 +65,7 @@ public sealed class DialogLayoutTests
             viewer.ScrollToEnd();
             viewer.UpdateLayout();
 
-            Assert.Equal(12, text.FontSize);
+            Assert.Equal((double)dialog.FindResource("Font.SizeBody"), text.FontSize);
             Assert.True(panel.LayoutTransform.Value.IsIdentity);
             Assert.True(panel.ActualWidth + panel.Margin.Left + panel.Margin.Right <= viewer.ActualWidth);
             Assert.Equal(Orientation.Vertical, actions.Orientation);
@@ -92,7 +92,7 @@ public sealed class DialogLayoutTests
 
             Assert.Same(surface, notice.Content);
             Assert.Equal(320, surface.Width);
-            Assert.Equal(12, text.FontSize);
+            Assert.Equal((double)notice.FindResource("Font.SizeBody"), text.FontSize);
             Assert.True(surface.LayoutTransform.Value.IsIdentity);
             return true;
         });
@@ -100,9 +100,11 @@ public sealed class DialogLayoutTests
 
     private static Window Dialog(FrameworkElement content)
     {
-        var dialog = new Window { Content = content, FontSize = 12, SizeToContent = SizeToContent.WidthAndHeight };
-        dialog.Resources["Size.Scrollbar"] = 8d;
-        dialog.Resources["Gap.Above2"] = new Thickness(0, 8, 0, 0);
+        var dialog = WindowCanvasTests.LoadWindow();
+        dialog.Content = content;
+        dialog.MinWidth = 0;
+        dialog.MinHeight = 0;
+        dialog.SizeToContent = SizeToContent.WidthAndHeight;
         return dialog;
     }
 }

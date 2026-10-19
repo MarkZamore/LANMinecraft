@@ -10,6 +10,25 @@ internal static class AtomicFile
         WriteAllBytes(path, (encoding ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)).GetBytes(contents));
     }
 
+    /// <summary>Leaves an identical file alone, including its timestamp and the
+    /// temporary file an atomic replacement would otherwise need.</summary>
+    public static bool WriteAllTextIfChanged(string path, string contents, Encoding? encoding = null)
+    {
+        var bytes = (encoding ?? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)).GetBytes(contents);
+        try
+        {
+            if (File.Exists(path) && File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes)) return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Reading can be denied while replacing the file is still allowed.
+            // The normal atomic writer decides whether the save can succeed.
+        }
+
+        WriteAllBytes(path, bytes);
+        return true;
+    }
+
     public static void WriteAllBytes(string path, ReadOnlySpan<byte> contents)
     {
         var fullPath = Path.GetFullPath(path);
