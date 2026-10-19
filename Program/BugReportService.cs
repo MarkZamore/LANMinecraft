@@ -86,6 +86,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// or a crash report, where the interesting part is at the end and short.
     /// </summary>
     private const int MaxSupportingLogTailBytes = 2 * 1024 * 1024;
+    private static readonly string[] JvmFatalLogPatterns = ["hs_err_pid*.log", "replay_pid*.log"];
     private static readonly TimeSpan SendTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>Reports older than this have been overtaken by whatever happened since.</summary>
@@ -410,7 +411,7 @@ public sealed class BugReportService : IPortableProtocolHandler
             // working directory and nothing anywhere else: no crash report, and
             // a latest.log that simply stops mid-sentence. It is the whole
             // account of a driver or an out-of-memory kill.
-            foreach (var fatal in new[] { "hs_err_pid*.log", "replay_pid*.log" }
+            foreach (var fatal in JvmFatalLogPatterns
                          .SelectMany(pattern => Directory.EnumerateFiles(instance, pattern))
                          .Select(path => new FileInfo(path))
                          .Where(file => file.LastWriteTimeUtc > _timeProvider.GetUtcNow().AddDays(-1))
@@ -534,7 +535,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// What e4steam said in the session before this one - kept when its debug
     /// log was cleared - and in this one, in that order.
     /// </summary>
-    private static IEnumerable<string> E4steamReportLines(IReadOnlyList<string> debugLogs, string previous)
+    private static List<string> E4steamReportLines(IReadOnlyList<string> debugLogs, string previous)
     {
         var lines = new List<string>();
         if (File.Exists(previous))
@@ -620,7 +621,7 @@ public sealed class BugReportService : IPortableProtocolHandler
     /// are kept, and the stream is read through a window rather than into memory,
     /// so a log that grew to gigabytes costs the same as one that did not.
     /// </summary>
-    private static Stream Unpack(Stream file, int maxBytes, out bool truncated)
+    private static MemoryStream Unpack(Stream file, int maxBytes, out bool truncated)
     {
         using var gzip = new GZipStream(file, CompressionMode.Decompress, leaveOpen: true);
         var window = new byte[maxBytes];

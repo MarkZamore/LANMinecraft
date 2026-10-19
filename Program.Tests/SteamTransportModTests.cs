@@ -32,7 +32,7 @@ public sealed class SteamTransportModTests
         });
 
         var neoforge = Assert.Single(
-            SteamTransportCatalog.Builds.Where(build => build.Loaders.Contains(PackLoaderKind.NeoForge)));
+            SteamTransportCatalog.Builds, build => build.Loaders.Contains(PackLoaderKind.NeoForge));
         Assert.Equal("e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar", neoforge.FileName);
         Assert.Equal(3_634_360, neoforge.SizeBytes);
         Assert.Equal(
@@ -42,8 +42,8 @@ public sealed class SteamTransportModTests
         // Two Forge builds now, one per range; this is the one that carries
         // 1.19.2 and 1.20.1, which is most of the Forge packs worth playing.
         var forge = Assert.Single(
-            SteamTransportCatalog.Builds.Where(
-                build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar"));
+            SteamTransportCatalog.Builds,
+            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar");
         Assert.Equal(3_633_909, forge.SizeBytes);
         Assert.Equal(
             "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",

@@ -169,7 +169,7 @@ public sealed class ControlsPresetService(Logger? logger = null)
     /// </summary>
     private void ReportMappingsTheBuildDoesNotHave(
         ControlsPreset preset,
-        IReadOnlyDictionary<string, string> current)
+        Dictionary<string, string> current)
     {
         if (logger is null) return;
 

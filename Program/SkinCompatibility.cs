@@ -37,7 +37,8 @@ public static class SkinCompatibility
     public static bool ReadsModernSkins(string? minecraftVersion)
     {
         if (!SteamTransportCatalog.TryParseVersion(minecraftVersion, out var version)) return true;
-        SteamTransportCatalog.TryParseVersion(FirstModernVersion, out var modern);
+        if (!SteamTransportCatalog.TryParseVersion(FirstModernVersion, out var modern))
+            throw new InvalidOperationException($"Invalid modern skin version: {FirstModernVersion}.");
         return SteamTransportCatalog.Compare(version, modern) >= 0;
     }
 

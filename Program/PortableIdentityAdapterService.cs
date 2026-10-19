@@ -216,7 +216,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     /// it is present and behaving badly. An evening was spent guessing which of
     /// the two a guest's stuttering world was.
     /// </summary>
-    private static string DescribeGameFeatures(IReadOnlyDictionary<string, string> properties)
+    private static string DescribeGameFeatures(Dictionary<string, string> properties)
     {
         var present = new List<string>();
         if (Says(properties, "lanPublishEnabled")) present.Add("one-press LAN");
@@ -228,7 +228,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         return present.Count == 0 ? "nothing beyond skins and the UUID" : string.Join(", ", present);
     }
 
-    private static bool Says(IReadOnlyDictionary<string, string> properties, string name) =>
+    private static bool Says(Dictionary<string, string> properties, string name) =>
         properties.TryGetValue(name, out var value) &&
         string.Equals(value, "true", StringComparison.Ordinal);
 

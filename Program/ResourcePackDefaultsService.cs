@@ -312,7 +312,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     /// out of wherever it ended up and put back where the pack says, which is
     /// what makes the order the pack's rather than the last screen's.
     /// </summary>
-    private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, IReadOnlyList<string> wanted, IReadOnlyList<string> dropped)
+    private static (int Added, bool Rearranged) Arrange(List<string> lines, string prefix, List<string> wanted, IReadOnlyList<string> dropped)
     {
         if (wanted.Count == 0 && dropped.Count == 0) return (0, false);
         var index = lines.FindIndex(line => line.StartsWith(prefix, StringComparison.Ordinal));
@@ -328,7 +328,7 @@ public sealed class ResourcePackDefaultsService(Logger? logger = null)
     }
 
     /// <summary>Takes entries out of one of the game's lists; true when the line changed.</summary>
-    private static bool Remove(List<string> lines, string prefix, IReadOnlyList<string> unwanted)
+    private static bool Remove(List<string> lines, string prefix, List<string> unwanted)
     {
         if (unwanted.Count == 0) return false;
         var index = lines.FindIndex(line => line.StartsWith(prefix, StringComparison.Ordinal));
