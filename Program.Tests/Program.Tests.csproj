@@ -31,9 +31,10 @@
   </ItemGroup>
 
   <!-- The wrapper builds Program first, then disables reference builds to keep
-       its real adapter intact. Still prepare the fresh-process probe in that
-       mode; ordinary dotnet test builds it through the project reference. -->
-  <Target Name="BuildRenderingProbeHost" AfterTargets="Build"
+       its real adapter intact. Prepare the probe before reference resolution
+       copies its executable companion files, including on a clean checkout;
+       ordinary dotnet test builds it through the project reference. -->
+  <Target Name="BuildRenderingProbeHost" BeforeTargets="ResolveProjectReferences"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(BuildProjectReferences)' == 'false'">
     <MSBuild Projects="..\tools\PortabilityAuditHost\PortabilityAuditHost.csproj"
              Targets="Build"
