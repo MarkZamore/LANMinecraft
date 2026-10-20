@@ -145,6 +145,17 @@
         <sys:Double x:Key="Size.PopupMax">280</sys:Double>
         <sys:Double x:Key="Size.StatusLine">32</sys:Double>
         <sys:Double x:Key="Size.StatusArea">56</sys:Double>
+        <sys:Double x:Key="Size.LibraryCardMin">240</sys:Double>
+        <GridLength x:Key="Size.LibraryActionGap">8</GridLength>
+        <GridLength x:Key="Size.LibraryTreeIndent">16</GridLength>
+        <sys:Double x:Key="Size.LibraryHero">240</sys:Double>
+        <sys:Double x:Key="Size.LibrarySummary">40</sys:Double>
+        <Color x:Key="Color.LibraryImageShade">#80202020</Color>
+        <LinearGradientBrush x:Key="Brush.LibraryHeroOverlay" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="{StaticResource Color.LibraryImageShade}" Offset="0"/>
+            <GradientStop Color="{StaticResource Color.LibraryImageShade}" Offset="0.4"/>
+            <GradientStop Color="{StaticResource Color.Canvas}" Offset="1"/>
+        </LinearGradientBrush>
         <sys:Double x:Key="Size.Scrollbar">16</sys:Double>
         <GridLength x:Key="Size.ScrollGutter">20</GridLength>
         <sys:Double x:Key="Size.ScrollThumb">2</sys:Double>
@@ -307,7 +318,13 @@
                     <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}"/>
                 </Border>
                 <ControlTemplate.Triggers>
-                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/></Trigger>
+                    <MultiTrigger>
+                        <MultiTrigger.Conditions>
+                            <Condition Property="IsMouseOver" Value="True"/>
+                            <Condition Property="IsReadOnly" Value="False"/>
+                        </MultiTrigger.Conditions>
+                        <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
+                    </MultiTrigger>
                     <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/></Trigger>
                     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceDisabled}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.BorderDisabled}"/><Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/></Trigger>
                 </ControlTemplate.Triggers>

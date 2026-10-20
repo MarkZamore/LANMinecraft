@@ -43,6 +43,7 @@ public sealed class PackApplyFailedException(Exception inner)
 /// </summary>
 public sealed partial class PortablePackSyncService
 {
+    public PackCatalogService? Catalog { get; set; }
     public const string SourceMarkerFileName = "portable-pack-source.json";
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string PackManifestAssetName = "pack-manifest.json";
@@ -184,7 +185,7 @@ public sealed partial class PortablePackSyncService
                     _logger.Info(
                         $"Pack sync source marker still names {marker.Repo}; " +
                         $"the built-in {DefaultPackRelativePath} source is used and the marker is rewritten.");
-                    return DefaultPackSource;
+                    return Catalog?.SourceFor(packRelativePath) ?? DefaultPackSource;
                 }
                 return marker;
             }
@@ -195,7 +196,7 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return KnownSourceFor(packRelativePath);
+        return Catalog?.SourceFor(packRelativePath) ?? KnownSourceFor(packRelativePath);
     }
 
     /// <summary>
@@ -551,6 +552,9 @@ public sealed partial class PortablePackSyncService
 
     private async Task<RemoteManifestDto> FetchManifestAsync(PackSyncSource source, CancellationToken token)
     {
+        if (Catalog is { } catalog)
+            return JsonSerializer.Deserialize<RemoteManifestDto>(catalog.SessionManifest(source), JsonOptions)
+                ?? throw new InvalidDataException("Empty session manifest.");
         Exception? lastError = null;
         for (var attempt = 1; attempt <= ManifestFetchAttempts; attempt++)
         {
@@ -680,6 +684,8 @@ public sealed partial class PortablePackSyncService
                     throw new InvalidDataException(
                         $"Pack asset {asset.Name} download was redirected to {SanitizeUri(effectiveUri)}.");
                 }
+                if (Catalog is not null && response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
+                    throw new PackSessionExpiredException();
                 response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentLength is { } length && length != asset.SizeBytes)
                 {
@@ -1176,6 +1182,13 @@ public sealed partial class PortablePackSyncService
             _logger.Warn($"Pack sync state could not be read and will be rebuilt: {ex.Message}");
         }
         return new SyncStateDto();
+    }
+
+    public static void ValidateSnapshot(string json, string packDir)
+    {
+        var dto = JsonSerializer.Deserialize<RemoteManifestDto>(json, JsonOptions)
+            ?? throw new InvalidDataException("Empty pack manifest.");
+        ValidateRemoteManifest(dto, packDir);
     }
 
     private static ValidatedManifest ValidateRemoteManifest(RemoteManifestDto manifest, string packDir)

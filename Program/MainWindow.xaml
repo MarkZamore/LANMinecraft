@@ -66,6 +66,12 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="{StaticResource Size.ScrollGutter}" />
             </Grid.ColumnDefinitions>
+            <Grid x:Name="LaunchActions" Grid.Column="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="3*"/>
+                    <ColumnDefinition Width="{StaticResource Size.LibraryActionGap}"/>
+                    <ColumnDefinition Width="2*"/>
+                </Grid.ColumnDefinitions>
             <Button x:Name="PlayButton"
                 Grid.Column="0"
                 Click="PlayButton_Click"
@@ -87,6 +93,9 @@
                         TextAlignment="Center" />
                 </Grid>
             </Button>
+            <Button x:Name="LibraryButton" Grid.Column="2" Content="Библиотека" Click="LibraryButton_Click"
+                MinHeight="{StaticResource Size.Primary}" HorizontalAlignment="Stretch"/>
+            </Grid>
         </Grid>
         <ScrollViewer VerticalScrollBarVisibility="Auto"
             ClipToBounds="True"
@@ -641,5 +650,6 @@
             <TextBlock x:Name="TransferStatusText" />
             <TextBox x:Name="LogTextBox" />
         </Grid>
+        <local:PackLibraryView x:Name="LibraryView" Grid.ColumnSpan="3" Grid.RowSpan="4" Visibility="Collapsed"/>
     </Grid>
 </Window>
