@@ -170,8 +170,8 @@ public sealed class PackCatalogTests : IDisposable
     }
 
     [Theory]
-    [InlineData(968, 633, 1)]
-    [InlineData(968, 633, 1.5)]
+    [InlineData(804, 521, 1)]
+    [InlineData(804, 521, 1.5)]
     [InlineData(1904, 1001, 2)]
     public void LibraryFitsRealControlsAndTreeExpansionSurvivesNavigation(double width, double height, double dpi)
     {

@@ -61,7 +61,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="1" Margin="{StaticResource Gap.Below4}" x:Name="PlayArea">
+        <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="1" Margin="{StaticResource Gap.BodyScroll}" x:Name="PlayArea">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="{StaticResource Size.ScrollGutter}" />
@@ -99,7 +99,7 @@
         </Grid>
         <ScrollViewer VerticalScrollBarVisibility="Auto"
             ClipToBounds="True"
-            Margin="{StaticResource Gap.Below4}"
+            Margin="{StaticResource Gap.BodyScroll}"
             HorizontalScrollBarVisibility="Disabled"
             VerticalContentAlignment="Stretch"
             HorizontalContentAlignment="Stretch"
@@ -241,7 +241,11 @@
                                 Click="ControlsPresetButton_Click"
                                 IsEnabled="False"
                                 ToolTipService.ShowOnDisabled="True"
-                                HorizontalAlignment="Stretch" />
+                                HorizontalAlignment="Stretch">
+                                <Button.ContentTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center"/></DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
                         </Grid>
                     </Grid>
                     <Grid x:Name="DiagnosticStatusArea" Grid.Row="1" Margin="{StaticResource Gap.Below4}">
@@ -448,7 +452,7 @@
             Grid.Column="0"
             HorizontalAlignment="Right"
             Width="{StaticResource Size.Scrollbar}"
-            Margin="{StaticResource Gap.Below4}"
+            Margin="{StaticResource Gap.BodyScroll}"
             Orientation="Vertical"
             Focusable="True"
             Maximum="{Binding ScrollableHeight, ElementName=BodyScroll}"

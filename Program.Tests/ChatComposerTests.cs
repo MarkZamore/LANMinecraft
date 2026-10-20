@@ -19,7 +19,7 @@ public sealed class ChatComposerTests
             var input = Element<TextBox>(window, "ChatMessageTextBox");
             var action = Element<Button>(window, "ChatSendButton");
             input.Text = "Мой вопрос о сборке";
-            Settle(window, new Size(968, 633));
+            Settle(window, new Size(804, 521));
             Assert.True(input.IsEnabled);
             Assert.False(input.IsReadOnly);
             Assert.Equal(input.Text, composer.Prompt);
@@ -43,7 +43,7 @@ public sealed class ChatComposerTests
             var composer = Element<ChatComposer>(window, "ChatComposerControl");
             var input = Element<TextBox>(window, "ChatMessageTextBox");
             var action = Element<Button>(window, "ChatSendButton");
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             composer.IsServiceAvailable = true;
             input.Text = "   ";
             Settle(window, size);
@@ -103,10 +103,10 @@ public sealed class ChatComposerTests
     }
 
     [Theory]
-    [InlineData(968, 633, 1)]
-    [InlineData(968, 633, 1.25)]
-    [InlineData(968, 633, 1.5)]
-    [InlineData(968, 633, 2)]
+    [InlineData(804, 521, 1)]
+    [InlineData(804, 521, 1.25)]
+    [InlineData(804, 521, 1.5)]
+    [InlineData(804, 521, 2)]
     [InlineData(1904, 1001, 1)]
     [InlineData(1904, 1001, 1.5)]
     [InlineData(1904, 1001, 2)]
@@ -167,7 +167,7 @@ public sealed class ChatComposerTests
             input.Text = "Черновик сохраняется при изменении размера и переключении страницы";
             input.Select(5, 12);
             var draft = input.Text;
-            foreach (var size in new[] { new Size(968, 633), new Size(1904, 1001), new Size(968, 633) })
+            foreach (var size in new[] { new Size(804, 521), new Size(1904, 1001), new Size(804, 521) })
             {
                 Element<Grid>(window, "ChatPanel").Visibility = Visibility.Collapsed;
                 Element<Grid>(window, "ChangelogPanel").Visibility = Visibility.Visible;

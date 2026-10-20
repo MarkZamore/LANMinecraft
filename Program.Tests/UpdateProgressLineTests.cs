@@ -56,7 +56,7 @@ public class UpdateProgressLineTests
     /// spilling over the "Обновить" button beside it, even in a snapped window.
     /// </summary>
     [Theory]
-    [InlineData(968, 633)]
+    [InlineData(804, 521)]
     [InlineData(1104, 761)]
     [InlineData(1904, 1001)]
     public void EveryLine_FitsTheBarAtEachLayoutWidth(double width, double height)

@@ -22,7 +22,7 @@ public sealed class PlayButtonCaptionTests
             var button = Assert.IsType<Button>(window.FindName("PlayButton"));
             var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
             var progress = Assert.IsType<ProgressBar>(window.FindName("PlayProgressBar"));
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             // A different Windows accent must not recolour the explicitly blue action.
             window.Resources["Brush.Accent"] = new SolidColorBrush(Colors.Magenta);
             button.IsEnabled = true;
@@ -79,14 +79,16 @@ public sealed class PlayButtonCaptionTests
             var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
             text.Text = caption;
             button.IsHitTestVisible = false;
-            WindowCanvasTests.LayoutWindow(window, new Size(968, 633));
+            WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
 
             Assert.Equal((FontFamily)window.FindResource("Font.Family"), text.FontFamily);
             Assert.Equal((FontWeight)window.FindResource("Font.WeightEmphasis"), text.FontWeight);
             Assert.Equal((double)window.FindResource("Font.SizeDisplay"), text.FontSize);
             Assert.Equal(TextWrapping.Wrap, text.TextWrapping);
-            Assert.Equal(Assert.IsType<Grid>(window.FindName("PlayArea")).ColumnDefinitions[0].ActualWidth, button.ActualWidth, 3);
-            Assert.Equal(Assert.IsType<Grid>(window.FindName("BodyGrid")).ActualWidth, button.ActualWidth, 3);
+            var actions = Assert.IsType<Grid>(window.FindName("LaunchActions"));
+            Assert.Equal(Assert.IsType<Grid>(window.FindName("PlayArea")).ColumnDefinitions[0].ActualWidth, actions.ActualWidth, 3);
+            Assert.Equal(Assert.IsType<Grid>(window.FindName("BodyGrid")).ActualWidth, actions.ActualWidth, 3);
+            Assert.Equal(Assert.IsType<Button>(window.FindName("LibraryButton")).ActualWidth * 1.5, button.ActualWidth, 3);
             var bounds = text.TransformToAncestor(button)
                 .TransformBounds(new Rect(new Point(), text.RenderSize));
             Assert.True(bounds.Left >= button.BorderThickness.Left - 0.5 &&
