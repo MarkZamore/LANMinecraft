@@ -112,6 +112,8 @@
         <Thickness x:Key="Gap.Left3Right2">12,0,8,0</Thickness>
         <Thickness x:Key="Gap.Left4Right1">16,0,4,0</Thickness>
         <Thickness x:Key="Gap.Canvas">24</Thickness>
+        <Thickness x:Key="Gap.BodyScroll">0,0,-20,16</Thickness>
+        <Thickness x:Key="Gap.ScrollCanvas">0,0,-20,0</Thickness>
         <Thickness x:Key="Gap.Chevron">16,0,0,0</Thickness>
         <Thickness x:Key="Gap.CategoryIcon">0,0,16,0</Thickness>
         <Thickness x:Key="Pad.None">0</Thickness>
@@ -133,10 +135,13 @@
         <sys:Double x:Key="Size.ChatActionGlyph">16</sys:Double>
         <sys:Double x:Key="Size.ChatStopGlyph">10</sys:Double>
         <sys:Double x:Key="Size.ChatGlyphStroke">2</sys:Double>
-        <sys:Double x:Key="Size.WindowWidth">984</sys:Double>
-        <sys:Double x:Key="Size.WindowHeight">672</sys:Double>
-        <sys:Double x:Key="Size.WindowMinWidth">984</sys:Double>
-        <sys:Double x:Key="Size.WindowMinHeight">672</sys:Double>
+        <sys:Double x:Key="Size.WindowWidth">820</sys:Double>
+        <sys:Double x:Key="Size.WindowHeight">560</sys:Double>
+        <sys:Double x:Key="Size.WindowMinWidth">820</sys:Double>
+        <sys:Double x:Key="Size.WindowMinHeight">560</sys:Double>
+        <sys:Double x:Key="Size.CompactBreakpoint">960</sys:Double>
+        <sys:Double x:Key="Size.CompactNameField">64</sys:Double>
+        <GridLength x:Key="Size.CompactLabelColumn">56</GridLength>
         <sys:Double x:Key="Size.ButtonMax">96</sys:Double>
         <sys:Double x:Key="Size.Primary">44</sys:Double>
         <sys:Double x:Key="Size.Small">24</sys:Double>

@@ -166,7 +166,7 @@ public sealed class TransferProgressLineTests
     /// is measured and the widest of them has to fit.
     /// </summary>
     [Theory]
-    [InlineData(968, 633)]
+    [InlineData(804, 521)]
     [InlineData(1104, 761)]
     [InlineData(1904, 1001)]
     public void EveryLine_FitsTheBarAtEachLayoutWidth(double width, double height)

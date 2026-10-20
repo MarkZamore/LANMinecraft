@@ -19,7 +19,7 @@ namespace Minecraft.Tests;
 public sealed class WindowCanvasTests
 {
     [Theory]
-    [InlineData(968, 633)]
+    [InlineData(804, 521)]
     [InlineData(1104, 761)]
     [InlineData(1248, 761)]
     [InlineData(1904, 1001)]
@@ -40,7 +40,7 @@ public sealed class WindowCanvasTests
             Assert.True(double.IsPositiveInfinity(root.MaxWidth));
             AssertWidthWithinOnePhysicalPixel(width - root.Margin.Left - root.Margin.Right, root.ActualWidth, root);
             Assert.Equal(2, Grid.GetColumn(side));
-            Assert.True(Bounds(side, root).Left >= Bounds(body, root).Right + 23.5);
+            Assert.InRange(Bounds(side, root).Left - Bounds(bodyGrid, root).Right, 23.5, 24.5);
             var settings = Element<Grid>(window, "SettingsGrid");
             Assert.Equal(2, settings.RowDefinitions.Count);
             var rows = new[] { "NameSettingsRow", "BuildSettingsRow", "MemorySettingsRow", "PresetSettingsRow" }
@@ -64,7 +64,7 @@ public sealed class WindowCanvasTests
                     $"{name} is clipped at {width} DIP: {bounds}; body width {bodyGrid.ActualWidth}");
                 Assert.True(bounds.Bottom <= Math.Max(body.ExtentHeight, body.ViewportHeight) + 0.5);
             }
-            Assert.True(Element<TextBox>(window, "PlayerNameTextBox").ActualWidth >= 95.5);
+            Assert.True(Element<TextBox>(window, "PlayerNameTextBox").ActualWidth >= (width < 960 ? 64 : 95.5));
             Assert.True(body.ScrollableWidth <= 0.5);
             var footer = Element<Grid>(window, "FooterGrid");
             Assert.True(Bounds(footer, root).Bottom <= root.ActualHeight + 0.5);
@@ -93,15 +93,15 @@ public sealed class WindowCanvasTests
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            Assert.Equal(984, window.Width);
-            Assert.Equal(672, window.Height);
+            Assert.Equal(820, window.Width);
+            Assert.Equal(560, window.Height);
             Assert.Equal(window.Width, window.MinWidth);
             Assert.Equal(window.Height, window.MinHeight);
             Assert.Equal(window.MinWidth * 28, window.MinHeight * 41);
             Assert.Equal(ResizeMode.CanResize, window.ResizeMode);
             Assert.True(double.IsNaN(Element<Grid>(window, "RootGrid").Width));
             Assert.DoesNotContain("<Viewbox", File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml")), StringComparison.Ordinal);
-            LayoutWindow(window, new Size(968, 633));
+            LayoutWindow(window, new Size(804, 521));
             foreach (var name in SectionNames)
             {
                 var section = Element<Expander>(window, name);
@@ -114,7 +114,7 @@ public sealed class WindowCanvasTests
     }
 
     [Theory]
-    [InlineData(968, 633)]
+    [InlineData(804, 521)]
     [InlineData(1904, 1001)]
     public void TheStatus_RemainsBeforeTheSectionsAtTheirFullWidthAndPreservesTheReportDraft(double width, double height)
     {
@@ -149,10 +149,10 @@ public sealed class WindowCanvasTests
     }
 
     [Theory]
-    [InlineData(968, 633, 1)]
-    [InlineData(968, 633, 1.25)]
-    [InlineData(968, 633, 1.5)]
-    [InlineData(968, 633, 2)]
+    [InlineData(804, 521, 1)]
+    [InlineData(804, 521, 1.25)]
+    [InlineData(804, 521, 1.5)]
+    [InlineData(804, 521, 2)]
     [InlineData(1104, 761, 1)]
     [InlineData(1104, 761, 1.25)]
     [InlineData(1104, 761, 1.5)]
@@ -214,7 +214,7 @@ public sealed class WindowCanvasTests
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             var card = Element<Border>(window, "SidePanelCard");
             var title = Element<TextBlock>(window, "SidePanelTitle");
             var chat = Element<Grid>(window, "ChatPanel");
@@ -295,10 +295,10 @@ public sealed class WindowCanvasTests
     }
 
     [Theory]
-    [InlineData(968, 1)]
-    [InlineData(968, 1.25)]
-    [InlineData(968, 1.5)]
-    [InlineData(968, 2)]
+    [InlineData(804, 1)]
+    [InlineData(804, 1.25)]
+    [InlineData(804, 1.5)]
+    [InlineData(804, 2)]
     [InlineData(1904, 1)]
     [InlineData(1904, 1.25)]
     [InlineData(1904, 1.5)]
@@ -312,7 +312,7 @@ public sealed class WindowCanvasTests
             var body = Element<ScrollViewer>(window, "BodyScroll");
             var bar = Element<ScrollBar>(window, "BodyScrollBar");
             var play = Element<Button>(window, "PlayButton");
-            var size = new Size(width, 633);
+            var size = new Size(width, 521);
             var dpi = new DpiScale(scale, scale);
             void Layout()
             {
@@ -336,7 +336,7 @@ public sealed class WindowCanvasTests
             Assert.Equal(playBounds.Top, barBounds.Top, 3);
             Assert.Equal(Bounds(body, root).Bottom, barBounds.Bottom, 3);
             Assert.True(barBounds.Left >= playBounds.Right + 3.5);
-            Assert.True(barBounds.Right <= Bounds(Element<Border>(window, "SidePanelCard"), root).Left - 23.5);
+            Assert.InRange(Bounds(Element<Border>(window, "SidePanelCard"), root).Left - barBounds.Right, 3.5, 4.5);
             AssertStretchedActions(window);
 
             var middle = body.ScrollableHeight / 2;
@@ -379,7 +379,7 @@ public sealed class WindowCanvasTests
         OnAStaThread(() =>
         {
             var window = LoadWindow();
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             var report = Element<TextBox>(window, "BugReportMessageTextBox");
             report.Text = "Описание сохраняется после сворачивания";
             report.Select(3, 7);
@@ -414,7 +414,7 @@ public sealed class WindowCanvasTests
         {
             var window = LoadWindow();
             ExpandSections(window);
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             LayoutWindow(window, size);
             var body = Element<ScrollViewer>(window, "BodyScroll");
             Assert.True(body.ScrollableHeight > 0);
@@ -435,7 +435,7 @@ public sealed class WindowCanvasTests
         {
             var window = LoadWindow();
             ExpandSections(window);
-            LayoutWindow(window, new Size(968, 633));
+            LayoutWindow(window, new Size(804, 521));
             var report = Element<TextBox>(window, "BugReportMessageTextBox");
             var reportHeight = report.ActualHeight;
             var sideHeight = Element<Grid>(window, "SidePanel").ActualHeight;
@@ -493,7 +493,7 @@ public sealed class WindowCanvasTests
                     Assert.True(Element<Expander>(window, "ReportExpander").IsExpanded);
                 }
                 var dpi = VisualTreeHelper.GetDpi(window);
-                foreach (var size in new[] { new Size(1140, 800), new Size(984, 672) })
+                foreach (var size in new[] { new Size(1140, 800), new Size(820, 560) })
                 {
                     Assert.True(SetWindowPos(handle, 0, 0, 0,
                         (int)Math.Round(size.Width * dpi.DpiScaleX), (int)Math.Round(size.Height * dpi.DpiScaleY),
@@ -501,7 +501,7 @@ public sealed class WindowCanvasTests
                     SettleNativeLayout(window);
                     AssertNativeClientLayout(window);
                 }
-                Assert.Equal(984, window.Width, 1);
+                Assert.Equal(820, window.Width, 1);
                 Assert.Equal(10, report.SelectionStart);
                 Assert.Equal(10, report.SelectionLength);
                 Assert.Same(report, FocusManager.GetFocusedElement(window));
@@ -516,7 +516,7 @@ public sealed class WindowCanvasTests
     }
 
     [Theory]
-    [InlineData(968, 633)]
+    [InlineData(804, 521)]
     [InlineData(1104, 761)]
     [InlineData(1904, 1001)]
     public void ALongReport_ScrollsInsideItsFieldWithoutGrowingThePage(double width, double height)
@@ -561,7 +561,7 @@ public sealed class WindowCanvasTests
             var item = new { Name = caption, DisplayName = caption };
             dropdown.ItemsSource = new[] { item };
             dropdown.SelectedItem = item;
-            var size = new Size(968, 633);
+            var size = new Size(804, 521);
             LayoutWindow(window, size);
             DrainDispatcher();
             LayoutWindow(window, size);

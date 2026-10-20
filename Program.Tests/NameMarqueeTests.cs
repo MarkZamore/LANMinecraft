@@ -117,7 +117,7 @@ public sealed class NameMarqueeTests
         var field = Assert.IsType<TextBox>(window.FindName("PlayerNameTextBox"));
         field.Text = name;
         field.Width = Wide;
-        WindowCanvasTests.LayoutWindow(window, new Size(968, 633));
+        WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
         return field;
     }
 }

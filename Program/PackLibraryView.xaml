@@ -82,11 +82,11 @@
         <Grid x:Name="LibraryTopBar" Margin="{DynamicResource Gap.Below4}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="{DynamicResource Size.ColumnGap}"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="{DynamicResource Size.LibraryActionGap}"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="{DynamicResource Size.ScrollGutter}"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="{DynamicResource Size.LibraryActionGap}"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
                 <Button x:Name="ReturnLauncherButton" Content="Вернуться в лаунчер" Click="ReturnLauncher_Click" HorizontalAlignment="Stretch" MinHeight="{DynamicResource Size.Primary}"/>
             </Grid>
         </Grid>
-        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.ScrollCanvas}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <TextBlock Text="Добавь сборку" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below4}"/>
                 <ItemsControl x:Name="CatalogCards">
@@ -107,7 +107,7 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
-        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Margin="{DynamicResource Gap.ScrollCanvas}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="DetailContent">
                 <local:RoundedClipBorder Style="{StaticResource LibrarySectionStyle}" Padding="{DynamicResource Pad.None}" Height="{DynamicResource Size.LibraryHero}">
                     <Grid>
