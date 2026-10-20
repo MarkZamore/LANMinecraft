@@ -52,6 +52,9 @@
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>
+                                <!-- Let the popup's outside-click capture close the list.
+                                     Otherwise this click toggles the button back on after Closed. -->
+                                <Setter Property="IsHitTestVisible" Value="False"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/>

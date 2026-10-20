@@ -37,6 +37,10 @@ public partial class MainWindow : Window
     private Logger? _logger;
     private PackHashService? _packHash;
     private PortablePackSyncService? _packSync;
+    private PackCatalogService? _catalog;
+    private Task? _catalogStartup;
+    private bool _libraryVisible;
+    private readonly Dictionary<UIElement, Visibility> _launcherVisibility = [];
     private PackAutoManifestService? _autoManifest;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
@@ -119,6 +123,9 @@ public partial class MainWindow : Window
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
         WorldComboBox.ItemsSource = _worlds;
+        LibraryView.ReturnRequested += () => ShowLibrary(false);
+        LibraryView.MembershipRequested += ChangeLibraryMembership;
+        LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
@@ -162,7 +169,9 @@ public partial class MainWindow : Window
             // button reports on. All four are field assignments that cost
             // nothing; the other eleven wait until the window is up.
             _packHash = new PackHashService(_paths);
-            _packSync = new PortablePackSyncService(_paths, _logger);
+            _catalog = new PackCatalogService(_paths, _logger);
+            _packSync = new PortablePackSyncService(_paths, _logger) { Catalog = _catalog };
+            LibraryView.SetCatalog(_catalog.Packs);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
@@ -185,6 +194,7 @@ public partial class MainWindow : Window
             // The window can be closed in that gap, and closing disposes the
             // token this method goes on to use.
             if (_shutdownStarted) return;
+            _catalogStartup = InitializeCatalogAsync();
 
             LoadChangelog();
             ShowSidePanel(news: false);
@@ -270,10 +280,6 @@ public partial class MainWindow : Window
             // pack hash finishes, whichever loses.
             RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
-            if (BuildComboBox.SelectedItem is ClientBuildViewModel startupBuild)
-            {
-                _ = RefreshLauncherDataAsync(startupBuild.RelativePath);
-            }
             _uiTimer.Start();
             // Housekeeping nobody waits for: last week's logs, files this
             // launcher used to write, runtimes for builds that are gone. It
@@ -288,7 +294,7 @@ public partial class MainWindow : Window
                 {
                     LogCleanupService.RunCleanup(_paths, rotateLauncherLog: false);
                     DeprecatedFileCleanupService.Run(_paths, _logger);
-                    StructureCleanupService.Run(_paths, _logger);
+                    StructureCleanupService.Run(_paths, _logger, _settings.AddedPackRelativePaths?.ToArray());
                 }
                 catch (Exception ex)
                 {
@@ -475,6 +481,8 @@ public partial class MainWindow : Window
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
         var builds = Directory.EnumerateDirectories(_paths.Packs)
             .Where(MinecraftProcessService.HasPackData)
+            .Where(path => (_catalog?.Find(Path.GetFileName(path)) is null && PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is null) ||
+                           PackMembership.Contains(_settings, Path.GetFileName(path)))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
@@ -488,7 +496,8 @@ public partial class MainWindow : Window
         // exists on disk - pressing Play downloads it. Without this a new build
         // could only be seen by whoever already had its folder, which is no way
         // to hand one to friends.
-        foreach (var known in PortablePackSyncService.KnownPacks)
+        foreach (var known in (_catalog?.Sources ?? PackCatalogService.SeedSources().ToArray())
+                     .Where(known => PackMembership.Contains(_settings, known.RelativePath)))
         {
             if (builds.Any(build => string.Equals(
                     build.RelativePath,
@@ -1372,7 +1381,7 @@ public partial class MainWindow : Window
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftPreparing || _minecraftRunning) return;
+        if (_minecraftPreparing || _minecraftRunning || _catalog?.IsReady != true) return;
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1536,23 +1545,6 @@ public partial class MainWindow : Window
     /// can offer a layout published minutes ago instead of claiming the old one
     /// is applied until somebody presses Play.
     /// </summary>
-    private async Task RefreshLauncherDataAsync(string packRelativePath)
-    {
-        if (_packSync is null) return;
-        try
-        {
-            var refreshed = await _packSync
-                .RefreshLauncherDataAsync(packRelativePath, _lifetimeCts.Token)
-                .ConfigureAwait(true);
-            if (!refreshed) return;
-            RefreshControlsPresetStatus();
-            RefreshUi();
-        }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
-        {
-        }
-    }
-
     /// <summary>
     /// Works out whether the pack's controls preset is already in the instance's
     /// options. Called on every tick, so it reads the two files only when one of
@@ -1635,8 +1627,26 @@ public partial class MainWindow : Window
     /// </remarks>
     private void DeleteBuildButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftRunning || _paths is null || _settings is null || _settingsService is null) return;
+        if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
         if (BuildComboBox.SelectedItem is not ClientBuildViewModel build || !build.IsInstalled) return;
+        RemoveBuild(build.RelativePath, build.Name, installed: true);
+    }
+
+    private void RemoveBuild(string relativePath, string name, bool installed)
+    {
+        if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
+        var build = new ClientBuildViewModel { RelativePath = relativePath, Name = name, FullPath = _paths.CombineUnderPacks(relativePath), IsInstalled = installed };
+        if (!installed)
+        {
+            PackMembership.Remove(_settings, relativePath);
+            BuildRemovalService.Forget(_settings, relativePath);
+            _settingsService.Save(_settings);
+            RefreshBuilds();
+            RefreshWorlds();
+            RefreshControlsPresetStatus();
+            RefreshUi();
+            return;
+        }
 
         var removal = new BuildRemovalService(_paths, _packHash, _logger);
         BuildRemovalService.RemovalPlan plan;
@@ -1657,7 +1667,9 @@ public partial class MainWindow : Window
 
         var worldsToo = answer == BuildRemovalAnswer.WithWorlds;
         var outcome = removal.Remove(worldsToo ? removal.Plan(build.RelativePath, worldsToo: true) : plan);
-        if (BuildRemovalService.Forget(_settings, build.RelativePath)) _settingsService.Save(_settings);
+        PackMembership.Remove(_settings, build.RelativePath);
+        BuildRemovalService.Forget(_settings, build.RelativePath);
+        _settingsService.Save(_settings);
 
         RefreshBuilds();
         RefreshControlsPresetStatus();
@@ -2366,7 +2378,6 @@ public partial class MainWindow : Window
         RefreshPackMemory();
         InitializeRuntimeProgressUi();
         RefreshControlsPresetStatus();
-        _ = RefreshLauncherDataAsync(build.RelativePath);
         await RefreshPackHashAsync();
         if (_startupComplete) await StartNetworkingAsync();
         SetState($"Build selected: {build.Name}");
@@ -3037,6 +3048,7 @@ public partial class MainWindow : Window
     private void RefreshUi()
     {
         if (_settings is null) return;
+        if (_libraryVisible) RestoreLauncherVisibility();
 
         RefreshPlayerIdentityDisplay();
         // Steam answers one question - who this player is - and only two
@@ -3087,7 +3099,8 @@ public partial class MainWindow : Window
             PlayButtonText.Text = "Играть";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
-            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName;
+            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName && _catalog?.IsReady == true;
+            if (_catalog?.IsReady != true) PlayButtonText.Text = "Проверка сборок";
         }
         // The name is the one thing the launcher will not invent, so it is also
         // the one thing it has to ask for. Without this the button is simply
@@ -3107,7 +3120,7 @@ public partial class MainWindow : Window
         // a name the list only offers has nothing to remove, and a game that is
         // running is holding the very files this would delete.
         var installed = BuildComboBox.SelectedItem is ClientBuildViewModel selected && selected.IsInstalled;
-        DeleteBuildButton.IsEnabled = installed && !_minecraftRunning;
+        DeleteBuildButton.IsEnabled = installed && CanChangeLibrary;
         DeleteBuildButton.ToolTip = !installed
             ? "Эта сборка ещё не скачана"
             : _minecraftRunning
@@ -3169,6 +3182,75 @@ public partial class MainWindow : Window
 
         RefreshDiagnosticsPanel();
         RefreshTransferStatus();
+        LibraryView.CanChangeMembership = CanChangeLibrary;
+        LibraryView.RefreshMembership();
+        if (_libraryVisible) HideLauncherVisibility();
+    }
+
+    private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive && _catalog?.IsReady == true;
+
+    private async Task InitializeCatalogAsync()
+    {
+        if (_catalog is null) return;
+        await _catalog.RefreshOnceAsync(_lifetimeCts.Token);
+        if (_shutdownStarted) return;
+        LibraryView.SetCatalog(_catalog.Packs);
+        RefreshBuilds();
+        RefreshPackMemory();
+        RefreshUi();
+    }
+
+    private void LibraryButton_Click(object sender, RoutedEventArgs e) => ShowLibrary(true);
+
+    private void ShowLibrary(bool visible)
+    {
+        if (_libraryVisible == visible) return;
+        _libraryVisible = visible;
+        if (visible)
+        {
+            LibraryView.ShowCatalog();
+            LibraryView.Visibility = Visibility.Visible;
+            HideLauncherVisibility();
+        }
+        else
+        {
+            RestoreLauncherVisibility();
+            LibraryView.Visibility = Visibility.Collapsed;
+            _launcherVisibility.Clear();
+            RefreshUi();
+            LibraryButton.Focus();
+        }
+    }
+
+    private void HideLauncherVisibility()
+    {
+        foreach (UIElement element in RootGrid.Children)
+        {
+            if (ReferenceEquals(element, LibraryView)) continue;
+            _launcherVisibility[element] = element.Visibility;
+            element.Visibility = Visibility.Hidden;
+        }
+    }
+
+    private void RestoreLauncherVisibility()
+    {
+        foreach (var (element, visibility) in _launcherVisibility) element.Visibility = visibility;
+    }
+
+    private void ChangeLibraryMembership(CatalogPack pack)
+    {
+        if (!CanChangeLibrary || _settings is null || _paths is null) return;
+        var path = pack.Entry.RelativePath;
+        if (PackMembership.Contains(_settings, path))
+        {
+            RemoveBuild(path, pack.Name, MinecraftProcessService.HasPackData(_paths.CombineUnderPacks(path)));
+        }
+        else if (PackMembership.Add(_settings, path))
+        {
+            RequireSettingsService().Save(_settings);
+            RefreshBuilds();
+            RefreshUi();
+        }
     }
 
     private void RefreshTransferStatus()

@@ -41,10 +41,10 @@ public static class StructureCleanupService
         ["assets", "libraries", "versions", "runtime", "resources"];
 
     /// <summary>Sweeps, and answers how many things went.</summary>
-    public static int Run(AppPaths paths, Logger? logger = null)
+    public static int Run(AppPaths paths, Logger? logger = null, IReadOnlyCollection<string>? addedPacks = null)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        var removed = RemoveOrphanedRuntimes(paths, logger) + RemoveSupersededRuntimeCopies(paths, logger);
+        var removed = RemoveOrphanedRuntimes(paths, logger, addedPacks) + RemoveSupersededRuntimeCopies(paths, logger);
         if (removed > 0)
         {
             logger?.Info($"Structure swept: {removed} folder(s) no build had a use for.");
@@ -67,7 +67,7 @@ public static class StructureCleanupService
     /// is one press of Play from existing again, and its prepared runtime is
     /// the reason that press is quick.
     /// </remarks>
-    private static int RemoveOrphanedRuntimes(AppPaths paths, Logger? logger)
+    private static int RemoveOrphanedRuntimes(AppPaths paths, Logger? logger, IReadOnlyCollection<string>? addedPacks)
     {
         if (!Directory.Exists(paths.Runtimes)) return 0;
         var installed = ReadDirectoryNames(paths.Packs);
@@ -75,9 +75,9 @@ public static class StructureCleanupService
         // exist: that is a reading we did not get, not a machine with no builds.
         if (installed is null || installed.Count == 0) return 0;
 
-        foreach (var known in PortablePackSyncService.KnownPacks)
+        foreach (var relativePath in addedPacks ?? PortablePackSyncService.KnownPacks.Select(p => p.RelativePath).ToArray())
         {
-            installed.Add(known.RelativePath);
+            installed.Add(relativePath);
         }
 
         var removed = 0;

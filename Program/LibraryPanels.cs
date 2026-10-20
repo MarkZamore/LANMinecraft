@@ -1,0 +1,73 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+
+namespace Minecraft;
+
+/// <summary>Equal-width responsive columns; an addon group always stays intact.</summary>
+public sealed class LibraryColumnsPanel : Panel
+{
+    public static readonly DependencyProperty MinimumColumnWidthProperty = DependencyProperty.Register(
+        nameof(MinimumColumnWidth), typeof(double), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(240d, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public static readonly DependencyProperty GapProperty = DependencyProperty.Register(
+        nameof(Gap), typeof(double), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(16d, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public static readonly DependencyProperty BalanceHeightProperty = DependencyProperty.Register(
+        nameof(BalanceHeight), typeof(bool), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public double MinimumColumnWidth { get => (double)GetValue(MinimumColumnWidthProperty); set => SetValue(MinimumColumnWidthProperty, value); }
+    public double Gap { get => (double)GetValue(GapProperty); set => SetValue(GapProperty, value); }
+    public bool BalanceHeight { get => (bool)GetValue(BalanceHeightProperty); set => SetValue(BalanceHeightProperty, value); }
+    private readonly List<Rect> _rectangles = [];
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var width = double.IsFinite(availableSize.Width) ? availableSize.Width : MinimumColumnWidth;
+        var columns = Math.Min(Math.Max(1, InternalChildren.Count), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
+        var cell = Math.Max(0, (width - Gap * (columns - 1)) / columns);
+        var heights = new double[columns];
+        _rectangles.Clear();
+        var index = 0;
+        foreach (UIElement child in InternalChildren)
+        {
+            child.Measure(new Size(cell, double.PositiveInfinity));
+            var column = BalanceHeight ? Array.IndexOf(heights, heights.Min()) : index % columns;
+            var top = BalanceHeight ? heights[column] : heights.Take(columns).Max();
+            if (!BalanceHeight)
+            {
+                if (column == 0 && index != 0) top = heights.Max();
+                else if (column != 0) top = _rectangles[index - column].Top;
+            }
+            _rectangles.Add(new Rect(column * (cell + Gap), top, cell, child.DesiredSize.Height));
+            heights[column] = top + child.DesiredSize.Height + Gap;
+            index++;
+        }
+        return new Size(width, InternalChildren.Count == 0 ? 0 : Math.Max(0, heights.Max() - Gap));
+    }
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        for (var i = 0; i < InternalChildren.Count; i++) InternalChildren[i].Arrange(_rectangles[i]);
+        return finalSize;
+    }
+}
+
+public sealed class LibraryPreviewImage : Image
+{
+    protected override Size MeasureOverride(Size constraint)
+    {
+        var width = double.IsFinite(constraint.Width) ? constraint.Width : 240;
+        var size = new Size(width, width * 9 / 16);
+        base.MeasureOverride(size);
+        return size;
+    }
+}
+
+public sealed class RoundedClipBorder : Border
+{
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        Clip = new RectangleGeometry(new Rect(sizeInfo.NewSize), CornerRadius.TopLeft, CornerRadius.TopLeft);
+    }
+}

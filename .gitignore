@@ -26,6 +26,9 @@
 *.msi
 *.7z
 *.zip
+!Program/LibrarySeed/*.zip
+__pycache__/
+*.pyc
 
 # Logs and local settings outside the ignored portable runtime
 *.log

@@ -90,6 +90,7 @@ public sealed class DesignTokensTests
     [Theory]
     [InlineData("MainWindow.xaml")]
     [InlineData("CenteredDropDown.xaml")]
+    [InlineData("PackLibraryView.xaml")]
     [InlineData("WorldTransferConfirmationDialog.xaml")]
     [InlineData("BuildRemovalConfirmationDialog.xaml")]
     [InlineData("ControlsPresetConfirmationDialog.xaml")]

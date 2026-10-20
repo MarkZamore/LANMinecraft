@@ -192,7 +192,7 @@ public sealed class WindowCanvasTests
                 Assert.Equal(scale, VisualTreeHelper.GetDpi(section).DpiScaleY, 6);
                 Assert.Equal(scale, VisualTreeHelper.GetDpi(header).DpiScaleY, 6);
                 Assert.Equal(play.ActualHeight, section.ActualHeight, 3);
-                AssertWidthWithinOnePhysicalPixel(play.ActualWidth, section.ActualWidth, section);
+                AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "LaunchActions").ActualWidth, section.ActualWidth, section);
             }
             AssertStretchedActions(window);
             ExpandSections(window);
@@ -201,7 +201,7 @@ public sealed class WindowCanvasTests
             VisualTreeHelper.SetRootDpi(content, dpi);
             LayoutWindow(window, new Size(width, height));
             foreach (var name in SectionNames)
-                AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Element<Expander>(window, name).ActualWidth, play);
+                AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "LaunchActions").ActualWidth, Element<Expander>(window, name).ActualWidth, play);
             AssertStretchedActions(window);
             Assert.True(Element<ScrollViewer>(window, "BodyScroll").ScrollableWidth <= 0.5);
             return true;
@@ -625,8 +625,10 @@ public sealed class WindowCanvasTests
     private static void AssertStretchedActions(Window window)
     {
         var play = Element<Button>(window, "PlayButton");
-        Assert.Equal(Element<Grid>(window, "PlayArea").ColumnDefinitions[0].ActualWidth, play.ActualWidth, 3);
-        AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "BodyGrid").ActualWidth, play.ActualWidth, play);
+        Assert.Equal(Element<Grid>(window, "PlayArea").ColumnDefinitions[0].ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, 3);
+        AssertWidthWithinOnePhysicalPixel(play.ActualWidth * 2 / 3, Element<Button>(window, "LibraryButton").ActualWidth, play);
+        Assert.Equal(8, Element<Grid>(window, "LaunchActions").ColumnDefinitions[1].ActualWidth, 3);
+        AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "BodyGrid").ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, play);
         var skin = Element<Button>(window, "SkinButton");
         Assert.Equal(Element<Grid>(window, "MemorySettingsRow").ColumnDefinitions[0].ActualWidth, skin.ActualWidth, 3);
         var preset = Element<Button>(window, "ControlsPresetButton");

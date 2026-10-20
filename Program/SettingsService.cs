@@ -197,6 +197,7 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
+            PackMembership.Initialize(settings, _paths);
             // Weighing the pack means opening every jar in it, which on a
             // full build is most of a second and is paid again the first time
             // the mods folder changes - that is, after every pack update, on
@@ -263,6 +264,7 @@ public sealed class SettingsService
 
     public void Save(AppSettings settings)
     {
+        PackMembership.Initialize(settings, _paths);
         settings = ApplyFallbacks(settings, PackMemory, MeasuredMemory);
         AtomicFile.WriteAllTextIfChanged(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
@@ -326,7 +328,9 @@ public sealed class SettingsService
 
     private AppSettings CreateSafeDefaults()
     {
-        return ApplyFallbacks(new AppSettings(), PackMemory, MeasuredMemory, useRecommendedMemory: true);
+        var settings = ApplyFallbacks(new AppSettings(), PackMemory, MeasuredMemory, useRecommendedMemory: true);
+        PackMembership.Initialize(settings, _paths, fresh: true);
+        return settings;
     }
 
     /// <summary>1 when the file predates the version field.</summary>
