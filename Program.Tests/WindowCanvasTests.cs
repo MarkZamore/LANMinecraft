@@ -405,6 +405,37 @@ public sealed class WindowCanvasTests
     }
 
     [Fact]
+    public void ReturningFromLibrary_PreservesAutomaticScrollbarVisibility()
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var bar = Element<ScrollBar>(window, "BodyScrollBar");
+            var size = new Size(804, 521);
+            LayoutWindow(window, size);
+            DrainDispatcher();
+            LayoutWindow(window, size);
+            var visibility = bar.Visibility;
+            bar.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Hidden);
+            MainWindow.RestoreLauncherElementVisibility(bar, visibility);
+            Assert.NotNull(System.Windows.Data.BindingOperations.GetBindingExpression(bar, UIElement.VisibilityProperty));
+            ExpandSections(window);
+            LayoutWindow(window, size);
+            DrainDispatcher();
+            LayoutWindow(window, size);
+            Assert.Equal(Visibility.Visible, bar.Visibility);
+            bar.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Hidden);
+            MainWindow.RestoreLauncherElementVisibility(bar, Visibility.Visible);
+            foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = false;
+            LayoutWindow(window, size);
+            DrainDispatcher();
+            LayoutWindow(window, size);
+            Assert.Equal(Visibility.Collapsed, bar.Visibility);
+            return true;
+        });
+    }
+
+    [Fact]
     public void CollapsingASection_ReleasesItsHeightAndPreservesInput()
     {
         OnAStaThread(() =>

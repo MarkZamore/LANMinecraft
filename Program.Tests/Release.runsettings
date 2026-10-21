@@ -32,6 +32,8 @@
       FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.StartAsync_WhenReady_PublishesTheAccountAndRetryIsANoop|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.EveryCataloguedBuild_MatchesTheUpstreamRelease|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.MissingMod_IsDownloadedVerifiedAndInstalled|
+      FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.SupersededBuild_IsReplacedOnlyAfterVerifiedInstall|
+      FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.ReturningFromLibrary_PreservesAutomaticScrollbarVisibility|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.FirstInstall_DownloadsFullTree_ManifestWrittenLast_MarkerAndStateCreated|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.UpToDate_OnlyManifestRequested_NoFileRewritten|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.AssetShaMismatch_NothingApplied|

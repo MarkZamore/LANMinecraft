@@ -3230,13 +3230,22 @@ public partial class MainWindow : Window
         {
             if (ReferenceEquals(element, LibraryView)) continue;
             _launcherVisibility[element] = element.Visibility;
-            element.Visibility = Visibility.Hidden;
+            element.SetCurrentValue(VisibilityProperty, Visibility.Hidden);
         }
     }
 
     private void RestoreLauncherVisibility()
     {
-        foreach (var (element, visibility) in _launcherVisibility) element.Visibility = visibility;
+        foreach (var (element, visibility) in _launcherVisibility)
+            RestoreLauncherElementVisibility(element, visibility);
+    }
+
+    internal static void RestoreLauncherElementVisibility(UIElement element, Visibility visibility)
+    {
+        element.SetCurrentValue(VisibilityProperty, visibility);
+        // Library navigation must not replace the scrollbar's live overflow binding
+        // with the collapsed value captured before any categories were opened.
+        System.Windows.Data.BindingOperations.GetBindingExpression(element, VisibilityProperty)?.UpdateTarget();
     }
 
     private void ChangeLibraryMembership(CatalogPack pack)

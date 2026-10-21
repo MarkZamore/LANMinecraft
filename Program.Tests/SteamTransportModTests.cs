@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,7 +19,7 @@ public sealed class SteamTransportModTests
     [Fact]
     public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
     {
-        Assert.Equal("0.3.0", SteamTransportCatalog.Version);
+        Assert.Equal("0.3.2", SteamTransportCatalog.Version);
         Assert.All(SteamTransportCatalog.Builds, build =>
         {
             Assert.Equal(SteamTransportCatalog.Version, build.Version);
@@ -27,26 +27,26 @@ public sealed class SteamTransportModTests
             Assert.True(build.SizeBytes > 0);
             Assert.NotEmpty(build.Loaders);
             Assert.Equal(
-                $"https://github.com/Kamilhik/e4steam/releases/download/v0.3.0/{build.FileName}",
+                $"https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/{build.FileName}",
                 Assert.Single(build.DownloadUris).AbsoluteUri);
         });
 
         var neoforge = Assert.Single(
             SteamTransportCatalog.Builds, build => build.Loaders.Contains(PackLoaderKind.NeoForge));
-        Assert.Equal("e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar", neoforge.FileName);
-        Assert.Equal(3_634_360, neoforge.SizeBytes);
+        Assert.Equal("e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar", neoforge.FileName);
+        Assert.Equal(3_734_370, neoforge.SizeBytes);
         Assert.Equal(
-            "3d2b56b50f6646733a3e41e67aedb3cb7baf96e48707284083c473908bbf4adb",
+            "4f182b2560a6e001f248cd59cc063dd1c99d92a9b1b38ef099bc8ee822fe0418",
             neoforge.Sha256);
 
         // Two Forge builds now, one per range; this is the one that carries
         // 1.19.2 and 1.20.1, which is most of the Forge packs worth playing.
         var forge = Assert.Single(
             SteamTransportCatalog.Builds,
-            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar");
-        Assert.Equal(3_633_909, forge.SizeBytes);
+            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar");
+        Assert.Equal(3_735_682, forge.SizeBytes);
         Assert.Equal(
-            "7351b3e21845c6928fa8bf6ed834e2a9cbab660b7513afabb117b848f7670d15",
+            "9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a",
             forge.Sha256);
 
         // No two builds may share a cache folder, or one would overwrite another.
@@ -65,32 +65,32 @@ public sealed class SteamTransportModTests
     /// </summary>
     [Theory]
     // NeoForge, as before.
-    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar")]
     [InlineData(PackLoaderKind.NeoForge, "26.3", null)]
     [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
     // Forge, which used to be refused outright. Both versions still carry
     // packs people play.
-    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
     // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
-    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.2.jar")]
     [InlineData(PackLoaderKind.Forge, "1.17", null)]
     [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
     // Fabric and Quilt share the one build its author tested them both with.
-    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.16.5", "e4steam-fabric-mc1.16.x-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.16.5", "e4steam-fabric-mc1.16.x-v0.3.2.jar")]
     // The oldest of all of it, and the reason there is no shortlist any
     // more: a pack of somebody's own on 1.7 gets Steam play too.
-    [InlineData(PackLoaderKind.Forge, "1.7.10", "e4steam-forge-mc1.7.x-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.12.2", "e4steam-forge-mc1.12.x-v0.3.0.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.14.4", "e4steam-fabric-mc1.14.x-v0.3.0.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.7.10", "e4steam-forge-mc1.7.x-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.12.2", "e4steam-forge-mc1.12.x-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.14.4", "e4steam-fabric-mc1.14.x-v0.3.2.jar")]
     // Fabric began at 1.14, so 1.12 has no Fabric build and never will.
     [InlineData(PackLoaderKind.Fabric, "1.12.2", null)]
     [InlineData(PackLoaderKind.Forge, "1.6.4", null)]
@@ -206,6 +206,44 @@ public sealed class SteamTransportModTests
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.EnsureSteamTransportModAsync(instance, null, CancellationToken.None));
         Assert.Contains(conflictingName, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task SupersededBuild_IsReplacedOnlyAfterVerifiedInstall(bool corruptOld, bool corruptDownload)
+    {
+        using var fixture = new TemporaryRoot();
+        var oldPayload = Encoding.UTF8.GetBytes("old official jar");
+        var payload = Encoding.UTF8.GetBytes("new official jar");
+        var old = TestComponent(oldPayload) with { FileName = "e4steam-old.jar" };
+        var component = TestComponent(payload);
+        using var httpClient = new HttpClient(new StubHandler(corruptDownload ? oldPayload : payload));
+        var service = new ManagedComponentService(fixture.Paths, fixture.Logger, httpClient, component)
+        {
+            SupersededSteamBuilds = [old]
+        };
+        var instance = fixture.CreatePreparedInstance();
+        var oldPath = Path.Combine(instance.GameDirectory, "mods", old.FileName);
+        await File.WriteAllBytesAsync(oldPath, corruptOld ? payload : oldPayload);
+        if (corruptOld || corruptDownload)
+        {
+            if (corruptOld)
+                await Assert.ThrowsAsync<InvalidOperationException>(() => service.EnsureSteamTransportModAsync(instance));
+            else
+                await Assert.ThrowsAsync<HttpRequestException>(() => service.EnsureSteamTransportModAsync(instance));
+            Assert.True(File.Exists(oldPath));
+            Assert.False(File.Exists(Path.Combine(instance.GameDirectory, "mods", component.FileName)));
+        }
+        else
+        {
+            var result = await service.EnsureSteamTransportModAsync(instance);
+            Assert.False(File.Exists(oldPath));
+            Assert.Equal(payload, await File.ReadAllBytesAsync(result.InstalledPath));
+            var again = await service.EnsureSteamTransportModAsync(instance);
+            Assert.False(again.Installed);
+        }
     }
 
     private static ManagedComponentDescriptor TestComponent(byte[] payload) =>
