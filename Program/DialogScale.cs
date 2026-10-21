@@ -88,7 +88,7 @@ internal static class DialogScale
             return;
         }
         dialog.Content = null;
-        dialog.Content = new ScrollViewer
+        var viewer = new ScrollViewer
         {
             Content = content,
             MaxWidth = available.Width,
@@ -96,6 +96,8 @@ internal static class DialogScale
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
+        SmoothScrollingController.Attach(viewer);
+        dialog.Content = viewer;
     }
 
     private static void ReflowButtons(Window dialog, FrameworkElement content, double width)

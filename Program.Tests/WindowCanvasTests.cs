@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -358,7 +358,15 @@ public sealed class WindowCanvasTests
             bar.RaiseEvent(wheel);
             Layout();
             Assert.True(wheel.Handled);
-            if (SystemParameters.WheelScrollLines != 0) Assert.True(body.VerticalOffset > 0);
+            var scrolling = SmoothScrollingController.Attach(body);
+            Assert.Equal(Math.Min(36, body.ScrollableHeight), scrolling.TargetOffset, 3);
+            for (int frame = 0; frame < 60; frame++)
+            {
+                scrolling.AdvanceFrame(1000d / 60);
+                body.UpdateLayout();
+            }
+            Assert.True(body.VerticalOffset > 0);
+            Assert.False(scrolling.IsAnimating);
             body.LineDown();
             Layout();
             Assert.Equal(body.VerticalOffset, bar.Value, 3);
