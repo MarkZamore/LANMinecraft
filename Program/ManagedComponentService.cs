@@ -158,11 +158,14 @@ public sealed class ManagedComponentService
     internal string E4steamCachePath =>
         GetCachePath(_pinnedOverride ?? DescriptorFor(SteamTransportCatalog.Builds[0]));
 
+    internal IReadOnlyList<ManagedComponentDescriptor> SupersededSteamBuilds { get; init; } =
+        SteamTransportCatalog.SupersededBuilds;
+
     /// <summary>
     /// Converges one launch-critical JAR in the instance: keep a verified copy,
     /// otherwise restore it from the managed cache, otherwise download it. Any
-    /// other build of the same mod is a conflict and stops the launch, because
-    /// two copies of these mods break mod loading outright.
+    /// verified previously shipped build is replaced after installation. Unknown
+    /// builds remain conflicts because duplicate mods break loading.
     /// </summary>
     private async Task<ManagedComponentInstallResult> EnsureRequiredComponentCoreAsync(
         ManagedComponentDescriptor component,
@@ -175,7 +178,13 @@ public sealed class ManagedComponentService
         var gameDirectory = ValidatePreparedInstance(preparedInstance);
         var modsDirectory = Path.Combine(gameDirectory, "mods");
         EnsureOrdinaryDirectory(modsDirectory);
-        RejectConflictingJars(modsDirectory, component.FileName, conflictPrefixes);
+        var superseded = SupersededSteamBuilds
+            .Where(old => !string.Equals(old.FileName, component.FileName, StringComparison.OrdinalIgnoreCase))
+            .Select(old => (Path: Path.Combine(modsDirectory, old.FileName), Descriptor: old))
+            .Where(old => IsValidFile(old.Path, old.Descriptor))
+            .ToArray();
+        RejectConflictingJars(modsDirectory, component.FileName, conflictPrefixes,
+            superseded.Select(old => old.Path).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
         var installedPath = Path.Combine(modsDirectory, component.FileName);
         EnsureOrdinaryFileIfPresent(installedPath);
@@ -211,6 +220,14 @@ public sealed class ManagedComponentService
             await AtomicCopyAsync(cachePath, installedPath, component, token).ConfigureAwait(false);
             installed = true;
             _logger.Info($"Installed pinned {component.Id} into the prepared instance.");
+        }
+
+        // Keep the old working copy until the replacement has been verified and installed.
+        foreach (var old in superseded)
+        {
+            EnsureOrdinaryFileIfPresent(old.Path);
+            ValidateFile(old.Path, old.Descriptor);
+            File.Delete(old.Path);
         }
 
         return new ManagedComponentInstallResult(
@@ -598,14 +615,16 @@ public sealed class ManagedComponentService
     private static void RejectConflictingJars(
         string modsDirectory,
         string managedFileName,
-        IReadOnlyList<string> conflictPrefixes)
+        IReadOnlyList<string> conflictPrefixes,
+        HashSet<string> supersededPaths)
     {
         var conflict = Directory
             .EnumerateFiles(modsDirectory, "*.jar", SearchOption.TopDirectoryOnly)
             .FirstOrDefault(path =>
                 conflictPrefixes.Any(prefix =>
                     Path.GetFileName(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) &&
-                !string.Equals(Path.GetFileName(path), managedFileName, StringComparison.OrdinalIgnoreCase));
+                !string.Equals(Path.GetFileName(path), managedFileName, StringComparison.OrdinalIgnoreCase) &&
+                !supersededPaths.Contains(path));
         if (conflict is not null)
         {
             throw new InvalidOperationException(

@@ -31,7 +31,7 @@ public static class E4steamIdentity
 {
     /// <summary>
     /// Read out of <c>link/e4steam/steam/SteamMinecraftIdentity</c> in
-    /// e4steam-neoforge-mc1.20.2-26.2-v0.3.0, the build the launcher pins.
+    /// e4steam-neoforge-mc1.20.2-26.2-v0.3.2, the build the launcher pins.
     /// </summary>
     public const string Namespace = "e4steam:steam-identity:v1:";
 
