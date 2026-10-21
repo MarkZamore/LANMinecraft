@@ -242,8 +242,14 @@ public sealed class WindowCanvasTests
         });
     }
 
-    [Fact]
-    public void TheScrollbarThumb_FitsItsShortTrackSlotAtEveryPositionAndOnHover()
+    [Theory]
+    [InlineData(0)] // The current Windows scale.
+    [InlineData(1)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    [InlineData(1.75)]
+    [InlineData(2)]
+    public void TheScrollbarThumb_FitsItsShortTrackSlotAtEveryPositionAndOnHover(double scale)
     {
         OnAStaThread(() =>
         {
@@ -271,6 +277,18 @@ public sealed class WindowCanvasTests
             var thumb = track.Thumb;
             thumb.ApplyTemplate();
             var grip = Assert.IsType<Border>(thumb.Template.FindName("Grip", thumb));
+            // Create the template first, then remeasure its visuals at the test DPI.
+            if (scale > 0)
+            {
+                VisualTreeHelper.SetRootDpi(root, new DpiScale(scale, scale));
+                void InvalidateLayout(Visual visual)
+                {
+                    if (visual is UIElement element) { element.InvalidateMeasure(); element.InvalidateArrange(); }
+                    for (int i = 0; i < VisualTreeHelper.GetChildrenCount(visual); i++)
+                        InvalidateLayout((Visual)VisualTreeHelper.GetChild(visual, i));
+                }
+                InvalidateLayout(root);
+            }
             var mouseOverKey = Assert.IsType<DependencyPropertyKey>(typeof(UIElement)
                 .GetField("IsMouseOverPropertyKey", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(null));
@@ -284,8 +302,13 @@ public sealed class WindowCanvasTests
                 Assert.InRange(slot, 0.01, 12);
                 Assert.Equal(slot, thumb.ActualHeight, 3);
                 Assert.Equal(slot, grip.ActualHeight, 3);
-                Assert.Equal((double)window.FindResource(hovered ? "Size.ScrollThumbExpanded" : "Size.ScrollThumb"),
-                    grip.ActualWidth, 3);
+                var configuredWidth = (double)window.FindResource(hovered ? "Size.ScrollThumbExpanded" : "Size.ScrollThumb");
+                Assert.Equal(configuredWidth, grip.Width, 3);
+                // At 125%, WPF rounds a 2 DIP grip to 2 pixels (1.6 DIP).
+                var dpiScale = VisualTreeHelper.GetDpi(grip).DpiScaleX;
+                if (scale > 0) Assert.Equal(scale, dpiScale, 6);
+                var roundedWidth = Math.Round(configuredWidth * dpiScale) / dpiScale;
+                Assert.Equal(roundedWidth, grip.ActualWidth, 3);
                 var clip = VisualTreeHelper.GetClip(thumb);
                 Assert.True(clip is null || clip.Bounds.Height >= thumb.ActualHeight - 0.001,
                     $"Thumb cap is clipped at value {value}, hover {hovered}: slot {slot}, clip {clip?.Bounds}");
