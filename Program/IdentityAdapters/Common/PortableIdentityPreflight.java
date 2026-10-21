@@ -29,7 +29,9 @@ public final class PortableIdentityPreflight {
             byte[] original = readClassBytes(archive, className);
 
             ClassFileTransformer transformer;
-            if (isAlias("ftbTeleportClasses", className)) {
+            if (PortableProfileNameTransformer.isTarget(className)) {
+                transformer = new PortableProfileNameTransformer();
+            } else if (isAlias("ftbTeleportClasses", className)) {
                 transformer = new PortableFtbTeleportTransformer();
             } else if (isAlias("solarFluxPackClasses", className)) {
                 transformer = new PortableSolarFluxSyncTransformer();
@@ -59,7 +61,10 @@ public final class PortableIdentityPreflight {
                 throw new IllegalStateException("Portable identity transformer did not modify " + className + ".");
             }
             new ClassReader(transformed);
-            if (isAlias("loginClasses", className)) {
+            if (PortableProfileNameTransformer.isTarget(className)) {
+                // Exact method shape is checked by the optional transformer;
+                // it reaches only a bootstrap hook, no game-specific members.
+            } else if (isAlias("loginClasses", className)) {
                 verifyHookTargets(archive, className);
             } else if (isAlias("ftbTeleportClasses", className)) {
                 verifyFtbTeleportTargets(archive, className, transformed);
