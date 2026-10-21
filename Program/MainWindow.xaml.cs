@@ -114,6 +114,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        SmoothScrollingController.Attach(BodyScroll);
+        SmoothScrollingController.Attach(ChangelogScroll);
         SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         BodyScroll.SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         DarkTitleBar.Apply(this);

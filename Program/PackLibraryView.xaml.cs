@@ -11,7 +11,12 @@ public partial class PackLibraryView : UserControl
     private double _catalogOffset;
     public Func<string, bool>? IsAdded { get; set; }
     public bool CanChangeMembership { get; set; } = true;
-    public PackLibraryView() => InitializeComponent();
+    public PackLibraryView()
+    {
+        InitializeComponent();
+        SmoothScrollingController.Attach(CatalogScroll);
+        SmoothScrollingController.Attach(DetailScroll);
+    }
     public void SetCatalog(IEnumerable<CatalogPack> packs)
     {
         CatalogCards.ItemsSource = packs;

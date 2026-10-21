@@ -73,10 +73,7 @@ public static class ScrollBarBridge
 
         private void MouseWheel(object sender, MouseWheelEventArgs args)
         {
-            var lines = SystemParameters.WheelScrollLines;
-            var distance = lines < 0 ? _viewer.ViewportHeight : lines * _scrollbar.SmallChange;
-            _viewer.ScrollToVerticalOffset(_viewer.VerticalOffset - args.Delta / 120d * distance);
-            args.Handled = true;
+            args.Handled = SmoothScrollingController.Attach(_viewer).ScrollByWheelDelta(args.Delta);
         }
     }
 }
