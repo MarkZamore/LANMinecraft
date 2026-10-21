@@ -289,6 +289,7 @@ public sealed class MinecraftProcessService
     private readonly PortableIdentityRegistryService _identityRegistry;
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
     private readonly MeasuredMemoryStore _measuredMemory;
+    public GameNoticeOverlayService NoticeOverlay { get; }
     private readonly ConcurrentDictionary<int, byte> _activeClientProcesses = new();
     private int _clientPreparing;
     private string _lastJavaPath = "";
@@ -349,6 +350,7 @@ public sealed class MinecraftProcessService
         _identityRegistry = identityRegistry;
         _gameWindowPlacement = new MinecraftWindowPlacementService(paths, logger);
         _measuredMemory = new MeasuredMemoryStore(paths);
+        NoticeOverlay = new GameNoticeOverlayService(paths, logger);
     }
 
     public async Task StartClientAsync(
@@ -667,6 +669,10 @@ public sealed class MinecraftProcessService
         if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
         extraJvmArguments.AddRange(JavaCompatibilityArguments);
         extraJvmArguments.AddRange(identityJvmArguments);
+        // This renderer hooks LWJGL presentation, independently of Minecraft mappings,
+        // loaders and the optional identity adapter. It is never installed in mods.
+        using var noticeOverlay = NoticeOverlay.PrepareSession();
+        extraJvmArguments.AddRange(noticeOverlay.JvmArguments);
         // What the game is actually started with. A release once went out with
         // an option the JVM refuses, and the reports that came back could not
         // say which options had been applied at all - none of the five logs a
@@ -738,6 +744,7 @@ public sealed class MinecraftProcessService
             // once a buffer fills, so the process outlives this method.
             minecraftProcess.BeginOutputReadLine();
             minecraftProcess.BeginErrorReadLine();
+            noticeOverlay.BindProcess(minecraftProcess);
             started = true;
         }
         finally
@@ -855,6 +862,7 @@ public sealed class MinecraftProcessService
             // an exit code for a process whose state is unknown.
             exitCode.TrySetResult(0);
             _presence.Forget(processId);
+            NoticeOverlay.ProcessExited(processId);
             CleanupJavaTemporaryDirectory(packRelativePath);
             if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
             {

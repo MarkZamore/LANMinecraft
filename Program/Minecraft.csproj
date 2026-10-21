@@ -93,6 +93,22 @@
     </ItemGroup>
   </Target>
 
+  <PropertyGroup>
+    <NoticeOverlayAgentJar>$(MSBuildProjectDirectory)\Build\NoticeOverlay\launcher-notice-agent.jar</NoticeOverlayAgentJar>
+  </PropertyGroup>
+  <Target Name="BuildNoticeOverlayAgent"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\NoticeOverlay\Build-NoticeOverlay.ps1&quot; -OutputPath &quot;$(NoticeOverlayAgentJar)&quot;" />
+  </Target>
+  <Target Name="EmbedNoticeOverlayAgent" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildNoticeOverlayAgent"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <EmbeddedResource Include="$(NoticeOverlayAgentJar)" LogicalName="Minecraft.NoticeOverlayAgent.jar"
+                        Condition="Exists('$(NoticeOverlayAgentJar)')" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="UseFinalWpfAssemblyForPublish"
           BeforeTargets="ComputeResolvedFilesToPublishList"
           Condition="'$(PublishSingleFile)' == 'true'">
