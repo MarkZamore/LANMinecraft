@@ -229,6 +229,7 @@ public partial class MainWindow : Window
             _identityRegistry = new PortableIdentityRegistryService(_paths, _logger);
             await _skinService.StartAsync(_lifetimeCts.Token);
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry);
+            _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;

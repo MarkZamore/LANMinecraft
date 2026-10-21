@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Minecraft;
@@ -19,6 +21,33 @@ public sealed class PeerNoticeService : IDisposable
     private bool _disposed;
     private bool _restacking;
     private bool _restackQueued;
+    private GameNoticeOverlayService? _gameOverlay;
+
+    public GameNoticeOverlayService? GameOverlay
+    {
+        get => _gameOverlay;
+        set
+        {
+            _gameOverlay = value;
+            if (value is null) return;
+            string Color(string resource) => _owner.TryFindResource(resource) is SolidColorBrush brush
+                ? brush.Color.ToString(CultureInfo.InvariantCulture).TrimStart('#') : "";
+            string Number(string resource) => Convert.ToString(_owner.TryFindResource(resource), CultureInfo.InvariantCulture) ?? "";
+            value.SetStyle(new Dictionary<string, string>
+            {
+                ["bgArgb"] = Color("Brush.Popup"), ["borderArgb"] = Color("Brush.Border"),
+                ["textArgb"] = Color("Brush.Text"), ["mutedArgb"] = Color("Brush.TextMuted"),
+                ["fontFamily"] = (_owner.TryFindResource("Font.Family") as FontFamily)?.Source.Split(',')[0].Trim() ?? "Segoe UI",
+                ["fontSize"] = Number("Font.SizeBody"), ["width"] = Number("Size.NoticeWidth"),
+                ["gap"] = (_owner.TryFindResource("Gap.Canvas") is Thickness gap ? gap.Left : 24).ToString(CultureInfo.InvariantCulture),
+                ["padding"] = (_owner.TryFindResource("Pad.Panel") is Thickness padding ? padding.Left : 16).ToString(CultureInfo.InvariantCulture),
+                ["radius"] = (_owner.TryFindResource("Radius.Panel") is CornerRadius radius ? radius.TopLeft : 8).ToString(CultureInfo.InvariantCulture),
+                ["lifeMs"] = "7000",
+                ["riseMs"] = (_owner.TryFindResource("Motion.NoticeRise") is Duration rise && rise.HasTimeSpan ? rise.TimeSpan.TotalMilliseconds : 200).ToString(CultureInfo.InvariantCulture),
+                ["fadeMs"] = (_owner.TryFindResource("Motion.NoticeFade") is Duration fade && fade.HasTimeSpan ? fade.TimeSpan.TotalMilliseconds : 350).ToString(CultureInfo.InvariantCulture)
+            });
+        }
+    }
 
     public PeerNoticeService(Window owner, Logger? logger = null)
         : this(owner, logger, PeerNoticeNative.GetForegroundWindow) { }
@@ -41,6 +70,7 @@ public sealed class PeerNoticeService : IDisposable
     {
         ArgumentNullException.ThrowIfNull(notice);
         if (_disposed) return;
+        if (_gameOverlay?.TryShow(notice) == true) return;
         PeerNoticeWindow? window = null;
         try
         {
