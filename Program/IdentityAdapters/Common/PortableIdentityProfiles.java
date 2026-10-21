@@ -108,6 +108,11 @@ public final class PortableIdentityProfiles {
         return UUID.nameUUIDFromBytes((OfflinePrefix + name).getBytes(StandardCharsets.UTF_8));
     }
 
+    /** A display name for an exact portable UUID, without changing ownership. */
+    public static String nameOf(UUID id) {
+        return id == null ? null : loadRegistry().byUuid.get(id);
+    }
+
     private static Registry loadRegistry() {
         String configuredPath = System.getProperty("minecraft.portable.identity.registry", "").trim();
         if (configuredPath.isEmpty()) {
@@ -181,10 +186,21 @@ public final class PortableIdentityProfiles {
 
         final Map<String, UUID> byName;
         final Map<UUID, UUID> byTunnelUuid;
+        final Map<UUID, String> byUuid;
 
         Registry(Map<String, UUID> byName, Map<UUID, UUID> byTunnelUuid) {
             this.byName = byName;
             this.byTunnelUuid = byTunnelUuid;
+            Map<UUID, String> names = new HashMap<>();
+            Set<UUID> ambiguous = new HashSet<>();
+            for (Map.Entry<String, UUID> entry : byName.entrySet()) {
+                String previous = names.put(entry.getValue(), entry.getKey());
+                if (previous != null && !previous.equals(entry.getKey())) {
+                    ambiguous.add(entry.getValue());
+                }
+            }
+            names.keySet().removeAll(ambiguous);
+            byUuid = Collections.unmodifiableMap(names);
         }
     }
 }

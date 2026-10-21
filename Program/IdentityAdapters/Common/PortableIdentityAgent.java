@@ -43,6 +43,7 @@ public final class PortableIdentityAgent {
         }
 
         instrumentation.addTransformer(new PortableIdentityTransformer(), false);
+        instrumentation.addTransformer(new PortableProfileNameTransformer(), false);
         instrumentation.addTransformer(new PortableXaeroWaypointTransformer(), false);
         instrumentation.addTransformer(new PortableFtbTeleportTransformer(), false);
         instrumentation.addTransformer(new PortableSolarFluxSyncTransformer(), false);
