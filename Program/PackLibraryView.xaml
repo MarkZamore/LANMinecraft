@@ -97,7 +97,7 @@
                     FontSize="{DynamicResource Font.SizeDisplay}" FontWeight="{DynamicResource Font.WeightEmphasis}"/>
             </Grid>
         </Grid>
-        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.None}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.LibraryScroll}" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <TextBlock Text="Добавь сборку" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below4}"/>
                 <ItemsControl x:Name="CatalogCards">
@@ -118,7 +118,7 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
-        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Margin="{DynamicResource Gap.None}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Margin="{DynamicResource Gap.LibraryScroll}" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="DetailContent">
                 <local:RoundedClipBorder Style="{StaticResource LibrarySectionStyle}" Padding="{DynamicResource Pad.None}" Height="{DynamicResource Size.LibraryHero}">
                     <Grid>

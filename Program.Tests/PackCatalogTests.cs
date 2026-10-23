@@ -199,7 +199,8 @@ public sealed class PackCatalogTests : IDisposable
             var list = (ScrollViewer)view.FindName("CatalogScroll");
             Assert.InRange(list.ScrollableWidth, 0, 0.5);
             var panel = VisualChildren<LibraryColumnsPanel>((ItemsControl)view.FindName("CatalogCards")).Single();
-            Assert.Equal(new Thickness(), list.Margin);
+            Assert.Equal(new Thickness(0, 0, -20, 0), list.Margin);
+            AssertLibraryScrollGutter(list);
             var cards = panel.Children.Cast<FrameworkElement>().ToArray();
             Assert.Equal(4, cards.Length);
             Assert.All(cards, card =>
@@ -233,11 +234,27 @@ public sealed class PackCatalogTests : IDisposable
             var details = (ScrollViewer)view.FindName("DetailScroll");
             Assert.InRange(details.ScrollableWidth, 0, 0.5);
             Assert.True(details.ScrollableHeight > 0);
+            AssertLibraryScrollGutter(details);
             view.ShowCatalog();
             view.ShowDetails(pack);
             Assert.True(root.IsExpanded);
             Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
             return true;
+
+            void AssertLibraryScrollGutter(ScrollViewer viewer)
+            {
+                var canvas = (FrameworkElement)window.Content;
+                var presenter = VisualChildren<ScrollContentPresenter>(viewer).First();
+                var content = presenter.TransformToAncestor(canvas).TransformBounds(new Rect(presenter.RenderSize));
+                Assert.InRange(Math.Abs(content.Left), 0, 1);
+                Assert.InRange(Math.Abs(canvas.ActualWidth - content.Right), 0, 1);
+                var scrollbar = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(viewer)
+                    .Single(bar => bar.Name == "PART_VerticalScrollBar");
+                if (scrollbar.Visibility != Visibility.Visible) return;
+                var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
+                Assert.True(bounds.Left >= canvas.ActualWidth);
+                Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);
+            }
         });
     }
 
