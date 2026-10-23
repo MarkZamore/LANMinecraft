@@ -666,13 +666,15 @@ public sealed class WindowCanvasTests
                 var body = Element<ScrollViewer>(window, "BodyScroll");
                 body.ScrollToVerticalOffset(40);
                 DrainDispatcher();
-                var offset = body.VerticalOffset;
-                Assert.True(body.ScrollableHeight > offset);
+                Assert.True(body.ScrollableHeight > body.VerticalOffset);
                 var smooth = SmoothScrollingController.Attach(body);
                 smooth.ScrollByWheelDelta(-120);
                 var popup = (Popup)dropdown.FindName("DropDownPopup");
                 popup.IsOpen = true;
                 DrainDispatcher();
+                // With Windows animations disabled, the preceding wheel input
+                // scrolls immediately, before opening the popup acquires its lock.
+                var offset = body.VerticalOffset;
                 try
                 {
                     Assert.False(smooth.IsAnimating);
