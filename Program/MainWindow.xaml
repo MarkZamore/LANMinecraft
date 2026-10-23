@@ -94,7 +94,7 @@
                 </Grid>
             </Button>
             <Button x:Name="LibraryButton" Grid.Column="2" Content="Библиотека" Click="LibraryButton_Click"
-                MinHeight="{StaticResource Size.Primary}" HorizontalAlignment="Stretch"/>
+                MinHeight="{StaticResource Size.Primary}" FontWeight="{StaticResource Font.WeightEmphasis}" HorizontalAlignment="Stretch"/>
             </Grid>
         </Grid>
         <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -114,29 +114,25 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Grid Grid.Row="0"
-                        Grid.Column="0"
-                        Grid.ColumnSpan="1"
-                        Margin="{StaticResource Gap.Below4}"
-                        x:Name="SettingsGrid">
+                    <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.Below4}" x:Name="SettingsGrid">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1*" />
-                            <ColumnDefinition Width="1*" />
+                            <ColumnDefinition Width="3*" />
+                            <ColumnDefinition Width="{StaticResource Size.LibraryActionGap}" />
+                            <ColumnDefinition Width="2*" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.Right2}" x:Name="NameSettingsRow">
+                        <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.None}" x:Name="NameSettingsRow">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="Имя" Style="{StaticResource LabelTextStyle}" />
-                            <Grid Grid.Column="1" Margin="{StaticResource Gap.Right2}">
+                            <Grid Grid.Column="1">
                                 <TextBox x:Name="PlayerNameTextBox"
                                     MaxLength="16"
                                     IsReadOnly="True"
@@ -159,13 +155,13 @@
                                     </TextBlock.Style>
                                 </TextBlock>
                             </Grid>
-                            <Button Grid.Column="2"
-                                x:Name="ChangePlayerNameButton"
-                                Content="Изменить"
-                                Click="ChangePlayerNameButton_Click"
-                                Width="{StaticResource Size.ButtonMax}" />
                         </Grid>
-                        <Grid Grid.Row="1" Grid.Column="0" Margin="{StaticResource Gap.Above2Right2}" x:Name="BuildSettingsRow">
+                        <Button Grid.Row="0" Grid.Column="2"
+                            x:Name="ChangePlayerNameButton"
+                            Content="Поменять никнейм"
+                            Click="ChangePlayerNameButton_Click"
+                            HorizontalAlignment="Stretch" />
+                        <Grid Grid.Row="1" Grid.Column="0" Margin="{StaticResource Gap.Above2}" x:Name="BuildSettingsRow">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
                                 <ColumnDefinition Width="*" />
@@ -173,6 +169,7 @@
                             <TextBlock Grid.Column="0" Text="Сборка" Style="{StaticResource LabelTextStyle}" />
                             <Grid Grid.Column="1">
                                 <local:CenteredDropDown x:Name="BuildComboBox"
+                                    Height="{StaticResource Size.CategoryHeader}"
                                     ItemTemplate="{StaticResource BuildItemTemplate}"
                                     SelectionChanged="BuildComboBox_SelectionChanged" />
                                 <TextBlock x:Name="BuildPlaceholderText"
@@ -181,40 +178,9 @@
                                     Visibility="Collapsed" />
                             </Grid>
                         </Grid>
-                        <Grid Grid.Row="0" Grid.Column="1" Margin="{StaticResource Gap.Left2}" x:Name="MemorySettingsRow">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="{StaticResource Size.NumberField}" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0"
-                                x:Name="SkinButton"
-                                Content="Скин"
-                                Click="SkinButton_Click"
-                                HorizontalAlignment="Stretch" />
-                            <TextBlock Grid.Column="1"
-                                Text="RAM"
-                                Style="{StaticResource LabelTextStyle}"
-                                Margin="{StaticResource Gap.Left3Right2}" />
-                            <TextBox Grid.Column="2"
-                                x:Name="MemoryTextBox"
-                                FontSize="{StaticResource Font.SizeInput}"
-                                TextAlignment="Center"
-                                PreviewTextInput="MemoryTextBox_PreviewTextInput"
-                                TextChanged="MemoryTextBox_TextChanged"
-                                DataObject.Pasting="MemoryTextBox_Pasting"
-                                LostFocus="MemoryTextBox_LostFocus"
-                                KeyDown="MemoryTextBox_KeyDown" />
-                            <TextBlock Grid.Column="3"
-                                Text="ГБ"
-                                Style="{StaticResource LabelTextStyle}"
-                                Margin="{StaticResource Gap.Left2}" />
-                        </Grid>
-                        <Grid Grid.Row="1" Grid.Column="1" Margin="{StaticResource Gap.Left2Above2}" x:Name="PresetSettingsRow">
+                        <Grid Grid.Row="1" Grid.Column="2" Margin="{StaticResource Gap.Above2}" x:Name="BuildActionsRow">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="{StaticResource Size.EstimateColumn}" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0"
@@ -232,12 +198,26 @@
                             <TextBlock Grid.Column="1"
                                 x:Name="MemoryEstimateText"
                                 Style="{StaticResource LabelTextStyle}"
-                                TextTrimming="CharacterEllipsis"
+                                Text="Рекомендуется от 2 ГБ"
+                                TextWrapping="Wrap"
                                 Margin="{StaticResource Gap.Left2}" />
+                        </Grid>
+                        <Grid Grid.Row="2" Grid.Column="0" Margin="{StaticResource Gap.Above2}" x:Name="PresetSettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="{StaticResource Size.LibraryActionGap}" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                x:Name="SkinButton"
+                                Content="Выбрать скин"
+                                Click="SkinButton_Click"
+                                Height="{StaticResource Size.CategoryHeader}"
+                                HorizontalAlignment="Stretch" />
                             <Button Grid.Column="2"
                                 x:Name="ControlsPresetButton"
+                                Height="{StaticResource Size.CategoryHeader}"
                                 Content="Пресет управления"
-                                Margin="{StaticResource Gap.Left2}"
                                 Click="ControlsPresetButton_Click"
                                 IsEnabled="False"
                                 ToolTipService.ShowOnDisabled="True"
@@ -247,28 +227,36 @@
                                 </Button.ContentTemplate>
                             </Button>
                         </Grid>
-                    </Grid>
-                    <Grid x:Name="DiagnosticStatusArea" Grid.Row="1" Margin="{StaticResource Gap.Below4}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0"
-                            Text="Статус"
-                            Style="{StaticResource LabelTextStyle}"
-                            Margin="{StaticResource Gap.Below2}" />
-                        <TextBox Grid.Row="1"
-                            x:Name="DiagnosticLogStatusText"
-                            Height="{StaticResource Size.StatusArea}"
-                            Padding="{StaticResource Pad.Text}"
-                            IsReadOnly="True"
-                            TextWrapping="Wrap"
-                            VerticalScrollBarVisibility="Auto"
-                            VerticalContentAlignment="Top"
-                            ToolTip="Состояние лаунчера и подключения." />
+                        <Grid Grid.Row="2" Grid.Column="2" Margin="{StaticResource Gap.Above2}" x:Name="MemorySettingsRow">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="{StaticResource Size.LibraryActionGap}" />
+                                <ColumnDefinition Width="{StaticResource Size.NumberField}" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                Text="Выделить RAM"
+                                TextWrapping="Wrap"
+                                Style="{StaticResource LabelTextStyle}"
+                                Margin="{StaticResource Gap.None}" />
+                            <TextBox Grid.Column="2"
+                                x:Name="MemoryTextBox"
+                                Height="{StaticResource Size.CategoryHeader}"
+                                FontSize="{StaticResource Font.SizeInput}"
+                                TextAlignment="Center"
+                                PreviewTextInput="MemoryTextBox_PreviewTextInput"
+                                TextChanged="MemoryTextBox_TextChanged"
+                                DataObject.Pasting="MemoryTextBox_Pasting"
+                                LostFocus="MemoryTextBox_LostFocus"
+                                KeyDown="MemoryTextBox_KeyDown" />
+                            <TextBlock Grid.Column="3"
+                                Text="ГБ"
+                                Style="{StaticResource LabelTextStyle}"
+                                Margin="{StaticResource Gap.Left2}" />
+                        </Grid>
                     </Grid>
                     <Expander x:Name="WorldTransferExpander"
-                        Grid.Row="2"
+                        Grid.Row="1"
                         IsExpanded="False"
                         Margin="{StaticResource Gap.Below2}"
                         AutomationProperties.Name="Передача мира">
@@ -363,7 +351,7 @@
                         </Grid>
                     </Expander>
                     <Expander x:Name="ReportExpander"
-                        Grid.Row="3"
+                        Grid.Row="2"
                         IsExpanded="False"
                         AutomationProperties.Name="Сообщить о проблеме">
                         <Expander.Header>
@@ -459,9 +447,23 @@
             ViewportSize="{Binding ViewportHeight, ElementName=BodyScroll}"
             SmallChange="{StaticResource Font.LineHeightBody}"
             LargeChange="{Binding ViewportHeight, ElementName=BodyScroll}"
-            Visibility="{Binding ComputedVerticalScrollBarVisibility, ElementName=BodyScroll}"
             local:ScrollBarBridge.Target="{Binding ElementName=BodyScroll}"
-            AutomationProperties.Name="Прокрутка настроек и действий" />
+            AutomationProperties.Name="Прокрутка настроек и действий">
+            <ScrollBar.Style>
+                <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding ComputedVerticalScrollBarVisibility, ElementName=BodyScroll}" Value="Visible"/>
+                                <Condition Binding="{Binding Visibility, ElementName=LibraryView}" Value="Collapsed"/>
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </MultiDataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ScrollBar.Style>
+        </ScrollBar>
         <Border x:Name="SidePanelCard"
             Grid.Column="2"
             Grid.Row="0"
@@ -620,27 +622,27 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Grid Grid.Column="0" VerticalAlignment="Center">
+                <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right2}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}" Grid.Column="0" />
+                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right2}" Grid.Column="0" />
                     <TextBlock x:Name="SteamPersonaText"
                         Visibility="Collapsed"
                         Grid.Column="1"
                         TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Column="2"
+                        x:Name="RetrySteamButton"
+                        Content="Повторить"
+                        Margin="{StaticResource Gap.None}"
+                        MinWidth="{StaticResource Size.ButtonMin}"
+                        Click="RetrySteamButton_Click"
+                        Width="{StaticResource Size.ButtonMax}" />
                 </Grid>
                 <Button Grid.Column="1"
-                    x:Name="RetrySteamButton"
-                    Content="Повторить"
-                    Margin="{StaticResource Gap.Right2}"
-                    MinWidth="{StaticResource Size.ButtonMin}"
-                    Click="RetrySteamButton_Click"
-                    Width="{StaticResource Size.ButtonMax}" />
-                <Button Grid.Column="2"
                     x:Name="SidePanelToggleButton"
                     Content="Новости"
                     Click="SidePanelToggleButton_Click"

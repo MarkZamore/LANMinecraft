@@ -40,6 +40,16 @@ public sealed class SmoothScrollingController : IDisposable
     Transform originalTransform;
     TransformGroup bounceGroup;
     readonly TranslateTransform bounceTransform = new TranslateTransform();
+    private bool isScrollLocked;
+    internal bool IsScrollLocked
+    {
+        get => isScrollLocked;
+        set
+        {
+            if (value) Cancel();
+            isScrollLocked = value;
+        }
+    }
     public double TargetOffset { get; private set; }
     public bool IsAnimating { get; private set; }
     public double BounceOffset { get { return bounceTransform.Y; } }
@@ -59,7 +69,9 @@ public sealed class SmoothScrollingController : IDisposable
 
     public bool ScrollByWheelDelta(int delta)
     {
-        if (disposed || delta == 0 || viewer.ScrollableHeight <= 0) return false;
+        if (disposed || delta == 0) return false;
+        if (IsScrollLocked) return true;
+        if (viewer.ScrollableHeight <= 0) return false;
         double raw = (IsAnimating ? TargetOffset : viewer.VerticalOffset) - delta * WheelStep / 120.0;
         double target = Clamp(raw);
         if (!SystemParameters.ClientAreaAnimation) {

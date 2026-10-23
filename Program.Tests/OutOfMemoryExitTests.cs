@@ -34,7 +34,7 @@ public sealed class OutOfMemoryExitTests
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;", window, StringComparison.Ordinal);
         var handler = Between(window, "private void OnMinecraftRanOutOfMemory(", Environment.NewLine + "    }");
-        Assert.Contains("SetBugReportStatus(", handler, StringComparison.Ordinal);
+        Assert.Contains("_logger?.Warn(", handler, StringComparison.Ordinal);
         Assert.Contains("{maxMemoryGb} ГБ", handler, StringComparison.Ordinal);
     }
 
@@ -96,7 +96,7 @@ public sealed class OutOfMemoryExitTests
         var window = Read("Program", "MainWindow.xaml.cs");
         Assert.Contains("_minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;", window, StringComparison.Ordinal);
         var handler = Between(window, "private void OnMinecraftMemoryIsTooSmall(", Environment.NewLine + "    }");
-        Assert.Contains("SetBugReportStatus(", handler, StringComparison.Ordinal);
+        Assert.Contains("_logger?.Warn(", handler, StringComparison.Ordinal);
         Assert.Contains("{chosenGb} ГБ", handler, StringComparison.Ordinal);
         Assert.Contains("{neededGb} ГБ", handler, StringComparison.Ordinal);
 

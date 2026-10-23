@@ -149,7 +149,6 @@
         <sys:Double x:Key="Size.TextArea">120</sys:Double>
         <sys:Double x:Key="Size.PopupMax">280</sys:Double>
         <sys:Double x:Key="Size.StatusLine">32</sys:Double>
-        <sys:Double x:Key="Size.StatusArea">56</sys:Double>
         <sys:Double x:Key="Size.LibraryCardMin">240</sys:Double>
         <GridLength x:Key="Size.LibraryActionGap">8</GridLength>
         <GridLength x:Key="Size.LibraryTreeIndent">16</GridLength>
@@ -182,7 +181,6 @@
         <sys:Double x:Key="Size.BackdropOpacity">0.9</sys:Double>
         <GridLength x:Key="Size.LabelColumn">72</GridLength>
         <GridLength x:Key="Size.NumberField">64</GridLength>
-        <GridLength x:Key="Size.EstimateColumn">56</GridLength>
         <GridLength x:Key="Size.ColumnGap">24</GridLength>
         <Thickness x:Key="Border.Control">1</Thickness>
         <Thickness x:Key="Border.Focus">1</Thickness>

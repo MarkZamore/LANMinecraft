@@ -59,6 +59,10 @@
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheNativeClient_MaximizesAndRestoresWithoutChangingColumnsOrSelection|
+      FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.OpenDropDown_LocksOnlyTheParentScrollAndReleasesItOnClose|
+      FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.SteamRetry_StaysNextToSteamWhileNewsStaysAtTheRight|
+      FullyQualifiedName=Minecraft.Tests.BugReportPanelTests.RemovedStatus_HasNoStateOrProgressFormatting|
+      FullyQualifiedName=Minecraft.Tests.BugReportPanelTests.UnavailableSteam_IsExplainedByThePlayButton|
       FullyQualifiedName=Minecraft.Tests.ChatComposerTests.TheSameAction_SendsThenCancelsAControlledOperationAndRestoresItsArrow|
       FullyQualifiedName=Minecraft.Tests.DialogLayoutTests.ACrampedWorkArea_ReflowsActionsAndLetsThePlayerScrollToThem|
       FullyQualifiedName=Minecraft.Tests.PeerNoticeOverlayTests.Toasts_StayVisibleAboveAMockWhenLauncherMinimizesWithoutTakingFocus|

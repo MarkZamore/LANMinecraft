@@ -35,9 +35,6 @@ internal static class AdaptiveLauncherLayout
         var labelWidth = (GridLength)window.FindResource(compact ? "Size.CompactLabelColumn" : "Size.LabelColumn");
         foreach (var name in new[] { "NameSettingsRow", "BuildSettingsRow" })
             ((Grid)window.FindName(name)).ColumnDefinitions[0].Width = labelWidth;
-        var edit = (Button)window.FindName("ChangePlayerNameButton");
-        edit.Width = (double)window.FindResource(compact ? "Size.ButtonMin" : "Size.ButtonMax");
-        edit.Padding = (Thickness)window.FindResource(compact ? "Pad.Small" : "Pad.Control");
         ((TextBox)window.FindName("PlayerNameTextBox")).MinWidth =
             (double)window.FindResource(compact ? "Size.CompactNameField" : "Size.ButtonMin");
     }
