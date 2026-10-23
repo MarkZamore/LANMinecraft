@@ -80,20 +80,51 @@ public sealed class LibraryPreviewImage : Image
     }
 }
 
+/// <summary>Keep the standard Border contour; clip only its content inside the frame.</summary>
 public sealed class RoundedClipBorder : Border
 {
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if (e.Property == CornerRadiusProperty) UpdateClip(RenderSize);
+        if (e.Property == CornerRadiusProperty || e.Property == BorderThicknessProperty || e.Property == PaddingProperty)
+            UpdateContentClip();
     }
 
-    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    protected override Size ArrangeOverride(Size arrangeSize)
     {
-        base.OnRenderSizeChanged(sizeInfo);
-        UpdateClip(sizeInfo.NewSize);
+        var size = base.ArrangeOverride(arrangeSize);
+        UpdateContentClip();
+        return size;
     }
 
-    private void UpdateClip(Size size) =>
-        Clip = new RectangleGeometry(new Rect(size), CornerRadius.TopLeft, CornerRadius.TopLeft);
+    private void UpdateContentClip()
+    {
+        if (Child is not { } child) return;
+        // WPF Border measures CornerRadius at the middle of the stroke. Its
+        // inner curve subtracts half the stroke, not the full border thickness.
+        // Clipping the whole Border instead would cut its outer curve and AA.
+        var inset = BorderThickness;
+        var padding = Padding;
+        var radius = CornerRadius;
+        var size = child.RenderSize;
+        var tl = new Size(Math.Max(0, radius.TopLeft - inset.Left / 2 - padding.Left), Math.Max(0, radius.TopLeft - inset.Top / 2 - padding.Top));
+        var tr = new Size(Math.Max(0, radius.TopRight - inset.Right / 2 - padding.Right), Math.Max(0, radius.TopRight - inset.Top / 2 - padding.Top));
+        var br = new Size(Math.Max(0, radius.BottomRight - inset.Right / 2 - padding.Right), Math.Max(0, radius.BottomRight - inset.Bottom / 2 - padding.Bottom));
+        var bl = new Size(Math.Max(0, radius.BottomLeft - inset.Left / 2 - padding.Left), Math.Max(0, radius.BottomLeft - inset.Bottom / 2 - padding.Bottom));
+        var geometry = new StreamGeometry();
+        using (var path = geometry.Open())
+        {
+            path.BeginFigure(new Point(tl.Width, 0), true, true);
+            path.LineTo(new Point(size.Width - tr.Width, 0), true, false);
+            path.ArcTo(new Point(size.Width, tr.Height), tr, 0, false, SweepDirection.Clockwise, true, false);
+            path.LineTo(new Point(size.Width, size.Height - br.Height), true, false);
+            path.ArcTo(new Point(size.Width - br.Width, size.Height), br, 0, false, SweepDirection.Clockwise, true, false);
+            path.LineTo(new Point(bl.Width, size.Height), true, false);
+            path.ArcTo(new Point(0, size.Height - bl.Height), bl, 0, false, SweepDirection.Clockwise, true, false);
+            path.LineTo(new Point(0, tl.Height), true, false);
+            path.ArcTo(new Point(tl.Width, 0), tl, 0, false, SweepDirection.Clockwise, true, false);
+        }
+        geometry.Freeze();
+        child.Clip = geometry;
+    }
 }

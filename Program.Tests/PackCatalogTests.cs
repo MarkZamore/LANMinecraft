@@ -171,6 +171,42 @@ public sealed class PackCatalogTests : IDisposable
         Assert.False(PackCatalogService.ValidFolder("../escape"));
     }
 
+    private static void AssertMatchingCardContour(CornerRadius radius, double dpi)
+    {
+        // Compare real rendered corner pixels, including the border and a bright
+        // preview. Equal token values alone missed the old whole-card clipping.
+        Border[] borders = [new Border(), new RoundedClipBorder()];
+        var pixels = new List<byte[]>();
+        foreach (var border in borders)
+        {
+            border.Width = 80;
+            border.Height = 44;
+            border.CornerRadius = radius;
+            border.BorderThickness = new Thickness(1);
+            border.Background = System.Windows.Media.Brushes.White;
+            border.BorderBrush = System.Windows.Media.Brushes.Black;
+            if (border is RoundedClipBorder)
+                border.Child = new Border { Background = System.Windows.Media.Brushes.White };
+            border.Measure(new Size(80, 44));
+            border.Arrange(new Rect(0, 0, 80, 44));
+            border.UpdateLayout();
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                (int)(80 * dpi), (int)(44 * dpi), 96 * dpi, 96 * dpi, System.Windows.Media.PixelFormats.Pbgra32);
+            bitmap.Render(border);
+            var bytes = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+            bitmap.CopyPixels(bytes, bitmap.PixelWidth * 4, 0);
+            pixels.Add(bytes);
+        }
+        // The outer silhouette must match a normal button's Border. Ignore
+        // partial-coverage pixels where adjoining antialiased fills compose.
+        var corner = (int)(radius.TopLeft * dpi / 2);
+        var stride = (int)(80 * dpi) * 4;
+        for (var y = 0; y < corner; y++)
+        for (var x = 0; x < corner; x++)
+            if (pixels[0][y * stride + x * 4 + 3] == 0)
+                Assert.Equal(0, pixels[1][y * stride + x * 4 + 3]);
+    }
+
     [Theory]
     [InlineData(804, 521, 1)]
     [InlineData(804, 521, 1.5)]
@@ -215,8 +251,12 @@ public sealed class PackCatalogTests : IDisposable
             // Dynamic resources can resolve after the first size pass. The
             // preview must follow a new radius without requiring another resize.
             cardBorder.CornerRadius = new CornerRadius(16);
-            Assert.Equal(16, Assert.IsType<System.Windows.Media.RectangleGeometry>(cardBorder.Clip).RadiusX);
+            Assert.Null(cardBorder.Clip);
+            var contentClip = Assert.IsType<System.Windows.Media.StreamGeometry>(cardBorder.Child.Clip);
+            Assert.False(contentClip.FillContains(new Point(1, 1)));
+            Assert.True(contentClip.FillContains(new Point(16, 1)));
             cardBorder.CornerRadius = radius;
+            AssertMatchingCardContour(radius, dpi);
             if (width == 804)
             {
                 var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
