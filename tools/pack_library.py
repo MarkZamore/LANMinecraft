@@ -10,6 +10,7 @@ import pathlib
 import re
 import tomllib
 import zipfile
+from urllib.parse import urlsplit
 
 
 LIBRARIES = set("architectury balm cloth_config clothconfig forgeconfigapiport geckolib geckolib3 citadel curios patchouli kotlinforforge kotlin_forge scalablecatsforce resourcefullib resourcefulconfig puzzleslib moonlight framework collective bookshelflib bookshelf selene placebo iceberg cristellib caelus creativecore cucumber cyclopscore supermartijn642corelib supermartijn642configlib titanium terrablender fabric_api forgified_fabric_api connector connector_extras yet_another_config_lib_v3 yacl_v3 owo libipn libgui jamlib badpackets smartbrainlib azurelib azurelibarmor athena octolib lithostitched rhino kubejs libx ftblibrary ftbteams prometheus libjf cardinal_components_base cardinal_components_entity cardinal_components_world cloth_basic_math unobtainiumlib coroutil unionlib flywheel ponder ferritecore modernfix embeddium sodium neoforge jei_api connector attributeslib apothic_attributes apothic_enchanting apothic_spawners apothic_core structure_gel mru prickle glitchcore searchables playeranimator player_animation_library catalogue configured cerbons_api cerbonsapi fusion fzzy_config codechickenlib cofh_core hammerlib kiwi mafg_lib mafg_lib sophis_backpacks sophisticatedcore sophisticatedstorageinmotion_helper commonnetwork cc_tweaked_api theurgy_kubejs theurgy_api modonomicon guideme ae2wtlib chemlib alchemylib kotlinforforge alltheleaks mixinextras mixinextras_neoforge mixin_squared mixinsquared sparkutil almostunified polylib towntalk cobaltscareers_api granular_config blueflame balm_api cupboard glitchcore entity_texture_features entity_model_features animation_overhaul_api lionfishapi curioscontinuation jamlib ftbfilters ftbxmodcompat librarium valhelsia_core yungsapi yungsmenutweaks zeta mutil mcjtylib xnetgases_lib exact_version_api fairplaylib octo_lib octolib epherolib permafrost_core puzzlesaccessapi simpleclouds_api lodestone selene_lib auxilium reliquary_core porting_lib connector modmenu_api domum_ornamentum blockui structurize dummmmmmy_api kambrik mantle shetiphiancore yacl yetanotherconfiglib cloth_config_api openloader kleeslabs_api catconfig mcwbridges_api expandability trenzalore reborncore ftbchunks_api".split())
@@ -98,6 +99,8 @@ def build_library(pack, revision):
     pack = pathlib.Path(pack)
     authored = json.loads((pack / "library/content.json").read_text(encoding="utf-8-sig"))
     runtime = json.loads((pack / "portable-pack.json").read_text(encoding="utf-8-sig"))
+    pages_path = pack / "library/mod-pages.json"
+    pages = json.loads(pages_path.read_text(encoding="utf-8-sig")) if pages_path.exists() else {}
     mods = {}
     for jar in sorted((pack / "mods").glob("*.jar")):
         for mod in read_mods(jar.read_bytes(), jar.name):
@@ -105,6 +108,17 @@ def build_library(pack, revision):
     libraries = LIBRARIES | set(authored.get("libraryIds", []))
     parents = PARENTS | authored.get("parents", {})
     for mod in mods.values():
+        entry = pages.get(mod["id"])
+        page = entry.get("url") if isinstance(entry, dict) else entry
+        available = entry.get("available", True) if isinstance(entry, dict) else True
+        parsed = urlsplit(page) if isinstance(page, str) else None
+        if (not parsed or parsed.scheme != "https" or not parsed.hostname or
+                parsed.username or parsed.password or len(page) > 2048):
+            raise ValueError("Missing/invalid official project page for mod: " + mod["id"])
+        if not isinstance(available, bool):
+            raise ValueError("Invalid project page availability for mod: " + mod["id"])
+        mod["websiteUrl"] = page
+        mod["websiteAvailable"] = available
         parent = parents.get(mod["id"])
         mod["parentId"] = parent if parent in mods and parent != mod["id"] and parent not in libraries else None
         mod["isLibrary"] = mod["id"] in libraries

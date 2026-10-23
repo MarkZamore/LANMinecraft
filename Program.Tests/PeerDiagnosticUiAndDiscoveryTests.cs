@@ -494,7 +494,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         // Left half: the name, then the build under it.
         Assert.Equal((0, 0), name);
         Assert.Equal((1, 0), build);
-        // Third row: equal skin/preset actions on the left, memory on the right.
+        // Third row: skin/preset actions on the left, memory on the right.
         Assert.Equal((2, 0), skin);
         Assert.Equal((2, 2), memory);
         Assert.Equal((2, 0), preset);

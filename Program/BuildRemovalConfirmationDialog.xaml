@@ -19,16 +19,18 @@
                    Margin="{StaticResource Gap.Above2}"
                    Style="{StaticResource ParagraphTextStyle}"
                    TextWrapping="Wrap"/>
-        <!-- Three answers, and the one that does nothing is the one Enter and
-             Esc both give. The two that delete have to be pressed on purpose. -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
-            <Button x:Name="BuildOnlyButton" Content="Только сборку"
+        <!-- Enter, Escape and closing the window keep everything as it is. -->
+        <StackPanel Margin="{StaticResource Gap.Above4}">
+            <Button x:Name="ListOnlyButton" Content="Убрать из списка"
+                    Padding="{StaticResource Pad.Wide}" Click="ListOnlyButton_Click"/>
+            <Button x:Name="BuildOnlyButton" Content="Удалить сборку"
+                    Margin="{StaticResource Gap.Above2}"
                     Padding="{StaticResource Pad.Wide}" Click="BuildOnlyButton_Click"/>
-            <Button x:Name="WithWorldsButton" Content="Вместе с мирами"
-                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}"
+            <Button x:Name="WithWorldsButton" Content="Удалить сборку с мирами"
+                    Margin="{StaticResource Gap.Above2}" Padding="{StaticResource Pad.Wide}"
                     Click="WithWorldsButton_Click"/>
             <Button x:Name="KeepButton" Content="Не хочу" IsCancel="True" IsDefault="True"
-                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}"
+                    Margin="{StaticResource Gap.Above2}" Padding="{StaticResource Pad.Wide}"
                     Click="KeepButton_Click"/>
         </StackPanel>
     </StackPanel>

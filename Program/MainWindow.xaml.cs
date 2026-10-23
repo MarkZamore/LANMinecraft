@@ -125,6 +125,7 @@ public partial class MainWindow : Window
         WorldComboBox.ItemsSource = _worlds;
         LibraryView.ReturnRequested += () => ShowLibrary(false);
         LibraryView.MembershipRequested += ChangeLibraryMembership;
+        LibraryView.ModPageRequested += OpenModPage;
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
         _uiTimer.Tick += (_, _) =>
         {
@@ -475,8 +476,9 @@ public partial class MainWindow : Window
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
         var builds = Directory.EnumerateDirectories(_paths.Packs)
             .Where(MinecraftProcessService.HasPackData)
-            .Where(path => (_catalog?.Find(Path.GetFileName(path)) is null && PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is null) ||
-                           PackMembership.Contains(_settings, Path.GetFileName(path)))
+            .Where(path => PackMembership.ShouldListInstalled(_settings, Path.GetFileName(path),
+                isCatalogPack: _catalog?.Find(Path.GetFileName(path)) is not null ||
+                               PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is not null))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
@@ -1586,6 +1588,15 @@ public partial class MainWindow : Window
 
         var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name, plan.Worlds, plan.Java);
         if (answer == BuildRemovalAnswer.Keep) return;
+        if (TryRemoveBuildFromList(_settings, build.RelativePath, answer))
+        {
+            _settingsService.Save(_settings);
+            RefreshBuilds();
+            RefreshWorlds();
+            RefreshControlsPresetStatus();
+            RefreshUi();
+            return;
+        }
 
         var worldsToo = answer == BuildRemovalAnswer.WithWorlds;
         var outcome = removal.Remove(worldsToo ? removal.Plan(build.RelativePath, worldsToo: true) : plan);
@@ -1604,6 +1615,13 @@ public partial class MainWindow : Window
             // explorer window holding a file open, and saying which folder
             // stayed is the difference between closing it and reinstalling.
             : $"Сборка удалена не полностью - осталось: {string.Join(", ", outcome.Kept)}");
+    }
+
+    internal static bool TryRemoveBuildFromList(AppSettings settings, string relativePath, BuildRemovalAnswer answer)
+    {
+        if (answer != BuildRemovalAnswer.ListOnly) return false;
+        PackMembership.Remove(settings, relativePath);
+        return true;
     }
 
     /// <summary>
@@ -3110,6 +3128,13 @@ public partial class MainWindow : Window
         LibraryView.CanChangeMembership = CanChangeLibrary;
         LibraryView.RefreshMembership();
         if (_libraryVisible) HideLauncherVisibility();
+    }
+
+    private void OpenModPage(Uri uri)
+    {
+        try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        { _logger?.Warn($"Could not open mod project page: {ex.Message}"); }
     }
 
     private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive && _catalog?.IsReady == true;

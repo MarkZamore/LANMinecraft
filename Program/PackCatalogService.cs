@@ -17,6 +17,8 @@ public sealed class CatalogMod
     public string Version { get; set; } = "";
     public string? ParentId { get; set; }
     public bool IsLibrary { get; set; }
+    public string? WebsiteUrl { get; set; }
+    public bool WebsiteAvailable { get; set; } = true;
 }
 public sealed class CatalogDescription
 {
@@ -30,10 +32,11 @@ public sealed class CatalogDescription
     public string Description { get; set; } = "";
     public List<CatalogMod> Mods { get; set; } = [];
 }
-public sealed class CatalogModNode(CatalogMod mod)
+public sealed class CatalogModNode(CatalogMod mod, string? packId = null)
 {
     public string Name => mod.Name;
     public string Version => mod.Version;
+    public Uri? WebsiteUri => mod.WebsiteAvailable ? CatalogModPages.Resolve(mod.Id, mod.WebsiteUrl, packId) : null;
     public List<CatalogModNode> Children { get; } = [];
     public bool HasChildren => Children.Count != 0;
     public bool IsExpanded { get; set; }
@@ -46,13 +49,13 @@ public sealed class CatalogPack
     public string Name => Content.Name;
     public string VersionLabel => "Minecraft " + Content.MinecraftVersion;
     public string Summary => Content.Summary;
-    public string Description => Content.Description;
+    public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
     public List<CatalogModNode> Mods { get; } = [];
     public List<CatalogModNode> Libraries { get; } = [];
 
     public void BuildTree()
     {
-        var nodes = Content.Mods.ToDictionary(m => m.Id, m => new CatalogModNode(m), StringComparer.Ordinal);
+        var nodes = Content.Mods.ToDictionary(m => m.Id, m => new CatalogModNode(m, Content.Id), StringComparer.Ordinal);
         foreach (var mod in Content.Mods.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             var node = nodes[mod.Id];
@@ -319,6 +322,7 @@ public sealed class PackCatalogService
         var mods = new Dictionary<string, CatalogMod>(StringComparer.Ordinal);
         foreach (var mod in doc.Mods)
             if (mod is null || string.IsNullOrWhiteSpace(mod.Id) || string.IsNullOrWhiteSpace(mod.Name) ||
+                (mod.WebsiteUrl is not null && CatalogModPages.Parse(mod.WebsiteUrl) is null) ||
                 mod.Name.Length > 256 || !mods.TryAdd(mod.Id, mod)) throw new InvalidDataException("Invalid/duplicate mod.");
         foreach (var mod in doc.Mods)
         {

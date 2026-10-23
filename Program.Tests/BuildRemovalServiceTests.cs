@@ -244,6 +244,55 @@ public sealed class BuildRemovalServiceTests : IDisposable
         Assert.Equal(Other, settings.ClientRelativePath);
     }
 
+    [Fact]
+    public void RemovingFromTheList_KeepsInstalledFilesWorldsJavaAndSettingsAcrossRestart()
+    {
+        const string pack = "LL8 Extended";
+        const string localPack = "My Local Pack";
+        Install(pack, "1.21.1");
+        Install(localPack, "1.20.1");
+        var world = MakeWorld(pack, "Дом");
+        var java = Path.Combine(_paths.JavaRuntimes, "21", "release");
+        Write(java, "keep Java");
+        var settings = new AppSettings
+        {
+            AddedPackRelativePaths = [pack, localPack],
+            ClientRelativePath = pack,
+            SelectedWorldRelativePath = $"{pack}/Дом"
+        };
+        settings.MemoryByPack[pack] = 6;
+        var files = Directory.GetFiles(_root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => path, File.ReadAllBytes);
+
+        // Cancel (including the title-bar close) never reaches a destructive choice.
+        Assert.False(MainWindow.TryRemoveBuildFromList(settings, pack, BuildRemovalAnswer.Keep));
+        Assert.True(PackMembership.Contains(settings, pack));
+        Assert.True(MainWindow.TryRemoveBuildFromList(settings, pack, BuildRemovalAnswer.ListOnly));
+        Assert.False(PackMembership.Contains(settings, pack));
+        Assert.Equal(pack, settings.ClientRelativePath);
+        Assert.Equal($"{pack}/Дом", settings.SelectedWorldRelativePath);
+        Assert.Equal(6, settings.MemoryByPack[pack]);
+
+        var service = new SettingsService(_paths);
+        service.Save(settings);
+        var reloaded = service.Load();
+        PackMembership.Initialize(reloaded, _paths);
+        Assert.False(PackMembership.Contains(reloaded, pack));
+        Assert.True(PackMembership.Contains(reloaded, localPack));
+        Assert.True(MainWindow.TryRemoveBuildFromList(reloaded, localPack, BuildRemovalAnswer.ListOnly));
+        service.Save(reloaded);
+        reloaded = service.Load();
+        PackMembership.Initialize(reloaded, _paths);
+        Assert.Empty(reloaded.AddedPackRelativePaths!);
+        Assert.True(PackMembership.IsHidden(reloaded, pack));
+        Assert.True(PackMembership.IsHidden(reloaded, localPack));
+        Assert.Equal(6, reloaded.MemoryByPack[pack]);
+        Assert.True(Directory.Exists(world));
+        Assert.Equal("keep Java", File.ReadAllText(java));
+        foreach (var (path, content) in files)
+            Assert.Equal(content, File.ReadAllBytes(path));
+    }
+
     /// <summary>Nothing to remove is not a failure; it is a build already gone.</summary>
     [Fact]
     public void RemovingWhatIsNotThere_Succeeds()

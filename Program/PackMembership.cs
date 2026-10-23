@@ -6,6 +6,8 @@ public static class PackMembership
 {
     public static void Initialize(AppSettings settings, AppPaths paths, bool fresh = false)
     {
+        settings.HiddenPackRelativePaths = (settings.HiddenPackRelativePaths ?? [])
+            .Where(PackCatalogService.ValidFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (settings.AddedPackRelativePaths is null)
         {
             settings.AddedPackRelativePaths = PortablePackSyncService.KnownPacks
@@ -16,21 +18,36 @@ public static class PackMembership
                 settings.AddedPackRelativePaths.Add(PortablePackSyncService.DefaultPackRelativePath);
         }
         settings.AddedPackRelativePaths = settings.AddedPackRelativePaths
-            .Where(PackCatalogService.ValidFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            .Where(PackCatalogService.ValidFolder).Where(path => !IsHidden(settings, path))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public static bool Contains(AppSettings settings, string path) =>
-        settings.AddedPackRelativePaths?.Contains(path, StringComparer.OrdinalIgnoreCase) == true;
+        !IsHidden(settings, path) && settings.AddedPackRelativePaths?.Contains(path, StringComparer.OrdinalIgnoreCase) == true;
+
+    public static bool IsHidden(AppSettings settings, string path) =>
+        settings.HiddenPackRelativePaths?.Contains(path, StringComparer.OrdinalIgnoreCase) == true;
+
+    public static bool ShouldListInstalled(AppSettings settings, string path, bool isCatalogPack) =>
+        !IsHidden(settings, path) && (!isCatalogPack || Contains(settings, path));
 
     public static bool Add(AppSettings settings, string path)
     {
         if (!PackCatalogService.ValidFolder(path)) throw new ArgumentException("Invalid pack folder.", nameof(path));
         settings.AddedPackRelativePaths ??= [];
-        if (Contains(settings, path)) return false;
+        var unhidden = settings.HiddenPackRelativePaths?.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase)) > 0;
+        if (Contains(settings, path)) return unhidden;
         settings.AddedPackRelativePaths.Add(path);
         return true;
     }
 
-    public static bool Remove(AppSettings settings, string path) =>
-        settings.AddedPackRelativePaths?.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase)) > 0;
+    public static bool Remove(AppSettings settings, string path)
+    {
+        if (!PackCatalogService.ValidFolder(path)) return false;
+        var removed = settings.AddedPackRelativePaths?.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase)) > 0;
+        settings.HiddenPackRelativePaths ??= [];
+        if (IsHidden(settings, path)) return removed;
+        settings.HiddenPackRelativePaths.Add(path);
+        return true;
+    }
 }

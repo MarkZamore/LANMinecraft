@@ -134,6 +134,7 @@
                             <TextBlock Grid.Column="0" Text="Имя" Style="{StaticResource LabelTextStyle}" />
                             <Grid Grid.Column="1">
                                 <TextBox x:Name="PlayerNameTextBox"
+                                    Height="{StaticResource Size.CategoryHeader}"
                                     MaxLength="16"
                                     IsReadOnly="True"
                                     TextChanged="PlayerNameTextBox_TextChanged"
@@ -158,6 +159,7 @@
                         </Grid>
                         <Button Grid.Row="0" Grid.Column="2"
                             x:Name="ChangePlayerNameButton"
+                            Height="{StaticResource Size.CategoryHeader}"
                             Content="Поменять никнейм"
                             Click="ChangePlayerNameButton_Click"
                             HorizontalAlignment="Stretch" />
@@ -204,9 +206,9 @@
                         </Grid>
                         <Grid Grid.Row="2" Grid.Column="0" Margin="{StaticResource Gap.Above2}" x:Name="PresetSettingsRow">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="3*" />
                                 <ColumnDefinition Width="{StaticResource Size.LibraryActionGap}" />
-                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="4*" />
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0"
                                 x:Name="SkinButton"
@@ -223,7 +225,7 @@
                                 ToolTipService.ShowOnDisabled="True"
                                 HorizontalAlignment="Stretch">
                                 <Button.ContentTemplate>
-                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center"/></DataTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="NoWrap" TextAlignment="Center"/></DataTemplate>
                                 </Button.ContentTemplate>
                             </Button>
                         </Grid>

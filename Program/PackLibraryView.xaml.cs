@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 
 namespace Minecraft;
 
@@ -7,6 +8,7 @@ public partial class PackLibraryView : UserControl
 {
     public event Action? ReturnRequested;
     public event Action<CatalogPack>? MembershipRequested;
+    public event Action<Uri>? ModPageRequested;
     private CatalogPack? _selected;
     private double _catalogOffset;
     public Func<string, bool>? IsAdded { get; set; }
@@ -62,5 +64,14 @@ public partial class PackLibraryView : UserControl
     private void Membership_Click(object sender, RoutedEventArgs e)
     {
         if (_selected is not null && CanChangeMembership) MembershipRequested?.Invoke(_selected);
+    }
+    private void ModLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Hyperlink { DataContext: CatalogModNode node }) RequestModPage(node);
+        e.Handled = true;
+    }
+    internal void RequestModPage(CatalogModNode node)
+    {
+        if (node.WebsiteUri is { } uri) ModPageRequested?.Invoke(uri);
     }
 }

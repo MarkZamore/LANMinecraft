@@ -107,7 +107,7 @@ public sealed class FirstRunNicknameTests
 
         // A game started with no name is a player nobody can address, so the
         // button waits rather than inventing one at the last moment.
-        Assert.Contains("&& !_isEditingPlayerName && hasName;", window, StringComparison.Ordinal);
+        Assert.Contains("&& !_isEditingPlayerName && hasName &&", window, StringComparison.Ordinal);
         Assert.Contains(
             "var hasName = !string.IsNullOrWhiteSpace(_settings.PlayerName);",
             window,

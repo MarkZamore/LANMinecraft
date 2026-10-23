@@ -16,22 +16,39 @@ public sealed class LibraryColumnsPanel : Panel
     public static readonly DependencyProperty BalanceHeightProperty = DependencyProperty.Register(
         nameof(BalanceHeight), typeof(bool), typeof(LibraryColumnsPanel),
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public static readonly DependencyProperty FixedColumnWidthProperty = DependencyProperty.Register(
+        nameof(FixedColumnWidth), typeof(double), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public static readonly DependencyProperty RowGapProperty = DependencyProperty.Register(
+        nameof(RowGap), typeof(double), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsMeasure));
+    public static readonly DependencyProperty UniformItemHeightProperty = DependencyProperty.Register(
+        nameof(UniformItemHeight), typeof(bool), typeof(LibraryColumnsPanel),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsMeasure));
     public double MinimumColumnWidth { get => (double)GetValue(MinimumColumnWidthProperty); set => SetValue(MinimumColumnWidthProperty, value); }
     public double Gap { get => (double)GetValue(GapProperty); set => SetValue(GapProperty, value); }
     public bool BalanceHeight { get => (bool)GetValue(BalanceHeightProperty); set => SetValue(BalanceHeightProperty, value); }
+    public double FixedColumnWidth { get => (double)GetValue(FixedColumnWidthProperty); set => SetValue(FixedColumnWidthProperty, value); }
+    public double RowGap { get => (double)GetValue(RowGapProperty); set => SetValue(RowGapProperty, value); }
+    public bool UniformItemHeight { get => (bool)GetValue(UniformItemHeightProperty); set => SetValue(UniformItemHeightProperty, value); }
     private readonly List<Rect> _rectangles = [];
 
     protected override Size MeasureOverride(Size availableSize)
     {
         var width = double.IsFinite(availableSize.Width) ? availableSize.Width : MinimumColumnWidth;
         var columns = Math.Min(Math.Max(1, InternalChildren.Count), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
-        var cell = Math.Max(0, (width - Gap * (columns - 1)) / columns);
+        var cell = double.IsFinite(FixedColumnWidth) ? Math.Min(width, FixedColumnWidth) :
+            Math.Max(0, (width - Gap * (columns - 1)) / columns);
         var heights = new double[columns];
+        var rowGap = double.IsFinite(RowGap) ? RowGap : Gap;
         _rectangles.Clear();
         var index = 0;
+        foreach (UIElement child in InternalChildren) child.Measure(new Size(cell, double.PositiveInfinity));
+        var uniformHeight = UniformItemHeight
+            ? InternalChildren.Cast<UIElement>().Select(child => child.DesiredSize.Height).DefaultIfEmpty(0).Max() : 0;
         foreach (UIElement child in InternalChildren)
         {
-            child.Measure(new Size(cell, double.PositiveInfinity));
+            var height = UniformItemHeight ? uniformHeight : child.DesiredSize.Height;
             var column = BalanceHeight ? Array.IndexOf(heights, heights.Min()) : index % columns;
             var top = BalanceHeight ? heights[column] : heights.Take(columns).Max();
             if (!BalanceHeight)
@@ -39,11 +56,11 @@ public sealed class LibraryColumnsPanel : Panel
                 if (column == 0 && index != 0) top = heights.Max();
                 else if (column != 0) top = _rectangles[index - column].Top;
             }
-            _rectangles.Add(new Rect(column * (cell + Gap), top, cell, child.DesiredSize.Height));
-            heights[column] = top + child.DesiredSize.Height + Gap;
+            _rectangles.Add(new Rect(column * (cell + Gap), top, cell, height));
+            heights[column] = top + height + rowGap;
             index++;
         }
-        return new Size(width, InternalChildren.Count == 0 ? 0 : Math.Max(0, heights.Max() - Gap));
+        return new Size(width, InternalChildren.Count == 0 ? 0 : Math.Max(0, heights.Max() - rowGap));
     }
     protected override Size ArrangeOverride(Size finalSize)
     {
