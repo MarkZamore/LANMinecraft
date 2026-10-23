@@ -517,6 +517,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Null(button.Attribute("Margin"));
         Assert.Equal("{StaticResource IconActionButton}", (string?)delete.Attribute("Style"));
         Assert.Null(delete.Attribute("Width"));
+        Assert.Equal("{StaticResource Size.CategoryHeader}", (string?)delete.Attribute("Height"));
         var deleteGlyph = Assert.Single(delete.Elements(presentation + "TextBlock"));
         Assert.Equal("\uE74D", (string?)deleteGlyph.Attribute("Text"));
         Assert.Equal("{StaticResource Font.Icons}", (string?)deleteGlyph.Attribute("FontFamily"));

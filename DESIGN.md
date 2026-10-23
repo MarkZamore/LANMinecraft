@@ -6,22 +6,21 @@
 
 ## Палитра
 
-Фон повторяет полупрозрачный диагональный градиент эталона. Полупрозрачные карточки, мягкие заливки наведения и тонкие рамки объединяют элементы. Выбранный пункт списка сохраняет светлый текст и получает голубой индикатор слева. Кнопки удаления используют контурную корзину Segoe Fluent Icons U+E74D размером 16 в прозрачной области нажатия 32×32, как ResetScriptButton эталона: без рамки и подложки, приглушённый светлый значок, белый при наведении и голубой при клавиатурном фокусе. Состояния клавиатурного фокуса обозначаются заливкой, без акцентных обводок.
+Фон — приложенный пейзаж `Program/Assets/Background.png`, встроенный в EXE. Он заполняет окно без искажения пропорций, с центральным кадрированием и лёгким затемнением. Поверх него расположены полупрозрачные тёмные карточки и контролы с тонкими рамками. Раскрытые списки используют непрозрачную поверхность ListPopup. Выбранный пункт списка сохраняет светлый текст и получает голубой индикатор слева. Корзина сборки остаётся прозрачной кнопкой без подложки и рамки: область нажатия шириной 32 DIP, высота 44 DIP, значок Segoe Fluent Icons U+E74D размером 16. Рекомендация памяти использует CaptionTextStyle и одну строку, включая «Рекомендуется от 13 ГБ» при минимальной ширине окна. «Библиотека» и «Вернуться в лаунчер» повторяют размер и начертание текста кнопки запуска. Состояния клавиатурного фокуса обозначаются заливкой, без акцентных обводок.
 
-WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3, обновляет соответствующие цвета и кисти в памяти при системных событиях. Значения акцента в таблице — тот же резерв Fluent, что в эталоне. По отдельному требованию «Играть» всегда использует фиксированный голубой Primary #60CDFF, чёрный текст и прозрачную рамку; системный акцент его не перекрашивает. Hover и pressed повторяют runtime-формулу WindowsTheme эталона: 8% белого и 12% чёрного от этого голубого. Во время подготовки недоступность повторного клика не меняет голубую поверхность и чёрный текст. Только реально выключенная кнопка получает SurfaceDisabled/TextDisabled, как у эталона. Обычные кнопки повторяют Surface/SurfaceHover/SurfacePressed; при нажатии прозрачность содержимого 0,7, у корзины 0,55. Реестр и пользовательские файлы для оформления не записываются.
+WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3, обновляет соответствующие цвета и кисти в памяти при системных событиях. Значения акцента в таблице — резерв Fluent. «Играть» использует фиксированную полупрозрачную голубую поверхность Primary, чёрный текст и прозрачную рамку; системный акцент его не перекрашивает. Hover и pressed осветляют или затемняют этот голубой. Во время подготовки недоступность повторного клика не меняет голубую поверхность и чёрный текст. Только реально выключенная кнопка получает SurfaceDisabled/TextDisabled. Обычные кнопки повторяют Surface/SurfaceHover/SurfacePressed; при нажатии прозрачность содержимого 0,7. Реестр и пользовательские файлы для оформления не записываются.
 
 | Цвет и кисть | Резервное значение |
 |---|---|
 | `Color.Canvas`, `Brush.Canvas` | #202020 |
 | `Color.CanvasSecondary`, `Brush.CanvasSecondary` | #1C1C1C |
-| `Color.BackdropStart`, `Brush.BackdropStart` | #101B30 |
-| `Color.BackdropMiddle`, `Brush.BackdropMiddle` | #1C2330 |
-| `Color.BackdropEnd`, `Brush.BackdropEnd` | #282828 |
-| `Color.Surface`, `Brush.Surface` | #0DFFFFFF |
-| `Color.SurfaceHover`, `Brush.SurfaceHover` | #15FFFFFF |
-| `Color.SurfacePressed`, `Brush.SurfacePressed` | #08FFFFFF |
-| `Color.SurfaceDisabled`, `Brush.SurfaceDisabled` | #0AFFFFFF |
-| `Color.Popup`, `Brush.Popup` | #2C2C2C |
+| `Color.BackdropShade`, `Brush.BackdropShade` | #42000000 |
+| `Color.Surface`, `Brush.Surface` | #8C111820 |
+| `Color.SurfaceHover`, `Brush.SurfaceHover` | #A5232C34 |
+| `Color.SurfacePressed`, `Brush.SurfacePressed` | #B00D131A |
+| `Color.SurfaceDisabled`, `Brush.SurfaceDisabled` | #8C111820 |
+| `Color.Popup`, `Brush.Popup` | #ED151B20 |
+| `Color.ListPopup`, `Brush.ListPopup` | #151B20, непрозрачные раскрытые списки |
 | `Color.Border`, `Brush.Border` | #12FFFFFF |
 | `Color.BorderStrong`, `Brush.BorderStrong` | #26FFFFFF |
 | `Color.BorderDisabled`, `Brush.BorderDisabled` | #0AFFFFFF |
@@ -30,9 +29,9 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.TextMuted`, `Brush.TextMuted` | #C5FFFFFF |
 | `Color.TextDisabled`, `Brush.TextDisabled` | #5DFFFFFF |
 | `Color.Accent`, `Brush.Accent` | #60CDFF |
-| `Color.Primary`, `Brush.Primary` | #60CDFF |
-| `Color.PrimaryHover`, `Brush.PrimaryHover` | #6CD1FF |
-| `Color.PrimaryPressed`, `Brush.PrimaryPressed` | #54B4E0 |
+| `Color.Primary`, `Brush.Primary` | #C760CDFF |
+| `Color.PrimaryHover`, `Brush.PrimaryHover` | #D66CD1FF |
+| `Color.PrimaryPressed`, `Brush.PrimaryPressed` | #D654B4E0 |
 | `Color.AccentHover`, `Brush.AccentHover` | #56B8E5 |
 | `Color.AccentPressed`, `Brush.AccentPressed` | #4DA4CC |
 | `Color.AccentText`, `Brush.AccentText` | #99EBFF |
@@ -46,7 +45,7 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.ScrollThumb`, `Brush.ScrollThumb` | #8BFFFFFF |
 | `Color.ScrollThumbHover`, `Brush.ScrollThumbHover` | #C5FFFFFF |
 
-`Brush.WindowBackdrop` — градиент BackdropStart → BackdropMiddle → BackdropEnd с прозрачностью Size.BackdropOpacity. `Brush.ProgressGlow` — градиент ProgressTrack → ProgressFill → ProgressTrack для неопределённого прогресса. Заливка прогресса приглушена, чтобы над ней читался светлый текст.
+`Brush.WindowBackdrop` — DrawingBrush с исходным изображением и слоем BackdropShade, растягиваемый UniformToFill. `Brush.ProgressGlow` — градиент ProgressTrack → ProgressFill → ProgressTrack для неопределённого прогресса. Заливка прогресса приглушена, чтобы над ней читался светлый текст.
 
 ## Шрифт
 
@@ -155,7 +154,7 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Size.BorderWidth` | 1 |
 | `Size.ProgressGlow` | 120 |
 | `Size.GlyphStroke` | 1.25 |
-| `Size.BackdropOpacity` | 0.9 |
+| `Size.BackdropBounds` | Rect 0,0,1672,940, исходные пропорции изображения |
 | `Size.LabelColumn` | 72 |
 | `Size.NumberField` | 64 |
 | `Size.ColumnGap` | 24 |
@@ -166,10 +165,10 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Border.Focus` | 1 |
 | `Border.None` | 0 |
 | `Border.Section` | 0,1,0,0 |
-| `Radius.Control` | 4 |
+| `Radius.Control` | 8, как у категорий |
 | `Radius.ChatComposer` | 12 |
 | `Radius.ChatAction` | 20 |
-| `Radius.Primary` | 4 |
+| `Radius.Primary` | 8 |
 | `Radius.Panel` | 8 |
 | `Radius.Scrollbar` | 3 |
 | `Radius.SelectionMark` | 1.5 |

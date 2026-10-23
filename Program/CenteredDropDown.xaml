@@ -110,7 +110,7 @@
             <Border Width="{Binding ActualWidth, ElementName=ControlRoot}"
                     MaxHeight="{DynamicResource Size.PopupMax}"
                     Margin="{DynamicResource Gap.Above1}"
-                    Background="{DynamicResource Brush.Popup}"
+                    Background="{DynamicResource Brush.ListPopup}"
                     BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="{DynamicResource Border.Control}"
                     CornerRadius="{DynamicResource Radius.Panel}"

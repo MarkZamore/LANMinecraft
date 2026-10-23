@@ -677,6 +677,7 @@ public sealed class WindowCanvasTests
                 var offset = body.VerticalOffset;
                 try
                 {
+                    Assert.Equal(byte.MaxValue, Assert.IsType<SolidColorBrush>(((Border)popup.Child).Background).Color.A);
                     Assert.False(smooth.IsAnimating);
                     body.ScrollToEnd();
                     DrainDispatcher();
@@ -786,6 +787,8 @@ public sealed class WindowCanvasTests
         Assert.Equal(Element<Grid>(window, "PlayArea").ColumnDefinitions[0].ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, 3);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth * 2 / 3, Element<Button>(window, "LibraryButton").ActualWidth, play);
         Assert.Equal(play.FontWeight, Element<Button>(window, "LibraryButton").FontWeight);
+        Assert.Equal(play.FontSize, Element<Button>(window, "LibraryButton").FontSize);
+        Assert.Equal(play.FontFamily, Element<Button>(window, "LibraryButton").FontFamily);
         Assert.Equal(8, Element<Grid>(window, "LaunchActions").ColumnDefinitions[1].ActualWidth, 3);
         AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "BodyGrid").ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, play);
         var skin = Element<Button>(window, "SkinButton");
@@ -816,6 +819,10 @@ public sealed class WindowCanvasTests
         Assert.Equal(header.ActualHeight, Element<Button>(window, "ChangePlayerNameButton").ActualHeight, 3);
         Assert.Equal(header.ActualHeight, Element<TextBox>(window, "MemoryTextBox").ActualHeight, 3);
         Assert.Equal(header.ActualHeight, Element<CenteredDropDown>(window, "BuildComboBox").ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, Element<Button>(window, "DeleteBuildButton").ActualHeight, 3);
+        var estimate = Element<TextBlock>(window, "MemoryEstimateText");
+        Assert.Equal(TextWrapping.NoWrap, estimate.TextWrapping);
+        Assert.True(estimate.DesiredSize.Width <= estimate.ActualWidth + 0.5, "The RAM recommendation is clipped.");
         Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
             preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);
         Assert.All(new[] { play, skin, preset }, button =>
@@ -986,7 +993,9 @@ public sealed class WindowCanvasTests
         // A loose XAML resolves clr-namespace against the assembly parsing it.
         xaml = xaml.Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
         xaml = xaml.Replace("<Window.Resources>", "<Window.Resources>" + resources);
-        return (Window)XamlReader.Parse(xaml);
+        var window = (Window)XamlReader.Parse(xaml);
+        Element<TextBlock>(window, "MemoryEstimateText").Text = "Рекомендуется от 13 ГБ";
+        return window;
     }
 
     /// <summary>

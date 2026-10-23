@@ -59,6 +59,7 @@
 
   <ItemGroup>
     <Resource Include="Minecraft.ico" />
+    <Resource Include="Assets\Background.png" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
     <!-- Keeps the game from writing a full DEBUG copy of every session; see
