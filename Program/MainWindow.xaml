@@ -201,7 +201,7 @@
                             </Button>
                             <TextBlock Grid.Column="1"
                                 x:Name="MemoryEstimateText"
-                                Style="{StaticResource CaptionTextStyle}"
+                                Style="{StaticResource LabelTextStyle}"
                                 Text="Рекомендуется от 2 ГБ"
                                 TextWrapping="NoWrap"
                                 Margin="{StaticResource Gap.Left2}" />

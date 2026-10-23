@@ -64,7 +64,16 @@ public sealed class LibraryColumnsPanel : Panel
     }
     protected override Size ArrangeOverride(Size finalSize)
     {
-        for (var i = 0; i < InternalChildren.Count; i++) InternalChildren[i].Arrange(_rectangles[i]);
+        // Keep fixed-size card rows visually centered. Spare width belongs
+        // equally to both edges instead of accumulating after the last column.
+        var occupiedWidth = _rectangles.Select(rect => rect.Right).DefaultIfEmpty(0).Max();
+        var offset = double.IsFinite(FixedColumnWidth) ? Math.Max(0, (finalSize.Width - occupiedWidth) / 2) : 0;
+        for (var i = 0; i < InternalChildren.Count; i++)
+        {
+            var bounds = _rectangles[i];
+            bounds.Offset(offset, 0);
+            InternalChildren[i].Arrange(bounds);
+        }
         return finalSize;
     }
 }

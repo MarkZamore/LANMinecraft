@@ -149,7 +149,7 @@
         <sys:Double x:Key="Size.PopupMax">280</sys:Double>
         <sys:Double x:Key="Size.StatusLine">32</sys:Double>
         <sys:Double x:Key="Size.LibraryCardMin">240</sys:Double>
-        <sys:Double x:Key="Size.LibraryCardWidth">232</sys:Double>
+        <sys:Double x:Key="Size.LibraryCardWidth">240</sys:Double>
         <GridLength x:Key="Size.LibraryActionGap">8</GridLength>
         <GridLength x:Key="Size.LibraryTreeIndent">16</GridLength>
         <sys:Double x:Key="Size.LibraryHero">240</sys:Double>

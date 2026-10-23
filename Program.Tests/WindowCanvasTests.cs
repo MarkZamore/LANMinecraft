@@ -822,7 +822,9 @@ public sealed class WindowCanvasTests
         Assert.Equal(header.ActualHeight, Element<Button>(window, "DeleteBuildButton").ActualHeight, 3);
         var estimate = Element<TextBlock>(window, "MemoryEstimateText");
         Assert.Equal(TextWrapping.NoWrap, estimate.TextWrapping);
-        Assert.True(estimate.DesiredSize.Width <= estimate.ActualWidth + 0.5, "The RAM recommendation is clipped.");
+        Assert.Equal(Element<TextBox>(window, "PlayerNameTextBox").FontSize, estimate.FontSize);
+        Assert.True(estimate.DesiredSize.Width <= estimate.ActualWidth + estimate.Margin.Left + estimate.Margin.Right + 0.5,
+            "The RAM recommendation is clipped.");
         Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
             preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);
         Assert.All(new[] { play, skin, preset }, button =>
