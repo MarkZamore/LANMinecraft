@@ -208,12 +208,20 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.Equal(240, card.ActualWidth, 3);
                 Assert.Equal(cards[0].ActualHeight, card.ActualHeight, 3);
             });
+            Assert.Equal(0, cards[0].TransformToAncestor(panel).TransformBounds(new Rect(cards[0].RenderSize)).Left, 3);
+            var cardBorder = VisualChildren<RoundedClipBorder>(cards[0]).Single();
+            var radius = (CornerRadius)window.FindResource("Radius.Control");
+            Assert.Equal(radius, cardBorder.CornerRadius);
+            // Dynamic resources can resolve after the first size pass. The
+            // preview must follow a new radius without requiring another resize.
+            cardBorder.CornerRadius = new CornerRadius(16);
+            Assert.Equal(16, Assert.IsType<System.Windows.Media.RectangleGeometry>(cardBorder.Clip).RadiusX);
+            cardBorder.CornerRadius = radius;
             if (width == 804)
             {
                 var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
                 Assert.Equal(bounds[0].Top, bounds[1].Top, 3);
                 Assert.Equal(bounds[0].Top, bounds[2].Top, 3);
-                Assert.InRange(Math.Abs(bounds[0].Left - (panel.ActualWidth - bounds[2].Right)), 0, 1);
                 Assert.True(bounds[3].Top >= bounds[0].Bottom + 15);
             }
             foreach (var summary in VisualChildren<TextBlock>((ItemsControl)view.FindName("CatalogCards"))
@@ -226,6 +234,7 @@ public sealed class PackCatalogTests : IDisposable
             var sizes = panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize).ToArray();
             WindowCanvasTests.LayoutWindow(window, new Size(width + 400, height));
             Assert.Equal(sizes, panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize));
+            Assert.Equal(0, cards[0].TransformToAncestor(panel).TransformBounds(new Rect(cards[0].RenderSize)).Left, 3);
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             var pack = catalog.Find("LL8 Extended")!;
             var root = pack.Mods.First(m => m.HasChildren);

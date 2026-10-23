@@ -64,16 +64,7 @@ public sealed class LibraryColumnsPanel : Panel
     }
     protected override Size ArrangeOverride(Size finalSize)
     {
-        // Keep fixed-size card rows visually centered. Spare width belongs
-        // equally to both edges instead of accumulating after the last column.
-        var occupiedWidth = _rectangles.Select(rect => rect.Right).DefaultIfEmpty(0).Max();
-        var offset = double.IsFinite(FixedColumnWidth) ? Math.Max(0, (finalSize.Width - occupiedWidth) / 2) : 0;
-        for (var i = 0; i < InternalChildren.Count; i++)
-        {
-            var bounds = _rectangles[i];
-            bounds.Offset(offset, 0);
-            InternalChildren[i].Arrange(bounds);
-        }
+        for (var i = 0; i < InternalChildren.Count; i++) InternalChildren[i].Arrange(_rectangles[i]);
         return finalSize;
     }
 }
@@ -91,9 +82,18 @@ public sealed class LibraryPreviewImage : Image
 
 public sealed class RoundedClipBorder : Border
 {
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property == CornerRadiusProperty) UpdateClip(RenderSize);
+    }
+
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     {
         base.OnRenderSizeChanged(sizeInfo);
-        Clip = new RectangleGeometry(new Rect(sizeInfo.NewSize), CornerRadius.TopLeft, CornerRadius.TopLeft);
+        UpdateClip(sizeInfo.NewSize);
     }
+
+    private void UpdateClip(Size size) =>
+        Clip = new RectangleGeometry(new Rect(size), CornerRadius.TopLeft, CornerRadius.TopLeft);
 }
