@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Xml.Linq;
 using Minecraft;
 
@@ -218,20 +218,8 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             element =>
                 element.Name.LocalName == "CenteredDropDown" &&
                 (string?)element.Attribute(x + "Name") == "DiagnosticLogTargetComboBox");
-        // A field, not a label: the launcher's own line can be selected and
-        // scrolled, and looks like the box above it.
-        Assert.Contains(
-            document.Descendants(presentation + "TextBox"),
-            element =>
-                (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText" &&
-                (string?)element.Attribute("IsReadOnly") == "True");
-        var status = document.Descendants(presentation + "TextBox")
-            .Single(element => (string?)element.Attribute(x + "Name") == "DiagnosticLogStatusText");
-        Assert.Empty(status.Ancestors(presentation + "Expander"));
-        var statusArea = status.Parent;
-        Assert.Equal("DiagnosticStatusArea", (string?)statusArea?.Attribute(x + "Name"));
-        Assert.Equal("MainPanel", (string?)statusArea?.Parent?.Attribute(x + "Name"));
-        Assert.Null(status.Attribute("Grid.Column"));
+        Assert.DoesNotContain(document.Descendants(), element =>
+            (string?)element.Attribute(x + "Name") is "DiagnosticLogStatusText" or "DiagnosticStatusArea");
         Assert.Contains(
             document.Descendants(presentation + "Button"),
             element =>
@@ -260,8 +248,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "WorldTransferExpander"));
         var settings = document.Descendants(presentation + "Grid")
             .Single(element => (string?)element.Attribute(x + "Name") == "SettingsGrid");
-        Assert.True(RowOf(settings) < RowOf(statusArea!));
-        Assert.True(RowOf(statusArea!) < transferRow);
+        Assert.True(RowOf(settings) < transferRow);
         var reportRow = RowOf(reportSection);
         Assert.True(transferRow < reportRow,
             $"transfer row {transferRow}, report row {reportRow}");
@@ -439,7 +426,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "BodyScrollBar");
         Assert.Equal("0", (string?)bodyBar.Attribute("Grid.Row"));
         Assert.Equal("2", (string?)bodyBar.Attribute("Grid.RowSpan"));
-        Assert.Equal("{StaticResource Gap.Below4}", (string?)bodyBar.Attribute("Margin"));
+        Assert.Equal("{StaticResource Gap.BodyScroll}", (string?)bodyBar.Attribute("Margin"));
         Assert.Equal(2, document.Descendants(presentation + "Expander").Count());
         foreach (var name in new[] { "WorldTransferExpander", "ReportExpander" })
         {
@@ -466,14 +453,9 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         }
     }
 
-    /// <summary>
-    /// The settings under the Play button are two halves of equal width: who
-    /// you are and what you play on the left, how it looks and what it may use
-    /// on the right. The preset button is the right half's second row, and it
-    /// explains itself when it is off, so ShowOnDisabled is part of it.
-    /// </summary>
+    /// <summary>The three settings rows follow the launch actions' 3:2 columns.</summary>
     [Fact]
-    public void MainWindowXaml_SplitsTheSettingsIntoTwoEqualHalves()
+    public void MainWindowXaml_AlignsThreeSettingsRowsWithLaunchActions()
     {
         var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
         XNamespace presentation =
@@ -489,7 +471,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Elements()
             .Select(column => (string?)column.Attribute("Width"))
             .ToArray();
-        Assert.Equal(["1*", "1*"], widths.Select(width => width ?? string.Empty).ToArray());
+        Assert.Equal(["3*", "{StaticResource Size.LibraryActionGap}", "2*"], widths.Select(width => width ?? string.Empty).ToArray());
 
         // Which half a control lives in: the cell of whichever ancestor is a
         // direct child of the halves grid.
@@ -512,30 +494,27 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         // Left half: the name, then the build under it.
         Assert.Equal((0, 0), name);
         Assert.Equal((1, 0), build);
-        // Right half: the skin and the memory box share a row, the preset is under them.
-        Assert.Equal((0, 1), skin);
-        Assert.Equal((0, 1), memory);
-        Assert.Equal((1, 1), preset);
+        // Third row: equal skin/preset actions on the left, memory on the right.
+        Assert.Equal((2, 0), skin);
+        Assert.Equal((2, 2), memory);
+        Assert.Equal((2, 0), preset);
 
         Assert.Equal("Пресет управления", (string?)button.Attribute("Content"));
         Assert.Equal("True", (string?)button.Attribute("ToolTipService.ShowOnDisabled"));
 
-        // The row reads left to right: what this does to the build, what the
-        // build weighs, and what can be written into it. The preset takes
-        // whatever the other two leave, so there is no gap in the middle.
+        // Build removal and its memory recommendation share the second right cell.
         var delete = document.Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "DeleteBuildButton");
         var estimate = document.Descendants(presentation + "TextBlock")
             .Single(element => (string?)element.Attribute(x + "Name") == "MemoryEstimateText");
-        Assert.Equal((1, 1), Cell(delete));
+        Assert.Equal((1, 2), Cell(delete));
         Assert.Equal("0", (string?)delete.Attribute("Grid.Column"));
         Assert.Equal("1", (string?)estimate.Attribute("Grid.Column"));
         Assert.Equal("2", (string?)button.Attribute("Grid.Column"));
-        // The gap between the three is the one the transfer and report rows
-        // use. The first of them needs none: the row already has its own.
+        // Use the same spacing as the other action rows.
         Assert.Null(delete.Attribute("Margin"));
         Assert.Equal("{StaticResource Gap.Left2}", (string?)estimate.Attribute("Margin"));
-        Assert.Equal("{StaticResource Gap.Left2}", (string?)button.Attribute("Margin"));
+        Assert.Null(button.Attribute("Margin"));
         Assert.Equal("{StaticResource IconActionButton}", (string?)delete.Attribute("Style"));
         Assert.Null(delete.Attribute("Width"));
         var deleteGlyph = Assert.Single(delete.Elements(presentation + "TextBlock"));

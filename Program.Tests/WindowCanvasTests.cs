@@ -42,18 +42,17 @@ public sealed class WindowCanvasTests
             Assert.Equal(2, Grid.GetColumn(side));
             Assert.InRange(Bounds(side, root).Left - Bounds(bodyGrid, root).Right, 23.5, 24.5);
             var settings = Element<Grid>(window, "SettingsGrid");
-            Assert.Equal(2, settings.RowDefinitions.Count);
-            var rows = new[] { "NameSettingsRow", "BuildSettingsRow", "MemorySettingsRow", "PresetSettingsRow" }
+            Assert.Equal(3, settings.RowDefinitions.Count);
+            var rows = new[] { "NameSettingsRow", "BuildSettingsRow", "MemorySettingsRow", "PresetSettingsRow", "BuildActionsRow" }
                 .Select(name => Element<Grid>(window, name)).ToArray();
-            Assert.Equal(new[] { 0, 1, 0, 1 }, rows.Select(Grid.GetRow));
-            Assert.Equal(new[] { 0, 0, 1, 1 }, rows.Select(Grid.GetColumn));
+            Assert.Equal(new[] { 0, 1, 2, 2, 1 }, rows.Select(Grid.GetRow));
+            Assert.Equal(new[] { 0, 0, 2, 0, 2 }, rows.Select(Grid.GetColumn));
             string[] bodyControls =
             [
                 "PlayerNameTextBox", "ChangePlayerNameButton", "BuildComboBox", "SkinButton",
                 "MemoryTextBox", "DeleteBuildButton", "ControlsPresetButton", "WorldComboBox",
                 "DeleteWorldButton", "OnlinePlayerComboBox", "TransferButton",
-                "DiagnosticLogTargetComboBox", "SendBugReportButton", "BugReportMessageTextBox",
-                "DiagnosticLogStatusText"
+                "DiagnosticLogTargetComboBox", "SendBugReportButton", "BugReportMessageTextBox"
             ];
             foreach (var name in bodyControls)
             {
@@ -116,7 +115,7 @@ public sealed class WindowCanvasTests
     [Theory]
     [InlineData(804, 521)]
     [InlineData(1904, 1001)]
-    public void TheStatus_RemainsBeforeTheSectionsAtTheirFullWidthAndPreservesTheReportDraft(double width, double height)
+    public void SectionsFollowSettingsAndPreserveTheReportDraft(double width, double height)
     {
         OnAStaThread(() =>
         {
@@ -125,22 +124,16 @@ public sealed class WindowCanvasTests
             var report = Element<TextBox>(window, "BugReportMessageTextBox");
             report.Text = "Черновик описания сохраняется отдельно от состояния";
             report.Select(3, 9);
-            var status = Element<TextBox>(window, "DiagnosticLogStatusText");
-            status.Text = "Подготовка диагностического отчёта";
             LayoutWindow(window, size);
             var bodyGrid = Element<Grid>(window, "BodyGrid");
-            var area = Element<Grid>(window, "DiagnosticStatusArea");
             var settings = Element<Grid>(window, "SettingsGrid");
             var transfer = Element<Expander>(window, "WorldTransferExpander");
-            Assert.True(status.IsReadOnly);
+            Assert.Null(window.FindName("DiagnosticStatusArea"));
+            Assert.Null(window.FindName("DiagnosticLogStatusText"));
             Assert.False(transfer.IsExpanded);
-            Assert.True(status.ActualHeight > 0);
-            AssertWidthWithinOnePhysicalPixel(transfer.ActualWidth, status.ActualWidth, status);
-            Assert.True(Bounds(area, bodyGrid).Top >= Bounds(settings, bodyGrid).Bottom);
-            Assert.True(Bounds(area, bodyGrid).Bottom <= Bounds(transfer, bodyGrid).Top);
+            Assert.True(Bounds(transfer, bodyGrid).Top >= Bounds(settings, bodyGrid).Bottom);
             ExpandSections(window);
             LayoutWindow(window, size);
-            Assert.Equal("Подготовка диагностического отчёта", status.Text);
             Assert.Equal("Черновик описания сохраняется отдельно от состояния", report.Text);
             Assert.Equal(3, report.SelectionStart);
             Assert.Equal(9, report.SelectionLength);
@@ -411,21 +404,29 @@ public sealed class WindowCanvasTests
         {
             var window = LoadWindow();
             var bar = Element<ScrollBar>(window, "BodyScrollBar");
+            var library = Element<PackLibraryView>(window, "LibraryView");
             var size = new Size(804, 521);
             LayoutWindow(window, size);
             DrainDispatcher();
             LayoutWindow(window, size);
-            var visibility = bar.Visibility;
-            bar.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Hidden);
-            MainWindow.RestoreLauncherElementVisibility(bar, visibility);
-            Assert.NotNull(System.Windows.Data.BindingOperations.GetBindingExpression(bar, UIElement.VisibilityProperty));
+            Assert.Equal(Visibility.Collapsed, bar.Visibility);
             ExpandSections(window);
             LayoutWindow(window, size);
             DrainDispatcher();
             LayoutWindow(window, size);
             Assert.Equal(Visibility.Visible, bar.Visibility);
-            bar.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Hidden);
-            MainWindow.RestoreLauncherElementVisibility(bar, Visibility.Visible);
+            for (var transition = 0; transition < 3; transition++)
+            {
+                library.Visibility = Visibility.Visible;
+                // The transition itself hides the bar, before another layout or UI timer tick.
+                Assert.Equal(Visibility.Collapsed, bar.Visibility);
+                LayoutWindow(window, new Size(1104, 521));
+                DrainDispatcher();
+                LayoutWindow(window, size);
+                Assert.Equal(Visibility.Collapsed, bar.Visibility);
+                library.Visibility = Visibility.Collapsed;
+                Assert.Equal(Visibility.Visible, bar.Visibility);
+            }
             foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = false;
             LayoutWindow(window, size);
             DrainDispatcher();
@@ -642,6 +643,99 @@ public sealed class WindowCanvasTests
         });
     }
 
+    [Theory]
+    [InlineData("BuildComboBox")]
+    [InlineData("WorldComboBox")]
+    [InlineData("OnlinePlayerComboBox")]
+    [InlineData("DiagnosticLogTargetComboBox")]
+    public void OpenDropDown_LocksOnlyTheParentScrollAndReleasesItOnClose(string controlName)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            ExpandSections(window);
+            window.ShowActivated = false;
+            window.ShowInTaskbar = false;
+            window.Show();
+            try
+            {
+                var dropdown = Element<CenteredDropDown>(window, controlName);
+                dropdown.ItemsSource = Enumerable.Range(0, 80).Select(i => new { Name = $"Item {i}", DisplayName = $"Item {i}" }).ToArray();
+                var size = new Size(804, 521);
+                LayoutWindow(window, size);
+                var body = Element<ScrollViewer>(window, "BodyScroll");
+                body.ScrollToVerticalOffset(40);
+                DrainDispatcher();
+                var offset = body.VerticalOffset;
+                Assert.True(body.ScrollableHeight > offset);
+                var smooth = SmoothScrollingController.Attach(body);
+                smooth.ScrollByWheelDelta(-120);
+                var popup = (Popup)dropdown.FindName("DropDownPopup");
+                popup.IsOpen = true;
+                DrainDispatcher();
+                try
+                {
+                    Assert.False(smooth.IsAnimating);
+                    body.ScrollToEnd();
+                    DrainDispatcher();
+                    Assert.Equal(offset, body.VerticalOffset, 3);
+                    var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
+                    { RoutedEvent = UIElement.PreviewMouseWheelEvent };
+                    body.RaiseEvent(wheel);
+                    Assert.True(wheel.Handled);
+                    Assert.False(smooth.IsAnimating);
+                    Assert.True(smooth.ScrollByWheelDelta(-120));
+                    smooth.AdvanceFrame(50);
+                    DrainDispatcher();
+                    Assert.Equal(offset, body.VerticalOffset, 3);
+                    var list = (ListBox)dropdown.FindName("ItemsList");
+                    list.ApplyTemplate();
+                    list.UpdateLayout();
+                    var popupScroll = VisualDescendants<ScrollViewer>(list).First();
+                    popupScroll.ScrollToEnd();
+                    DrainDispatcher();
+                    Assert.True(popupScroll.VerticalOffset > 0);
+                    Assert.Equal(offset, body.VerticalOffset, 3);
+                }
+                finally
+                {
+                    popup.IsOpen = false;
+                    DrainDispatcher();
+                }
+                Assert.False(smooth.IsScrollLocked);
+                body.ScrollToEnd();
+                DrainDispatcher();
+                Assert.True(body.VerticalOffset > offset);
+                return true;
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(804)]
+    [InlineData(1904)]
+    public void SteamRetry_StaysNextToSteamWhileNewsStaysAtTheRight(double width)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            LayoutWindow(window, new Size(width, 521));
+            var group = Element<Grid>(window, "SteamConnectionPanel");
+            var retry = Element<Button>(window, "RetrySteamButton");
+            var label = group.Children.OfType<TextBlock>().Single(t => t.Text == "Steam:");
+            Assert.Same(group, retry.Parent);
+            Assert.InRange(Bounds(retry, group).Left - Bounds(label, group).Right, 7.5, 8.5);
+            var footer = Element<Grid>(window, "FooterActions");
+            var toggle = Element<Button>(window, "SidePanelToggleButton");
+            AssertWidthWithinOnePhysicalPixel(footer.ActualWidth, Bounds(toggle, footer).Right, toggle);
+            return true;
+        });
+    }
+
     private static readonly string[] SectionNames = ["WorldTransferExpander", "ReportExpander"];
 
     private static void AssertSidebarUpdateAlignment(Window window)
@@ -689,11 +783,24 @@ public sealed class WindowCanvasTests
         var play = Element<Button>(window, "PlayButton");
         Assert.Equal(Element<Grid>(window, "PlayArea").ColumnDefinitions[0].ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, 3);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth * 2 / 3, Element<Button>(window, "LibraryButton").ActualWidth, play);
+        Assert.Equal(play.FontWeight, Element<Button>(window, "LibraryButton").FontWeight);
         Assert.Equal(8, Element<Grid>(window, "LaunchActions").ColumnDefinitions[1].ActualWidth, 3);
         AssertWidthWithinOnePhysicalPixel(Element<Grid>(window, "BodyGrid").ActualWidth, Element<Grid>(window, "LaunchActions").ActualWidth, play);
         var skin = Element<Button>(window, "SkinButton");
-        Assert.Equal(Element<Grid>(window, "MemorySettingsRow").ColumnDefinitions[0].ActualWidth, skin.ActualWidth, 3);
+        var settings = Element<Grid>(window, "SettingsGrid");
+        var library = Element<Button>(window, "LibraryButton");
+        AssertWidthWithinOnePhysicalPixel(play.ActualWidth, settings.ColumnDefinitions[0].ActualWidth, play);
+        AssertWidthWithinOnePhysicalPixel(library.ActualWidth, settings.ColumnDefinitions[2].ActualWidth, library);
+        AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<TextBox>(window, "PlayerNameTextBox"), settings).Right, play);
+        AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<CenteredDropDown>(window, "BuildComboBox"), settings).Right, play);
+        AssertWidthWithinOnePhysicalPixel(library.ActualWidth, Element<Button>(window, "ChangePlayerNameButton").ActualWidth, library);
+        AssertWidthWithinOnePhysicalPixel(skin.ActualWidth, Element<Button>(window, "ControlsPresetButton").ActualWidth, skin);
+        AssertWidthWithinOnePhysicalPixel(play.ActualWidth, skin.ActualWidth + 8 + Element<Button>(window, "ControlsPresetButton").ActualWidth, play);
         var preset = Element<Button>(window, "ControlsPresetButton");
+        var transfer = Element<Expander>(window, "WorldTransferExpander");
+        var header = (FrameworkElement)transfer.Template.FindName("HeaderToggle", transfer);
+        Assert.Equal(header.ActualHeight, preset.ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, Element<CenteredDropDown>(window, "BuildComboBox").ActualHeight, 3);
         Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
             preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);
         Assert.All(new[] { play, skin, preset }, button =>

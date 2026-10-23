@@ -2,12 +2,16 @@ using System.Collections;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace Minecraft;
 
 public partial class CenteredDropDown : UserControl
 {
     private bool _synchronizingSelection;
+    private ScrollViewer? _lockedScroll;
+    private double _lockedVerticalOffset;
+    private double _lockedHorizontalOffset;
 
     public static readonly DependencyProperty ItemsSourceProperty = DependencyProperty.Register(
         nameof(ItemsSource),
@@ -40,6 +44,7 @@ public partial class CenteredDropDown : UserControl
     {
         ControlMotion.Initialize();
         InitializeComponent();
+        Unloaded += (_, _) => DropDownPopup.IsOpen = false;
         Loaded += (_, _) => ControlMotion.TurnChevron(DropDownChevron, DropDownPopup.IsOpen, animate: false);
     }
 
@@ -97,6 +102,7 @@ public partial class CenteredDropDown : UserControl
 
     private void DropDownPopup_Opened(object? sender, EventArgs e)
     {
+        LockParentScroll();
         ControlMotion.TurnChevron(DropDownChevron, expanded: true, animate: IsLoaded);
         ItemsList.SelectedItem = SelectedItem;
         if (SelectedItem is not null)
@@ -108,8 +114,44 @@ public partial class CenteredDropDown : UserControl
 
     private void DropDownPopup_Closed(object? sender, EventArgs e)
     {
+        UnlockParentScroll();
         ControlMotion.TurnChevron(DropDownChevron, expanded: false, animate: IsLoaded);
         DropDownButton.IsChecked = false;
+    }
+
+    private void LockParentScroll()
+    {
+        UnlockParentScroll();
+        for (DependencyObject? parent = VisualTreeHelper.GetParent(this); parent is not null;
+             parent = VisualTreeHelper.GetParent(parent))
+        {
+            if (parent is not ScrollViewer scroll) continue;
+            _lockedScroll = scroll;
+            _lockedVerticalOffset = scroll.VerticalOffset;
+            _lockedHorizontalOffset = scroll.HorizontalOffset;
+            SmoothScrollingController.Attach(scroll).IsScrollLocked = true;
+            scroll.ScrollChanged += RestoreParentScroll;
+            break;
+        }
+    }
+
+    private void UnlockParentScroll()
+    {
+        if (_lockedScroll is not { } scroll) return;
+        SmoothScrollingController.Attach(scroll).IsScrollLocked = false;
+        scroll.ScrollChanged -= RestoreParentScroll;
+        _lockedScroll = null;
+    }
+
+    private void RestoreParentScroll(object sender, ScrollChangedEventArgs e)
+    {
+        if (_lockedScroll is not { } scroll || !ReferenceEquals(e.OriginalSource, scroll)) return;
+        // Keep the viewport fixed for wheel, keyboard and the external scrollbar.
+        // The popup has its own ScrollViewer and remains independently scrollable.
+        var vertical = Math.Min(_lockedVerticalOffset, scroll.ScrollableHeight);
+        var horizontal = Math.Min(_lockedHorizontalOffset, scroll.ScrollableWidth);
+        if (Math.Abs(scroll.VerticalOffset - vertical) > 0.01) scroll.ScrollToVerticalOffset(vertical);
+        if (Math.Abs(scroll.HorizontalOffset - horizontal) > 0.01) scroll.ScrollToHorizontalOffset(horizontal);
     }
 
     private void ItemsList_SelectionChanged(object sender, SelectionChangedEventArgs e)

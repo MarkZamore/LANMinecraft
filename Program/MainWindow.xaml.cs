@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -77,8 +77,6 @@ public partial class MainWindow : Window
     /// <summary>False on every launch: the column opens on the assistant.</summary>
     private bool _sidePanelShowsNews;
     private bool _bugReportSending;
-    private string _bugReportStatus = string.Empty;
-    private readonly TransferRateTracker _bugReportRate = new();
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
     private double _lastTransferSpeedBytesPerSecond;
@@ -248,13 +246,6 @@ public partial class MainWindow : Window
                 ResolveCurrentInstanceDirectory,
                 CreateBugReportContext,
                 CaptureSupportEnvironmentAsync);
-            _bugReports.ReportReceived += (_, arrival) => PostToUi(() =>
-            {
-                SetBugReportStatus(
-                    $"Получен отчёт от {arrival.SenderName} ({DescribeBytes(arrival.ArchiveBytes)}). " +
-                    $"Папка: {Path.GetFileName(arrival.Directory)}");
-                RefreshDiagnosticsPanel();
-            });
             _bugReports.PruneStoredReports();
             _peerRouter.Register(_bugReports);
             _peerRouter.Register(_waypointSync);
@@ -685,7 +676,6 @@ public partial class MainWindow : Window
         SendBugReportButton.IsEnabled = hasRecipient && !_bugReportSending;
         DiagnosticLogTargetPlaceholderText.Visibility =
             hasRecipient ? Visibility.Collapsed : Visibility.Visible;
-        ShowBugReportStatus();
     }
 
     /// <summary>
@@ -695,16 +685,7 @@ public partial class MainWindow : Window
     /// </summary>
     private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_bugReports is null)
-        {
-            SetBugReportStatus("Лаунчер ещё готовится - отчёт можно будет отправить через несколько секунд.");
-            return;
-        }
-        if (_bugReportSending)
-        {
-            SetBugReportStatus(_bugReportStatus);
-            return;
-        }
+        if (_bugReports is null || _bugReportSending) return;
         // Both of these are what a disabled button already says. Reached only
         // if the state changed between the refresh and the click, and then the
         // right answer is to do nothing rather than to explain.
@@ -712,23 +693,17 @@ public partial class MainWindow : Window
         if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient) return;
 
         _bugReportSending = true;
-        _bugReportRate.Reset();
         // The button goes down for the length of the send, the way it comes back
         // up in the finally below: one report at a time, and a second press
         // while the first is in flight is a press that does nothing.
         RefreshDiagnosticsPanel();
-        SetBugReportStatus($"Подготовка отчёта для {recipient.DisplayName}…");
         try
         {
             var message = BugReportMessageTextBox.Text;
-            var progress = new Progress<BugReportProgress>(value => ApplyBugReportProgress(recipient, value));
-            var manifest = await _bugReports
-                .SendAsync(recipient.SteamId, message, progress, _lifetimeCts.Token)
+            await _bugReports
+                .SendAsync(recipient.SteamId, message, progress: null, _lifetimeCts.Token)
                 .ConfigureAwait(true);
             BugReportMessageTextBox.Clear();
-            SetBugReportStatus(
-                $"Отчёт отправлен игроку {recipient.DisplayName} " +
-                $"({DescribeBytes(manifest.ArchiveBytes)}).");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -736,7 +711,6 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _logger?.Warn($"Bug report could not be sent: {ex.Message}");
-            SetBugReportStatus($"Не удалось отправить отчёт: {ex.Message}");
         }
         finally
         {
@@ -744,46 +718,6 @@ public partial class MainWindow : Window
             RefreshDiagnosticsPanel();
         }
     }
-
-    /// <summary>
-    /// The line under the button while a report is going out: how much of it
-    /// has left, out of how much, and how fast. A report is megabytes over a
-    /// Steam relay, so a still line reads as a hang.
-    /// </summary>
-    private void ApplyBugReportProgress(DiagnosticLogTargetOption recipient, BugReportProgress progress)
-    {
-        var speed = _bugReportRate.Update(progress.SentBytes, recipient.SteamId.ToString());
-        var line = $"Отправка отчёта игроку {recipient.DisplayName}: " +
-                   $"{DescribeBytes(progress.SentBytes)} из {DescribeBytes(progress.TotalBytes)}";
-        if (speed > 0) line += $" ({DescribeBytes((long)speed)}/с)";
-        SetBugReportStatus(line);
-    }
-
-    private static string DescribeBytes(long bytes) =>
-        bytes >= 1024L * 1024
-            ? $"{bytes / (1024d * 1024d):F1} МиБ"
-            : $"{Math.Max(0, bytes) / 1024d:F0} КиБ";
-
-    private void SetBugReportStatus(string message)
-    {
-        _bugReportStatus = message;
-        ShowBugReportStatus();
-    }
-
-    /// <summary>
-    /// The status line: what happened to the last report, and nothing else.
-    /// An empty box under a filled one reads as a box that broke, so at rest it
-    /// says the panel is fine - but only while it is. With no Steam and nobody
-    /// to send to it says nothing at all, because the list and the button are
-    /// already dead in front of the player and a line explaining that is one
-    /// more thing to read on the way to giving up.
-    /// </summary>
-    private void ShowBugReportStatus() =>
-        DiagnosticLogStatusText.Text = _bugReportStatus.Length > 0
-            ? _bugReportStatus
-            : _steamClient?.Status.IsReady == true && IsIdentityBound
-                ? "Всё работает :)"
-                : string.Empty;
 
     internal void OpenSupportLogsDirectory()
     {
@@ -1360,7 +1294,7 @@ public partial class MainWindow : Window
     /// </remarks>
     private void OnMinecraftMemoryIsTooSmall(int chosenGb, int neededGb)
     {
-        PostToUi(() => SetBugReportStatus(
+        PostToUi(() => _logger?.Warn(
             neededGb > GetAllowedHeapGb()
                 ? "Обнаружен компьютер со слабой аурой"
                 : $"Этой сборке мало {chosenGb} ГБ, поставьте в RAM от {neededGb} ГБ."));
@@ -1368,7 +1302,7 @@ public partial class MainWindow : Window
 
     private void OnMinecraftRanOutOfMemory(int maxMemoryGb)
     {
-        PostToUi(() => SetBugReportStatus(
+        PostToUi(() => _logger?.Warn(
             (maxMemoryGb > 0 ? $"Игре не хватило памяти: ей выделено {maxMemoryGb} ГБ. " : "Игре не хватило памяти. ") +
             "Мир не пострадал - игра закрылась, не успев предложить открыть его без модов."));
     }
@@ -1394,15 +1328,6 @@ public partial class MainWindow : Window
             {
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
-            // What the last update had to say goes now, before this launch has
-            // anything of its own to say. A line naming the mods an update took
-            // away stood there until something else overwrote it - across a
-            // different build, and across starting the same one again - so it
-            // read as news about the launch a player was watching rather than
-            // about one they had forgotten. Cleared, the line falls back to
-            // saying the panel is fine, which is the honest answer when this
-            // update changed nothing.
-            SetBugReportStatus(string.Empty);
             ApplyPlayerName();
             ApplyMemoryText(chosenByPlayer: false);
             var settings = RequireSettings();
@@ -1434,12 +1359,6 @@ public partial class MainWindow : Window
             {
                 RequireLogger().Warn(syncResult.Warning);
                 SetState(syncResult.Warning);
-                // And where somebody can read it. SetState only fills a field
-                // the support snapshot carries, so everything the sync has ever
-                // had to say - that it could not reach the internet and is
-                // playing the copy on disk, that an update has taken mods away -
-                // went into a diagnostic nobody opens.
-                SetBugReportStatus(syncResult.Warning);
             }
 
             // A folder somebody filled with mods becomes a pack here: what
@@ -1974,7 +1893,7 @@ public partial class MainWindow : Window
 
         _isEditingPlayerName = false;
         PlayerNameTextBox.IsReadOnly = true;
-        ChangePlayerNameButton.Content = "Изменить";
+        ChangePlayerNameButton.Content = "Поменять никнейм";
         RefreshUi();
     }
 
@@ -2973,7 +2892,7 @@ public partial class MainWindow : Window
     {
         var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
             PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
-        MemoryEstimateText.Text = $"от {estimateGb} ГБ";
+        MemoryEstimateText.Text = $"Рекомендуется от {estimateGb} ГБ";
         MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки.";
     }
 
@@ -3076,7 +2995,7 @@ public partial class MainWindow : Window
         PlayerNameTextBox.IsEnabled = settingsEnabled;
         PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
         ChangePlayerNameButton.IsEnabled = settingsEnabled;
-        ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Изменить";
+        ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Поменять никнейм";
         _playerNameMarquee?.SetAllowed(!_isEditingPlayerName);
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -3103,7 +3022,10 @@ public partial class MainWindow : Window
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
             PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName && _catalog?.IsReady == true;
-            if (_catalog?.IsReady != true) PlayButtonText.Text = "Проверка сборок";
+            if (!PlayButton.IsEnabled && (_steamClient?.Status.IsReady != true || !IsIdentityBound))
+                PlayButtonText.Text = "Включите Steam";
+            else if (_catalog?.IsReady != true)
+                PlayButtonText.Text = "Проверка сборок";
         }
         // The name is the one thing the launcher will not invent, so it is also
         // the one thing it has to ask for. Without this the button is simply
@@ -3229,7 +3151,9 @@ public partial class MainWindow : Window
     {
         foreach (UIElement element in RootGrid.Children)
         {
-            if (ReferenceEquals(element, LibraryView)) continue;
+            // The scrollbar derives visibility from both overflow and the active view.
+            // A temporary local value would compete with that live state during layout.
+            if (ReferenceEquals(element, LibraryView) || ReferenceEquals(element, BodyScrollBar)) continue;
             _launcherVisibility[element] = element.Visibility;
             element.SetCurrentValue(VisibilityProperty, Visibility.Hidden);
         }
@@ -3244,8 +3168,7 @@ public partial class MainWindow : Window
     internal static void RestoreLauncherElementVisibility(UIElement element, Visibility visibility)
     {
         element.SetCurrentValue(VisibilityProperty, visibility);
-        // Library navigation must not replace the scrollbar's live overflow binding
-        // with the collapsed value captured before any categories were opened.
+        // Keep any visibility binding live when restoring the launcher after navigation.
         System.Windows.Data.BindingOperations.GetBindingExpression(element, VisibilityProperty)?.UpdateTarget();
     }
 

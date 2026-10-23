@@ -17,25 +17,14 @@ namespace Minecraft.Tests;
 /// </remarks>
 public sealed class BugReportPanelTests
 {
-    /// <summary>
-    /// The status line under the report panel is where the sync says what an
-    /// update took away, and nothing used to take it back down. A player who
-    /// started a different build, or the same one again, went on being told
-    /// about mods removed from an update they had already read about - and the
-    /// line reads as news about the launch in front of them.
-    ///
-    /// Cleared at the top of a launch, it falls back to saying the panel is
-    /// fine, which is the honest answer when this update changed nothing.
-    /// </summary>
     [Fact]
-    public void StartingABuild_ClearsWhatTheLastUpdateSaid()
+    public void RemovedStatus_HasNoStateOrProgressFormatting()
     {
-        var launch = Between(ReadWindowCode(), "private async void PlayButton_Click(", "\n    }");
-
-        var cleared = launch.IndexOf("SetBugReportStatus(string.Empty)", StringComparison.Ordinal);
-        var synced = launch.IndexOf("SyncAsync(", StringComparison.Ordinal);
-        Assert.True(cleared > 0, "A launch no longer clears what the last update said.");
-        Assert.True(synced > cleared, "The line is cleared after the sync, so this update's own word is lost.");
+        var source = ReadWindowCode();
+        Assert.DoesNotContain("SetBugReportStatus", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShowBugReportStatus", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_bugReportStatus", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApplyBugReportProgress", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,22 +39,12 @@ public sealed class BugReportPanelTests
         Assert.DoesNotContain("BugReportMessageTextBox.IsEnabled", ReadWindowCode(), StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// And the line under the button says nothing about either of them.
-    /// </summary>
     [Fact]
-    public void TheStatusLine_NeverExplainsSteamOrAnEmptyList()
+    public void UnavailableSteam_IsExplainedByThePlayButton()
     {
-        var source = ReadWindowCode();
-        var status = Between(source, "private void ShowBugReportStatus()", ";\n");
-
-        Assert.DoesNotContain("Включите Steam", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("некому передать", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("Некому отправить", source, StringComparison.Ordinal);
-        // At rest it still says the panel is fine, because an empty box under a
-        // filled one reads as a box that broke - but only while it is fine.
-        Assert.Contains("Всё работает :)", status, StringComparison.Ordinal);
-        Assert.Contains("string.Empty", status, StringComparison.Ordinal);
+        var refresh = Between(ReadWindowCode(), "private void RefreshUi()", "\n    }");
+        Assert.Contains("_steamClient?.Status.IsReady != true || !IsIdentityBound", refresh, StringComparison.Ordinal);
+        Assert.Contains("PlayButtonText.Text = \"Включите Steam\";", refresh, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -83,9 +62,7 @@ public sealed class BugReportPanelTests
             "is not DiagnosticLogTargetOption recipient) return;",
             click,
             StringComparison.Ordinal);
-        // The launcher still starting up is not something the panel shows, so
-        // that one is still said.
-        Assert.Contains("Лаунчер ещё готовится", click, StringComparison.Ordinal);
+        Assert.Contains("if (_bugReports is null || _bugReportSending) return;", click, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -96,7 +73,7 @@ public sealed class BugReportPanelTests
     public void TheHintOverTheField_StandsOnTheLineOfTheTyping()
     {
         var markup = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
-        var hint = Between(markup, "<TextBlock Text=\"Что случилось", "</TextBlock>");
+        var hint = Between(markup, "<TextBlock x:Name=\"BugReportPlaceholderText\"", "</TextBlock>");
 
         Assert.Contains("Margin=\"{StaticResource Pad.FieldText}\"", hint, StringComparison.Ordinal);
 
