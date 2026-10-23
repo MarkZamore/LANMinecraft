@@ -205,7 +205,7 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(4, cards.Length);
             Assert.All(cards, card =>
             {
-                Assert.Equal(232, card.ActualWidth, 3);
+                Assert.Equal(240, card.ActualWidth, 3);
                 Assert.Equal(cards[0].ActualHeight, card.ActualHeight, 3);
             });
             if (width == 804)
@@ -213,6 +213,7 @@ public sealed class PackCatalogTests : IDisposable
                 var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
                 Assert.Equal(bounds[0].Top, bounds[1].Top, 3);
                 Assert.Equal(bounds[0].Top, bounds[2].Top, 3);
+                Assert.InRange(Math.Abs(bounds[0].Left - (panel.ActualWidth - bounds[2].Right)), 0, 1);
                 Assert.True(bounds[3].Top >= bounds[0].Bottom + 15);
             }
             foreach (var summary in VisualChildren<TextBlock>((ItemsControl)view.FindName("CatalogCards"))
