@@ -192,6 +192,10 @@ public sealed class PackCatalogTests : IDisposable
             var back = (Button)view.FindName("ReturnLauncherButton");
             Assert.InRange(Math.Abs(back.ActualWidth - ((Button)window.FindName("PlayButton")).ActualWidth), 0, 1);
             Assert.True(back.ActualHeight >= 44);
+            var play = (Button)window.FindName("PlayButton");
+            Assert.Equal(play.FontFamily, back.FontFamily);
+            Assert.Equal(play.FontSize, back.FontSize);
+            Assert.Equal(play.FontWeight, back.FontWeight);
             var list = (ScrollViewer)view.FindName("CatalogScroll");
             Assert.InRange(list.ScrollableWidth, 0, 0.5);
             var panel = VisualChildren<LibraryColumnsPanel>((ItemsControl)view.FindName("CatalogCards")).Single();

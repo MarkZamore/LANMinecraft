@@ -94,7 +94,8 @@
                 </Grid>
             </Button>
             <Button x:Name="LibraryButton" Grid.Column="2" Content="Библиотека" Click="LibraryButton_Click"
-                MinHeight="{StaticResource Size.Primary}" FontWeight="{StaticResource Font.WeightEmphasis}" HorizontalAlignment="Stretch"/>
+                MinHeight="{StaticResource Size.Primary}" FontSize="{StaticResource Font.SizeDisplay}"
+                FontWeight="{StaticResource Font.WeightEmphasis}" HorizontalAlignment="Stretch"/>
             </Grid>
         </Grid>
         <ScrollViewer VerticalScrollBarVisibility="Auto"
@@ -188,6 +189,7 @@
                             <Button Grid.Column="0"
                                 x:Name="DeleteBuildButton"
                                 Style="{StaticResource IconActionButton}"
+                                Height="{StaticResource Size.CategoryHeader}"
                                 Padding="{StaticResource Pad.None}"
                                 Click="DeleteBuildButton_Click"
                                 IsEnabled="False"
@@ -199,9 +201,9 @@
                             </Button>
                             <TextBlock Grid.Column="1"
                                 x:Name="MemoryEstimateText"
-                                Style="{StaticResource LabelTextStyle}"
+                                Style="{StaticResource CaptionTextStyle}"
                                 Text="Рекомендуется от 2 ГБ"
-                                TextWrapping="Wrap"
+                                TextWrapping="NoWrap"
                                 Margin="{StaticResource Gap.Left2}" />
                         </Grid>
                         <Grid Grid.Row="2" Grid.Column="0" Margin="{StaticResource Gap.Above2}" x:Name="PresetSettingsRow">

@@ -93,7 +93,8 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="{DynamicResource Size.ColumnGap}"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="{DynamicResource Size.LibraryActionGap}"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
-                <Button x:Name="ReturnLauncherButton" Content="Вернуться в лаунчер" Click="ReturnLauncher_Click" HorizontalAlignment="Stretch" MinHeight="{DynamicResource Size.Primary}"/>
+                <Button x:Name="ReturnLauncherButton" Content="Вернуться в лаунчер" Click="ReturnLauncher_Click" HorizontalAlignment="Stretch" MinHeight="{DynamicResource Size.Primary}"
+                    FontSize="{DynamicResource Font.SizeDisplay}" FontWeight="{DynamicResource Font.WeightEmphasis}"/>
             </Grid>
         </Grid>
         <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.None}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

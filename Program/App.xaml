@@ -7,14 +7,13 @@
         <!-- Windows 11 Fluent palette. WindowsThemeService refreshes the system accent in memory. -->
         <Color x:Key="Color.Canvas">#202020</Color>
         <Color x:Key="Color.CanvasSecondary">#1C1C1C</Color>
-        <Color x:Key="Color.BackdropStart">#101B30</Color>
-        <Color x:Key="Color.BackdropMiddle">#1C2330</Color>
-        <Color x:Key="Color.BackdropEnd">#282828</Color>
-        <Color x:Key="Color.Surface">#0DFFFFFF</Color>
-        <Color x:Key="Color.SurfaceHover">#15FFFFFF</Color>
-        <Color x:Key="Color.SurfacePressed">#08FFFFFF</Color>
-        <Color x:Key="Color.SurfaceDisabled">#0AFFFFFF</Color>
-        <Color x:Key="Color.Popup">#2C2C2C</Color>
+        <Color x:Key="Color.BackdropShade">#42000000</Color>
+        <Color x:Key="Color.Surface">#8C111820</Color>
+        <Color x:Key="Color.SurfaceHover">#A5232C34</Color>
+        <Color x:Key="Color.SurfacePressed">#B00D131A</Color>
+        <Color x:Key="Color.SurfaceDisabled">#8C111820</Color>
+        <Color x:Key="Color.Popup">#ED151B20</Color>
+        <Color x:Key="Color.ListPopup">#151B20</Color>
         <Color x:Key="Color.Border">#12FFFFFF</Color>
         <Color x:Key="Color.BorderStrong">#26FFFFFF</Color>
         <Color x:Key="Color.BorderDisabled">#0AFFFFFF</Color>
@@ -23,9 +22,9 @@
         <Color x:Key="Color.TextMuted">#C5FFFFFF</Color>
         <Color x:Key="Color.TextDisabled">#5DFFFFFF</Color>
         <Color x:Key="Color.Accent">#60CDFF</Color>
-        <Color x:Key="Color.Primary">#60CDFF</Color>
-        <Color x:Key="Color.PrimaryHover">#6CD1FF</Color>
-        <Color x:Key="Color.PrimaryPressed">#54B4E0</Color>
+        <Color x:Key="Color.Primary">#C760CDFF</Color>
+        <Color x:Key="Color.PrimaryHover">#D66CD1FF</Color>
+        <Color x:Key="Color.PrimaryPressed">#D654B4E0</Color>
         <Color x:Key="Color.AccentHover">#56B8E5</Color>
         <Color x:Key="Color.AccentPressed">#4DA4CC</Color>
         <Color x:Key="Color.AccentText">#99EBFF</Color>
@@ -40,14 +39,13 @@
         <Color x:Key="Color.ScrollThumbHover">#C5FFFFFF</Color>
         <SolidColorBrush x:Key="Brush.Canvas" Color="{StaticResource Color.Canvas}"/>
         <SolidColorBrush x:Key="Brush.CanvasSecondary" Color="{StaticResource Color.CanvasSecondary}"/>
-        <SolidColorBrush x:Key="Brush.BackdropStart" Color="{StaticResource Color.BackdropStart}"/>
-        <SolidColorBrush x:Key="Brush.BackdropMiddle" Color="{StaticResource Color.BackdropMiddle}"/>
-        <SolidColorBrush x:Key="Brush.BackdropEnd" Color="{StaticResource Color.BackdropEnd}"/>
+        <SolidColorBrush x:Key="Brush.BackdropShade" Color="{StaticResource Color.BackdropShade}"/>
         <SolidColorBrush x:Key="Brush.Surface" Color="{StaticResource Color.Surface}"/>
         <SolidColorBrush x:Key="Brush.SurfaceHover" Color="{StaticResource Color.SurfaceHover}"/>
         <SolidColorBrush x:Key="Brush.SurfacePressed" Color="{StaticResource Color.SurfacePressed}"/>
         <SolidColorBrush x:Key="Brush.SurfaceDisabled" Color="{StaticResource Color.SurfaceDisabled}"/>
         <SolidColorBrush x:Key="Brush.Popup" Color="{StaticResource Color.Popup}"/>
+        <SolidColorBrush x:Key="Brush.ListPopup" Color="{StaticResource Color.ListPopup}"/>
         <SolidColorBrush x:Key="Brush.Border" Color="{StaticResource Color.Border}"/>
         <SolidColorBrush x:Key="Brush.BorderStrong" Color="{StaticResource Color.BorderStrong}"/>
         <SolidColorBrush x:Key="Brush.BorderDisabled" Color="{StaticResource Color.BorderDisabled}"/>
@@ -179,7 +177,7 @@
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
         <sys:Double x:Key="Size.ProgressGlow">120</sys:Double>
         <sys:Double x:Key="Size.GlyphStroke">1.25</sys:Double>
-        <sys:Double x:Key="Size.BackdropOpacity">0.9</sys:Double>
+        <Rect x:Key="Size.BackdropBounds">0,0,1672,940</Rect>
         <GridLength x:Key="Size.LabelColumn">72</GridLength>
         <GridLength x:Key="Size.NumberField">64</GridLength>
         <GridLength x:Key="Size.ColumnGap">24</GridLength>
@@ -193,18 +191,27 @@
         <Duration x:Key="Motion.SectionExpand">0:0:0.2</Duration>
         <Duration x:Key="Motion.SectionCollapse">0:0:0.18</Duration>
         <Duration x:Key="Motion.SectionFade">0:0:0.16</Duration>
-        <CornerRadius x:Key="Radius.Control">4</CornerRadius>
+        <CornerRadius x:Key="Radius.Control">8</CornerRadius>
         <CornerRadius x:Key="Radius.ChatComposer">12</CornerRadius>
         <CornerRadius x:Key="Radius.ChatAction">20</CornerRadius>
-        <CornerRadius x:Key="Radius.Primary">4</CornerRadius>
+        <CornerRadius x:Key="Radius.Primary">8</CornerRadius>
         <CornerRadius x:Key="Radius.Panel">8</CornerRadius>
         <CornerRadius x:Key="Radius.Scrollbar">3</CornerRadius>
         <CornerRadius x:Key="Radius.SelectionMark">1.5</CornerRadius>
-        <LinearGradientBrush x:Key="Brush.WindowBackdrop" StartPoint="0,0" EndPoint="1,1" Opacity="{StaticResource Size.BackdropOpacity}">
-            <GradientStop Color="{StaticResource Color.BackdropStart}" Offset="0"/>
-            <GradientStop Color="{StaticResource Color.BackdropMiddle}" Offset="0.5"/>
-            <GradientStop Color="{StaticResource Color.BackdropEnd}" Offset="1"/>
-        </LinearGradientBrush>
+        <DrawingBrush x:Key="Brush.WindowBackdrop" Stretch="UniformToFill">
+            <DrawingBrush.Drawing>
+                <DrawingGroup>
+                    <ImageDrawing Rect="{StaticResource Size.BackdropBounds}">
+                        <ImageDrawing.ImageSource>
+                            <BitmapImage UriSource="pack://application:,,,/LANMinecraft;component/Assets/Background.png" CacheOption="OnLoad"/>
+                        </ImageDrawing.ImageSource>
+                    </ImageDrawing>
+                    <GeometryDrawing Brush="{StaticResource Brush.BackdropShade}">
+                        <GeometryDrawing.Geometry><RectangleGeometry Rect="{StaticResource Size.BackdropBounds}"/></GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                </DrawingGroup>
+            </DrawingBrush.Drawing>
+        </DrawingBrush>
         <Style x:Key="WindowStyle" TargetType="Window">
             <Setter Property="Background" Value="{DynamicResource Brush.WindowBackdrop}"/>
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
@@ -493,7 +500,7 @@
         </Style>
 
 
-        <Style TargetType="ListBox"><Setter Property="Background" Value="{DynamicResource Brush.Popup}"/><Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/><Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/><Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/></Style>
+        <Style TargetType="ListBox"><Setter Property="Background" Value="{DynamicResource Brush.ListPopup}"/><Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/><Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/><Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/></Style>
         <Style TargetType="ListBoxItem">
             <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/><Setter Property="Padding" Value="{StaticResource Pad.Control}"/>
             <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
