@@ -7,6 +7,11 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Style="{DynamicResource WindowStyle}">
+    <Window.Resources>
+        <DataTemplate x:Key="RemovalChoiceContentTemplate">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center"/>
+        </DataTemplate>
+    </Window.Resources>
     <StackPanel x:Name="RemovalPanel"
                 Width="{StaticResource Size.DialogWidth}"
                 Margin="{StaticResource Gap.Canvas}">
@@ -14,24 +19,32 @@
                    FontSize="{StaticResource Font.SizeHeading}"
                    Style="{StaticResource EmphasisTextStyle}"
                    TextWrapping="Wrap"/>
-        <TextBlock x:Name="ExplanationText" Margin="{StaticResource Gap.Above2}" TextWrapping="Wrap"/>
-        <TextBlock x:Name="WorldsText"
-                   Margin="{StaticResource Gap.Above2}"
-                   Style="{StaticResource ParagraphTextStyle}"
-                   TextWrapping="Wrap"/>
         <!-- Enter, Escape and closing the window keep everything as it is. -->
-        <StackPanel Margin="{StaticResource Gap.Above4}">
-            <Button x:Name="ListOnlyButton" Content="Убрать из списка"
+        <Grid Margin="{StaticResource Gap.Above4}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="{StaticResource Size.DialogActionGap}"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="{StaticResource Size.DialogActionGap}"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Button x:Name="ListOnlyButton" Grid.Row="0" Grid.Column="0" Content="Убрать из списка"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
                     Padding="{StaticResource Pad.Wide}" Click="ListOnlyButton_Click"/>
-            <Button x:Name="BuildOnlyButton" Content="Удалить сборку"
-                    Margin="{StaticResource Gap.Above2}"
+            <Button x:Name="BuildOnlyButton" Grid.Row="0" Grid.Column="2" Content="Удалить сборку"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
                     Padding="{StaticResource Pad.Wide}" Click="BuildOnlyButton_Click"/>
-            <Button x:Name="WithWorldsButton" Content="Удалить сборку с мирами"
-                    Margin="{StaticResource Gap.Above2}" Padding="{StaticResource Pad.Wide}"
+            <Button x:Name="WithWorldsButton" Grid.Row="2" Grid.Column="0" Content="Удалить сборку с мирами"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
+                    Padding="{StaticResource Pad.Wide}"
                     Click="WithWorldsButton_Click"/>
-            <Button x:Name="KeepButton" Content="Не хочу" IsCancel="True" IsDefault="True"
-                    Margin="{StaticResource Gap.Above2}" Padding="{StaticResource Pad.Wide}"
+            <Button x:Name="KeepButton" Grid.Row="2" Grid.Column="2" Content="Не хочу" IsCancel="True" IsDefault="True"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
+                    Padding="{StaticResource Pad.Wide}"
                     Click="KeepButton_Click"/>
-        </StackPanel>
+        </Grid>
     </StackPanel>
 </Window>

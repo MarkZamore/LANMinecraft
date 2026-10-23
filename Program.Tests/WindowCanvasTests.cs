@@ -794,7 +794,12 @@ public sealed class WindowCanvasTests
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<TextBox>(window, "PlayerNameTextBox"), settings).Right, play);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<CenteredDropDown>(window, "BuildComboBox"), settings).Right, play);
         AssertWidthWithinOnePhysicalPixel(library.ActualWidth, Element<Button>(window, "ChangePlayerNameButton").ActualWidth, library);
-        AssertWidthWithinOnePhysicalPixel(skin.ActualWidth * 4 / 3, Element<Button>(window, "ControlsPresetButton").ActualWidth, skin);
+        // Compare each rounded column with its unrounded share. Multiplying
+        // the rounded skin width by 4/3 amplifies its device-pixel error.
+        Assert.Equal(3, Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[0].Width.Value);
+        Assert.Equal(4, Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].Width.Value);
+        AssertWidthWithinOnePhysicalPixel((play.ActualWidth - 8) * 3 / 7, skin.ActualWidth, skin);
+        AssertWidthWithinOnePhysicalPixel((play.ActualWidth - 8) * 4 / 7, Element<Button>(window, "ControlsPresetButton").ActualWidth, skin);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, skin.ActualWidth + 8 + Element<Button>(window, "ControlsPresetButton").ActualWidth, play);
         var preset = Element<Button>(window, "ControlsPresetButton");
         var presetText = VisualDescendants<TextBlock>(preset).Single(text => text.Text == "Пресет управления");
