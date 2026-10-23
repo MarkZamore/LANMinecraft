@@ -111,6 +111,7 @@
         <Thickness x:Key="Gap.Left4Right1">16,0,4,0</Thickness>
         <Thickness x:Key="Gap.Canvas">24</Thickness>
         <Thickness x:Key="Gap.BodyScroll">0,0,-20,16</Thickness>
+        <Thickness x:Key="Gap.LibraryScroll">0,0,-20,0</Thickness>
         <Thickness x:Key="Gap.Chevron">16,0,0,0</Thickness>
         <Thickness x:Key="Gap.CategoryIcon">0,0,16,0</Thickness>
         <Thickness x:Key="Pad.None">0</Thickness>
