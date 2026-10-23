@@ -33,7 +33,7 @@ public partial class PackLibraryView : UserControl
     {
         var added = _selected is not null && IsAdded?.Invoke(_selected.Entry.RelativePath) == true;
         MembershipButton.Content = added ? "Убрать" : "Добавить";
-        MembershipButton.Style = TryFindResource(added ? typeof(Button) : "PrimaryButtonStyle") as Style;
+        MembershipButton.Style = TryFindResource(added ? typeof(Button) : "LibraryAddButtonStyle") as Style;
         MembershipButton.IsEnabled = CanChangeMembership;
         MembershipButton.ToolTip = CanChangeMembership ? null : "Дождитесь завершения игры, подготовки или передачи мира.";
     }

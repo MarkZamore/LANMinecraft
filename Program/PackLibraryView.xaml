@@ -99,7 +99,6 @@
         </Grid>
         <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.LibraryScroll}" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
-                <TextBlock Text="Добавь сборку" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below4}"/>
                 <ItemsControl x:Name="CatalogCards">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardWidth}" FixedColumnWidth="{DynamicResource Size.LibraryCardWidth}" UniformItemHeight="True" Gap="{DynamicResource Space.4}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate><DataTemplate>
@@ -133,7 +132,7 @@
                                     <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding VersionLabel}" Margin="{DynamicResource Gap.Above2}" Foreground="{DynamicResource Brush.TextMuted}"/>
                                 </StackPanel>
-                                <Button x:Name="MembershipButton" Grid.Column="1" Click="Membership_Click" Content="Добавить" MinHeight="{DynamicResource Size.Primary}" Padding="{DynamicResource Pad.Wide}" VerticalAlignment="Bottom"/>
+                                <Button x:Name="MembershipButton" Grid.Column="1" Click="Membership_Click" Content="Добавить" Width="{DynamicResource Size.ButtonMax}" MinHeight="{DynamicResource Size.Primary}" Padding="{DynamicResource Pad.Wide}" VerticalAlignment="Bottom"/>
                             </Grid>
                         </Grid>
                     </Grid>
