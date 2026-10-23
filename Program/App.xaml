@@ -174,6 +174,7 @@
         <sys:Double x:Key="Size.SelectionMark">3</sys:Double>
         <sys:Double x:Key="Size.SelectionMarkHeight">16</sys:Double>
         <sys:Double x:Key="Size.DialogWidth">520</sys:Double>
+        <GridLength x:Key="Size.DialogActionGap">8</GridLength>
         <sys:Double x:Key="Size.NoticeWidth">320</sys:Double>
         <sys:Double x:Key="Size.BorderWidth">1</sys:Double>
         <sys:Double x:Key="Size.ProgressGlow">120</sys:Double>

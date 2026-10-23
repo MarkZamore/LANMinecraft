@@ -93,6 +93,7 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.ModAddonAndLibraryLinksOpenTheirOwnPagesWithoutChangingExpansion|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.UnsafeProjectPageCannotReplaceTheVerifiedCatalogue|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CustomSourceIsFrozenAtStartupWithoutBecomingACatalogMembership|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CancelledStartupStillFreezesOfflineSnapshotAndDoesNotRetryOnNavigation</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CancelledStartupStillFreezesOfflineSnapshotAndDoesNotRetryOnNavigation|
+      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.SharedJavaOutputs_AreBuiltSequentially_AndFailureStopsTheRelease</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

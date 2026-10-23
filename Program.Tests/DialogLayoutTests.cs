@@ -29,7 +29,7 @@ public sealed class DialogLayoutTests
             foreach (var declaration in app.Root!.Attributes().Where(attribute => attribute.IsNamespaceDeclaration))
                 if (root.Attribute(declaration.Name) is null) root.Add(new XAttribute(declaration));
             foreach (var handler in root.Descendants().Attributes("Click").ToArray()) handler.Remove();
-            root.AddFirst(new XElement(root.Name.Namespace + "Window.Resources", app.Root.Elements().Single().Elements()));
+            root.Element(root.Name.Namespace + "Window.Resources")!.AddFirst(app.Root.Elements().Single().Elements());
             var dialog = (Window)XamlReader.Parse(markup.ToString());
             var panel = (StackPanel)dialog.FindName("RemovalPanel");
             VisualTreeHelper.SetRootDpi(dialog, new DpiScale(dpi, dpi));
@@ -47,7 +47,8 @@ public sealed class DialogLayoutTests
                 Assert.Equal(i == 3, button.IsDefault);
                 Assert.Equal(i == 3, button.IsCancel);
                 Assert.InRange(button.ActualWidth, 1, width);
-                button.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                Assert.Equal(i / 2 * 2, Grid.GetRow(button));
+                Assert.Equal(i % 2 * 2, Grid.GetColumn(button));
                 Assert.True(button.DesiredSize.Width <= button.ActualWidth, $"The choice '{labels[i]}' is clipped.");
             }
             return true;

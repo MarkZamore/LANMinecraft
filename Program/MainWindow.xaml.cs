@@ -1586,7 +1586,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name, plan.Worlds, plan.Java);
+        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name);
         if (answer == BuildRemovalAnswer.Keep) return;
         if (TryRemoveBuildFromList(_settings, build.RelativePath, answer))
         {

@@ -138,17 +138,12 @@ jobs:
       - name: Test and publish
         shell: pwsh
         run: |
-          # The tests build Debug and the release builds Release, so the two
-          # compilers write to different obj and bin trees and neither waits
-          # for the other. Both are already restored; the launcher has no
-          # DEBUG-only code, so what is tested is what ships.
-          $tests = Start-Job -Name 'tests' -ScriptBlock {
-            param($workspace)
-            $ErrorActionPreference = 'Stop'
-            Set-Location -LiteralPath $workspace
-            & .\Program.Tests\Test-Launcher.ps1 -Profile Release -Configuration Debug -NoRestore
-            if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
-          } -ArgumentList $env:GITHUB_WORKSPACE
+          # Debug and Release share Java JARs and their build-state files in
+          # Program/Build. Finish tests before publishing so neither build
+          # replaces an agent or writes its state while the other uses it.
+          $ErrorActionPreference = 'Stop'
+          & .\Program.Tests\Test-Launcher.ps1 -Profile Release -Configuration Debug -NoRestore
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
 
           .\Program\Publish.ps1 `
             -SourceRevisionId "${{ github.sha }}" `
@@ -157,12 +152,7 @@ jobs:
             -NoRestore `
             -KeepBuildOutput
 
-          Wait-Job -Job $tests | Out-Null
-          Receive-Job -Job $tests -ErrorAction Continue
-          if ($tests.State -eq 'Failed') {
-            throw "Tests failed: $($tests.ChildJobs[0].JobStateInfo.Reason.Message)"
-          }
-          Remove-Job -Job $tests
+          if ($LASTEXITCODE -ne 0) { throw "Publishing failed." }
 
       - name: Create delta and update manifest
         shell: pwsh

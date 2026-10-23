@@ -12,6 +12,81 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class ReleaseWorkflowTests
 {
+    [Theory]
+    [InlineData("none")]
+    [InlineData("tests")]
+    [InlineData("publish")]
+    public async Task SharedJavaOutputs_AreBuiltSequentially_AndFailureStopsTheRelease(string failure)
+    {
+        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+        var step = workflow.Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
+            .Single(part => part.TrimStart().StartsWith("Test and publish\n", StringComparison.Ordinal)
+                || part.TrimStart().StartsWith("Test and publish\r\n", StringComparison.Ordinal));
+        var body = step[(step.IndexOf("run: |", StringComparison.Ordinal) + "run: |".Length)..];
+        body = string.Join('\n', Lines(body).Select(line => line.StartsWith("          ", StringComparison.Ordinal) ? line[10..] : line))
+            .Replace("${{ github.sha }}", new string('a', 40), StringComparison.Ordinal)
+            .Replace("${{ github.workspace }}", "$env:GITHUB_WORKSPACE", StringComparison.Ordinal);
+        var root = Path.Combine(Path.GetDirectoryName(FindRepositoryFile("Program.Tests", "TESTING.md"))!,
+            "TestResults", "ReleaseOrder", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Program.Tests"));
+        Directory.CreateDirectory(Path.Combine(root, "Program"));
+        try
+        {
+            // Execute the actual workflow body with stand-ins that contend for
+            // the shared Java output. Publishing must see a completed test run.
+            File.WriteAllText(Path.Combine(root, "Program.Tests", "Test-Launcher.ps1"), """
+                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'tests-start'
+                $jar = [IO.File]::Open((Join-Path $PWD 'agent.jar'), 'OpenOrCreate', 'ReadWrite', 'None')
+                try { Start-Sleep -Milliseconds 300 } finally { $jar.Dispose() }
+                if ($env:RELEASE_ORDER_FAILURE -eq 'tests') { throw 'Injected test failure' }
+                Set-Content -LiteralPath (Join-Path $PWD 'tests-complete') -Value 'done'
+                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'tests-end'
+                $global:LASTEXITCODE = 0
+                """);
+            File.WriteAllText(Path.Combine(root, "Program", "Publish.ps1"), """
+                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'publish-start'
+                if (-not (Test-Path -LiteralPath (Join-Path $PWD 'tests-complete'))) {
+                    throw 'Publishing overlapped the test build'
+                }
+                $jar = [IO.File]::Open((Join-Path $PWD 'agent.jar'), 'Open', 'ReadWrite', 'None')
+                $jar.Dispose()
+                if ($env:RELEASE_ORDER_FAILURE -eq 'publish') { $global:LASTEXITCODE = 9; return }
+                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'publish-end'
+                $global:LASTEXITCODE = 0
+                """);
+            var script = Path.Combine(root, "step.ps1");
+            File.WriteAllText(script, "$global:LASTEXITCODE = 0\n" + body
+                + "\nAdd-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'finished'\n");
+            var log = Path.Combine(root, "order.log");
+            var start = new ProcessStartInfo(FindShell())
+            {
+                WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script }) start.ArgumentList.Add(argument);
+            start.Environment["GITHUB_WORKSPACE"] = root;
+            start.Environment["RELEASE_NUMBER"] = "393";
+            start.Environment["RELEASE_ORDER_LOG"] = log;
+            start.Environment["RELEASE_ORDER_FAILURE"] = failure;
+            using var process = Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try { await process.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
+            var output = await stdout + await stderr;
+            Assert.True(failure == "none" ? process.ExitCode == 0 : process.ExitCode != 0, output);
+            var expected = failure switch
+            {
+                "tests" => new[] { "tests-start" },
+                "publish" => ["tests-start", "tests-end", "publish-start"],
+                _ => ["tests-start", "tests-end", "publish-start", "publish-end", "finished"]
+            };
+            Assert.Equal(expected, File.ReadAllLines(log));
+        }
+        finally { TempTree.Delete(root); }
+    }
+
     /// <summary>gh is called through the helper, never on its own.</summary>
     [Fact]
     public void ReleaseWorkflow_CallsGhOnlyThroughTheRetryHelper()
