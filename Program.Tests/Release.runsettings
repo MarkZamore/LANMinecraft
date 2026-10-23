@@ -72,6 +72,8 @@
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.AgentLaunchArguments_AreIndependentOfMinecraftAndLiveOutsideMods|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.ExtractionAndIpc_StayUnderPortableRoot_AndRejectAnAncestorJunction|
       FullyQualifiedName=Minecraft.Tests.FluentControlMotionTests.SectionMotion_ReversesSafelyAndRestoresAutomaticHeight|
+      FullyQualifiedName=Minecraft.Tests.LibraryTreeMotionTests.ExpandedAddonsAreMeasuredWithoutShowingANativeWindow|
+      FullyQualifiedName=Minecraft.Tests.LibraryTreeMotionTests.AddonReveal_ReversesWithoutJumpAndRestoresAutomaticLayoutAfterNavigation|
       FullyQualifiedName=Minecraft.Tests.RenderingStartupTests.TheBuiltRuntimeConfiguration_DisablesDirtyRectanglesBeforeWpfCachesTheSwitch|
       FullyQualifiedName=Minecraft.Tests.FunctionalAuditTests.Updater_FullDeltaFallbackCancellationInstallRestartAndRollback|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.Saving_identical_text_keeps_the_file_and_its_timestamp|
@@ -86,6 +88,10 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MissingFrozenPayloadRequestsRestartAndNeverOverwritesAnInstalledFile|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MalformedIndexCannotEscapePortableRootAndOfflineSeedIsAlwaysAvailable|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.LibraryFitsRealControlsAndTreeExpansionSurvivesNavigation|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.RemovingFromTheList_KeepsInstalledFilesWorldsJavaAndSettingsAcrossRestart|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.ModAddonAndLibraryLinksOpenTheirOwnPagesWithoutChangingExpansion|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.UnsafeProjectPageCannotReplaceTheVerifiedCatalogue|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CustomSourceIsFrozenAtStartupWithoutBecomingACatalogMembership|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CancelledStartupStillFreezesOfflineSnapshotAndDoesNotRetryOnNavigation</TestCaseFilter>
   </RunConfiguration>

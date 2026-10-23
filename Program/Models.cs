@@ -59,6 +59,8 @@ public sealed class AppSettings
     public string ClientRelativePath { get; set; } = "";
     /// <summary>Null is an old settings file; an empty list deliberately has no catalog packs.</summary>
     public List<string>? AddedPackRelativePaths { get; set; }
+    /// <summary>Explicit list removals, including automatically discovered local packs.</summary>
+    public List<string> HiddenPackRelativePaths { get; set; } = [];
     public string SkinPath { get; set; } = "";
     public string SelectedWorldRelativePath { get; set; } = "";
 }

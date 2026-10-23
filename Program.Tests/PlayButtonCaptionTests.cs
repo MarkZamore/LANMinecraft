@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using Minecraft;
@@ -59,10 +59,12 @@ public sealed class PlayButtonCaptionTests
         var captions = new TheoryData<string>
         {
             "Играть",
+            "Включите Steam",
+            "Проверка сборок",
             "Игра запущена",
             "Не удалось подготовить сборку",
         };
-        var already = new HashSet<string>(StringComparer.Ordinal) { "Играть", "Игра запущена", "Не удалось подготовить сборку" };
+        var already = new HashSet<string>(StringComparer.Ordinal) { "Играть", "Включите Steam", "Проверка сборок", "Игра запущена", "Не удалось подготовить сборку" };
         // Several stages settle on the same words; each is measured once.
         foreach (var caption in Captions()) if (already.Add(caption)) captions.Add(caption);
         return captions;

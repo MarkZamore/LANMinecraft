@@ -8,6 +8,9 @@ public enum BuildRemovalAnswer
     /// <summary>Nothing goes.</summary>
     Keep,
 
+    /// <summary>Only launcher membership goes; all files and settings stay.</summary>
+    ListOnly,
+
     /// <summary>The build goes, the worlds stay where they are under Worlds.</summary>
     BuildOnly,
 
@@ -16,16 +19,12 @@ public enum BuildRemovalAnswer
 }
 
 /// <summary>
-/// The one question in the launcher whose answer cannot be taken back, so it is
-/// asked in full: the build by name, what will actually be deleted, and how
-/// many worlds are at stake - because "вместе с мирами" means nothing to
-/// somebody who has forgotten how many worlds that build has.
+/// Distinguishes hiding a build in the launcher from deleting its files and
+/// worlds, and names the data affected by the destructive choices.
 /// </summary>
 /// <remarks>
 /// It is a window of ours rather than a MessageBox for two reasons. The system
-/// box has no three-way form that is not Yes/No/Cancel, and three buttons that
-/// say what they do beat three that have to be explained in the text above
-/// them. And a MessageBox is a light system dialog dropped on a dark launcher.
+/// box cannot offer the four explicit choices with the launcher's theme.
 /// </remarks>
 public partial class BuildRemovalConfirmationDialog : Window
 {
@@ -33,9 +32,10 @@ public partial class BuildRemovalConfirmationDialog : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
-        QuestionText.Text = $"Вы точно хотите удалить {buildName} с компьютера?";
+        QuestionText.Text = $"Что сделать со сборкой {buildName}?";
         ExplanationText.Text =
-            "Будут удалены файлы сборки, её настройки и всё, что лаунчер для неё готовил." +
+            "«Убрать из списка» скроет сборку в лаунчере, сохранив её файлы, миры, Java и настройки. " +
+            "«Удалить сборку» удалит её файлы, настройки и всё, что лаунчер для неё готовил." +
             (java.Count > 0
                 // Worth a line: it is the largest single thing that goes, and a
                 // player who deletes a build to free space should be told they
@@ -45,8 +45,8 @@ public partial class BuildRemovalConfirmationDialog : Window
         WorldsText.Text = worlds switch
         {
             0 => "Миров у этой сборки нет. Сборку можно скачать заново в любой момент.",
-            _ => $"{Worlds(worlds)} этой сборки останутся в папке Worlds, если выбрать «Только сборку». " +
-                 "«Вместе с мирами» удалит и их, и вернуть их будет неоткуда."
+            _ => $"{Worlds(worlds)} этой сборки останутся в папке Worlds, если выбрать «Удалить сборку». " +
+                 "«Удалить сборку с мирами» удалит и их, и вернуть их будет неоткуда."
         };
         Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
     }
@@ -75,6 +75,8 @@ public partial class BuildRemovalConfirmationDialog : Window
     }
 
     private void BuildOnlyButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.BuildOnly);
+
+    private void ListOnlyButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.ListOnly);
 
     private void WithWorldsButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.WithWorlds);
 

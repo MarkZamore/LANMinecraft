@@ -113,7 +113,6 @@
         <Thickness x:Key="Gap.Left4Right1">16,0,4,0</Thickness>
         <Thickness x:Key="Gap.Canvas">24</Thickness>
         <Thickness x:Key="Gap.BodyScroll">0,0,-20,16</Thickness>
-        <Thickness x:Key="Gap.ScrollCanvas">0,0,-20,0</Thickness>
         <Thickness x:Key="Gap.Chevron">16,0,0,0</Thickness>
         <Thickness x:Key="Gap.CategoryIcon">0,0,16,0</Thickness>
         <Thickness x:Key="Pad.None">0</Thickness>
@@ -125,6 +124,7 @@
         <Thickness x:Key="Pad.FieldText">12,8</Thickness>
         <Thickness x:Key="Pad.ChatComposer">12</Thickness>
         <Thickness x:Key="Pad.Panel">16</Thickness>
+        <Thickness x:Key="Pad.LibraryCard">16,8</Thickness>
         <Thickness x:Key="Pad.CategoryHeader">16,8</Thickness>
         <Thickness x:Key="Pad.SectionContent">16,8,16,16</Thickness>
         <Thickness x:Key="Pad.Popup">4</Thickness>
@@ -150,10 +150,10 @@
         <sys:Double x:Key="Size.PopupMax">280</sys:Double>
         <sys:Double x:Key="Size.StatusLine">32</sys:Double>
         <sys:Double x:Key="Size.LibraryCardMin">240</sys:Double>
+        <sys:Double x:Key="Size.LibraryCardWidth">232</sys:Double>
         <GridLength x:Key="Size.LibraryActionGap">8</GridLength>
         <GridLength x:Key="Size.LibraryTreeIndent">16</GridLength>
         <sys:Double x:Key="Size.LibraryHero">240</sys:Double>
-        <sys:Double x:Key="Size.LibrarySummary">40</sys:Double>
         <Color x:Key="Color.LibraryImageShade">#80202020</Color>
         <LinearGradientBrush x:Key="Brush.LibraryHeroOverlay" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="{StaticResource Color.LibraryImageShade}" Offset="0"/>

@@ -1,10 +1,59 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Markup;
+using System.Windows.Media;
+using System.Xml.Linq;
 
 namespace Minecraft.Tests;
 
 public sealed class DialogLayoutTests
 {
+    [Theory]
+    [InlineData(1, 440)]
+    [InlineData(1.5, 440)]
+    [InlineData(2, 440)]
+    [InlineData(2, 280)]
+    public void BuildRemovalChoices_FitAndKeepCancelAsTheDefault(double dpi, double width)
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Program", "App.xaml")))
+                directory = directory.Parent;
+            Assert.NotNull(directory);
+            var app = XDocument.Load(Path.Combine(directory.FullName, "Program", "App.xaml"));
+            var markup = XDocument.Load(Path.Combine(directory.FullName, "Program", "BuildRemovalConfirmationDialog.xaml"));
+            var root = markup.Root!;
+            root.Attribute(XName.Get("Class", "http://schemas.microsoft.com/winfx/2006/xaml"))!.Remove();
+            foreach (var declaration in app.Root!.Attributes().Where(attribute => attribute.IsNamespaceDeclaration))
+                if (root.Attribute(declaration.Name) is null) root.Add(new XAttribute(declaration));
+            foreach (var handler in root.Descendants().Attributes("Click").ToArray()) handler.Remove();
+            root.AddFirst(new XElement(root.Name.Namespace + "Window.Resources", app.Root.Elements().Single().Elements()));
+            var dialog = (Window)XamlReader.Parse(markup.ToString());
+            var panel = (StackPanel)dialog.FindName("RemovalPanel");
+            VisualTreeHelper.SetRootDpi(dialog, new DpiScale(dpi, dpi));
+            VisualTreeHelper.SetRootDpi(panel, new DpiScale(dpi, dpi));
+            DialogScale.FitToClientArea(dialog, panel, new Size(width, 1000));
+            panel.Measure(new Size(width, double.PositiveInfinity));
+            panel.Arrange(new Rect(new Point(), panel.DesiredSize));
+            panel.UpdateLayout();
+            var names = new[] { "ListOnlyButton", "BuildOnlyButton", "WithWorldsButton", "KeepButton" };
+            var labels = new[] { "Убрать из списка", "Удалить сборку", "Удалить сборку с мирами", "Не хочу" };
+            for (var i = 0; i < names.Length; i++)
+            {
+                var button = (Button)dialog.FindName(names[i]);
+                Assert.Equal(labels[i], button.Content);
+                Assert.Equal(i == 3, button.IsDefault);
+                Assert.Equal(i == 3, button.IsCancel);
+                Assert.InRange(button.ActualWidth, 1, width);
+                button.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                Assert.True(button.DesiredSize.Width <= button.ActualWidth, $"The choice '{labels[i]}' is clipped.");
+            }
+            return true;
+        });
+    }
+
     [Theory]
     [InlineData(1800, 1020, 0, 0, 1368, 650)]
     [InlineData(-100, 1020, -1920, 0, -552, 650)]
@@ -49,7 +98,7 @@ public sealed class DialogLayoutTests
                 TextWrapping = TextWrapping.Wrap
             };
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            foreach (var label in new[] { "Только сборку", "Вместе с мирами", "Не хочу" })
+            foreach (var label in new[] { "Убрать из списка", "Удалить сборку", "Удалить сборку с мирами", "Не хочу" })
                 actions.Children.Add(new Button { Content = label, Width = 140, Height = 30 });
             var panel = new StackPanel { Width = 520, Margin = new Thickness(16) };
             panel.Children.Add(text);

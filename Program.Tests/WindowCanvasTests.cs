@@ -794,12 +794,20 @@ public sealed class WindowCanvasTests
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<TextBox>(window, "PlayerNameTextBox"), settings).Right, play);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, Bounds(Element<CenteredDropDown>(window, "BuildComboBox"), settings).Right, play);
         AssertWidthWithinOnePhysicalPixel(library.ActualWidth, Element<Button>(window, "ChangePlayerNameButton").ActualWidth, library);
-        AssertWidthWithinOnePhysicalPixel(skin.ActualWidth, Element<Button>(window, "ControlsPresetButton").ActualWidth, skin);
+        AssertWidthWithinOnePhysicalPixel(skin.ActualWidth * 4 / 3, Element<Button>(window, "ControlsPresetButton").ActualWidth, skin);
         AssertWidthWithinOnePhysicalPixel(play.ActualWidth, skin.ActualWidth + 8 + Element<Button>(window, "ControlsPresetButton").ActualWidth, play);
         var preset = Element<Button>(window, "ControlsPresetButton");
+        var presetText = VisualDescendants<TextBlock>(preset).Single(text => text.Text == "Пресет управления");
+        Assert.Equal(TextWrapping.NoWrap, presetText.TextWrapping);
+        Assert.True(presetText.DesiredSize.Width <= presetText.ActualWidth + 1);
+        Assert.True(presetText.ActualHeight <= (double)window.FindResource("Font.LineHeightBody") + 1);
         var transfer = Element<Expander>(window, "WorldTransferExpander");
         var header = (FrameworkElement)transfer.Template.FindName("HeaderToggle", transfer);
         Assert.Equal(header.ActualHeight, preset.ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, skin.ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, Element<TextBox>(window, "PlayerNameTextBox").ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, Element<Button>(window, "ChangePlayerNameButton").ActualHeight, 3);
+        Assert.Equal(header.ActualHeight, Element<TextBox>(window, "MemoryTextBox").ActualHeight, 3);
         Assert.Equal(header.ActualHeight, Element<CenteredDropDown>(window, "BuildComboBox").ActualHeight, 3);
         Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
             preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);
