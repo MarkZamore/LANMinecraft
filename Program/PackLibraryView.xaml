@@ -107,7 +107,7 @@
                             <StackPanel>
                                 <local:LibraryPreviewImage Source="{Binding Preview}" Stretch="UniformToFill"/>
                                 <StackPanel Margin="{DynamicResource Pad.LibraryCard}">
-                                    <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextWrapping="Wrap" ToolTip="{Binding Name}"/>
                                     <TextBlock Text="{Binding VersionLabel}" Foreground="{DynamicResource Brush.TextMuted}" FontSize="{DynamicResource Font.SizeCaption}" Margin="{DynamicResource Gap.Above1}"/>
                                     <TextBlock Text="{Binding Summary}" TextWrapping="Wrap"
                                         LineHeight="{DynamicResource Font.LineHeightBody}" Foreground="{DynamicResource Brush.TextMuted}" Margin="{DynamicResource Gap.Above1}"/>

@@ -69,8 +69,8 @@ Program/*_wpftmp.csproj
 # Test run artefacts
 Program.Tests/TestResults/
 
-# Worktrees and scratch the agent harness keeps beside the repository.
-.claude/
+# Generated local measurements, probe sessions and release staging.
+/artifacts/
 
 # Private Process Monitor captures and disposable audit installations
 /Program.Tests/PortabilityAudit/Artifacts/

@@ -20,3 +20,13 @@ Unavailable author pages use `{ "url": "https://…", "available": false }`. The
 launcher keeps the name as plain text; a future verified replacement can enable it
 through metadata without updating the executable. Check each pack library README
 for bundled-only components and unavailable source exceptions.
+
+The preparation audit on 2026-10-23 covered 1,637 entries and 1,177 distinct URLs:
+1,174 confirmed project URLs, one documented pack-source exception and two
+unavailable author addresses. The unavailable addresses affect six IDs:
+`ic2cre`, `advancedsolarpanels`, `energycontrol`, `gravitationsuite`,
+`iridiumsource`, `sexmod`; they remain non-clickable. Catalyst and Deployer Got
+Dizzy use their original author pack page because they have no independent
+project page. These are historical audit results, not a guarantee of current
+availability. The maintained mapping is each pack's `library/mod-pages.json`;
+raw hosting-API caches and one-off search scripts are not required at runtime.

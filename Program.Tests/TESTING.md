@@ -52,3 +52,17 @@ dotnet test Program.Tests -c Debug --filter FullyQualifiedName~MemorySizingTests
 Результаты сохраняются в игнорируемой папке `Program.Tests/TestResults`. После успешного обязательного прогона временный тестовый процесс и установки удаляются, TRX и краткая сводка остаются. При ошибке сохраняется материал для диагностики. Для уже собранных файлов можно использовать `-NoBuild -HostPath <актуальный PortabilityAuditHost.exe>`; процесс должен быть опубликован с той же текущей зависимостью лаунчера.
 
 Проверку самого валидатора можно выполнить без сборки и запуска тестов: `Test-Launcher.ps1 -ValidateTrx <результат.trx>`. Этот режим использует те же правила отказа, что и обязательный прогон.
+
+## Измерение интерфейса настоящими контролами
+
+```powershell
+dotnet run --project tools/MeasureLayout -- . current
+dotnet run --project tools/MeasureLayout -- . library --library-only
+dotnet run --project tools/MeasureRemoval
+```
+
+`MeasureLayout` — .NET 10/WPF, настоящие `CenteredDropDown`, системные шрифты и renderer лаунчера без запуска Steam и сетевого startup. Полный проход содержит 72 случая: три размера окна, DPI 100/125/150/200%, свёрнутые и раскрытые категории, длинный чат, библиотека, предпросмотр и моды. `--probe` оставляет один минимальный макет лаунчера, `--probe-library` — один макет библиотеки. JSON с геометрией, PNG и контрольные суммы сохраняются в `artifacts/MeasureLayout/<имя>`; снимки проверяются визуально вместе с результатами `WindowCanvasTests`. Полоса прокрутки, вынесенная в правый отступ, включена в снимок без масштабирования остального содержимого.
+
+`MeasureRemoval` отдельно измеряет настоящий диалог удаления при ширине 552/440/280 DIP и DPI 100/150/200%, сохраняя PNG в `artifacts/MeasureRemoval`. Он не вызывает операции удаления сборки. Диалоги дополнительно защищены `DialogLayoutTests`.
+
+Результаты локальных измерений, стендов и промежуточные EXE находятся только в игнорируемом `artifacts/`; повторно используемые исходники инструментов остаются в `tools/`. Устаревшие прототипы startup hooks, отдельных окон уведомлений и отменённого графического backend не заменяют действующие тесты `RenderingStartupTests`, `GameNoticeOverlayServiceTests`, `NoticeOverlayAgentTests` и OpenGL-стенд `tools/NoticeOverlayProbe`.

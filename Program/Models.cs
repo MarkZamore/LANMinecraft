@@ -387,6 +387,15 @@ public sealed class WorldViewModel
     public string DisplayName => $"{Name} ({BuildName})";
 }
 
+public static class PackDisplayName
+{
+    // Presentation only: the existing folder, membership and source identifiers stay unchanged.
+    public static string For(string relativePath, string name) =>
+        relativePath.Equals(PortablePackSyncService.DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase)
+            ? "LL8 Extended (сломан)"
+            : name;
+}
+
 public sealed class ClientBuildViewModel
 {
     public required string Name { get; init; }
