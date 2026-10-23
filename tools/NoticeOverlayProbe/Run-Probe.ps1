@@ -21,7 +21,7 @@ if (-not $Agent -and -not $WithoutAgent) { $Agent = Join-Path $Repository 'Progr
 if ($Agent) { $Agent = [IO.Path]::GetFullPath($Agent) }
 if ($Agent -and -not (Test-Path -LiteralPath $Agent)) { throw "Build the notification agent first: $Agent" }
 
-$artifacts = Join-Path $Repository '.claude\NoticeOverlayProbe'
+$artifacts = Join-Path $Repository 'artifacts\NoticeOverlayProbe'
 $libraries = Join-Path $Repository 'Minecraft\Launcher\Shared\libraries'
 $session = Join-Path $artifacts ('session-' + $Version + $(if ($Fullscreen) { '-fullscreen' } else { '' }))
 $probeTemp = Join-Path $session 'temp'

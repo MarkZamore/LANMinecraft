@@ -40,7 +40,7 @@ public class NoticeDialogTests
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CLAUDE.md")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Program", "Minecraft.csproj")))
         {
             directory = directory.Parent;
         }

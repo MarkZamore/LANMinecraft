@@ -263,6 +263,15 @@ public sealed class PackCatalogTests : IDisposable
     public void AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks()
     {
         var service = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
+        var ll8 = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
+        Assert.Equal("LL8 Extended (сломан)", ll8.Name);
+        Assert.Equal("LL8 Extended", ll8.Entry.RelativePath);
+        Assert.Equal("ll8-extended", ll8.Entry.Id);
+        Assert.Equal("LL8 Extended (сломан)", PackDisplayName.For("ll8 extended", "LL8 Extended"));
+        Assert.Equal("Other Pack", PackDisplayName.For("Other Pack", "Other Pack"));
+        // Both old disk caches and new remote metadata may carry the original name.
+        ll8.Content.Name = "LL8 Extended";
+        Assert.Equal("LL8 Extended (сломан)", ll8.Name);
         foreach (var pack in service.Packs)
         {
             Assert.DoesNotContain("\n", pack.Description, StringComparison.Ordinal);

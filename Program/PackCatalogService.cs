@@ -46,7 +46,7 @@ public sealed class CatalogPack
     public required CatalogSource Entry { get; init; }
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
-    public string Name => Content.Name;
+    public string Name => PackDisplayName.For(Entry.RelativePath, Content.Name);
     public string VersionLabel => "Minecraft " + Content.MinecraftVersion;
     public string Summary => Content.Summary;
     public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
