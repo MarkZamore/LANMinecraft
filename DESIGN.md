@@ -6,7 +6,7 @@
 
 ## Палитра
 
-Фон — приложенный пейзаж `Program/Assets/Background.png`, встроенный в EXE. Он заполняет окно без искажения пропорций, с центральным кадрированием и лёгким затемнением. Поверх него расположены полупрозрачные чёрные карточки и контролы без синего оттенка с тонкими рамками. Раскрытые списки используют непрозрачную поверхность ListPopup. Выбранный пункт списка сохраняет светлый текст и получает голубой индикатор слева. Корзина сборки остаётся прозрачной кнопкой без подложки и рамки: область нажатия шириной 32 DIP, высота 44 DIP, значок Segoe Fluent Icons U+E74D размером 16. Рекомендация памяти использует обычный LabelTextStyle (14 DIP) и одну строку, включая «Рекомендуется от 13 ГБ» при минимальной ширине окна. «Библиотека» и «Вернуться в лаунчер» повторяют размер и начертание текста кнопки запуска. Состояния клавиатурного фокуса обозначаются заливкой, без акцентных обводок.
+Фон — приложенный пейзаж `Program/Assets/Background.png`, встроенный в EXE. Он заполняет окно без искажения пропорций, с центральным кадрированием и лёгким затемнением. Поверх него расположены полупрозрачные чёрные карточки и контролы без синего оттенка с тонкими рамками. Поля, нейтральные кнопки, категории, карточки и шкалы прогресса используют одинаковое мягкое затемнение: чёрный с непрозрачностью 20% (Surface и ProgressTrack). Выключенное состояние сохраняет эту же подложку; hover и pressed усиливают затемнение. Зелёные акцентные кнопки слегка затемнены по RGB для сохранения читаемости чёрного текста. Шкала в покое не накладывает заливку поверх дорожки, даже при значении 100%. Раскрытые списки используют непрозрачную поверхность ListPopup. Выбранный пункт списка сохраняет светлый текст и получает голубой индикатор слева. Корзина сборки остаётся прозрачной кнопкой без подложки и рамки: область нажатия шириной 32 DIP, высота 44 DIP, значок Segoe Fluent Icons U+E74D размером 16. Рекомендация памяти использует обычный LabelTextStyle (14 DIP) и одну строку, включая «Рекомендуется от 13 ГБ» при минимальной ширине окна. «Библиотека» и «Вернуться в лаунчер» повторяют размер и начертание текста кнопки запуска. Состояния клавиатурного фокуса обозначаются заливкой, без акцентных обводок.
 
 WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3, обновляет соответствующие цвета и кисти в памяти при системных событиях. Значения акцента в таблице — резерв Fluent. «Играть» использует фиксированную полупрозрачную зелёную поверхность Primary, чёрный текст и прозрачную рамку; системный акцент его не перекрашивает. Hover и pressed осветляют или затемняют этот зелёный. Во время подготовки недоступность повторного клика не меняет зелёную поверхность и чёрный текст. Только реально выключенная кнопка получает SurfaceDisabled/TextDisabled. Обычные кнопки повторяют Surface/SurfaceHover/SurfacePressed; при нажатии прозрачность содержимого 0,7. Реестр и пользовательские файлы для оформления не записываются.
 
@@ -15,10 +15,10 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.Canvas`, `Brush.Canvas` | #202020 |
 | `Color.CanvasSecondary`, `Brush.CanvasSecondary` | #1C1C1C |
 | `Color.BackdropShade`, `Brush.BackdropShade` | #42000000 |
-| `Color.Surface`, `Brush.Surface` | #8C000000 |
-| `Color.SurfaceHover`, `Brush.SurfaceHover` | #A5101010 |
-| `Color.SurfacePressed`, `Brush.SurfacePressed` | #B0000000 |
-| `Color.SurfaceDisabled`, `Brush.SurfaceDisabled` | #8C000000 |
+| `Color.Surface`, `Brush.Surface` | #33000000 |
+| `Color.SurfaceHover`, `Brush.SurfaceHover` | #45000000 |
+| `Color.SurfacePressed`, `Brush.SurfacePressed` | #59000000 |
+| `Color.SurfaceDisabled`, `Brush.SurfaceDisabled` | #33000000 |
 | `Color.Popup`, `Brush.Popup` | #ED101010 |
 | `Color.ListPopup`, `Brush.ListPopup` | #101010, непрозрачные раскрытые списки |
 | `Color.Border`, `Brush.Border` | #12FFFFFF |
@@ -29,9 +29,9 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.TextMuted`, `Brush.TextMuted` | #C5FFFFFF |
 | `Color.TextDisabled`, `Brush.TextDisabled` | #5DFFFFFF |
 | `Color.Accent`, `Brush.Accent` | #60CDFF |
-| `Color.Primary`, `Brush.Primary` | #C74CC38A |
-| `Color.PrimaryHover`, `Brush.PrimaryHover` | #D65FD39A |
-| `Color.PrimaryPressed`, `Brush.PrimaryPressed` | #D63FAE79 |
+| `Color.Primary`, `Brush.Primary` | #C747B580 |
+| `Color.PrimaryHover`, `Brush.PrimaryHover` | #D658C48F |
+| `Color.PrimaryPressed`, `Brush.PrimaryPressed` | #D63AA272 |
 | `Color.AccentHover`, `Brush.AccentHover` | #56B8E5 |
 | `Color.AccentPressed`, `Brush.AccentPressed` | #4DA4CC |
 | `Color.AccentText`, `Brush.AccentText` | #99EBFF |
@@ -40,7 +40,7 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.CheckMark`, `Brush.CheckMark` | #172837 |
 | `Color.CategoryHover`, `Brush.CategoryHover` | #0CFFFFFF |
 | `Color.CategoryPressed`, `Brush.CategoryPressed` | #18000000 |
-| `Color.ProgressTrack`, `Brush.ProgressTrack` | #0FFFFFFF |
+| `Color.ProgressTrack`, `Brush.ProgressTrack` | #33000000 |
 | `Color.ProgressFill`, `Brush.ProgressFill` | #4D97AFC3 |
 | `Color.ScrollThumb`, `Brush.ScrollThumb` | #8BFFFFFF |
 | `Color.ScrollThumbHover`, `Brush.ScrollThumbHover` | #C5FFFFFF |
@@ -252,6 +252,6 @@ FluentScrollViewer резервирует 20 DIP для полосы: 4 DIP св
 
 Карточки каталога имеют одинаковую высоту, вычисленную по самой высокой карточке при фиксированной ширине `Size.LibraryCardWidth` (240 DIP), без обрезки описания. При минимальном размере окна в ряд помещаются три карточки; их размеры сохраняются при расширении окна. В третьей строке настроек ширина «Выбрать скин»/«Пресет управления» распределена 3:4 с промежутком 8 DIP; пресет отображается в одну строку уже при минимальном размере.
 
-Кнопки с акцентной заливкой используют прежний зелёный RGB #4CC38A с текущей полупрозрачностью; hover #5FD39A, pressed #3FAE79. В библиотеке нет заголовка над сеткой. LibraryAddButtonStyle сохраняет обычный шрифт 14 Regular, рамку и центрирование кнопки «Убрать», добавляя зелёную заливку; обе кнопки имеют одинаковую ширину 96 DIP и минимальную высоту 44 DIP и отступ Pad.Wide.
+Кнопки с акцентной заливкой используют слегка затемнённый зелёный RGB #47B580 с текущей полупрозрачностью; hover #58C48F, pressed #3AA272. В библиотеке нет заголовка над сеткой. LibraryAddButtonStyle сохраняет обычный шрифт 14 Regular, рамку и центрирование кнопки «Убрать», добавляя зелёную заливку; обе кнопки имеют одинаковую ширину 96 DIP и минимальную высоту 44 DIP и отступ Pad.Wide.
 
 Карточки сборок используют общий Radius.Control (8 DIP). Внешний контур рисует стандартный Border без обрезки рамки. Только содержимое, включая игровое превью, обрезается по внутренней кривой с учётом половины толщины рамки; обрезка обновляется при изменении радиуса без изменения размера. Неиспользованная ширина сетки остаётся справа; карточки не сдвигаются к центру при увеличении окна. Раскрытые списки остаются непрозрачными, с нейтральным тёмным фоном.

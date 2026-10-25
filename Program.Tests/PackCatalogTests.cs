@@ -292,7 +292,7 @@ public sealed class PackCatalogTests : IDisposable
             var addPadding = membership.Padding;
             var addBorder = membership.BorderThickness;
             var green = Assert.IsType<System.Windows.Media.SolidColorBrush>(membership.Background).Color;
-            Assert.Equal((0x4C, 0xC3, 0x8A), ((int)green.R, (int)green.G, (int)green.B));
+            Assert.Equal((0x47, 0xB5, 0x80), ((int)green.R, (int)green.G, (int)green.B));
             view.IsAdded = _ => true;
             view.RefreshMembership();
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));

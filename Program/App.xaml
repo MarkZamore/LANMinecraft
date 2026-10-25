@@ -8,10 +8,10 @@
         <Color x:Key="Color.Canvas">#202020</Color>
         <Color x:Key="Color.CanvasSecondary">#1C1C1C</Color>
         <Color x:Key="Color.BackdropShade">#42000000</Color>
-        <Color x:Key="Color.Surface">#8C000000</Color>
-        <Color x:Key="Color.SurfaceHover">#A5101010</Color>
-        <Color x:Key="Color.SurfacePressed">#B0000000</Color>
-        <Color x:Key="Color.SurfaceDisabled">#8C000000</Color>
+        <Color x:Key="Color.Surface">#33000000</Color>
+        <Color x:Key="Color.SurfaceHover">#45000000</Color>
+        <Color x:Key="Color.SurfacePressed">#59000000</Color>
+        <Color x:Key="Color.SurfaceDisabled">#33000000</Color>
         <Color x:Key="Color.Popup">#ED101010</Color>
         <Color x:Key="Color.ListPopup">#101010</Color>
         <Color x:Key="Color.Border">#12FFFFFF</Color>
@@ -22,9 +22,9 @@
         <Color x:Key="Color.TextMuted">#C5FFFFFF</Color>
         <Color x:Key="Color.TextDisabled">#5DFFFFFF</Color>
         <Color x:Key="Color.Accent">#60CDFF</Color>
-        <Color x:Key="Color.Primary">#C74CC38A</Color>
-        <Color x:Key="Color.PrimaryHover">#D65FD39A</Color>
-        <Color x:Key="Color.PrimaryPressed">#D63FAE79</Color>
+        <Color x:Key="Color.Primary">#C747B580</Color>
+        <Color x:Key="Color.PrimaryHover">#D658C48F</Color>
+        <Color x:Key="Color.PrimaryPressed">#D63AA272</Color>
         <Color x:Key="Color.AccentHover">#56B8E5</Color>
         <Color x:Key="Color.AccentPressed">#4DA4CC</Color>
         <Color x:Key="Color.AccentText">#99EBFF</Color>
@@ -33,7 +33,7 @@
         <Color x:Key="Color.CheckMark">#172837</Color>
         <Color x:Key="Color.CategoryHover">#0CFFFFFF</Color>
         <Color x:Key="Color.CategoryPressed">#18000000</Color>
-        <Color x:Key="Color.ProgressTrack">#0FFFFFFF</Color>
+        <Color x:Key="Color.ProgressTrack">#33000000</Color>
         <Color x:Key="Color.ProgressFill">#4D97AFC3</Color>
         <Color x:Key="Color.ScrollThumb">#8BFFFFFF</Color>
         <Color x:Key="Color.ScrollThumbHover">#C5FFFFFF</Color>
