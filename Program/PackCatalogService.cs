@@ -373,7 +373,7 @@ public sealed class PackCatalogService
         KeyNotFoundException or FormatException or OverflowException or UnauthorizedAccessException;
     public static IEnumerable<CatalogSource> SeedSources()
     {
-        string[] ids = ["ll8-extended", "all-the-mods-10", "terrafirma-rebirth", "minecraft-26-2"];
+        string[] ids = ["ll8-extended", "all-the-mods-10", "terrafirma-rebirth", "minecraft-26-2", "all-the-mods-9"];
         return PortablePackSyncService.KnownPacks.Select((p, i) => new CatalogSource(ids[i], p.RelativePath, p.Source));
     }
     private sealed class CatalogIndex
