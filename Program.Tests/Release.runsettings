@@ -36,6 +36,7 @@
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.ReturningFromLibrary_PreservesAutomaticScrollbarVisibility|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.FirstInstall_DownloadsFullTree_ManifestWrittenLast_MarkerAndStateCreated|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.UpToDate_OnlyManifestRequested_NoFileRewritten|
+      FullyQualifiedName=Minecraft.Tests.ControlsPresetRemoteSyncTests.GitHubPreset_AddChangeRemoveAndRestore_UpdatesAvailabilityWithoutChangingPlayerOptions|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.AssetShaMismatch_NothingApplied|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.InterruptedApply_StagingSwept_NextSyncConverges|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.RedirectToForeignHost_Rejected|
