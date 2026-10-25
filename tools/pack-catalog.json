@@ -36,6 +36,15 @@
         "repo": "Minecraft-26.2",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "all-the-mods-9",
+      "relativePath": "All The Mods 9",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-9",
+        "tag": "pack-latest"
+      }
     }
   ]
 }

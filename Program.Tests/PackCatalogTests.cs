@@ -108,7 +108,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Null(service.Find("My Custom Pack"));
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource("My Custom Pack"));
         Assert.Contains("revision", service.SessionManifest(host.Source), StringComparison.Ordinal);
@@ -122,7 +122,7 @@ public sealed class PackCatalogTests : IDisposable
         await service.RefreshOnceAsync(new CancellationToken(true));
         var count = host.Requests.Count;
         Assert.True(service.IsReady);
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         await service.RefreshOnceAsync();
         Assert.Equal(count, host.Requests.Count);
     }
@@ -166,7 +166,7 @@ public sealed class PackCatalogTests : IDisposable
         using var host = new CatalogHost { InvalidIndex = true };
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         Assert.DoesNotContain(service.Sources, p => p.RelativePath.Contains("..", StringComparison.Ordinal));
         Assert.False(PackCatalogService.ValidFolder("../escape"));
     }
@@ -238,7 +238,7 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new Thickness(0, 0, -20, 0), list.Margin);
             AssertLibraryScrollGutter(list);
             var cards = panel.Children.Cast<FrameworkElement>().ToArray();
-            Assert.Equal(4, cards.Length);
+            Assert.Equal(5, cards.Length);
             Assert.All(cards, card =>
             {
                 Assert.Equal(240, card.ActualWidth, 3);
@@ -328,6 +328,17 @@ public sealed class PackCatalogTests : IDisposable
     public void AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks()
     {
         var service = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
+        var atm9 = Assert.IsType<CatalogPack>(service.Find("All The Mods 9"));
+        Assert.Equal("all-the-mods-9", atm9.Entry.Id);
+        Assert.Equal(new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest"), atm9.Entry.Source);
+        Assert.Equal("1.20.1", atm9.Content.MinecraftVersion);
+        Assert.Contains(atm9.Content.Mods, mod => mod.Id == "allthemodium");
+        Assert.Contains(atm9.Content.Mods, mod => mod.Id == "mekanism");
+        using (var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.all-the-mods-9.zip")!)
+        using (var archive = new ZipArchive(stream))
+        using (var metadata = archive.GetEntry("library.json")!.Open())
+        using (var description = JsonDocument.Parse(metadata))
+            Assert.Equal("forge", description.RootElement.GetProperty("loader").GetString()!.ToLowerInvariant());
         var ll8 = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
         Assert.Equal("LL8 Extended (сломан)", ll8.Name);
         Assert.Equal("LL8 Extended", ll8.Entry.RelativePath);
@@ -401,7 +412,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Null(service.Find(CatalogHost.Folder));
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
     }
 
     private static IEnumerable<T> VisualChildren<T>(DependencyObject parent) where T : DependencyObject

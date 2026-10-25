@@ -76,6 +76,7 @@ public sealed partial class PortablePackSyncService
         // of its own: the launcher fetches Mojang's for the version its manifest
         // names, so the whole download is one megabyte.
         new("Minecraft 26.2", new PackSyncSource("MarkZamore", "Minecraft-26.2", "pack-latest")),
+        new("All The Mods 9", new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest")),
     ]);
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
