@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private PortablePackSyncService? _packSync;
     private PackCatalogService? _catalog;
     private Task? _catalogStartup;
+    private Task _launcherDataRefresh = Task.CompletedTask;
     private bool _libraryVisible;
     private readonly Dictionary<UIElement, Visibility> _launcherVisibility = [];
     private PackAutoManifestService? _autoManifest;
@@ -196,6 +197,7 @@ public partial class MainWindow : Window
             // token this method goes on to use.
             if (_shutdownStarted) return;
             _catalogStartup = InitializeCatalogAsync();
+            _ = RefreshLauncherDataAsync();
 
             LoadChangelog();
             ShowSidePanel(news: false);
@@ -364,6 +366,7 @@ public partial class MainWindow : Window
         _lifetimeCts.Cancel();
         try
         {
+            await _launcherDataRefresh;
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
@@ -575,6 +578,7 @@ public partial class MainWindow : Window
             _settingsService.Save(_settings);
             RefreshPackMemory();
             RefreshControlsPresetStatus();
+            _ = RefreshLauncherDataAsync();
             _ = RefreshPackHashAndNetworkingAsync();
         }
     }
@@ -1348,6 +1352,9 @@ public partial class MainWindow : Window
             PackSyncResult syncResult;
             try
             {
+                // Metadata refresh and a full sync share the pack directory.
+                // Finish any earlier selection request before the full sync writes.
+                await _launcherDataRefresh;
                 syncResult = await RequirePackSync().SyncAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
             }
             catch
@@ -1469,6 +1476,36 @@ public partial class MainWindow : Window
     /// can offer a layout published minutes ago instead of claiming the old one
     /// is applied until somebody presses Play.
     /// </summary>
+    private Task RefreshLauncherDataAsync()
+    {
+        if (_catalogStartup is null || _packSync is null || _settings is null || _shutdownStarted)
+            return Task.CompletedTask;
+        var pack = _settings.ClientRelativePath;
+        var previous = _launcherDataRefresh;
+        _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
+        return _launcherDataRefresh;
+    }
+
+    private async Task RefreshLauncherDataCoreAsync(string pack, Task previous)
+    {
+        try
+        {
+            await previous;
+            if (_catalogStartup is not null) await _catalogStartup;
+            if (_shutdownStarted || _minecraftPreparing || _packSync is null) return;
+            if (await _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token) && !_shutdownStarted)
+            {
+                RefreshControlsPresetStatus();
+                RefreshUi();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _logger?.Warn("The pack's launcher data could not be refreshed: " + ex.Message);
+        }
+    }
+
     /// <summary>
     /// Works out whether the pack's controls preset is already in the instance's
     /// options. Called on every tick, so it reads the two files only when one of
@@ -1514,9 +1551,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ControlsPresetButton_Click(object sender, RoutedEventArgs e)
+    private async void ControlsPresetButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftRunning || _controlsPreset is null) return;
+        if (_minecraftRunning || _minecraftPreparing || _controlsPreset is null) return;
+        await _launcherDataRefresh;
+        if (_shutdownStarted || _minecraftRunning || _minecraftPreparing) return;
+        RefreshControlsPresetStatus();
+        if (!_controlsPresetStatus.HasPreset || _controlsPresetStatus.IsApplied) return;
         var directories = ResolveSelectedBuildDirectories();
         if (directories is null) return;
 
@@ -2318,6 +2359,8 @@ public partial class MainWindow : Window
         RefreshPackMemory();
         InitializeRuntimeProgressUi();
         RefreshControlsPresetStatus();
+        await RefreshLauncherDataAsync();
+        if (_shutdownStarted) return;
         await RefreshPackHashAsync();
         if (_startupComplete) await StartNetworkingAsync();
         SetState($"Build selected: {build.Name}");
@@ -3137,7 +3180,8 @@ public partial class MainWindow : Window
         { _logger?.Warn($"Could not open mod project page: {ex.Message}"); }
     }
 
-    private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive && _catalog?.IsReady == true;
+    private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive &&
+        _launcherDataRefresh.IsCompleted && _catalog?.IsReady == true;
 
     private async Task InitializeCatalogAsync()
     {

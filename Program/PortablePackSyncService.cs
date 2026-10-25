@@ -234,7 +234,6 @@ public sealed partial class PortablePackSyncService
     /// failure is silent: this is a convenience, and the full sync at launch
     /// remains the thing that guarantees the pack.
     /// </summary>
-    /// <returns>True when a file was replaced, so the caller can look again.</returns>
     /// <summary>
     /// What a pack weighs, read from the manifest it publishes rather than from
     /// a folder - which is the only way to answer for a pack nobody has
@@ -281,6 +280,12 @@ public sealed partial class PortablePackSyncService
         }
     }
 
+    /// <summary>
+    /// Refreshes the small launcher files from the verified GitHub snapshot of
+    /// this session. An author removing the preset also removes the local copy;
+    /// the player's options.txt and unrelated launcher files are never deleted.
+    /// </summary>
+    /// <returns>True when launcher data was replaced or the preset was removed.</returns>
     public async Task<bool> RefreshLauncherDataAsync(string packRelativePath, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
@@ -299,7 +304,11 @@ public sealed partial class PortablePackSyncService
                 .Where(file => file.Path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal))
                 .Where(file => !HasFileWithHash(packDir, file))
                 .ToList();
-            if (wanted.Count == 0) return false;
+            var presetPath = Path.Combine(packDir, ControlsPresetService.PresetRelativePath.Replace('/', Path.DirectorySeparatorChar));
+            var removePreset = !manifest.Files.Any(file => string.Equals(
+                file.Path, ControlsPresetService.PresetRelativePath, StringComparison.OrdinalIgnoreCase)) &&
+                File.Exists(presetPath);
+            if (wanted.Count == 0 && !removePreset) return false;
 
             var assets = wanted
                 .Select(file => manifest.AssetByCoveredPath[file.Path])
@@ -331,7 +340,12 @@ public sealed partial class PortablePackSyncService
                 var staged = ResolveStagedSource(manifest.AssetByCoveredPath[file.Path], stageAssets, stageExtract, file.Path);
                 PlaceStagedFile(packDir, file.Path, staged);
             }
-            _logger.Info($"Pack {packRelativePath}: {wanted.Count} launcher file(s) refreshed ahead of a full sync.");
+            // Deletion is applied only after every replacement has been downloaded
+            // and verified, so an unavailable or damaged release keeps the preset.
+            token.ThrowIfCancellationRequested();
+            if (removePreset) File.Delete(presetPath);
+            _logger.Info($"Pack {packRelativePath}: {wanted.Count} launcher file(s) refreshed, " +
+                         $"{(removePreset ? 1 : 0)} preset(s) removed ahead of a full sync.");
             return true;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
