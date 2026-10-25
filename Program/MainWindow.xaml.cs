@@ -3020,12 +3020,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// A bar at rest shows its track and nothing else; a bar at work fills. Both
-    /// brushes are tokens of the design system.
+    /// A bar at rest shows only its track, even at 100%; a bar at work fills.
+    /// Avoid compositing a second copy of the translucent track over itself.
     /// </summary>
     private void SetProgressActivity(ProgressBar progressBar, bool active)
     {
-        progressBar.Foreground = (Brush)FindResource(active ? "Brush.ProgressFill" : "Brush.ProgressTrack");
+        progressBar.Foreground = active ? (Brush)FindResource("Brush.ProgressFill") : Brushes.Transparent;
     }
 
     private void RefreshUi()
