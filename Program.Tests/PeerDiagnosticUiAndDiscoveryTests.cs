@@ -509,11 +509,13 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "MemoryEstimateText");
         Assert.Equal((1, 2), Cell(delete));
         Assert.Equal("0", (string?)delete.Attribute("Grid.Column"));
-        Assert.Equal("1", (string?)estimate.Attribute("Grid.Column"));
+        Assert.Equal("MemoryEstimateButton", (string?)estimate.Parent!.Attribute(x + "Name"));
+        Assert.Equal("MemoryEstimateButton_Click", (string?)estimate.Parent.Attribute("Click"));
+        Assert.Equal("1", (string?)estimate.Parent.Attribute("Grid.Column"));
         Assert.Equal("2", (string?)button.Attribute("Grid.Column"));
         // Use the same spacing as the other action rows.
         Assert.Null(delete.Attribute("Margin"));
-        Assert.Equal("{StaticResource Gap.Left2}", (string?)estimate.Attribute("Margin"));
+        Assert.Equal("{StaticResource Gap.Left2}", (string?)estimate.Parent!.Attribute("Margin"));
         Assert.Null(button.Attribute("Margin"));
         Assert.Equal("{StaticResource IconActionButton}", (string?)delete.Attribute("Style"));
         Assert.Null(delete.Attribute("Width"));

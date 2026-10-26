@@ -2857,8 +2857,19 @@ public partial class MainWindow : Window
     /// than a stale number: the last pack's answer standing under a new build's
     /// name is worse than no answer at all.
     /// </summary>
+    private int? _recommendedMemoryGb;
+
+    private void MemoryEstimateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_recommendedMemoryGb is not { } memoryGb || !MemoryTextBox.IsEnabled ||
+            _settings is null || _settingsService is null || _memoryEstimateWait?.IsEnabled == true) return;
+        SetMemoryGb(memoryGb, chosenByPlayer: true);
+    }
+
     private void StartMemoryEstimateWait()
     {
+        _recommendedMemoryGb = null;
+        MemoryEstimateButton.IsEnabled = false;
         _memoryEstimateWaitStep = 0;
         MemoryEstimateText.Text = "от .";
         MemoryEstimateText.ToolTip = "Расчёт памяти для выбранной сборки.";
@@ -2953,8 +2964,10 @@ public partial class MainWindow : Window
     {
         var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
             PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
+        _recommendedMemoryGb = estimateGb;
+        MemoryEstimateButton.IsEnabled = MemoryTextBox.IsEnabled && _memoryEstimateWait?.IsEnabled != true;
         MemoryEstimateText.Text = $"Рекомендуется от {estimateGb} ГБ";
-        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки.";
+        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы выделить эту память.";
     }
 
     /// <summary>
@@ -3160,6 +3173,7 @@ public partial class MainWindow : Window
         // already running.
         TransferProgressArea.IsEnabled = _transferActive || canTransfer;
         MemoryTextBox.IsEnabled = settingsEnabled;
+        MemoryEstimateButton.IsEnabled = settingsEnabled && _recommendedMemoryGb.HasValue && _memoryEstimateWait?.IsEnabled != true;
         // Updating is the one thing in this window that does not need to know who
         // the player is: it replaces this program and touches nothing a world or a
         // friend list depends on. Steam being down is often the very reason a
