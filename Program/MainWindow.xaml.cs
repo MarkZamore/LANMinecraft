@@ -1561,7 +1561,7 @@ public partial class MainWindow : Window
         var directories = ResolveSelectedBuildDirectories();
         if (directories is null) return;
 
-        if (!ControlsPresetConfirmationDialog.Ask(this, _controlsPresetStatus.FirstDifference)) return;
+        if (!ControlsPresetConfirmationDialog.Ask(this)) return;
 
         try
         {

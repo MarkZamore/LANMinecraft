@@ -1,4 +1,4 @@
-﻿<Window x:Class="Minecraft.ControlsPresetConfirmationDialog"
+<Window x:Class="Minecraft.ControlsPresetConfirmationDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Пресет управления"
@@ -14,12 +14,6 @@
                    FontSize="{StaticResource Font.SizeHeading}"
                    Style="{StaticResource EmphasisTextStyle}"
                    TextWrapping="Wrap"/>
-        <TextBlock Margin="{StaticResource Gap.Above2}"
-                   TextWrapping="Wrap"
-                   Text="Раскладка сборки разведена так, что моды не спорят за одни и те же клавиши."/>
-        <TextBlock x:Name="DifferenceText"
-                   Margin="{StaticResource Gap.Above2}"
-                   Style="{StaticResource ParagraphTextStyle}"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
             <Button x:Name="ReplaceButton" Content="Заменить"
                     Padding="{StaticResource Pad.Wide}" Click="ReplaceButton_Click"/>
