@@ -173,7 +173,7 @@ public partial class MainWindow : Window
             _packHash = new PackHashService(_paths);
             _catalog = new PackCatalogService(_paths, _logger);
             _packSync = new PortablePackSyncService(_paths, _logger) { Catalog = _catalog };
-            LibraryView.SetCatalog(_catalog.Packs);
+            RefreshLibraryCatalog();
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
@@ -3202,10 +3202,16 @@ public partial class MainWindow : Window
         if (_catalog is null) return;
         await _catalog.RefreshOnceAsync(_lifetimeCts.Token);
         if (_shutdownStarted) return;
-        LibraryView.SetCatalog(_catalog.Packs);
+        RefreshLibraryCatalog();
         RefreshBuilds();
         RefreshPackMemory();
         RefreshUi();
+    }
+
+    private void RefreshLibraryCatalog()
+    {
+        if (_catalog is not null && _settings is not null)
+            LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings));
     }
 
     private void LibraryButton_Click(object sender, RoutedEventArgs e) => ShowLibrary(true);
@@ -3216,6 +3222,7 @@ public partial class MainWindow : Window
         _libraryVisible = visible;
         if (visible)
         {
+            RefreshLibraryCatalog();
             LibraryView.ShowCatalog();
             LibraryView.Visibility = Visibility.Visible;
             HideLauncherVisibility();
@@ -3269,6 +3276,7 @@ public partial class MainWindow : Window
             RefreshBuilds();
             RefreshUi();
         }
+        RefreshLibraryCatalog();
     }
 
     private void RefreshTransferStatus()

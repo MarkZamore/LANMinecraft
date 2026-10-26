@@ -134,6 +134,7 @@ public sealed class PackCatalogService
                     var source = JsonSerializer.Deserialize<PackSyncSource>(File.ReadAllText(marker), JsonOptions);
                     if (source is null || !ValidSource(source)) continue;
                     var relative = Path.GetFileName(directory);
+                    if (IsRetiredPack(relative)) continue;
                     // Preserve legacy default-repository repair.
                     if (relative.Equals(PortablePackSyncService.DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase) &&
                         PortablePackSyncService.IsLegacyDefaultSource(source)) continue;
@@ -147,6 +148,12 @@ public sealed class PackCatalogService
     }
 
     public bool IsReady { get; private set; }
+    public bool HasOnlineCatalog { get; private set; }
+    public IReadOnlyList<CatalogPack> PacksForDisplay(AppSettings settings)
+    {
+        lock (_gate)
+            return Packs.Where(pack => HasOnlineCatalog || PackMembership.Contains(settings, pack.Entry.RelativePath)).ToArray();
+    }
     public IReadOnlyList<CatalogPack> Packs { get { lock (_gate) return _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray(); } }
     public IReadOnlyList<CatalogSource> Sources { get { lock (_gate) return _sources.ToArray(); } }
     public PackSyncSource? SourceFor(string relativePath) { lock (_gate) return _sources.FirstOrDefault(s =>
@@ -181,6 +188,7 @@ public sealed class PackCatalogService
                 var indexBytes = await ReadBoundedAsync(IndexUri, 256 * 1024, ct).ConfigureAwait(false);
                 var index = Encoding.UTF8.GetString(indexBytes);
                 var entries = ParseIndex(index);
+                lock (_gate) HasOnlineCatalog = true;
                 // Source changes become active only after that pack's manifest and bundle validate.
                 candidates = entries.Concat(candidates.Where(old => !entries.Any(next =>
                     next.RelativePath.Equals(old.RelativePath, StringComparison.OrdinalIgnoreCase)))).ToArray();
@@ -368,8 +376,13 @@ public sealed class PackCatalogService
                 entry.Id.Length > 100 || !ids.Add(entry.Id) || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
                 throw new InvalidDataException("Invalid/duplicate library source.");
         }
-        return index.Packs;
+        // Old verified disk indices can still name a withdrawn repository.
+        // Keep their other entries, including packs discovered only on GitHub.
+        return index.Packs.Where(entry => !IsRetiredPack(entry.RelativePath)).ToList();
     }
+
+    internal static bool IsRetiredPack(string path) =>
+        string.Equals(path, "LL8 Extended", StringComparison.OrdinalIgnoreCase);
 
     public static bool ValidFolder(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 &&
         value is not ("." or "..") && value == value.Trim() && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && !value.EndsWith('.');
@@ -390,7 +403,7 @@ public sealed class PackCatalogService
         KeyNotFoundException or FormatException or OverflowException or UnauthorizedAccessException;
     public static IEnumerable<CatalogSource> SeedSources()
     {
-        string[] ids = ["ll8-extended", "all-the-mods-10", "terrafirma-rebirth", "minecraft-26-2", "all-the-mods-9"];
+        string[] ids = ["all-the-mods-10", "terrafirma-rebirth", "minecraft-26-2", "all-the-mods-9"];
         return PortablePackSyncService.KnownPacks.Select((p, i) => new CatalogSource(ids[i], p.RelativePath, p.Source));
     }
     private sealed class CatalogIndex

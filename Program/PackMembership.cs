@@ -6,7 +6,9 @@ public static class PackMembership
 {
     public static void Initialize(AppSettings settings, AppPaths paths, bool fresh = false)
     {
+        // Withdrawal hides the local installation but never removes it or its worlds.
         settings.HiddenPackRelativePaths = (settings.HiddenPackRelativePaths ?? [])
+            .Concat(["LL8 Extended"])
             .Where(PackCatalogService.ValidFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (settings.AddedPackRelativePaths is null)
         {
@@ -34,6 +36,7 @@ public static class PackMembership
     public static bool Add(AppSettings settings, string path)
     {
         if (!PackCatalogService.ValidFolder(path)) throw new ArgumentException("Invalid pack folder.", nameof(path));
+        if (PackCatalogService.IsRetiredPack(path)) return false;
         settings.AddedPackRelativePaths ??= [];
         var unhidden = settings.HiddenPackRelativePaths?.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase)) > 0;
         if (Contains(settings, path)) return unhidden;
