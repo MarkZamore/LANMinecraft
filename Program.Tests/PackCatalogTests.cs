@@ -37,7 +37,22 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Empty(old.AddedPackRelativePaths);
         var defaults = new AppSettings();
         PackMembership.Initialize(defaults, new AppPaths(Path.Combine(_root, "Fresh")), fresh: true);
-        Assert.Equal(new[] { "LL8 Extended" }, defaults.AddedPackRelativePaths);
+        Assert.Equal(new[] { "All The Mods 10" }, defaults.AddedPackRelativePaths);
+
+        var oldInstall = Path.Combine(_paths.Packs, "LL8 Extended", "mods", "keep.jar");
+        var oldWorld = Path.Combine(_paths.Worlds, "LL8 Extended", "World", "level.dat");
+        Directory.CreateDirectory(Path.GetDirectoryName(oldInstall)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(oldWorld)!);
+        File.WriteAllText(oldInstall, "local installation");
+        File.WriteAllText(oldWorld, "local world");
+        var retired = new AppSettings { ClientRelativePath = "LL8 Extended", AddedPackRelativePaths = ["LL8 Extended"] };
+        PackMembership.Initialize(retired, _paths);
+        Assert.Empty(retired.AddedPackRelativePaths!);
+        Assert.True(PackMembership.IsHidden(retired, "LL8 Extended"));
+        Assert.False(PackMembership.Add(retired, "LL8 Extended"));
+        Assert.False(PackMembership.ShouldListInstalled(retired, "LL8 Extended", isCatalogPack: false));
+        Assert.Equal("local installation", File.ReadAllText(oldInstall));
+        Assert.Equal("local world", File.ReadAllText(oldWorld));
     }
 
     [Fact]
@@ -47,10 +62,10 @@ public sealed class PackCatalogTests : IDisposable
         var java = Path.Combine(_paths.JavaRuntimes, "17", "release");
         Directory.CreateDirectory(Path.GetDirectoryName(java)!);
         File.WriteAllText(java, "keep this Java runtime");
-        Assert.True(PackMembership.Add(settings, "LL8 Extended"));
-        Assert.False(PackMembership.Add(settings, "ll8 extended"));
-        Assert.False(Directory.Exists(Path.Combine(_paths.Packs, "LL8 Extended")));
-        Assert.True(PackMembership.Remove(settings, "LL8 Extended"));
+        Assert.True(PackMembership.Add(settings, "All The Mods 10"));
+        Assert.False(PackMembership.Add(settings, "all the mods 10"));
+        Assert.False(Directory.Exists(Path.Combine(_paths.Packs, "All The Mods 10")));
+        Assert.True(PackMembership.Remove(settings, "All The Mods 10"));
         var service = new SettingsService(_paths);
         service.Save(settings);
         Assert.Empty(service.Load().AddedPackRelativePaths!);
@@ -67,10 +82,16 @@ public sealed class PackCatalogTests : IDisposable
         ];
         using var host = new CatalogHost(mods: initialMods);
         var service = new PackCatalogService(_paths, _logger, host.Client);
+        var settings = new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] };
+        Assert.False(service.HasOnlineCatalog);
+        Assert.Equal(PortablePackSyncService.DefaultPackRelativePath, Assert.Single(service.PacksForDisplay(settings)).Entry.RelativePath);
         var task = service.RefreshOnceAsync();
         Assert.Same(task, service.RefreshOnceAsync());
         await task;
         Assert.True(service.IsReady);
+        Assert.True(service.HasOnlineCatalog);
+        Assert.Contains(service.PacksForDisplay(settings), p => p.Entry.RelativePath == CatalogHost.Folder);
+        Assert.False(PackMembership.Contains(settings, CatalogHost.Folder));
         Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
         var originalPack = service.Find(CatalogHost.Folder)!;
         Assert.Equal(2, originalPack.ModCount);
@@ -100,6 +121,21 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
         Assert.Equal("Minecraft 26.2 (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
         Assert.Equal(2, originalPack.ModCount);
+
+        // Discovery persists without an EXE update, but offline presentation
+        // stays limited to explicitly added packs from that verified cache.
+        using var offlineHttp = new HttpClient(new OfflineHandler());
+        var offlineStartup = new PackCatalogService(_paths, _logger, offlineHttp);
+        await offlineStartup.RefreshOnceAsync();
+        Assert.False(offlineStartup.HasOnlineCatalog);
+        Assert.Equal(PortablePackSyncService.DefaultPackRelativePath,
+            Assert.Single(offlineStartup.PacksForDisplay(settings)).Entry.RelativePath);
+        Assert.NotNull(offlineStartup.Find(CatalogHost.Folder));
+        Assert.True(PackMembership.Add(settings, CatalogHost.Folder));
+        Assert.Equal(2, offlineStartup.PacksForDisplay(settings).Count);
+        Assert.Contains(offlineStartup.PacksForDisplay(settings), pack => pack.Entry.RelativePath == CatalogHost.Folder);
+        settings.AddedPackRelativePaths!.Clear();
+        Assert.Empty(offlineStartup.PacksForDisplay(settings));
     }
 
     [Fact]
@@ -130,7 +166,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Null(service.Find("My Custom Pack"));
-        Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(4, service.Packs.Count);
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource("My Custom Pack"));
         Assert.Contains("revision", service.SessionManifest(host.Source), StringComparison.Ordinal);
@@ -144,7 +180,7 @@ public sealed class PackCatalogTests : IDisposable
         await service.RefreshOnceAsync(new CancellationToken(true));
         var count = host.Requests.Count;
         Assert.True(service.IsReady);
-        Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(4, service.Packs.Count);
         await service.RefreshOnceAsync();
         Assert.Equal(count, host.Requests.Count);
     }
@@ -188,7 +224,7 @@ public sealed class PackCatalogTests : IDisposable
         using var host = new CatalogHost { InvalidIndex = true };
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
-        Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(4, service.Packs.Count);
         Assert.DoesNotContain(service.Sources, p => p.RelativePath.Contains("..", StringComparison.Ordinal));
         Assert.False(PackCatalogService.ValidFolder("../escape"));
     }
@@ -261,7 +297,7 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new Thickness(0, 0, -20, 0), view.Margin);
             AssertLibraryScrollGutter(list);
             var cards = panel.Children.Cast<FrameworkElement>().ToArray();
-            Assert.Equal(5, cards.Length);
+            Assert.Equal(4, cards.Length);
             Assert.All(cards, card =>
             {
                 Assert.Equal(240, card.ActualWidth, 3);
@@ -301,7 +337,7 @@ public sealed class PackCatalogTests : IDisposable
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             if (list.ScrollableHeight > 0) AssertScrollInput(list);
             var catalogOffset = list.VerticalOffset;
-            var pack = catalog.Find("LL8 Extended")!;
+            var pack = catalog.Find("All The Mods 10")!;
             var root = pack.Mods.First(m => m.HasChildren);
             root.IsExpanded = true;
             view.ShowDetails(pack);
@@ -391,15 +427,12 @@ public sealed class PackCatalogTests : IDisposable
         using (var metadata = archive.GetEntry("library.json")!.Open())
         using (var description = JsonDocument.Parse(metadata))
             Assert.Equal("forge", description.RootElement.GetProperty("loader").GetString()!.ToLowerInvariant());
-        var ll8 = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
-        Assert.Equal("LL8 Extended (сломан)", ll8.Name);
-        Assert.Equal("LL8 Extended", ll8.Entry.RelativePath);
-        Assert.Equal("ll8-extended", ll8.Entry.Id);
-        Assert.Equal("LL8 Extended (сломан)", PackDisplayName.For("ll8 extended", "LL8 Extended"));
+        var defaultPack = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
+        Assert.Equal("All The Mods 10", defaultPack.Name);
+        Assert.Equal("all-the-mods-10", defaultPack.Entry.Id);
+        Assert.Null(service.Find("LL8 Extended"));
+        Assert.DoesNotContain(service.Sources, source => source.RelativePath == "LL8 Extended");
         Assert.Equal("Other Pack", PackDisplayName.For("Other Pack", "Other Pack"));
-        // Both old disk caches and new remote metadata may carry the original name.
-        ll8.Content.Name = "LL8 Extended";
-        Assert.Equal("LL8 Extended (сломан)", ll8.Name);
         foreach (var pack in service.Packs)
         {
             Assert.DoesNotContain("\n", pack.Description, StringComparison.Ordinal);
@@ -428,7 +461,13 @@ public sealed class PackCatalogTests : IDisposable
             var window = WindowCanvasTests.LoadWindow();
             var view = (PackLibraryView)window.FindName("LibraryView");
             var catalog = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
-            var pack = catalog.Find("LL8 Extended")!;
+            var pack = catalog.Find("All The Mods 10")!;
+            var unavailable = new CatalogModNode(new CatalogMod
+            {
+                Id = "unavailable_project", Name = "Unavailable project",
+                WebsiteUrl = "https://example.org/unavailable", WebsiteAvailable = false
+            });
+            pack.Mods.Add(unavailable);
             var parent = pack.Mods.First(node => node.HasChildren);
             parent.IsExpanded = true;
             view.Visibility = Visibility.Visible;
@@ -445,7 +484,6 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.Equal(node.WebsiteUri, opened[^1]);
                 Assert.True(parent.IsExpanded);
             }
-            var unavailable = pack.Mods.Single(node => node.Name == "FapCraft");
             var disabled = VisualChildren<TextBlock>(view).SelectMany(text => text.Inlines.OfType<Hyperlink>())
                 .Single(link => ReferenceEquals(link.DataContext, unavailable));
             Assert.False(disabled.IsEnabled);
@@ -464,7 +502,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Null(service.Find(CatalogHost.Folder));
-        Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(4, service.Packs.Count);
     }
 
     [Theory]
@@ -487,6 +525,54 @@ public sealed class PackCatalogTests : IDisposable
             .ToList();
         Assert.Equal(count, pack.ModCount);
         Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} ({count} {word})", pack.VersionLabel);
+    }
+
+    [Fact]
+    public async Task WithdrawnPackIsNotRestoredFromOldIndexOrSourceMarker()
+    {
+        var cache = Path.Combine(_paths.Launcher, "Library");
+        Directory.CreateDirectory(cache);
+        var retiredSource = new PackSyncSource("MarkZamore", "LL8-Extended", "pack-latest");
+        File.WriteAllText(Path.Combine(cache, "catalog.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            packs = new[] { new CatalogSource("ll8-extended", "LL8 Extended", retiredSource) }
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var packDir = Path.Combine(_paths.Packs, "LL8 Extended");
+        Directory.CreateDirectory(packDir);
+        File.WriteAllText(Path.Combine(packDir, PortablePackSyncService.SourceMarkerFileName),
+            JsonSerializer.Serialize(retiredSource, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        using var http = new HttpClient(new OfflineHandler());
+        var catalog = new PackCatalogService(_paths, _logger, http);
+        Assert.Null(catalog.Find("LL8 Extended"));
+        await catalog.RefreshOnceAsync();
+        Assert.Null(catalog.Find("LL8 Extended"));
+        Assert.DoesNotContain(catalog.Sources, source => source.Source.Repo == "LL8-Extended");
+        Assert.Null(new PortablePackSyncService(_paths, _logger, http) { Catalog = catalog }.TryResolveSource("LL8 Extended"));
+        Assert.Null(typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.ll8-extended.zip"));
+        Assert.True(Directory.Exists(packDir));
+    }
+
+    [Fact]
+    public void RemovingAnOfflineCardAlsoClosesItsDetailPage()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var view = (PackLibraryView)window.FindName("LibraryView");
+            var service = new PackCatalogService(_paths, _logger);
+            var settings = new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] };
+            var pack = Assert.Single(service.PacksForDisplay(settings));
+            view.SetCatalog(service.PacksForDisplay(settings));
+            view.ShowDetails(pack);
+            Assert.True(PackMembership.Remove(settings, pack.Entry.RelativePath));
+            view.SetCatalog(service.PacksForDisplay(settings));
+            var detail = (ScrollViewer)view.FindName("DetailScroll");
+            var cards = (ItemsControl)view.FindName("CatalogCards");
+            Assert.Equal(Visibility.Collapsed, detail.Visibility);
+            Assert.Empty(cards.Items);
+            return true;
+        });
     }
 
     private static IEnumerable<T> VisualChildren<T>(DependencyObject parent) where T : DependencyObject

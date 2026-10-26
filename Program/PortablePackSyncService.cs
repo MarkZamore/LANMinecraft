@@ -47,10 +47,10 @@ public sealed partial class PortablePackSyncService
     public const string SourceMarkerFileName = "portable-pack-source.json";
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string PackManifestAssetName = "pack-manifest.json";
-    public const string DefaultPackRelativePath = "LL8 Extended";
+    public const string DefaultPackRelativePath = "All The Mods 10";
 
     public static PackSyncSource DefaultPackSource { get; } =
-        new("MarkZamore", "LL8-Extended", "pack-latest");
+        new("MarkZamore", "All-The-Mods-10", "pack-latest");
 
     /// <summary>
     /// A pack the launcher knows how to fetch, and therefore may offer before it
@@ -67,7 +67,6 @@ public sealed partial class PortablePackSyncService
     /// </summary>
     public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
         new(DefaultPackRelativePath, DefaultPackSource),
-        new("All The Mods 10", new PackSyncSource("MarkZamore", "All-The-Mods-10", "pack-latest")),
         new(
             "TerraFirma Rebirth",
             new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")),
@@ -170,6 +169,7 @@ public sealed partial class PortablePackSyncService
     public PackSyncSource? TryResolveSource(string packRelativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
+        if (PackCatalogService.IsRetiredPack(packRelativePath)) return null;
         var markerPath = Path.Combine(_paths.CombineUnderPacks(packRelativePath), SourceMarkerFileName);
         if (File.Exists(markerPath))
         {

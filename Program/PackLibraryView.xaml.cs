@@ -24,8 +24,9 @@ public partial class PackLibraryView : UserControl
         CatalogCards.ItemsSource = packs;
         if (_selected is { } selected)
         {
-            _selected = packs.FirstOrDefault(p => p.Entry.RelativePath == selected.Entry.RelativePath) ?? selected;
+            _selected = packs.FirstOrDefault(p => p.Entry.RelativePath == selected.Entry.RelativePath);
             DetailContent.DataContext = _selected;
+            if (_selected is null) ShowCatalog();
         }
         RefreshMembership();
     }

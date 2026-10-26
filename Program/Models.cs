@@ -389,11 +389,7 @@ public sealed class WorldViewModel
 
 public static class PackDisplayName
 {
-    // Presentation only: the existing folder, membership and source identifiers stay unchanged.
-    public static string For(string relativePath, string name) =>
-        relativePath.Equals(PortablePackSyncService.DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase)
-            ? "LL8 Extended (сломан)"
-            : name;
+    public static string For(string relativePath, string name) => name;
 }
 
 public sealed class ClientBuildViewModel

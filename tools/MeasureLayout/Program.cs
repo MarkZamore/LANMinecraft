@@ -58,14 +58,14 @@ internal static class Program
             {
                 var view = (PackLibraryView)window.FindName("LibraryView");
                 var catalog = new PackCatalogService(new AppPaths(Path.Combine(output, "catalog-cache")), new Logger(Path.Combine(output, "catalog.log")));
-                view.SetCatalog(catalog.Packs);
-                view.IsAdded = path => path == "LL8 Extended";
+                view.SetCatalog(catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
+                view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
                 foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
                     if (child != view) child.Visibility = Visibility.Hidden;
                 view.Visibility = Visibility.Visible;
                 if (mode is "pack-detail" or "pack-mods")
                 {
-                    var pack = catalog.Find("LL8 Extended")!;
+                    var pack = catalog.Find(PortablePackSyncService.DefaultPackRelativePath)!;
                     pack.Mods.First(m => m.HasChildren).IsExpanded = true;
                     view.ShowDetails(pack);
                 }
