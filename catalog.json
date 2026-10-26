@@ -45,6 +45,15 @@
         "repo": "All-The-Mods-9",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "all-the-mods-9-modified",
+      "relativePath": "All the Mods 9 Modified",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-9-Modified",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
