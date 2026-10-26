@@ -2,15 +2,6 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "ll8-extended",
-      "relativePath": "LL8 Extended",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "LL8-Extended",
-        "tag": "pack-latest"
-      }
-    },
-    {
       "id": "all-the-mods-10",
       "relativePath": "All The Mods 10",
       "source": {
