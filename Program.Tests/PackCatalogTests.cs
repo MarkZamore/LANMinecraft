@@ -235,7 +235,8 @@ public sealed class PackCatalogTests : IDisposable
             var list = (ScrollViewer)view.FindName("CatalogScroll");
             Assert.InRange(list.ScrollableWidth, 0, 0.5);
             var panel = VisualChildren<LibraryColumnsPanel>((ItemsControl)view.FindName("CatalogCards")).Single();
-            Assert.Equal(new Thickness(0, 0, -20, 0), list.Margin);
+            Assert.Equal(new Thickness(0), list.Margin);
+            Assert.Equal(new Thickness(0, 0, -20, 0), view.Margin);
             AssertLibraryScrollGutter(list);
             var cards = panel.Children.Cast<FrameworkElement>().ToArray();
             Assert.Equal(5, cards.Length);
@@ -276,6 +277,8 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(sizes, panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize));
             Assert.Equal(0, cards[0].TransformToAncestor(panel).TransformBounds(new Rect(cards[0].RenderSize)).Left, 3);
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            if (list.ScrollableHeight > 0) AssertScrollInput(list);
+            var catalogOffset = list.VerticalOffset;
             var pack = catalog.Find("LL8 Extended")!;
             var root = pack.Mods.First(m => m.HasChildren);
             root.IsExpanded = true;
@@ -285,6 +288,9 @@ public sealed class PackCatalogTests : IDisposable
             Assert.InRange(details.ScrollableWidth, 0, 0.5);
             Assert.True(details.ScrollableHeight > 0);
             AssertLibraryScrollGutter(details);
+            AssertScrollInput(details);
+            details.ScrollToTop();
+            details.UpdateLayout();
             var membership = (Button)view.FindName("MembershipButton");
             Assert.Equal("Добавить", membership.Content);
             var addSize = membership.RenderSize;
@@ -302,10 +308,28 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(addPadding, membership.Padding);
             Assert.Equal(addBorder, membership.BorderThickness);
             view.ShowCatalog();
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            Assert.Equal(catalogOffset, list.VerticalOffset, 2);
             view.ShowDetails(pack);
             Assert.True(root.IsExpanded);
             Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
             return true;
+
+            void AssertScrollInput(ScrollViewer viewer)
+            {
+                Assert.True(viewer.ScrollableHeight > 0);
+                var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+                viewer.RaiseEvent(wheel);
+                Assert.True(wheel.Handled);
+                var controller = SmoothScrollingController.Attach(viewer);
+                for (var frame = 0; frame < 80; frame++) { controller.AdvanceFrame(1000d / 60); viewer.UpdateLayout(); }
+                Assert.True(viewer.VerticalOffset > 0);
+                var scrollbar = (System.Windows.Controls.Primitives.ScrollBar)viewer.Template.FindName("PART_VerticalScrollBar", viewer);
+                var target = viewer.ScrollableHeight / 2;
+                scrollbar.Value = target;
+                viewer.UpdateLayout();
+                Assert.Equal(target, viewer.VerticalOffset, 2);
+            }
 
             void AssertLibraryScrollGutter(ScrollViewer viewer)
             {
@@ -316,7 +340,13 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.InRange(Math.Abs(canvas.ActualWidth - content.Right), 0, 1);
                 var scrollbar = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(viewer)
                     .Single(bar => bar.Name == "PART_VerticalScrollBar");
+                Assert.Equal(viewer.ScrollableHeight > 0 ? Visibility.Visible : Visibility.Collapsed, scrollbar.Visibility);
                 if (scrollbar.Visibility != Visibility.Visible) return;
+                var inside = scrollbar.TransformToAncestor(view).TransformBounds(new Rect(scrollbar.RenderSize));
+                Assert.True(inside.Right <= view.ActualWidth + 0.5, "Library scrollbar must fit inside its own view.");
+                Assert.Same(viewer, ScrollBarBridge.GetTarget(scrollbar));
+                var thumb = VisualChildren<System.Windows.Controls.Primitives.Thumb>(scrollbar).Single();
+                Assert.True(thumb.ActualWidth > 0 && thumb.ActualHeight > 0);
                 var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
                 Assert.True(bounds.Left >= canvas.ActualWidth);
                 Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);

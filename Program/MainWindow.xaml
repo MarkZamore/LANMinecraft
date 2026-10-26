@@ -660,6 +660,6 @@
             <TextBlock x:Name="TransferStatusText" />
             <TextBox x:Name="LogTextBox" />
         </Grid>
-        <local:PackLibraryView x:Name="LibraryView" Grid.ColumnSpan="3" Grid.RowSpan="4" Visibility="Collapsed"/>
+        <local:PackLibraryView x:Name="LibraryView" Grid.ColumnSpan="3" Grid.RowSpan="4" Margin="{DynamicResource Gap.LibraryScroll}" Visibility="Collapsed"/>
     </Grid>
 </Window>

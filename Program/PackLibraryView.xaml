@@ -89,7 +89,7 @@
     </UserControl.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Grid x:Name="LibraryTopBar" Margin="{DynamicResource Gap.Below4}">
+        <Grid x:Name="LibraryTopBar" Margin="{DynamicResource Gap.LibraryTopBar}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="{DynamicResource Size.ColumnGap}"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions>
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="{DynamicResource Size.LibraryActionGap}"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
@@ -97,7 +97,7 @@
                     FontSize="{DynamicResource Font.SizeDisplay}" FontWeight="{DynamicResource Font.WeightEmphasis}"/>
             </Grid>
         </Grid>
-        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Margin="{DynamicResource Gap.LibraryScroll}" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <ItemsControl x:Name="CatalogCards">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardWidth}" FixedColumnWidth="{DynamicResource Size.LibraryCardWidth}" UniformItemHeight="True" Gap="{DynamicResource Space.4}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
@@ -117,7 +117,7 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
-        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Margin="{DynamicResource Gap.LibraryScroll}" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="DetailContent">
                 <local:RoundedClipBorder Style="{StaticResource LibrarySectionStyle}" Padding="{DynamicResource Pad.None}" Height="{DynamicResource Size.LibraryHero}">
                     <Grid>
