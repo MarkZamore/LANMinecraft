@@ -45,6 +45,15 @@
         "repo": "All-The-Mods-9-Modified",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
