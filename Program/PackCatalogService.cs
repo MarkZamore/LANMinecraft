@@ -47,7 +47,24 @@ public sealed class CatalogPack
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
     public string Name => PackDisplayName.For(Entry.RelativePath, Content.Name);
-    public string VersionLabel => "Minecraft " + Content.MinecraftVersion;
+    // The published catalogue lists actual mod projects, including addons.
+    // Its library flag excludes technical dependencies; files and resources
+    // are not catalogue mods and never contribute to this count.
+    public int ModCount => Content.Mods.Count(mod => !mod.IsLibrary);
+    public string VersionLabel
+    {
+        get
+        {
+            var count = ModCount;
+            var word = count % 100 is >= 11 and <= 14 ? "модов" : (count % 10) switch
+            {
+                1 => "мод",
+                2 or 3 or 4 => "мода",
+                _ => "модов"
+            };
+            return $"Minecraft {Content.MinecraftVersion} ({count} {word})";
+        }
+    }
     public string Summary => Content.Summary;
     public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
     public List<CatalogModNode> Mods { get; } = [];
