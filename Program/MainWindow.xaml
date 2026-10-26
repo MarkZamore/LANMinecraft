@@ -199,12 +199,15 @@
                                     FontSize="{StaticResource Size.Icon}"
                                     TextWrapping="NoWrap" />
                             </Button>
-                            <TextBlock Grid.Column="1"
-                                x:Name="MemoryEstimateText"
-                                Style="{StaticResource LabelTextStyle}"
-                                Text="Рекомендуется от 2 ГБ"
-                                TextWrapping="NoWrap"
-                                Margin="{StaticResource Gap.Left2}" />
+                            <Button Grid.Column="1" x:Name="MemoryEstimateButton"
+                                Style="{StaticResource MemoryRecommendationButtonStyle}"
+                                Click="MemoryEstimateButton_Click" IsEnabled="False"
+                                Margin="{StaticResource Gap.Left2}" ToolTipService.ShowOnDisabled="True">
+                                <TextBlock x:Name="MemoryEstimateText"
+                                    Style="{StaticResource LabelTextStyle}"
+                                    Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                    Text="Рекомендуется от 2 ГБ" TextWrapping="NoWrap"/>
+                            </Button>
                         </Grid>
                         <Grid Grid.Row="2" Grid.Column="0" Margin="{StaticResource Gap.Above2}" x:Name="PresetSettingsRow">
                             <Grid.ColumnDefinitions>
