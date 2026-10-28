@@ -56,6 +56,8 @@
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.ANeoForgeRuntimeWithNoMappingsOfItsOwn_IsReadFromMojangsAlone|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterIntermediaryTests.AFabricRuntime_IsReadThroughMojangsOwnMappings|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterAsmPackagingTests.TheBootstrapPath_GetsTheHooksAlone_AndNeverAsm|
+      FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterTests.Native_title_producer_keeps_only_pack_name_across_simulated_lifecycle_without_changing_connections|
+      FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterCacheTests.TitleOnlyDegradedState_IsRetriedEvenWhenEveryFileAndFingerprintMatches|
       FullyQualifiedName=Minecraft.Tests.DesignTokensTests.AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody|

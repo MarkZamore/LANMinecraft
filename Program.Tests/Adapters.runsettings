@@ -2,6 +2,6 @@
 <!-- Optional mapping/bytecode and loader compatibility matrix. -->
 <RunSettings>
   <RunConfiguration>
-    <TestCaseFilter>FullyQualifiedName~Minecraft.Tests.IdentityAdapter|FullyQualifiedName~Minecraft.Tests.PortableSkinSignatureTests|FullyQualifiedName~Minecraft.Tests.PortableIdentityRegistryTests|FullyQualifiedName~Minecraft.Tests.JavaRuntimeCatalogTests|FullyQualifiedName~Minecraft.Tests.SteamTransportModTests</TestCaseFilter>
+    <TestCaseFilter>FullyQualifiedName~Minecraft.Tests.WindowTitle|FullyQualifiedName~Minecraft.Tests.IdentityAdapter|FullyQualifiedName~Minecraft.Tests.PortableSkinSignatureTests|FullyQualifiedName~Minecraft.Tests.PortableIdentityRegistryTests|FullyQualifiedName~Minecraft.Tests.JavaRuntimeCatalogTests|FullyQualifiedName~Minecraft.Tests.SteamTransportModTests</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
