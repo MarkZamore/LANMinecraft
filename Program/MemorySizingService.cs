@@ -289,7 +289,8 @@ public static class MemorySizingService
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default) =>
         pack.IsKnown || measured.IsKnown ? GetNativeReserveGb(pack, video, measured)
-        : Math.Clamp(wholeGameGb / 2, 2, 8);
+        : Math.Clamp(Math.Clamp(wholeGameGb / 2, 2, 8) +
+                     (int)Math.Ceiling(Math.Max(0, pack.LocalAiReserveMb) / 1024d), 1, MaxHeapGb - MinHeapGb);
 
     /// <summary>The same room, for a pack that has been weighed or watched.</summary>
     public static int GetNativeReserveGb(
@@ -311,7 +312,9 @@ public static class MemorySizingService
         // Rounded up: a reserve set too low is spent by the game anyway - over
         // the budget, and into the memory the machine kept for itself.
         return Math.Clamp(
-            (int)Math.Ceiling(HeldWithinWhatWasSeen(megabytes, measured) / 1024d),
+            // Measurements cover Java alone. The native AI child is a
+            // separate process, so historical Java measurements cannot cap it.
+            (int)Math.Ceiling((HeldWithinWhatWasSeen(megabytes, measured) + Math.Max(0, pack.LocalAiReserveMb)) / 1024d),
             1,
             MaxHeapGb - MinHeapGb);
     }

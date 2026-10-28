@@ -33,7 +33,8 @@ public readonly record struct PackMemoryProfile(
     long ModBytes,
     long AssetBytes,
     string? MinecraftVersion,
-    int JarCount = 0)
+    int JarCount = 0,
+    int LocalAiReserveMb = 0)
 {
     /// <summary>
     /// A pack nobody has looked at: not installed yet, or unreadable. The
@@ -64,6 +65,10 @@ public readonly record struct PackMemoryProfile(
     /// tests and the launch itself do.</param>
     public static PackMemoryProfile Measure(string packDirectory, string? weightsFile = null)
     {
+        if (string.IsNullOrWhiteSpace(packDirectory) || !Directory.Exists(packDirectory)) return Unknown;
+        // Read on every measurement, independently of the nested-JAR cache.
+        // Its descriptor can change while all JAR names/sizes stay identical.
+        var localAiReserve = LocalAiProvisioningService.ReadRequirements(packDirectory)?.ReserveMemoryMb ?? 0;
         try
         {
             if (string.IsNullOrWhiteSpace(packDirectory) || !Directory.Exists(packDirectory))
@@ -78,15 +83,15 @@ public readonly record struct PackMemoryProfile(
                 MeasureFiles(Path.Combine(packDirectory, "shaderpacks"), extension: null).Bytes;
             var loaded = mods.Count + CountNestedMods(modsRoot, mods.Count, mods.Bytes, weightsFile);
             return new PackMemoryProfile(
-                loaded, mods.Bytes, assets, ReadMinecraftVersion(packDirectory), mods.Count);
+                loaded, mods.Bytes, assets, ReadMinecraftVersion(packDirectory), mods.Count, localAiReserve);
         }
         catch (IOException)
         {
-            return Unknown;
+            return Unknown with { LocalAiReserveMb = localAiReserve };
         }
         catch (UnauthorizedAccessException)
         {
-            return Unknown;
+            return Unknown with { LocalAiReserveMb = localAiReserve };
         }
     }
 

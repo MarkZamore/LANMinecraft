@@ -35,6 +35,52 @@ class LibraryPublisherTests(unittest.TestCase):
     def write_content(self):
         (self.pack / "library/content.json").write_text(json.dumps(self.content))
 
+    def write_inventory(self):
+        inventory = {"schemaVersion": 1,
+                     "minecraftVersion": "1.21.1", "loader": {"type": "NeoForge"},
+                     "sourceJars": {jar.relative_to(self.pack).as_posix(): hashlib.sha256(jar.read_bytes()).hexdigest()
+                                    for jar in (self.pack / "mods").glob("*.jar")},
+                     "mods": [{"id": mid, "name": mid.title(), "version": "selected-2.0"}
+                              for mid in ("base", "addon", "helper", "integration")]}
+        (self.pack / "library/loaded-mods.json").write_text(json.dumps(inventory))
+
+    def test_manual_additions_keep_the_full_actual_inventory_and_frozen_base_ids(self):
+        self.write_inventory()
+        self.content.update(modsTitle="Дополнительные моды", visibleModIds=["integration", "addon"], baseModIds=["base"])
+        self.write_content()
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            data = json.loads(archive.read("library.json"))
+        self.assertEqual("Дополнительные моды", data["modsTitle"])
+        self.assertEqual(["addon", "integration"], data["visibleModIds"])
+        self.assertEqual(["base"], data["baseModIds"])
+        self.assertEqual({"base", "addon", "helper", "integration"}, {mod["id"] for mod in data["mods"]})
+        self.assertEqual(4, len({mod["id"] for mod in data["mods"] if mod["isLoadedMod"]}))
+        # A base version change must not turn its stable ID into an addition.
+        self.content["visibleModIds"] = ["base"]
+        self.write_content()
+        with self.assertRaisesRegex(ValueError, "Base mod cannot"):
+            build_library(self.pack, "r2")
+
+    def test_manual_additions_require_actual_inventory_and_reject_dependencies_or_unknown_ids(self):
+        self.content["visibleModIds"] = ["addon"]
+        self.write_content()
+        with self.assertRaisesRegex(ValueError, "actual loader inventory"):
+            build_library(self.pack, "r1")
+        self.write_inventory()
+        for ids, message in ((["missing"], "not actually loaded"), (["helper"], "Auxiliary library"),
+                             (["addon", "addon"], "Invalid/duplicate"), (None, "Invalid/duplicate")):
+            self.content["visibleModIds"] = ids
+            self.write_content()
+            with self.subTest(ids=ids), self.assertRaisesRegex(ValueError, message):
+                build_library(self.pack, "r1")
+
+    def test_existing_cards_keep_their_complete_lists_without_new_presentation_fields(self):
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            data = json.loads(archive.read("library.json"))
+        self.assertNotIn("visibleModIds", data)
+        self.assertNotIn("modsTitle", data)
+        self.assertEqual(4, len(data["mods"]))
+
     def test_actual_names_curated_addons_and_libraries_not_the_whole_dependency_graph(self):
         payload = build_library(self.pack, "revision-one")
         target = pathlib.Path(self.temp.name) / "bundle.zip"

@@ -172,6 +172,31 @@ def build_library(pack, revision):
     pages_path = pack / "library/mod-pages.json"
     pages = json.loads(pages_path.read_text(encoding="utf-8-sig")) if pages_path.exists() else {}
     mods = read_pack_mods(pack)
+    presentation = {}
+    if "modsTitle" in authored:
+        title = authored["modsTitle"]
+        if not isinstance(title, str) or not title.strip() or len(title) > 120:
+            raise ValueError("Invalid mod list title")
+        presentation["modsTitle"] = title
+    for field in ("baseModIds", "visibleModIds"):
+        if field in authored:
+            ids = authored[field]
+            if (not isinstance(ids, list) or len(ids) > 10000 or
+                    any(not isinstance(mid, str) or not mid.strip() for mid in ids) or len(set(ids)) != len(ids)):
+                raise ValueError("Invalid/duplicate " + field)
+            presentation[field] = sorted(ids)
+    visible = presentation.get("visibleModIds")
+    if visible is not None:
+        # A manually selected list is presentation only. Its overall counter
+        # must still describe the actual loader, including selected JarJar mods.
+        if not (pack / "library/loaded-mods.json").exists():
+            raise ValueError("A filtered mod list requires an exact-hash actual loader inventory")
+        base_ids = set(presentation.get("baseModIds", []))
+        for mod_id in visible:
+            if mod_id in base_ids:
+                raise ValueError("Base mod cannot be presented as an addition: " + mod_id)
+            if mod_id not in mods or not mods[mod_id]["isLoadedMod"]:
+                raise ValueError("Visible mod is not actually loaded: " + mod_id)
     libraries = LIBRARIES | set(authored.get("libraryIds", []))
     parents = PARENTS | authored.get("parents", {})
     for mod in mods.values():
@@ -189,6 +214,8 @@ def build_library(pack, revision):
         parent = parents.get(mod["id"])
         mod["parentId"] = parent if parent in mods and parent != mod["id"] and parent not in libraries else None
         mod["isLibrary"] = mod["id"] in libraries or not mod["isLoadedMod"]
+        if visible is not None and mod["id"] in visible and mod["isLibrary"]:
+            raise ValueError("Auxiliary library cannot be presented as an addition: " + mod["id"])
     # Fail publication rather than handing the UI a cyclic tree.
     for mod in mods.values():
         seen = {mod["id"]}
@@ -201,7 +228,8 @@ def build_library(pack, revision):
     doc = {"schemaVersion": 1, "id": authored["id"], "relativePath": authored.get("relativePath", pack.name),
            "name": authored["name"], "summary": authored["summary"], "description": authored["description"],
            "minecraftVersion": runtime["minecraftVersion"], "loader": runtime["loader"]["type"],
-           "revision": revision, "mods": sorted(mods.values(), key=lambda m: (m["name"].casefold(), m["id"]))}
+           "revision": revision, **presentation,
+           "mods": sorted(mods.values(), key=lambda m: (m["name"].casefold(), m["id"]))}
     data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
     preview = (pack / "library/preview.jpg").read_bytes()
     buffer = io.BytesIO()

@@ -461,6 +461,8 @@ public sealed class MinecraftProcessService
         // would otherwise fail where it used to work.
         Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Roaming"));
         Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Local"));
+        var localAi = await new LocalAiProvisioningService(_paths)
+            .PrepareAsync(packDir, gameDir, javaHome, runtimeProgress, token).ConfigureAwait(false);
         var session = MSession.CreateOfflineSession(identityContext.IdentityName);
         session.UUID = identityContext.MinecraftUuid;
         session.AccessToken = identityContext.SessionAccessToken;
@@ -728,6 +730,7 @@ public sealed class MinecraftProcessService
         minecraftProcess.StartInfo.StandardOutputEncoding = Utf8NoBom;
         minecraftProcess.StartInfo.StandardErrorEncoding = Utf8NoBom;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
+        localAi?.ConfigureEnvironment(minecraftProcess.StartInfo.Environment);
         var startupOutput = new StartupOutputBuffer();
         startupOutput.MirrorTo(gameDir);
         minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);

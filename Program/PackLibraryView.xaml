@@ -144,15 +144,18 @@
                 </Border>
                 <Border Style="{StaticResource LibrarySectionStyle}">
                     <StackPanel>
-                        <TextBlock Text="Моды" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
+                        <TextBlock x:Name="ModsHeading" Text="{Binding ModsTitle}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
                         <ItemsControl ItemsSource="{Binding Mods}" ItemTemplate="{StaticResource LibraryModGroupTemplate}">
                             <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardMin}" Gap="{DynamicResource Space.4}" RowGap="{DynamicResource Space.1}" BalanceHeight="True"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         </ItemsControl>
-                        <TextBlock Text="Вспомогательные библиотеки" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Above4}"/>
-                        <ItemsControl ItemsSource="{Binding Libraries}" Margin="{DynamicResource Gap.Above2}">
-                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardMin}" Gap="{DynamicResource Space.4}" RowGap="{DynamicResource Space.1}" BalanceHeight="True"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate><DataTemplate><TextBlock TextWrapping="Wrap" ToolTip="{Binding Version}"><Hyperlink Style="{StaticResource LibraryModLinkStyle}" Foreground="{DynamicResource Brush.TextMuted}" NavigateUri="{Binding WebsiteUri}" ToolTip="{Binding WebsiteUri}" Click="ModLink_Click"><Run Text="{Binding Name, Mode=OneWay}"/></Hyperlink></TextBlock></DataTemplate></ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <StackPanel x:Name="LibrariesSection">
+                            <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding HasLibraries}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                            <TextBlock Text="Вспомогательные библиотеки" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Above4}"/>
+                            <ItemsControl ItemsSource="{Binding Libraries}" Margin="{DynamicResource Gap.Above2}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardMin}" Gap="{DynamicResource Space.4}" RowGap="{DynamicResource Space.1}" BalanceHeight="True"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate><TextBlock TextWrapping="Wrap" ToolTip="{Binding Version}"><Hyperlink Style="{StaticResource LibraryModLinkStyle}" Foreground="{DynamicResource Brush.TextMuted}" NavigateUri="{Binding WebsiteUri}" ToolTip="{Binding WebsiteUri}" Click="ModLink_Click"><Run Text="{Binding Name, Mode=OneWay}"/></Hyperlink></TextBlock></DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>

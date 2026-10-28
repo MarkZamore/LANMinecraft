@@ -249,6 +249,12 @@
       FullyQualifiedName=Minecraft.Tests.LoaderVersionResolverTests.CallerCancellationDuringInstallerBody_RemainsCancellationAndCreatesNoCache|
       FullyQualifiedName=Minecraft.Tests.LoaderVersionResolverTests.AStalledInstallerChecksum_IsEvictedAndCanBeRetried|
       FullyQualifiedName=Minecraft.Tests.ModRuntimeMetadataTests.NeoForgeDependencyType_UsesNativeCaseInsensitiveEnumSemantics|
-      FullyQualifiedName=Minecraft.Tests.PackRenameMigrationTests.CatalogSourceAliases_KeepValueEqualityAcrossJsonRoundTrip</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackRenameMigrationTests.CatalogSourceAliases_KeepValueEqualityAcrossJsonRoundTrip|
+      FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.SelectedAdditionsKeepTheCompleteLoadedCountAndAnAddonOfAHiddenBaseRemainsVisible|
+      FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.DetailViewBindsThePublishedHeadingAndHidesAnEmptyLibrarySection|
+      FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.CompletePreparationIsPortableRepairsRuntimeAndReusesDownloads|
+      FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiReserveChangesRecommendationAndAdvisoryWithoutChangingThePlayersHeap|
+      FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiDescriptorChangesAreReadDespiteUnchangedJarCacheLengthAndTimestamp|
+      FullyQualifiedName=Minecraft.Tests.PackLauncherFeaturesTests.KnownFeaturesAreAcceptedAndUnknownFeaturesRequireAnUpdateBeforeAnyDownload</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

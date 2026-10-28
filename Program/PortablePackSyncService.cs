@@ -113,7 +113,13 @@ public sealed partial class PortablePackSyncService
     // re-download for an unrelated change.
 
     private const int SourceMarkerCacheGeneration = 1;
-    private const int RemoteManifestCacheGeneration = 1;
+    // Published pack manifests have a separate format from launcher-owned
+    // caches. Version 2 makes required capabilities visible to old launchers:
+    // their version-1 validator refuses the pack before installing its files.
+    private const int LegacyRemoteManifestGeneration = 1;
+    private const int FeatureManifestGeneration = 2;
+    private static readonly HashSet<string> SupportedLauncherFeatures =
+        new(["local-ai-native-v1", "curated-mod-list-v1"], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
@@ -1352,11 +1358,31 @@ public sealed partial class PortablePackSyncService
 
     private static ValidatedManifest ValidateRemoteManifest(RemoteManifestDto manifest, string packDir)
     {
-        if (manifest.SchemaVersion != RemoteManifestCacheGeneration)
+        if (manifest.SchemaVersion is not (LegacyRemoteManifestGeneration or FeatureManifestGeneration))
         {
-            throw new InvalidDataException(
-                $"Unsupported pack sync manifest schemaVersion {manifest.SchemaVersion}; " +
-                $"expected {RemoteManifestCacheGeneration}.");
+            throw new NotSupportedException(
+                $"Сборке требуется другой формат манифеста ({manifest.SchemaVersion}). Обновите лаунчер и повторите «Играть».");
+        }
+        var requiredFeatures = manifest.RequiredLauncherFeatures;
+        if (manifest.SchemaVersion == LegacyRemoteManifestGeneration)
+        {
+            if (requiredFeatures.ValueKind != JsonValueKind.Undefined)
+                throw new NotSupportedException(
+                    "Сборка с обязательными функциями требует формат манифеста 2. Обновите лаунчер и повторите «Играть».");
+        }
+        else
+        {
+            if (requiredFeatures.ValueKind != JsonValueKind.Array || requiredFeatures.GetArrayLength() == 0)
+                throw new NotSupportedException(
+                    "Манифест сборки не указывает обязательные функции. Обновите лаунчер и повторите «Играть».");
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var value in requiredFeatures.EnumerateArray())
+            {
+                if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } feature ||
+                    !SupportedLauncherFeatures.Contains(feature) || !seen.Add(feature))
+                    throw new NotSupportedException(
+                        "Обязательная функция сборки неизвестна или указана неверно. Обновите лаунчер и повторите «Играть».");
+            }
         }
         if (manifest.Files is not { Count: > 0 })
         {
@@ -1728,6 +1754,7 @@ public sealed partial class PortablePackSyncService
     private sealed class RemoteManifestDto
     {
         public int SchemaVersion { get; set; }
+        public JsonElement RequiredLauncherFeatures { get; set; }
         public string? PackId { get; set; }
         public string? Revision { get; set; }
         /// <summary>Read only for weighing a pack that is not installed yet.</summary>
