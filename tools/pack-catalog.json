@@ -12,7 +12,8 @@
     },
     {
       "id": "terrafirma-rebirth",
-      "relativePath": "TerraFirma Rebirth 2",
+      "relativePath": "TerraFirma Rebirth",
+      "sourcePath": "TerraFirma Rebirth 2",
       "source": {
         "owner": "MarkZamore",
         "repo": "TerraFirma-Rebirth-2",
