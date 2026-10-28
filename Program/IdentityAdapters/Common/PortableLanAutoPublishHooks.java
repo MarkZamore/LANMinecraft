@@ -30,6 +30,8 @@ public final class PortableLanAutoPublishHooks {
     // the same instance and must not re-publish or discard user edits.
     private static final Map<Object, Boolean> ATTEMPTED =
         Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Object, Boolean> REQUESTED =
+        Collections.synchronizedMap(new WeakHashMap<>());
 
     /**
      * Raised whenever somebody other than this code moves the server's view
@@ -68,7 +70,143 @@ public final class PortableLanAutoPublishHooks {
     private PortableLanAutoPublishHooks() {
     }
 
+    /** Adds the explicit LAN action beside the unchanged native world settings. */
+    public static Object addLanPauseRow(Object rows, Object nativeExit, int columns, Object pauseScreen) {
+        ClassLoader loader = pauseScreen.getClass().getClassLoader();
+        try {
+            Class<?> elementType = loadClass(loader, aliases("layoutElementClasses"));
+            Object minecraft = null;
+            Object server = null;
+            Boolean published = null;
+            try {
+                Class<?> minecraftType = loadClass(loader, aliases("minecraftClasses"));
+                minecraft = PortableIdentityReflection.invokeStatic(
+                    minecraftType, new Class<?>[0], new Object[0], aliases("minecraftGetInstanceMethods"));
+                if (minecraft != null) {
+                    server = PortableIdentityReflection.invoke(minecraft, aliases("getSingleplayerServerMethods"));
+                }
+                if (server != null) {
+                    Object state = PortableIdentityReflection.invoke(server, aliases("isPublishedMethods"));
+                    if (state instanceof Boolean value) published = value;
+                }
+            } catch (ReflectiveOperationException unknownState) {
+                // No integrated server or an unknown state keeps the original
+                // menu. It must not offer a LAN action on a remote connection.
+            }
+            if (server != null && published != null) {
+                Object button = explicitLanPauseButton(pauseScreen, minecraft, published, loader);
+                Object width = PortableIdentityReflection.invoke(nativeExit, aliases("widgetGetWidthMethods"));
+                PortableIdentityReflection.invokeDeclared(button,
+                    new Class<?>[] { int.class }, new Object[] { width }, aliases("widgetSetWidthMethods"));
+                PortableIdentityReflection.invokeDeclared(rows,
+                    new Class<?>[] { elementType, int.class }, new Object[] { button, columns },
+                    aliases("pauseRowAddMethods"));
+            }
+            return PortableIdentityReflection.invokeDeclared(rows,
+                new Class<?>[] { elementType, int.class }, new Object[] { nativeExit, columns },
+                aliases("pauseRowAddMethods"));
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("The native LAN/reporting pause row could not be built.", exception);
+        }
+    }
+
+    private static Object explicitLanPauseButton(
+        Object pauseScreen, Object minecraft, boolean published, ClassLoader loader)
+        throws ReflectiveOperationException {
+        Class<?> componentType = loadClass(loader, aliases("componentClasses"));
+        Class<?> screenType = loadClass(loader, aliases("screenClasses"));
+        Object label;
+        java.util.function.Supplier<?> screen;
+        if (published) {
+            label = staticField(pauseScreen.getClass(), aliases("pausePlayerReportingFields"));
+            var constructor = loadClass(loader, aliases("reportingScreenClasses")).getDeclaredConstructor(screenType);
+            constructor.setAccessible(true);
+            screen = () -> constructScreen(constructor, pauseScreen);
+        } else {
+            // This is Minecraft's own translated Open to LAN caption. Its
+            // world-options caption and action remain in the original row.
+            label = PortableIdentityReflection.invokeStatic(componentType,
+                new Class<?>[] { String.class }, new Object[] { "menu.multiplayerOptions.button" },
+                aliases("componentTranslatableMethods"));
+            Class<?> levelType = loadClass(loader, aliases("levelClasses"));
+            Object level = PortableIdentityReflection.getField(minecraft, aliases("minecraftLevelFields"));
+            var constructor = loadClass(loader, aliases("worldOptionsScreenClasses"))
+                .getDeclaredConstructor(screenType, levelType);
+            constructor.setAccessible(true);
+            screen = () -> {
+                Object requested = constructScreen(constructor, pauseScreen, level);
+                REQUESTED.put(requested, Boolean.TRUE);
+                return requested;
+            };
+        }
+        return PortableIdentityReflection.invokeDeclared(pauseScreen,
+            new Class<?>[] { componentType, java.util.function.Supplier.class }, new Object[] { label, screen },
+            aliases("pauseOpenScreenButtonMethods"));
+    }
+
+    private static Object constructScreen(java.lang.reflect.Constructor<?> constructor, Object... arguments) {
+        try {
+            return constructor.newInstance(arguments);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("The native pause action screen could not be opened.", exception);
+        }
+    }
+
+    /** The native multiplayer pause slot, with reporting after a successful publication. */
+    public static Object pauseButton(
+        Object pauseScreen, Object nativeLabel, java.util.function.Supplier<?> nativeScreen) {
+        ClassLoader loader = pauseScreen.getClass().getClassLoader();
+        try {
+            Class<?> componentType = loadClass(loader, aliases("componentClasses"));
+            Object label = nativeLabel;
+            java.util.function.Supplier<?> screen = nativeScreen;
+            if (publishedIntegratedWorld(loader)) {
+                Class<?> screenType = loadClass(loader, aliases("screenClasses"));
+                Class<?> reportingType = loadClass(loader, aliases("reportingScreenClasses"));
+                var constructor = reportingType.getDeclaredConstructor(screenType);
+                constructor.setAccessible(true);
+                label = staticField(pauseScreen.getClass(), aliases("pausePlayerReportingFields"));
+                screen = () -> {
+                    try {
+                        return constructor.newInstance(pauseScreen);
+                    } catch (ReflectiveOperationException exception) {
+                        throw new IllegalStateException("The native reporting screen could not be opened.", exception);
+                    }
+                };
+            }
+            return PortableIdentityReflection.invokeDeclared(
+                pauseScreen,
+                new Class<?>[] { componentType, java.util.function.Supplier.class },
+                new Object[] { label, screen },
+                aliases("pauseOpenScreenButtonMethods"));
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("The native multiplayer pause button could not be built.", exception);
+        }
+    }
+
+    private static boolean publishedIntegratedWorld(ClassLoader loader) {
+        try {
+            Class<?> minecraftType = loadClass(loader, aliases("minecraftClasses"));
+            Object minecraft = PortableIdentityReflection.invokeStatic(
+                minecraftType, new Class<?>[0], new Object[0], aliases("minecraftGetInstanceMethods"));
+            Object server = PortableIdentityReflection.invoke(minecraft, aliases("getSingleplayerServerMethods"));
+            return server != null && Boolean.TRUE.equals(PortableIdentityReflection.invoke(
+                server, aliases("isPublishedMethods")));
+        } catch (ReflectiveOperationException exception) {
+            // An unknown state must keep the native multiplayer slot, rather
+            // than pretend a failed or missing publication succeeded.
+            return false;
+        }
+    }
+
     public static boolean autoPublish(Object screen) {
+        // WorldOptionsScreen also owns difficulty, gamerules and permissions.
+        // Its normal entry must never publish or dismiss it. Only the screen
+        // deliberately constructed by our explicit LAN action is eligible.
+        if ("true".equals(System.getProperty("minecraft.portable.identity.lanPublishExplicitRequestOnly")) &&
+            REQUESTED.remove(screen) == null) {
+            return false;
+        }
         if (ATTEMPTED.putIfAbsent(screen, Boolean.TRUE) != null) {
             return false;
         }
@@ -123,17 +261,6 @@ public final class PortableLanAutoPublishHooks {
                 return true;
             }
 
-            // The values the vanilla screen would pre-select: the world's own
-            // game mode and command permission, plus a free port.
-            Object gameType = PortableIdentityReflection.invoke(
-                server,
-                aliases("getDefaultGameTypeMethods", "getDefaultGameType", "u_"));
-            Object worldData = PortableIdentityReflection.invoke(
-                server,
-                aliases("getWorldDataMethods", "getWorldData", "bb"));
-            boolean commands = Boolean.TRUE.equals(PortableIdentityReflection.invoke(
-                worldData,
-                aliases("isAllowCommandsMethods", "isAllowCommands", "m")));
             int port = (Integer) PortableIdentityReflection.invokeStatic(
                 httpUtilType,
                 new Class<?>[0],
@@ -142,11 +269,37 @@ public final class PortableLanAutoPublishHooks {
 
             // Publish before closing the screen so every failure path falls
             // through to the untouched vanilla settings UI.
-            boolean published = Boolean.TRUE.equals(PortableIdentityReflection.invokeDeclared(
-                server,
-                new Class<?>[] { gameTypeType, boolean.class, int.class },
-                new Object[] { gameType, commands, port },
-                aliases("publishServerMethods", "publishServer", "a")));
+            boolean published;
+            if (hasAll("multiplayerScopeClasses", "lanMultiplayerScopeFields")) {
+                // 26.2's native screen publishes a scope and a port. Its
+                // two-argument overload keeps the existing per-guest mode and
+                // commands setting; the four-argument convenience overload
+                // would write those settings again.
+                Class<?> scopeType = loadClass(loader, aliases("multiplayerScopeClasses"));
+                Object lanScope = staticField(scopeType, aliases("lanMultiplayerScopeFields"));
+                published = Boolean.TRUE.equals(PortableIdentityReflection.invokeDeclared(
+                    server,
+                    new Class<?>[] { scopeType, int.class },
+                    new Object[] { lanScope, port },
+                    aliases("publishServerMethods", "publishServer")));
+            } else {
+                // The values the older vanilla screen would pre-select:
+                // the world's own mode and command permission.
+                Object gameType = PortableIdentityReflection.invoke(
+                    server,
+                    aliases("getDefaultGameTypeMethods", "getDefaultGameType", "u_"));
+                Object worldData = PortableIdentityReflection.invoke(
+                    server,
+                    aliases("getWorldDataMethods", "getWorldData", "bb"));
+                boolean commands = Boolean.TRUE.equals(PortableIdentityReflection.invoke(
+                    worldData,
+                    aliases("isAllowCommandsMethods", "isAllowCommands", "m")));
+                published = Boolean.TRUE.equals(PortableIdentityReflection.invokeDeclared(
+                    server,
+                    new Class<?>[] { gameTypeType, boolean.class, int.class },
+                    new Object[] { gameType, commands, port },
+                    aliases("publishServerMethods", "publishServer", "a")));
+            }
             if (!published) {
                 System.out.println(
                     "[PortableIdentity] LAN auto-publish could not bind port " + port +
@@ -208,6 +361,9 @@ public final class PortableLanAutoPublishHooks {
         Object gui = PortableIdentityReflection.getField(
             minecraft,
             aliases("minecraftGuiFields", "gui", "l"));
+        if (hasAll("guiHudFields")) {
+            gui = PortableIdentityReflection.getField(gui, aliases("guiHudFields"));
+        }
         Object chat = PortableIdentityReflection.invoke(
             gui,
             aliases("guiChatMethods", "getChat", "d"));
@@ -440,9 +596,9 @@ public final class PortableLanAutoPublishHooks {
      * Puts the screen away, which is what the vanilla one does when it closes -
      * but not this instant. The screen is in the middle of being built, and
      * mods look at what it built as soon as it is done; closing it out from
-     * under them is how the game went down. The client is an Executor, so the
-     * close waits in its queue and runs at the top of the next frame, before
-     * anything is drawn - the screen is put away without ever being seen.
+     * under them is how the game went down. When the native scheduling method
+     * is known, queue explicitly: Executor.execute may run inline on the render
+     * thread. Closing in the next client task lets native/mod init hooks finish.
      */
     private static void closeScreenSoon(Class<?> minecraftType, Class<?> screenType)
         throws ReflectiveOperationException {
@@ -453,8 +609,13 @@ public final class PortableLanAutoPublishHooks {
             aliases("minecraftGetInstanceMethods", "getInstance", "Q"));
         Runnable close = () -> {
             try {
+                Object receiver = "true".equals(System.getProperty(
+                    "minecraft.portable.identity.setScreenOnGui"))
+                    ? PortableIdentityReflection.getField(
+                        minecraft, aliases("minecraftGuiFields", "gui"))
+                    : minecraft;
                 PortableIdentityReflection.invokeDeclared(
-                    minecraft,
+                    receiver,
                     new Class<?>[] { screenType },
                     new Object[] { null },
                     aliases("setScreenMethods", "setScreen", "a"));
@@ -463,11 +624,33 @@ public final class PortableLanAutoPublishHooks {
                     "[PortableIdentity] LAN share screen could not be closed: " + exception);
             }
         };
-        if (minecraft instanceof java.util.concurrent.Executor client) {
+        if (hasAll("minecraftScheduleMethods")) {
+            PortableIdentityReflection.invokeDeclared(
+                minecraft,
+                new Class<?>[] { Runnable.class },
+                new Object[] { close },
+                aliases("minecraftScheduleMethods"));
+        } else if (minecraft instanceof java.util.concurrent.Executor client) {
             client.execute(close);
         } else {
             close.run();
         }
+    }
+
+    private static Object staticField(Class<?> type, String... names)
+        throws ReflectiveOperationException {
+        for (String name : names) {
+            for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+                try {
+                    var field = current.getDeclaredField(name);
+                    field.setAccessible(true);
+                    return field.get(null);
+                } catch (NoSuchFieldException ignored) {
+                    // Try the declaring superclass, then the runtime alias.
+                }
+            }
+        }
+        throw new NoSuchFieldException(type.getName() + "." + String.join("/", names));
     }
 
     private static Class<?> loadClass(ClassLoader loader, String... names) throws ClassNotFoundException {

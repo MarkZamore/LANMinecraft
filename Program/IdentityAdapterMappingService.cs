@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Minecraft;
 
@@ -33,6 +34,8 @@ internal sealed class IdentityAdapterMappingService
         "net/minecraft/network/protocol/game/ServerboundMovePlayerPacket";
     private const string MoveVehiclePacket =
         "net/minecraft/network/protocol/game/ServerboundMoveVehiclePacket";
+    private const string AcceptTeleportPacket =
+        "net/minecraft/network/protocol/game/ServerboundAcceptTeleportationPacket";
     private const string HelloPacket = "net/minecraft/network/protocol/login/ServerboundHelloPacket";
     private const string MinecraftServer = "net/minecraft/server/MinecraftServer";
     private const string Connection = "net/minecraft/network/Connection";
@@ -41,9 +44,22 @@ internal sealed class IdentityAdapterMappingService
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
     private const string ShareToLanScreen = "net/minecraft/client/gui/screens/ShareToLanScreen";
+    private const string MultiplayerOptionsScreen = "net/minecraft/client/gui/screens/MultiplayerOptionsScreen";
+    private const string WorldOptionsScreen = "net/minecraft/client/gui/screens/WorldOptionsScreen";
+    private const string MultiplayerScope = "net/minecraft/server/MinecraftServer$MultiplayerScope";
+    private const string SkinManager = "net/minecraft/client/resources/SkinManager";
+    private const string PauseScreen = "net/minecraft/client/gui/screens/PauseScreen";
+    private const string ReportingScreen = "net/minecraft/client/gui/screens/social/SocialInteractionsScreen";
+    private const string Button = "net/minecraft/client/gui/components/Button";
+    private const string PauseRowHelper = "net/minecraft/client/gui/layouts/GridLayout$RowHelper";
+    private const string LayoutElement = "net/minecraft/client/gui/layouts/LayoutElement";
+    private const string AbstractWidget = "net/minecraft/client/gui/components/AbstractWidget";
+    private const string Level = "net/minecraft/world/level/Level";
     private const string IntegratedServer = "net/minecraft/client/server/IntegratedServer";
     private const string MinecraftClient = "net/minecraft/client/Minecraft";
     private const string Gui = "net/minecraft/client/gui/Gui";
+    private const string Hud = "net/minecraft/client/gui/Hud";
+    private const string BlockableEventLoop = "net/minecraft/util/thread/BlockableEventLoop";
     private const string ChatComponent = "net/minecraft/client/gui/components/ChatComponent";
     private const string HttpUtil = "net/minecraft/util/HttpUtil";
     private const string GameType = "net/minecraft/world/level/GameType";
@@ -80,6 +96,10 @@ internal sealed class IdentityAdapterMappingService
     private const string TextureUrlChecker = "com/mojang/authlib/yggdrasil/TextureUrlChecker";
     private const string YggdrasilSessionService =
         "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
+    private const string MinecraftServicesSessionService =
+        "com/mojang/authlib/services/MinecraftServicesSessionService";
+    private const string MinecraftServicesDiscoveryService =
+        "com/mojang/authlib/services/MinecraftServicesDiscoveryService";
     // Where every Minecraft agrees who a player is. Whatever builds an offline
     // profile - the login listener on the old versions, UUIDUtil on the new -
     // ends at new GameProfile(offlineUuid, name), so this is the one seam that
@@ -123,24 +143,23 @@ internal sealed class IdentityAdapterMappingService
         var officialOnly = mappingPath is null && intermediaryPath is null &&
             runtime.Descriptor.Loader.Type == PackLoaderKind.NeoForge &&
             mojangMappingPath is not null;
-        if (mappingPath is null && intermediaryPath is null && !officialOnly)
-        {
-            return BuildSkinsOnly(runtime, gameDirectory, "the runtime ships no mappings this build can read");
-        }
-
         RuntimeNames mappings;
         try
         {
             mappings = mappingPath is not null ? RuntimeNames.Read(mappingPath, mojangMappingPath)
                 : intermediaryPath is not null
                     ? RuntimeNames.ReadIntermediary(intermediaryPath, mojangMappingPath, runtime.ClientJarPath)
-                    : RuntimeNames.ReadOfficialOnly(mojangMappingPath!);
+                    : officialOnly ? RuntimeNames.ReadOfficialOnly(mojangMappingPath!)
+                    // Current Minecraft is shipped with official names and no
+                    // mapping download. Read its actual members, rather than
+                    // borrowing another installed version's mapping file.
+                    : RuntimeNames.ReadNamedJar(runtime.ClientJarPath);
         }
         catch (InvalidDataException ex)
         {
             return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
         }
-        mappingPath ??= intermediaryPath ?? mojangMappingPath!;
+        mappingPath ??= intermediaryPath ?? mojangMappingPath ?? runtime.ClientJarPath;
 
         try
         {
@@ -183,17 +202,26 @@ internal sealed class IdentityAdapterMappingService
         string? mappingPath = null)
     {
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
+        AddLanRedirectProperties(runtime, gameDirectory, lanScreen, lanProperties);
+        var pauseScreen = AddPauseReportingProperties(mappings, lanProperties);
         var perPlayerProperties = new Dictionary<string, string>(StringComparer.Ordinal);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
         AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, perPlayerProperties);
         var discoveryScreen = AddSteamDiscoveryProperties(mappings, perPlayerProperties, runtime.Descriptor);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
-            { YggdrasilSessionService, TextureUrlChecker, GameProfile };
+            { YggdrasilSessionService, MinecraftServicesSessionService,
+                TextureUrlChecker, MinecraftServicesDiscoveryService, GameProfile };
         if (lanScreen is not null)
         {
-            wanted.Add(ShareToLanScreen);
+            wanted.Add(lanScreen.RuntimeName);
             wanted.Add(lanScreen.ObfName);
+        }
+        AddModernSkinTarget(mappings, wanted);
+        if (pauseScreen is not null)
+        {
+            wanted.Add(pauseScreen.RuntimeName);
+            wanted.Add(pauseScreen.ObfName);
         }
 
         if (discoveryScreen is not null)
@@ -207,10 +235,14 @@ internal sealed class IdentityAdapterMappingService
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
         // and without it there is nothing to patch at all.
-        var sessionService = targets.FirstOrDefault(target => target.ClassName == YggdrasilSessionService)
+        var sessionService = targets.FirstOrDefault(target =>
+                target.ClassName is YggdrasilSessionService or MinecraftServicesSessionService)
             ?? throw Unsupported(
                 runtime.Descriptor,
                 $"{whyNotEverything}, and authlib itself was not found either");
+        if (sessionService.ClassName == MinecraftServicesSessionService &&
+            targets.All(target => target.ClassName != MinecraftServicesDiscoveryService))
+            throw Unsupported(runtime.Descriptor, "authlib session service carries no texture-domain discovery service");
         if (targets.All(target => target.ClassName != GameProfile))
         {
             throw Unsupported(
@@ -250,12 +282,12 @@ internal sealed class IdentityAdapterMappingService
         // told to patch every target it is given. One that is not there means
         // the hook is off rather than half on.
         if (lanScreen is not null &&
-            targets.All(target => target.ClassName != ShareToLanScreen && target.ClassName != lanScreen.ObfName))
+            targets.All(target => target.ClassName != lanScreen.RuntimeName && target.ClassName != lanScreen.ObfName))
         {
             properties["lanPublishEnabled"] = "false";
         }
         AddServeDistanceProperties(mappings, properties);
-        AddSkinProperties(properties);
+        AddSkinProperties(properties, mappings);
         // There is no mapping file behind this configuration, and the cache
         // above still wants a file to notice changing. authlib is the file it
         // was actually derived from, so authlib is what it watches - unless
@@ -265,9 +297,11 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>The part that is the same however the rest turns out.</summary>
-    private static void AddSkinProperties(Dictionary<string, string> properties)
+    private static void AddSkinProperties(Dictionary<string, string> properties, RuntimeNames? mappings)
     {
-        properties["textureUrlCheckerClasses"] = JoinAliases(TextureUrlChecker, YggdrasilSessionService);
+        properties["textureUrlCheckerClasses"] = JoinAliases(
+            TextureUrlChecker, YggdrasilSessionService,
+            MinecraftServicesSessionService, MinecraftServicesDiscoveryService);
         properties["textureUrlCheckerMethods"] = JoinAliases("isAllowedTextureDomain", "isWhitelistedDomain");
         properties["textureUrlCheckerDescriptors"] = "(Ljava/lang/String;)Z";
         // Where the game asks authlib for a skin. getTextures took a profile up
@@ -276,6 +310,144 @@ internal sealed class IdentityAdapterMappingService
         // one step before authlib reads it.
         properties["skinReaderMethods"] = JoinAliases("getTextures", "getPackedTextures");
         properties["gameProfileClasses"] = GameProfile;
+        var skinManager = mappings?.FindClass(SkinManager);
+        var lookup = skinManager?.FindMethod("createLookup", descriptor =>
+            descriptor == "(Lcom/mojang/authlib/GameProfile;Z)Ljava/util/function/Supplier;");
+        properties["modernSkinLookupEnabled"] = lookup is null ? "false" : "true";
+        if (lookup is not null && skinManager is not null)
+        {
+            properties["skinManagerClasses"] = JoinAliases(skinManager);
+            properties["skinManagerLookupMethods"] = JoinAliases(lookup);
+            properties["skinManagerLookupDescriptors"] = lookup.ObfDescriptor;
+        }
+    }
+
+    private static void AddModernSkinTarget(RuntimeNames? mappings, HashSet<string> wanted)
+    {
+        var skinManager = mappings?.FindClass(SkinManager);
+        if (skinManager?.FindMethod("createLookup", descriptor =>
+                descriptor == "(Lcom/mojang/authlib/GameProfile;Z)Ljava/util/function/Supplier;") is null) return;
+        wanted.Add(skinManager.RuntimeName);
+        wanted.Add(skinManager.ObfName);
+    }
+
+    private void AddLanRedirectProperties(
+        PreparedRuntime runtime, string gameDirectory, MappedClass? screen, Dictionary<string, string> properties)
+    {
+        properties["lanRedirectNativeInitEnabled"] = "false";
+        if (screen is null || properties.GetValueOrDefault("lanPublishEnabled") != "true") return;
+        var origin = screen.Official switch
+        {
+            ShareToLanScreen => "link.e4steam.mixin.ShareToLanScreenMixin",
+            MultiplayerOptionsScreen => "link.e4steam.mixin.MultiplayerOptionsScreenMixin",
+            WorldOptionsScreen => "link.e4steam.mixin.WorldOptionsScreenMixin",
+            _ => null
+        };
+        var transport = SteamTransportCatalog.Find(runtime.Descriptor);
+        if (origin is null || transport is not { Version: "0.3.4" }) return;
+        _paths.EnsureUnderRoot(Path.GetFullPath(gameDirectory));
+        var path = Path.Combine(gameDirectory, "mods", transport.FileName);
+        if (!IsPinnedTransportJar(path, transport)) return;
+        properties["lanRedirectNativeInitEnabled"] = "true";
+        properties["lanRedirectTransportSha256"] = transport.Sha256.ToLowerInvariant();
+        properties["lanRedirectMixinOrigin"] = origin;
+    }
+
+    internal static bool IsPinnedTransportJar(string path, SteamTransportBuild transport)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length != transport.SizeBytes) return false;
+            using var stream = file.OpenRead();
+            return string.Equals(Convert.ToHexString(SHA256.HashData(stream)), transport.Sha256,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The newer pause menu keeps its multiplayer-options action after opening
+    /// a world. Restore the native reporting action at that one button site.
+    /// Older menus already select the reporting action themselves.
+    /// </summary>
+    private static MappedClass? AddPauseReportingProperties(
+        RuntimeNames? mappings, Dictionary<string, string> properties)
+    {
+        properties["pauseReportingEnabled"] = "false";
+        properties["pauseLanRowEnabled"] = "false";
+        properties["pauseScreenClasses"] = PauseScreen;
+        if (properties.GetValueOrDefault("lanPublishEnabled") != "true" ||
+            mappings is null) return null;
+        var worldOptions = mappings.FindClass(WorldOptionsScreen);
+        var multiplayerOptions = mappings.FindClass(MultiplayerOptionsScreen);
+        if (worldOptions is null && multiplayerOptions is null) return null;
+        var pause = mappings.FindClass(PauseScreen);
+        var reporting = mappings.FindClass(ReportingScreen);
+        var screen = mappings.FindClass(Screen);
+        var component = mappings.FindClass(Component);
+        var button = mappings.FindClass(Button);
+        if (pause is null || reporting is null || screen is null || component is null || button is null) return null;
+        var menu = pause.FindMethod("createPauseMenu", descriptor => descriptor == "()V");
+        var open = pause.FindMethod("openScreenButton", descriptor =>
+            descriptor == $"(L{component.ObfName};Ljava/util/function/Supplier;)L{button.ObfName};");
+        var multiplayer = pause.FindField("MULTIPLAYER_OPTIONS");
+        var reports = pause.FindField("PLAYER_REPORTING");
+        var constructor = reporting.FindMethod("<init>", descriptor => descriptor == $"(L{screen.ObfName};)V");
+        if (menu is null || open is null || reports is null || constructor is null) return null;
+        if (worldOptions is null && multiplayer is null) return null;
+        if (worldOptions is not null)
+        {
+            // WorldOptionsScreen now owns game rules and difficulty as well as
+            // LAN settings. Only a dedicated request from the added pause row
+            // may auto-publish; the normal world-options entry stays native.
+            var row = mappings.FindClass(PauseRowHelper);
+            var element = mappings.FindClass(LayoutElement);
+            var widget = mappings.FindClass(AbstractWidget);
+            var level = mappings.FindClass(Level);
+            var minecraft = mappings.FindClass(MinecraftClient);
+            if (row is null || element is null || widget is null || level is null || minecraft is null) return null;
+            var rowAdd = row.FindMethod("addChild", descriptor =>
+                descriptor == $"(L{element.ObfName};I)L{element.ObfName};");
+            var width = widget.FindMethod("getWidth", descriptor => descriptor == "()I");
+            var setWidth = widget.FindMethod("setWidth", descriptor => descriptor == "(I)V");
+            var levelField = minecraft.FindField("level");
+            var translatable = component.FindMethod("translatable", descriptor =>
+                descriptor.StartsWith("(Ljava/lang/String;)L", StringComparison.Ordinal));
+            var worldConstructor = worldOptions.FindMethod("<init>", descriptor =>
+                descriptor == $"(L{screen.ObfName};L{level.ObfName};)V");
+            if (rowAdd is null || width is null || setWidth is null || levelField is null ||
+                translatable is null || worldConstructor is null || pause.FindField("WORLD_OPTIONS") is null) return null;
+            properties["pauseLanRowEnabled"] = "true";
+            properties["pauseRowHelperClasses"] = JoinAliases(row);
+            properties["pauseRowAddMethods"] = JoinAliases(rowAdd);
+            properties["pauseRowAddDescriptors"] = JoinAliases(
+                $"(L{element.RuntimeName};I)L{element.RuntimeName};", rowAdd.ObfDescriptor);
+            properties["layoutElementClasses"] = JoinDottedAliases(element);
+            properties["widgetClasses"] = JoinAliases(widget);
+            properties["widgetGetWidthMethods"] = JoinAliases(width);
+            properties["widgetSetWidthMethods"] = JoinAliases(setWidth);
+            properties["worldOptionsScreenClasses"] = JoinDottedAliases(worldOptions);
+            properties["levelClasses"] = JoinDottedAliases(level);
+            properties["minecraftLevelFields"] = JoinAliases(levelField);
+            properties["componentTranslatableMethods"] = JoinAliases(translatable);
+        }
+        else
+        {
+            properties["pauseReportingEnabled"] = "true";
+        }
+        properties["pauseScreenClasses"] = JoinAliases(pause);
+        properties["pauseCreateMenuMethods"] = JoinAliases(menu);
+        if (multiplayer is not null) properties["pauseMultiplayerFields"] = JoinAliases(multiplayer);
+        properties["pausePlayerReportingFields"] = JoinAliases(reports);
+        properties["pauseOpenScreenButtonMethods"] = JoinAliases(open);
+        properties["pauseOpenScreenButtonDescriptors"] = JoinAliases(
+            $"(L{component.RuntimeName};Ljava/util/function/Supplier;)L{button.RuntimeName};", open.ObfDescriptor);
+        properties["reportingScreenClasses"] = JoinDottedAliases(reporting);
+        return pause;
     }
 
     /// <summary>
@@ -346,11 +518,14 @@ internal sealed class IdentityAdapterMappingService
         properties = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["lanPublishEnabled"] = "false",
+            ["lanPublishExplicitRequestOnly"] = "false",
             ["lanShareScreenClasses"] = ShareToLanScreen
         };
         if (mappings is null) return null;
 
-        var shareScreen = mappings.FindClass(ShareToLanScreen);
+        var shareScreen = mappings.FindClass(ShareToLanScreen) ?? mappings.FindClass(MultiplayerOptionsScreen)
+            ?? mappings.FindClass(WorldOptionsScreen);
+        var multiplayerScope = mappings.FindClass(MultiplayerScope);
         var integrated = mappings.FindClass(IntegratedServer);
         var minecraftClient = mappings.FindClass(MinecraftClient);
         var gui = mappings.FindClass(Gui);
@@ -372,9 +547,11 @@ internal sealed class IdentityAdapterMappingService
         }
 
         var shareInit = shareScreen.FindMethod("init", descriptor => descriptor == "()V");
-        var publishServer = integrated.FindMethod(
-            "publishServer",
-            descriptor => descriptor.EndsWith("ZI)Z", StringComparison.Ordinal));
+        var scopedPublish = multiplayerScope is null ? null : integrated.FindMethod(
+            "publishServer", descriptor => descriptor == $"(L{multiplayerScope.ObfName};I)Z");
+        var lanScope = multiplayerScope?.FindField("LAN");
+        var publishServer = scopedPublish ?? integrated.FindMethod(
+            "publishServer", descriptor => descriptor == $"(L{gameType.ObfName};ZI)Z");
         var defaultGameType = server.FindMethod(
             "getDefaultGameType",
             descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
@@ -401,14 +578,21 @@ internal sealed class IdentityAdapterMappingService
         var setScreen = minecraftClient.FindMethod(
             "setScreen",
             descriptor => descriptor == $"(L{screen.ObfName};)V");
+        var setScreenOnGui = setScreen is null;
+        setScreen ??= gui.FindMethod("setScreen", descriptor => descriptor == $"(L{screen.ObfName};)V");
         var updateTitle = minecraftClient.FindMethod("updateTitle", descriptor => descriptor == "()V");
         var guiField = minecraftClient.FindField("gui");
-        var getChat = gui.FindMethod(
+        var hud = mappings.FindClass(Hud);
+        var guiHud = gui.FindField("hud");
+        var getChat = (guiHud is not null ? hud : gui)?.FindMethod(
             "getChat",
             descriptor => descriptor.StartsWith("()L", StringComparison.Ordinal));
         var addMessage = chatComponent.FindMethod(
             "addMessage",
-            descriptor => descriptor == $"(L{component.ObfName};)V");
+            descriptor => descriptor == $"(L{component.ObfName};)V") ?? chatComponent.FindMethod(
+            "addClientSystemMessage", descriptor => descriptor == $"(L{component.ObfName};)V");
+        var schedule = mappings.FindClass(BlockableEventLoop)?.FindMethod(
+            "schedule", descriptor => descriptor == "(Ljava/lang/Runnable;)V");
         // The line the game writes in chat when a world opens is wanted, not
         // required: PublishCommand said it inline until 1.19.4, and a world
         // that opens without a line about it has still opened. The hook's own
@@ -424,12 +608,23 @@ internal sealed class IdentityAdapterMappingService
         {
             return null;
         }
+        if (scopedPublish is not null && lanScope is null) return null;
 
         properties["lanPublishEnabled"] = "true";
+        properties["lanPublishExplicitRequestOnly"] = shareScreen.Official == WorldOptionsScreen ? "true" : "false";
         properties["lanShareScreenClasses"] = JoinAliases(shareScreen);
         properties["lanShareInitMethods"] = JoinAliases(shareInit);
         properties["integratedServerClasses"] = JoinAliases(integrated);
         properties["publishServerMethods"] = JoinAliases(publishServer);
+        properties["publishServerDescriptors"] = scopedPublish is not null && multiplayerScope is not null
+            ? JoinAliases($"(L{multiplayerScope.RuntimeName};I)Z", publishServer.ObfDescriptor)
+            : JoinAliases($"(L{gameType.RuntimeName};ZI)Z", publishServer.ObfDescriptor);
+        properties["setScreenOnGui"] = setScreenOnGui ? "true" : "false";
+        if (scopedPublish is not null && multiplayerScope is not null && lanScope is not null)
+        {
+            properties["multiplayerScopeClasses"] = JoinDottedAliases(multiplayerScope);
+            properties["lanMultiplayerScopeFields"] = JoinAliases(lanScope);
+        }
         properties["serverClasses"] = JoinAliases(server);
         properties["playerListClasses"] = JoinAliases(playerList);
         properties["playerListMethods"] = JoinAliases(getPlayerList);
@@ -455,6 +650,12 @@ internal sealed class IdentityAdapterMappingService
         properties["screenClasses"] = JoinDottedAliases(screen);
         properties["componentClasses"] = JoinDottedAliases(component);
         properties["guiClasses"] = JoinAliases(gui);
+        if (guiHud is not null && hud is not null)
+        {
+            properties["guiHudFields"] = JoinAliases(guiHud);
+            properties["hudClasses"] = JoinAliases(hud);
+        }
+        if (schedule is not null) properties["minecraftScheduleMethods"] = JoinAliases(schedule);
         properties["guiChatMethods"] = JoinAliases(getChat);
         properties["chatComponentClasses"] = JoinAliases(chatComponent);
         properties["chatAddMessageMethods"] = JoinAliases(addMessage);
@@ -693,6 +894,27 @@ internal sealed class IdentityAdapterMappingService
         properties["handleMoveVehicleDescriptors"] = JoinAliases(
             $"(L{moveVehicle.RuntimeName};)V", $"(L{moveVehicle.ObfName};)V");
         properties["singleplayerOwnerMethods"] = JoinAliases(owner);
+        // Newer clients moved the on-foot owner check into a private helper.
+        // The transformer also proves its sole caller is handleMovePlayer
+        // before touching the helper; the name alone is not permission.
+        var movementCheck = listener.FindMethod("shouldCheckPlayerMovement", descriptor => descriptor == "(Z)Z");
+        if (movementCheck is not null)
+        {
+            properties["movementCheckHelperMethods"] = JoinAliases(movementCheck);
+            properties["movementCheckHelperDescriptors"] = movementCheck.ObfDescriptor;
+            var position = listener.FindMethod("handlePlayerPositionChange", descriptor => descriptor == "(DDDFFZZ)V");
+            var teleportPacket = mappings.FindClass(AcceptTeleportPacket);
+            var teleportAck = teleportPacket is null ? null : listener.FindMethod("handleAcceptTeleportPacket",
+                descriptor => descriptor == $"(L{teleportPacket.ObfName};)V");
+            if (position is not null && teleportAck is not null)
+            {
+                properties["movementPositionMethods"] = JoinAliases(position);
+                properties["movementPositionDescriptors"] = position.ObfDescriptor;
+                properties["movementTeleportAckMethods"] = JoinAliases(teleportAck);
+                properties["movementTeleportAckDescriptors"] = JoinAliases(
+                    $"(L{teleportPacket!.RuntimeName};)V", teleportAck.ObfDescriptor);
+            }
+        }
         // Both, and not only the class that declares it. A call to an
         // inherited method carries the name of the class it was called on, so
         // on 1.20.2 and later the instruction inside the listener says the
@@ -1054,14 +1276,16 @@ internal sealed class IdentityAdapterMappingService
         // separately, because they are older than the hooks above and a
         // Minecraft that cannot have those may still have these.
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
+        AddLanRedirectProperties(runtime, gameDirectory, lanScreen, lanProperties);
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
+        var pauseScreen = AddPauseReportingProperties(mappings, properties);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
         AddChunkPacingProperties(mappings, properties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, properties);
         var discoveryScreen = AddSteamDiscoveryProperties(mappings, properties, runtime.Descriptor);
         AddServeDistanceProperties(mappings, properties);
 
-        AddSkinProperties(properties);
+        AddSkinProperties(properties, mappings);
 
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -1069,12 +1293,11 @@ internal sealed class IdentityAdapterMappingService
             listener.ObfName,
             PlayerInfo,
             playerInfo.ObfName,
-            YggdrasilSessionService,
             GameProfile
         };
         if (lanScreen is not null)
         {
-            requiredTargets.Add(ShareToLanScreen);
+            requiredTargets.Add(lanScreen.RuntimeName);
             requiredTargets.Add(lanScreen.ObfName);
         }
         if (discoveryScreen is not null)
@@ -1084,11 +1307,26 @@ internal sealed class IdentityAdapterMappingService
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         AddGuestMovementTargets(mappings, requiredTargets, guestMovement);
+        AddModernSkinTarget(mappings, requiredTargets);
+        if (pauseScreen is not null)
+        {
+            requiredTargets.Add(pauseScreen.RuntimeName);
+            requiredTargets.Add(pauseScreen.ObfName);
+        }
         // Wanted where it exists, not required: authlib only grew
         // TextureUrlChecker at 3.18.38, and every version before that keeps the
         // same rule on the session service instead.
-        var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal) { TextureUrlChecker };
+        var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal)
+        {
+            TextureUrlChecker, YggdrasilSessionService,
+            MinecraftServicesSessionService, MinecraftServicesDiscoveryService
+        };
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
+        if (targets.All(target => target.ClassName is not (YggdrasilSessionService or MinecraftServicesSessionService)))
+            throw Unsupported(runtime.Descriptor, "authlib session service was not found");
+        if (targets.Any(target => target.ClassName == MinecraftServicesSessionService) &&
+            targets.All(target => target.ClassName != MinecraftServicesDiscoveryService))
+            throw Unsupported(runtime.Descriptor, "authlib session service carries no texture-domain discovery service");
         var found = targets.Select(target => target.ClassName).ToHashSet(StringComparer.Ordinal);
         if (!requiredTargets.IsSubsetOf(found))
         {
@@ -1115,8 +1353,8 @@ internal sealed class IdentityAdapterMappingService
         // store holds every version the machine has ever played, and taking the
         // alphabetically first put 1.18.2's file in front of 1.21.1's.
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
-                     .OrderByDescending(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
-                     .ThenBy(path => path, StringComparer.OrdinalIgnoreCase))
+                     .Where(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
@@ -1154,8 +1392,8 @@ internal sealed class IdentityAdapterMappingService
         if (!Directory.Exists(libraries)) return null;
         var wanted = $"intermediary-{runtime.Descriptor.MinecraftVersion}.jar";
         return Directory.EnumerateFiles(libraries, "*.jar", SearchOption.AllDirectories)
-            .OrderByDescending(path => string.Equals(
-                Path.GetFileName(path), wanted, StringComparison.OrdinalIgnoreCase))
+            .Where(path => string.Equals(Path.GetFileName(path), wanted, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
     }
 
@@ -1203,12 +1441,11 @@ internal sealed class IdentityAdapterMappingService
 
         var libraries = runtime.LibrariesRoot;
         if (!Directory.Exists(libraries)) return null;
-        // This Minecraft's own file first, when there is one. A preference and
-        // not a filter: every real store files them under a version folder, but
-        // a layout that does not is still this runtime's only answer.
+        // Version scope is required: a shared store may hold mappings for an
+        // older release even when this Minecraft no longer ships mappings.
         foreach (var path in Directory.EnumerateFiles(libraries, "*mappings*.txt", SearchOption.AllDirectories)
-                     .OrderByDescending(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
-                     .ThenByDescending(path => Path.GetFileName(path).Contains("merged", StringComparison.OrdinalIgnoreCase))
+                     .Where(path => IsFiledUnderVersion(path, runtime.Descriptor.MinecraftVersion))
+                     .OrderByDescending(path => Path.GetFileName(path).Contains("merged", StringComparison.OrdinalIgnoreCase))
                      .ThenBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             try
@@ -1237,6 +1474,31 @@ internal sealed class IdentityAdapterMappingService
     {
         var wanted = new HashSet<string>(requiredTargets, StringComparer.Ordinal);
         var candidates = new List<string>();
+        var loader = runtime.Descriptor.Loader;
+        if (!string.IsNullOrWhiteSpace(loader.Version) && loader.Version.IndexOfAny(['/', '\\']) < 0)
+        {
+            // Loader installers can produce the actual patched client without
+            // listing it as an ordinary profile library. It is this exact
+            // loader version's output, not an arbitrary Minecraft in the store.
+            if (loader.Type == PackLoaderKind.NeoForge)
+            {
+                candidates.Add(Path.Combine(runtime.LibrariesRoot, "net", "neoforged", "minecraft-client-patched",
+                    loader.Version, $"minecraft-client-patched-{loader.Version}.jar"));
+                candidates.Add(Path.Combine(runtime.LibrariesRoot, "net", "neoforged", "neoforge",
+                    loader.Version, $"neoforge-{loader.Version}-client.jar"));
+            }
+            else if (loader.Type == PackLoaderKind.Forge)
+            {
+                var version = runtime.Descriptor.MinecraftVersion + "-" + loader.Version;
+                candidates.Add(Path.Combine(runtime.LibrariesRoot, "net", "minecraftforge", "forge",
+                    version, $"forge-{version}-client.jar"));
+            }
+        }
+        var runtimeLibraries = FindProfileLibraries(runtime);
+        // The selected profile, including its inherited vanilla version,
+        // determines authlib and the patched client. An older authlib anywhere
+        // in the shared store is not evidence about this JVM's bytecode.
+        if (runtimeLibraries is not null) candidates.AddRange(runtimeLibraries);
         // This runtime's own Minecraft first, and only then anybody else's.
         // The store is shared, a class name is not unique across versions, and
         // first-jar-wins used to hand a 1.18.2 pack the ShareToLanScreen out of
@@ -1259,7 +1521,7 @@ internal sealed class IdentityAdapterMappingService
             candidates.AddRange(Directory.EnumerateFiles(instanceMods, "*.jar", SearchOption.TopDirectoryOnly));
         }
         var libraries = runtime.LibrariesRoot;
-        if (Directory.Exists(libraries))
+        if (runtimeLibraries is null && Directory.Exists(libraries))
         {
             // Everything else in the store - authlib and the loader's own jars,
             // which carry no Minecraft classes - minus another version's
@@ -1294,6 +1556,41 @@ internal sealed class IdentityAdapterMappingService
             if (wanted.Count == 0) break;
         }
         return found;
+    }
+
+    private string[]? FindProfileLibraries(PreparedRuntime runtime)
+    {
+        var roots = new[]
+        {
+            SharedRuntimeStore.Versions(_paths),
+            Path.Combine(runtime.RuntimeRoot, "versions"),
+            Directory.GetParent(Path.GetDirectoryName(runtime.ClientJarPath)!)?.FullName ?? ""
+        }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var libraries = new List<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var readAny = false;
+        void Read(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id) || !visited.Add(id) ||
+                id.IndexOfAny(['/', '\\']) >= 0 || id is "." or "..") return;
+            var profile = roots.Select(root => Path.Combine(root, id, id + ".json"))
+                .FirstOrDefault(File.Exists);
+            if (profile is null) return;
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(profile));
+                readAny = true;
+                libraries.AddRange(PackRuntimeService.LibrariesNamedBy(profile, runtime.LibrariesRoot));
+                if (document.RootElement.TryGetProperty("inheritsFrom", out var parent))
+                    Read(parent.GetString() ?? "");
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+            {
+            }
+        }
+        Read(runtime.ProfileId);
+        Read(runtime.Descriptor.MinecraftVersion);
+        return readAny ? libraries.Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : null;
     }
 
     /// <summary>
@@ -1407,6 +1704,102 @@ internal sealed class IdentityAdapterMappingService
             _classes = classes;
         }
 
+        /// <summary>
+        /// Minecraft releases which no longer obfuscate their classes have no
+        /// mapping download. Their constant pools provide the exact same
+        /// member names and descriptors without a version-specific alias table.
+        /// No classes are loaded and no game initializers run during this read.
+        /// </summary>
+        public static RuntimeNames ReadNamedJar(string path)
+        {
+            var classes = new Dictionary<string, MappedClass>(StringComparer.Ordinal);
+            using var archive = ZipFile.OpenRead(path);
+            foreach (var name in Required)
+            {
+                if (archive.GetEntry(name + ".class") is not { } entry) continue;
+                using var stream = entry.Open();
+                using var memory = new MemoryStream();
+                stream.CopyTo(memory);
+                classes[name] = ReadNamedClass(name, memory.ToArray());
+            }
+            // A named class from a dependency is not proof that the actual
+            // Minecraft jar uses this namespace.
+            if (!classes.ContainsKey(MinecraftClient) || !classes.ContainsKey(Screen))
+                throw new InvalidDataException("The runtime ships neither usable mappings nor a named Minecraft client.");
+            return new RuntimeNames(classes);
+        }
+
+        private static MappedClass ReadNamedClass(string name, byte[] bytes)
+        {
+            try
+            {
+                using var reader = new BinaryReader(new MemoryStream(bytes));
+                int U2() => (reader.ReadByte() << 8) | reader.ReadByte();
+                uint U4() => ((uint)U2() << 16) | (uint)U2();
+                void Skip(long count)
+                {
+                    if (count < 0 || reader.BaseStream.Position + count > reader.BaseStream.Length)
+                        throw new InvalidDataException("Truncated named Minecraft class.");
+                    reader.BaseStream.Position += count;
+                }
+                if (U4() != 0xcafebabe) throw new InvalidDataException("Invalid named Minecraft class.");
+                Skip(4); // minor and major version
+                var pool = new Dictionary<int, string>();
+                var count = U2();
+                for (var index = 1; index < count; index++)
+                {
+                    switch (reader.ReadByte())
+                    {
+                        case 1:
+                            var length = U2();
+                            var utf8 = reader.ReadBytes(length);
+                            if (utf8.Length != length) throw new EndOfStreamException();
+                            pool[index] = System.Text.Encoding.UTF8.GetString(utf8);
+                            break;
+                        case 3: case 4: case 9: case 10: case 11: case 12: case 17: case 18:
+                            Skip(4); break;
+                        case 5: case 6:
+                            Skip(8); index++; break;
+                        case 7: case 8: case 16: case 19: case 20:
+                            Skip(2); break;
+                        case 15:
+                            Skip(3); break;
+                        default:
+                            throw new InvalidDataException("Unknown named Minecraft constant pool entry.");
+                    }
+                }
+                Skip(6); // access, this and superclass
+                Skip(U2() * 2L); // interfaces
+                var mapped = new MappedClass(name, name, name);
+                void Members(bool methods)
+                {
+                    var memberCount = U2();
+                    for (var index = 0; index < memberCount; index++)
+                    {
+                        Skip(2); // access flags
+                        var memberName = pool[U2()];
+                        var descriptor = pool[U2()];
+                        var member = new MappedMember(memberName, memberName, memberName, descriptor);
+                        if (methods) mapped.Methods.Add(member);
+                        else mapped.Fields[memberName] = member;
+                        var attributes = U2();
+                        for (var attribute = 0; attribute < attributes; attribute++)
+                        {
+                            Skip(2); // attribute name
+                            Skip(U4());
+                        }
+                    }
+                }
+                Members(methods: false);
+                Members(methods: true);
+                return mapped;
+            }
+            catch (Exception ex) when (ex is EndOfStreamException or KeyNotFoundException)
+            {
+                throw new InvalidDataException("Cannot read named Minecraft class " + name + ".", ex);
+            }
+        }
+
         /// <summary>The classes this build asks about, by their official names.</summary>
         private static HashSet<string> Required { get; } = new(StringComparer.Ordinal)
         {
@@ -1419,6 +1812,7 @@ internal sealed class IdentityAdapterMappingService
             CommonListener,
             MovePlayerPacket,
             MoveVehiclePacket,
+            AcceptTeleportPacket,
             HelloPacket,
             MinecraftServer,
             Connection,
@@ -1426,6 +1820,10 @@ internal sealed class IdentityAdapterMappingService
             Component,
             PlayerInfo,
             PlayerSkin,
+            SkinManager,
+            PauseScreen,
+            ReportingScreen,
+            Button,
             ClientPacketListener,
             Screen,
             ServerLevel,
@@ -1442,6 +1840,15 @@ internal sealed class IdentityAdapterMappingService
             NetworkPacket,
             ChunkRadiusPacket,
             ShareToLanScreen,
+            MultiplayerOptionsScreen,
+            WorldOptionsScreen,
+            PauseRowHelper,
+            LayoutElement,
+            AbstractWidget,
+            Level,
+            MultiplayerScope,
+            Hud,
+            BlockableEventLoop,
             IntegratedServer,
             MinecraftClient,
             Gui,

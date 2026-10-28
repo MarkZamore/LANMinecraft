@@ -515,12 +515,13 @@ public sealed class ManagedComponentService
         return sanitized.Uri.GetLeftPart(UriPartial.Path);
     }
 
-    private static async Task AtomicCopyAsync(
+    private async Task AtomicCopyAsync(
         string sourcePath,
         string destinationPath,
         ManagedComponentDescriptor component,
         CancellationToken token)
     {
+        EnsureOrdinaryFileIfPresent(sourcePath);
         ValidateFile(sourcePath, component);
         var destinationDirectory = Path.GetDirectoryName(destinationPath)
             ?? throw new InvalidOperationException(
@@ -595,7 +596,7 @@ public sealed class ManagedComponentService
             Path.GetDirectoryName(destinationPath)!,
             $".{Path.GetFileName(destinationPath)}.{operation}.{Guid.NewGuid():N}.tmp");
 
-    private static void PublishTemporaryFile(string temporaryPath, string destinationPath)
+    private void PublishTemporaryFile(string temporaryPath, string destinationPath)
     {
         EnsureOrdinaryFileIfPresent(destinationPath);
         if (File.Exists(destinationPath))
@@ -758,11 +759,13 @@ public sealed class ManagedComponentService
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
-    private static void EnsureOrdinaryDirectory(
+    private void EnsureOrdinaryDirectory(
         string path,
         bool createIfMissing = true)
     {
+        EnsureOrdinaryAncestors(path);
         if (createIfMissing) Directory.CreateDirectory(path);
+        EnsureOrdinaryAncestors(path);
         var directory = new DirectoryInfo(path);
         if (!directory.Exists)
         {
@@ -774,13 +777,33 @@ public sealed class ManagedComponentService
         }
     }
 
-    private static void EnsureOrdinaryFileIfPresent(string path)
+    private void EnsureOrdinaryFileIfPresent(string path)
     {
+        EnsureOrdinaryAncestors(path);
         if (!File.Exists(path)) return;
         var attributes = File.GetAttributes(path);
         if ((attributes & FileAttributes.ReparsePoint) != 0)
         {
             throw new IOException($"Managed component file cannot be a reparse point: {path}");
+        }
+    }
+
+    private void EnsureOrdinaryAncestors(string path)
+    {
+        var current = Path.GetFullPath(path);
+        _paths.EnsureUnderRoot(current);
+        var root = Path.TrimEndingDirectorySeparator(_paths.Root);
+        while (true)
+        {
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException($"Managed component path cannot pass through a reparse point: {current}");
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { }
+            if (string.Equals(Path.TrimEndingDirectorySeparator(current), root, StringComparison.OrdinalIgnoreCase)) break;
+            current = Path.GetDirectoryName(current)
+                ?? throw new IOException("Managed component path has no portable root.");
         }
     }
 

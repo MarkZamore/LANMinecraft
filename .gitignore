@@ -27,6 +27,7 @@
 *.7z
 *.zip
 !Program/LibrarySeed/*.zip
+!Program.Tests/Fixtures/LanRedirect/upstream-fixtures.zip
 __pycache__/
 *.pyc
 

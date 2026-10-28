@@ -238,7 +238,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         var librariesRoot = SharedRuntimeStore.Libraries(paths);
         if (withSrgMappings)
         {
-            var mcpDirectory = Path.Combine(librariesRoot, "mcp_config");
+            var mcpDirectory = Path.Combine(librariesRoot, "mcp_config", "1.21.1");
             Directory.CreateDirectory(mcpDirectory);
             File.WriteAllText(Path.Combine(mcpDirectory, "mcp_config-test-mappings-merged.txt"), srg);
         }
@@ -427,7 +427,7 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
     {
         var paths = new AppPaths(_root);
         var runtimeRoot = Path.Combine(_root, "Minecraft", "Launcher", "Runtimes", "Test");
-        var mappingDirectory = Path.Combine(runtimeRoot, "libraries", "neoform");
+        var mappingDirectory = Path.Combine(runtimeRoot, "libraries", "neoform", "1.21.1");
         Directory.CreateDirectory(mappingDirectory);
         if (withMappingFile)
         {
@@ -756,7 +756,9 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         // is the same on every loader.
         Assert.Equal(
             "com/mojang/authlib/yggdrasil/TextureUrlChecker," +
-            "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
+            "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService," +
+            "com/mojang/authlib/services/MinecraftServicesSessionService," +
+            "com/mojang/authlib/services/MinecraftServicesDiscoveryService",
             properties["textureUrlCheckerClasses"]);
         Assert.Equal("isAllowedTextureDomain,isWhitelistedDomain", properties["textureUrlCheckerMethods"]);
         Assert.Equal("(Ljava/lang/String;)Z", properties["textureUrlCheckerDescriptors"]);

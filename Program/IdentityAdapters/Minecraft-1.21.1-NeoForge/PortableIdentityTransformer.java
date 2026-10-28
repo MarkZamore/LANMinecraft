@@ -29,17 +29,19 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         "net/minecraft/client/multiplayer/PlayerInfo";
     private static final String OBFUSCATED_PLAYER_INFO = "fzq";
     // Where authlib keeps the rule about which hosts a skin may come from.
-    // It moved once and was renamed once, and those are the only three forms
-    // there have ever been: isWhitelistedDomain on the session service up to
+    // Earlier authlib has three static forms: isWhitelistedDomain on the session service up to
     // authlib 2.1.28, isAllowedTextureDomain on the session service from 2.3.31
     // to 3.16.29, and isAllowedTextureDomain on TextureUrlChecker from 3.18.38
-    // onwards. Read out of all 18 published authlib jars, 1.5.21 to 9.0.75.
-    // Both classes are looked at and whichever carries the method is patched:
+    // to 9.0.75. Authlib 10.0.77 moved the reader and the instance domain rule
+    // to MinecraftServicesSessionService and MinecraftServicesDiscoveryService.
+    // Each candidate is inspected and whichever carries a method is patched:
     // com.mojang.authlib is never obfuscated, so this is the same on Fabric,
     // Quilt, Forge and NeoForge alike, and needs no mappings from the runtime.
     private static final String TEXTURE_URL_CHECKER =
         "com/mojang/authlib/yggdrasil/TextureUrlChecker,"
-            + "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService";
+            + "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService,"
+            + "com/mojang/authlib/services/MinecraftServicesSessionService,"
+            + "com/mojang/authlib/services/MinecraftServicesDiscoveryService";
     private static final String TEXTURE_URL_CHECKER_METHODS =
         "isAllowedTextureDomain,isWhitelistedDomain";
     private static final String SKIN_READER_METHODS = "getTextures,getPackedTextures";
@@ -120,7 +122,9 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
         boolean gameProfileClass = contains(property("gameProfileClasses", GAME_PROFILE), className);
-        if (!loginClass && !playerInfoClass && !textureUrlCheckerClass && !gameProfileClass) {
+        boolean skinManagerClass = "true".equals(property("modernSkinLookupEnabled", "false")) &&
+            contains(property("skinManagerClasses", "net/minecraft/client/resources/SkinManager"), className);
+        if (!loginClass && !playerInfoClass && !textureUrlCheckerClass && !gameProfileClass && !skinManagerClass) {
             return null;
         }
 
@@ -134,6 +138,9 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         }
         if (playerInfoClass) {
             return transformPlayerInfo(node, className);
+        }
+        if (skinManagerClass) {
+            return transformSkinManager(node, className);
         }
 
         boolean helloPatched = false;
@@ -190,9 +197,11 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
                 inject.add(new MethodInsnNode(
                     Opcodes.INVOKESTATIC,
                     SKIN_PROFILES,
-                    "apply",
-                    "(Ljava/lang/Object;)V",
+                    "withSkin",
+                    "(Ljava/lang/Object;)Ljava/lang/Object;",
                     false));
+                inject.add(new TypeInsnNode(Opcodes.CHECKCAST, GAME_PROFILE));
+                inject.add(new VarInsnNode(Opcodes.ASTORE, 1));
                 // Argument 2, where authlib has one, is "this skin must be
                 // signed". Only Mojang can sign a skin, so a launcher skin
                 // never is, and authlib answers with nothing at all - which is
@@ -235,7 +244,10 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
 
             LabelNode continueLabel = new LabelNode();
             InsnList prefix = new InsnList();
-            prefix.add(new VarInsnNode(Opcodes.ALOAD, 0));
+            // Authlib 10 moved the allowlist into its discovery service and
+            // made the check an instance method. The URL is argument 1 there;
+            // every earlier static checker keeps argument 0.
+            prefix.add(new VarInsnNode(Opcodes.ALOAD, isStatic(method) ? 0 : 1));
             prefix.add(new MethodInsnNode(
                 Opcodes.INVOKESTATIC,
                 SKIN_PROFILES,
@@ -288,6 +300,17 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
                 "(Ljava/util/UUID;Ljava/lang/String;)Ljava/util/UUID;",
                 false));
             inject.add(new VarInsnNode(Opcodes.ASTORE, 1));
+            if (method.desc.equals(
+                "(Ljava/util/UUID;Ljava/lang/String;Lcom/mojang/authlib/properties/PropertyMap;)V") &&
+                "java/lang/Record".equals(node.superName)) {
+                inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                inject.add(new VarInsnNode(Opcodes.ALOAD, 2));
+                inject.add(new VarInsnNode(Opcodes.ALOAD, 3));
+                inject.add(new MethodInsnNode(Opcodes.INVOKESTATIC, SKIN_PROFILES, "propertiesFor",
+                    "(Ljava/util/UUID;Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/Object;", false));
+                inject.add(new TypeInsnNode(Opcodes.CHECKCAST, "com/mojang/authlib/properties/PropertyMap"));
+                inject.add(new VarInsnNode(Opcodes.ASTORE, 3));
+            }
             method.instructions.insert(inject);
             patched = true;
         }
@@ -305,6 +328,44 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
 
     private static boolean isStatic(MethodNode method) {
         return (method.access & Opcodes.ACC_STATIC) != 0;
+    }
+
+    private static byte[] transformSkinManager(ClassNode node, String className) {
+        boolean patched = false;
+        for (MethodNode method : node.methods) {
+            if (isStatic(method) || !matchesMethod(method,
+                "skinManagerLookupMethods", "createLookup",
+                "skinManagerLookupDescriptors", "(Lcom/mojang/authlib/GameProfile;Z)Ljava/util/function/Supplier;")) {
+                continue;
+            }
+            // New Minecraft moved peer secure filtering from PlayerInfo here.
+            // Keep the native lookup, cache, downloader and async supplier;
+            // only registry-owned profiles may use the launcher's unsigned PNG.
+            InsnList inject = new InsnList();
+            inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            inject.add(new MethodInsnNode(Opcodes.INVOKESTATIC, SKIN_PROFILES, "withSkin",
+                "(Ljava/lang/Object;)Ljava/lang/Object;", false));
+            inject.add(new TypeInsnNode(Opcodes.CHECKCAST, GAME_PROFILE));
+            inject.add(new VarInsnNode(Opcodes.ASTORE, 1));
+            inject.add(new VarInsnNode(Opcodes.ALOAD, 1));
+            inject.add(new MethodInsnNode(Opcodes.INVOKESTATIC, SKIN_PROFILES, "isPortableSkin",
+                "(Ljava/lang/Object;)Z", false));
+            LabelNode keepTheRule = new LabelNode();
+            inject.add(new JumpInsnNode(Opcodes.IFEQ, keepTheRule));
+            inject.add(new InsnNode(Opcodes.ICONST_0));
+            inject.add(new VarInsnNode(Opcodes.ISTORE, 2));
+            inject.add(keepTheRule);
+            inject.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+            method.instructions.insert(inject);
+            patched = true;
+        }
+        if (!patched) {
+            throw new IllegalStateException("Unsupported Minecraft skin manager: native lookup was not found.");
+        }
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        System.out.println("[PortableIdentity] Patched native skin lookup class " + className + ".");
+        return writer.toByteArray();
     }
 
     // The method the game calls to read a profile's skin. Matched by name and

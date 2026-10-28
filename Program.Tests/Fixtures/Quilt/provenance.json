@@ -1,0 +1,14 @@
+{
+  "description": "Factual runtime identity and provides fields extracted from the root quilt.mod.json of the official release, without executing loader code.",
+  "jar": "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-loader/0.30.1/quilt-loader-0.30.1.jar",
+  "sha256Sidecar": "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-loader/0.30.1/quilt-loader-0.30.1.jar.sha256",
+  "sha256": "a561a9fe9abb45556c696095a29e81477618bf2408b86c36db5aecdcd6a86fdb",
+  "sources": "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-loader/0.30.1/quilt-loader-0.30.1-sources.jar",
+  "sourcesSha256": "66d1b1214179306574b730f0841a63d9499d47d1ea16b912ef336f6a2c62a08a",
+  "evidence": [
+    "quilt.mod.json: quilt_loader.provides declares fabricloader 0.19.3 independently of Quilt 0.30.1",
+    "org/quiltmc/loader/impl/plugin/fabric/StandardFabricPlugin.java:64-71 reads fabric.mod.json",
+    "org/quiltmc/loader/impl/plugin/quilt/StandardQuiltPlugin.java:455-462 registers each provided version as a ProvidedModOption",
+    "org/quiltmc/loader/impl/QuiltLoaderImpl.java:1162-1167 exposes each provided version as a ProvidedModContainer"
+  ]
+}

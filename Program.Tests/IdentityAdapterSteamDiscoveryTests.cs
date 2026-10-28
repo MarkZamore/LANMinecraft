@@ -53,7 +53,7 @@ public sealed class IdentityAdapterSteamDiscoveryTests : IDisposable
 
     [Theory]
     [InlineData(PackLoaderKind.Forge, "1.20.1", "0.3.4")]
-    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "0.3.2")]
+    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "0.3.4")]
     public void DiscoveryVersion_FollowsTheReviewedPlatformTransport(PackLoaderKind loader, string minecraft, string version)
     {
         var properties = Build(Mappings, out var target, loader, minecraft);

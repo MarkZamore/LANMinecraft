@@ -51,15 +51,21 @@ process. `ready` requires successful initialization and logon; the optional
 client-process hint is reported separately, consistent with the author's
 reviewed 0.3.4 behavior. This still does not establish a peer connection.
 
-## Forge 0.3.4 transport review
+## Shared 0.3.4 transport review
 
-Only the Forge Minecraft `[1.18.2,1.20.3)` row changes from 0.3.2 to the author's
-[0.3.4 release](https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4).
+All six modern branches use the author's
+[0.3.4 release](https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4),
+published once in the launcher's [shared repository](https://github.com/MarkZamore/e4steam).
+The thirteen retro branches retain the latest compatible author release 0.3.2;
+the author publishes no 0.3.4 artifacts for those branches. All seven installed
+profiles select 0.3.4, including ATM10's NeoForge profile.
+For Forge Minecraft `[1.18.2,1.20.3)`,
 The new JAR is 3,817,117 bytes, SHA256
 `33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc`;
 the retired 0.3.2 bytes are recognized by their exact SHA256
 `9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a`.
-Other existing transports keep their pins, including ATM10's NeoForge 0.3.2.
+The catalog records exact retired hashes for replacement; compatible packs
+reuse one verified download in the shared managed-component cache.
 
 The author's `SteamClientHealthMonitor.nativeProbeConfirmed` change fixes a
 15-second teardown when a native client-process hint has never confirmed an

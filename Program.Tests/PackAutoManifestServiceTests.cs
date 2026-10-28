@@ -27,6 +27,9 @@ public sealed class PackAutoManifestServiceTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             LastUrl = request.RequestUri?.ToString();
+            if (request.RequestUri!.AbsolutePath.EndsWith("version_manifest_v2.json", StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new StringContent("""{"versions":[{"id":"1.18.2","type":"release"},{"id":"1.19-pre1","type":"snapshot"}]}""") });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("""
@@ -123,12 +126,12 @@ public sealed class PackAutoManifestServiceTests : IDisposable
     [Fact]
     public async Task AFolderTheModsDisagreeAbout_IsRefusedWithAReason()
     {
-        var (paths, pack) = MakePack("Muddle", fabricJars: 3);
+        var (paths, pack) = MakePack("Muddle", fabricJars: 3, range: "1.99");
 
         var error = await Assert.ThrowsAsync<InvalidDataException>(
             () => Service(paths, new FabricMeta()).EnsureAsync("Muddle", CancellationToken.None));
 
-        Assert.Contains("too few", error.Message, StringComparison.Ordinal);
+        Assert.Contains("общего стабильного", error.Message, StringComparison.Ordinal);
         Assert.False(PackManifestService.HasManifest(pack));
     }
 
@@ -146,7 +149,7 @@ public sealed class PackAutoManifestServiceTests : IDisposable
             () => Service(paths, new Offline()).EnsureAsync("My Pack", CancellationToken.None));
 
         Assert.Contains("Fabric", error.Message, StringComparison.Ordinal);
-        Assert.Contains("1.18.2", error.Message, StringComparison.Ordinal);
+        Assert.Contains("каталог Minecraft", error.Message, StringComparison.Ordinal);
         Assert.False(PackManifestService.HasManifest(pack));
     }
 

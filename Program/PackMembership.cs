@@ -10,10 +10,12 @@ public static class PackMembership
             .Where(PackCatalogService.ValidFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (settings.AddedPackRelativePaths is null)
         {
-            settings.AddedPackRelativePaths = PortablePackSyncService.KnownPacks
-                .Where(p => MinecraftProcessService.HasPackData(paths.CombineUnderPacks(p.RelativePath)) ||
-                            p.RelativePath.Equals(settings.ClientRelativePath, StringComparison.OrdinalIgnoreCase))
-                .Select(p => p.RelativePath).ToList();
+            // An installed legacy name is still this catalog pack. Preserve
+            // implicit membership before the startup rename reads settings.
+            settings.AddedPackRelativePaths = PackCatalogService.SeedSources()
+                .SelectMany(entry => new[] {entry.RelativePath}.Concat(entry.LegacyRelativePaths))
+                .Where(path => MinecraftProcessService.HasPackData(paths.CombineUnderPacks(path)) ||
+                               path.Equals(settings.ClientRelativePath, StringComparison.OrdinalIgnoreCase)).ToList();
             if (fresh && settings.AddedPackRelativePaths.Count == 0)
                 settings.AddedPackRelativePaths.Add(PortablePackSyncService.DefaultPackRelativePath);
         }

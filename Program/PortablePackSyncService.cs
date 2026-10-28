@@ -260,7 +260,10 @@ public sealed partial class PortablePackSyncService
                         $"the built-in {DefaultPackRelativePath} source is used and the marker is rewritten.");
                     return catalog is null ? DefaultPackSource : catalog.SourceFor(packRelativePath);
                 }
-                var normalized = NormalizeTerraFirmaSource(packRelativePath, marker);
+                var renamed = PackCatalogService.SeedSources().FirstOrDefault(entry =>
+                    entry.RelativePath.Equals(packRelativePath, StringComparison.OrdinalIgnoreCase) &&
+                    entry.LegacySources.Any(source => PackRenameMigration.SourceEquals(source, marker)));
+                var normalized = NormalizeTerraFirmaSource(packRelativePath, renamed?.Source ?? marker);
                 return catalog?.ResolveHistoricalSourceMarker(packRelativePath, normalized) ?? normalized;
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)

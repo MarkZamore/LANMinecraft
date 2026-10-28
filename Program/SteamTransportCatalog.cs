@@ -27,34 +27,29 @@ public sealed record SteamTransportBuild(
     IReadOnlyList<int> MinimumMinecraftVersion,
     IReadOnlyList<int> ExclusiveMaximumMinecraftVersion)
 {
-    /// <summary>Where this exact file can be fetched from.</summary>
+    /// <summary>The author's exact artifact, kept as provenance rather than a delivery fallback.</summary>
+    public Uri UpstreamDownloadUri { get; } = new(
+        $"https://github.com/Kamilhik/e4steam/releases/download/v{Version}/{FileName}",
+        UriKind.Absolute);
+
+    /// <summary>The single shared delivery source in the launcher's own repository.</summary>
     public IReadOnlyList<Uri> DownloadUris { get; } = Array.AsReadOnly<Uri>(
     [
         new Uri(
-            $"https://github.com/Kamilhik/e4steam/releases/download/v{Version}/{FileName}",
+            $"https://github.com/MarkZamore/e4steam/releases/download/v{Version}/{FileName}",
             UriKind.Absolute)
     ]);
 }
 
 /// <summary>
-/// The builds of e4steam the launcher will install, and which pack each one is
-/// for.
-///
-/// The mod is not one artifact. Its author publishes a build per loader and per
-/// range of Minecraft - nineteen of them in 0.3.0 - and for a long time this
-/// launcher pinned exactly one of those and took its <c>mods.toml</c> to be a
-/// statement about the mod. It is not: <c>[1.20.2,26.3)</c> is what the
-/// NeoForge build declares, and the Forge build beside it declares
-/// <c>[1.18.2,1.20.3)</c>. Reading one artifact as the whole shut every Forge
-/// pack out of playing together for no reason but that.
-///
-/// Every range below is read from the build's own metadata rather than from its
-/// file name, which understates them: the file called
-/// <c>forge-mc1.18.2-1.20.2</c> declares Minecraft up to 1.20.3.
+/// The latest author transport available for each loader and Minecraft branch.
+/// Metadata and SHA-256 pins belong to each artifact independently; modern
+/// releases do not imply that a new retro JAR was published alongside them.
 /// </summary>
 public static class SteamTransportCatalog
 {
-    // Previously shipped bytes may be replaced automatically; unknown JARs remain conflicts.
+    // Only exact previously shipped bytes may be replaced; unknown JARs remain conflicts.
+    // A legacy row still active below is ignored when its filename is the selected build.
     internal static IReadOnlyList<ManagedComponentDescriptor> SupersededBuilds { get; } =
     [
         new(ManagedComponentService.E4steamComponentId, 30_001, "e4steam-forge-mc1.7.x-v0.3.0.jar",
@@ -114,34 +109,78 @@ public static class SteamTransportCatalog
         new(ManagedComponentService.E4steamComponentId, 30_019, "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar",
             [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.0/e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar")],
             3_632_179, "6578e4d71a5e1499d35aeff699ac84ade6047e104a0439efca9d13cdea0ad443"),
+        new(ManagedComponentService.E4steamComponentId, 32_001, "e4steam-forge-mc1.7.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.7.x-v0.3.2.jar")],
+            2_107_709, "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c"),
+        new(ManagedComponentService.E4steamComponentId, 32_002, "e4steam-forge-mc1.8.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.8.x-v0.3.2.jar")],
+            3_039_265, "35caf65a4d97904066e2f1f6454d1ba4661bc73130305ffdb3917f90b3449972"),
+        new(ManagedComponentService.E4steamComponentId, 32_003, "e4steam-forge-mc1.9.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.9.x-v0.3.2.jar")],
+            3_038_887, "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66"),
+        new(ManagedComponentService.E4steamComponentId, 32_004, "e4steam-forge-mc1.10.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.10.x-v0.3.2.jar")],
+            3_038_892, "ede466e6c19878c513419d971ca860b533eaa1ea756bf2c34a0adfbe80ad82ba"),
+        new(ManagedComponentService.E4steamComponentId, 32_005, "e4steam-forge-mc1.11.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.11.x-v0.3.2.jar")],
+            3_038_892, "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f"),
+        new(ManagedComponentService.E4steamComponentId, 32_006, "e4steam-forge-mc1.12.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.12.x-v0.3.2.jar")],
+            3_038_928, "f554e6d20f037dbf8a2596eb0c3aaa3cf3ba0625d1caca9a3925cad297506e24"),
+        new(ManagedComponentService.E4steamComponentId, 32_007, "e4steam-forge-mc1.13.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.13.x-v0.3.2.jar")],
+            2_901_410, "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec"),
+        new(ManagedComponentService.E4steamComponentId, 32_008, "e4steam-forge-mc1.14.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.14.x-v0.3.2.jar")],
+            2_903_985, "b7d08bbfadbee160f37eeb1e665d55c4a50b4682806dd63f3db5879b8fa5e1c7"),
+        new(ManagedComponentService.E4steamComponentId, 32_009, "e4steam-forge-mc1.15.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.15.x-v0.3.2.jar")],
+            2_899_585, "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91"),
+        new(ManagedComponentService.E4steamComponentId, 32_010, "e4steam-forge-mc1.16.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.16.x-v0.3.2.jar")],
+            2_899_902, "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca"),
+        new(ManagedComponentService.E4steamComponentId, 32_011, "e4steam-forge-mc1.17.1-1.18.1-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.17.1-1.18.1-v0.3.2.jar")],
+            3_739_438, "b3498cabcbc6ddfc87b62e433cfe2335f5f58aab182b1848cca505bffa5da99c"),
         new(ManagedComponentService.E4steamComponentId, 32_012, "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar",
             [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")],
             3_735_682, "9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a"),
+        new(ManagedComponentService.E4steamComponentId, 32_013, "e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar")],
+            3_734_370, "4f182b2560a6e001f248cd59cc063dd1c99d92a9b1b38ef099bc8ee822fe0418"),
+        new(ManagedComponentService.E4steamComponentId, 32_014, "e4steam-fabric-mc1.14.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.14.x-v0.3.2.jar")],
+            3_590_675, "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2"),
+        new(ManagedComponentService.E4steamComponentId, 32_015, "e4steam-fabric-mc1.15.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.15.x-v0.3.2.jar")],
+            3_589_233, "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2"),
+        new(ManagedComponentService.E4steamComponentId, 32_016, "e4steam-fabric-mc1.16.x-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.16.x-v0.3.2.jar")],
+            3_589_535, "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f"),
+        new(ManagedComponentService.E4steamComponentId, 32_017, "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.2.jar")],
+            3_735_432, "7e0b582c528c8cfbfba16c9e9b14b7e4ef3f480b56ce36cc54638a9690a5e290"),
+        new(ManagedComponentService.E4steamComponentId, 32_018, "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.2.jar")],
+            3_731_863, "a7575fe3efb058d6918ae8f5a375491fb9d0c3edce40f91e4b7e3155898b7a7b"),
+        new(ManagedComponentService.E4steamComponentId, 32_019, "e4steam-fabric-quilt-mc26.1-26.2-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-quilt-mc26.1-26.2-v0.3.2.jar")],
+            3_732_350, "1d189e09cfe2be5e441201ef4aa516b5d294e9e7b0017e6ea1b9f81230ff3012"),
     ];
 
-    /// <summary>The baseline release retained by the other existing transport pins.</summary>
-    public const string Version = "0.3.2";
+    /// <summary>The newest author release; retro branches retain their newest published compatible JAR.</summary>
+    public const string Version = "0.3.4";
 
     /// <summary>
-    /// Every build its author publishes, and therefore every pack this
-    /// launcher can carry into a Steam session.
-    ///
-    /// Nineteen platform builds. The Forge 1.18.2-1.20.2 row uses the author
-    /// fix in 0.3.4; the other eighteen pins remain unchanged. A
-    /// player who assembles a pack of their own gets Steam play if e4steam has
-    /// a build for it, and it has one for almost everything.
-    ///
-    /// Every range is read from the build's own metadata rather than from its
-    /// file name. The names understate them - the file called
-    /// forge-mc1.18.2-1.20.2 declares Minecraft up to 1.20.3 - and the six
-    /// oldest Forge builds predate mods.toml entirely and declare "1.12.x" and
-    /// the like in mcmod.info, which is where those ranges come from.
+    /// Six modern branches use 0.3.4. The author published no retro artifacts
+    /// in that release, so thirteen older branches keep their latest 0.3.2 files.
+    /// Every range is taken from the actual JAR metadata, not its filename.
     /// </summary>
     public static IReadOnlyList<SteamTransportBuild> Builds { get; } =
         Array.AsReadOnly<SteamTransportBuild>(
         [
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.7.x-v0.3.2.jar",
                 2_107_709,
                 "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c",
@@ -150,7 +189,7 @@ public static class SteamTransportCatalog
                 [1, 7],
                 [1, 8]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.8.x-v0.3.2.jar",
                 3_039_265,
                 "35caf65a4d97904066e2f1f6454d1ba4661bc73130305ffdb3917f90b3449972",
@@ -159,7 +198,7 @@ public static class SteamTransportCatalog
                 [1, 8],
                 [1, 9]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.9.x-v0.3.2.jar",
                 3_038_887,
                 "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66",
@@ -168,7 +207,7 @@ public static class SteamTransportCatalog
                 [1, 9],
                 [1, 10]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.10.x-v0.3.2.jar",
                 3_038_892,
                 "ede466e6c19878c513419d971ca860b533eaa1ea756bf2c34a0adfbe80ad82ba",
@@ -177,7 +216,7 @@ public static class SteamTransportCatalog
                 [1, 10],
                 [1, 11]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.11.x-v0.3.2.jar",
                 3_038_892,
                 "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f",
@@ -186,7 +225,7 @@ public static class SteamTransportCatalog
                 [1, 11],
                 [1, 12]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.12.x-v0.3.2.jar",
                 3_038_928,
                 "f554e6d20f037dbf8a2596eb0c3aaa3cf3ba0625d1caca9a3925cad297506e24",
@@ -195,7 +234,7 @@ public static class SteamTransportCatalog
                 [1, 12],
                 [1, 13]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.13.x-v0.3.2.jar",
                 2_901_410,
                 "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec",
@@ -204,7 +243,7 @@ public static class SteamTransportCatalog
                 [1, 13],
                 [1, 14]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.14.x-v0.3.2.jar",
                 2_903_985,
                 "b7d08bbfadbee160f37eeb1e665d55c4a50b4682806dd63f3db5879b8fa5e1c7",
@@ -213,7 +252,7 @@ public static class SteamTransportCatalog
                 [1, 14],
                 [1, 15]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.15.x-v0.3.2.jar",
                 2_899_585,
                 "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91",
@@ -222,7 +261,7 @@ public static class SteamTransportCatalog
                 [1, 15],
                 [1, 16]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-forge-mc1.16.x-v0.3.2.jar",
                 2_899_902,
                 "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca",
@@ -232,15 +271,15 @@ public static class SteamTransportCatalog
                 [1, 17]),
             new(
                 Version,
-                "e4steam-forge-mc1.17.1-1.18.1-v0.3.2.jar",
-                3_739_438,
-                "b3498cabcbc6ddfc87b62e433cfe2335f5f58aab182b1848cca505bffa5da99c",
-                32_011,
+                "e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar",
+                3_820_487,
+                "b1a6b34ca34edff830414a676de33a7ebe6fd3a43d0f18e687b717d45d87a312",
+                34_011,
                 [PackLoaderKind.Forge],
                 [1, 17, 1],
                 [1, 18, 2]),
             new(
-                "0.3.4",
+                Version,
                 "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
                 3_817_117,
                 "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc",
@@ -250,15 +289,15 @@ public static class SteamTransportCatalog
                 [1, 20, 3]),
             new(
                 Version,
-                "e4steam-neoforge-mc1.20.2-26.2-v0.3.2.jar",
-                3_734_370,
-                "4f182b2560a6e001f248cd59cc063dd1c99d92a9b1b38ef099bc8ee822fe0418",
-                32_013,
+                "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+                3_815_800,
+                "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0",
+                34_013,
                 [PackLoaderKind.NeoForge],
                 [1, 20, 2],
-                [26, 3]),
+                [26, 4]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-fabric-mc1.14.x-v0.3.2.jar",
                 3_590_675,
                 "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2",
@@ -267,7 +306,7 @@ public static class SteamTransportCatalog
                 [1, 14],
                 [1, 15]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-fabric-mc1.15.x-v0.3.2.jar",
                 3_589_233,
                 "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2",
@@ -276,7 +315,7 @@ public static class SteamTransportCatalog
                 [1, 15],
                 [1, 16]),
             new(
-                Version,
+                "0.3.2",
                 "e4steam-fabric-mc1.16.x-v0.3.2.jar",
                 3_589_535,
                 "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f",
@@ -286,31 +325,31 @@ public static class SteamTransportCatalog
                 [1, 17]),
             new(
                 Version,
-                "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.2.jar",
-                3_735_432,
-                "7e0b582c528c8cfbfba16c9e9b14b7e4ef3f480b56ce36cc54638a9690a5e290",
-                32_017,
+                "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar",
+                3_816_090,
+                "0aaef192271c57c9af3be4a8b09e62101592953bb7c97c276df4b26c289aeef3",
+                34_017,
                 [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
                 [1, 17],
                 [1, 19]),
             new(
                 Version,
-                "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.2.jar",
-                3_731_863,
-                "a7575fe3efb058d6918ae8f5a375491fb9d0c3edce40f91e4b7e3155898b7a7b",
-                32_018,
+                "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar",
+                3_812_904,
+                "ec692ae255704971b24bdff28724ec48224d6c87c7e5d568e4252b4df15a447d",
+                34_018,
                 [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
                 [1, 19],
                 [26, 1]),
             new(
                 Version,
-                "e4steam-fabric-quilt-mc26.1-26.2-v0.3.2.jar",
-                3_732_350,
-                "1d189e09cfe2be5e441201ef4aa516b5d294e9e7b0017e6ea1b9f81230ff3012",
-                32_019,
+                "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar",
+                3_813_546,
+                "ea7ed37c3c2b8b41c7e458043b051725c22e81b9f9fa318a1474831cc484854e",
+                34_019,
                 [PackLoaderKind.Fabric, PackLoaderKind.Quilt],
                 [26, 1],
-                [26, 3])
+                [26, 4])
         ]);
 
     /// <summary>
