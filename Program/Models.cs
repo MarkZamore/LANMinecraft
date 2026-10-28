@@ -61,6 +61,9 @@ public sealed class AppSettings
     public List<string>? AddedPackRelativePaths { get; set; }
     /// <summary>Explicit list removals, including automatically discovered local packs.</summary>
     public List<string> HiddenPackRelativePaths { get; set; } = [];
+    /// <summary>One-time repair of the forced LL8 hiding introduced in release 408.</summary>
+    public bool Ll8LocalVisibilityMigrated { get; set; }
+
     public string SkinPath { get; set; } = "";
     public string SelectedWorldRelativePath { get; set; } = "";
 }

@@ -47,12 +47,30 @@ public sealed class PackCatalogTests : IDisposable
         File.WriteAllText(oldWorld, "local world");
         var retired = new AppSettings { ClientRelativePath = "LL8 Extended", AddedPackRelativePaths = ["LL8 Extended"] };
         PackMembership.Initialize(retired, _paths);
-        Assert.Empty(retired.AddedPackRelativePaths!);
-        Assert.True(PackMembership.IsHidden(retired, "LL8 Extended"));
+        Assert.Equal(new[] { "LL8 Extended" }, retired.AddedPackRelativePaths);
+        Assert.False(PackMembership.IsHidden(retired, "LL8 Extended"));
         Assert.False(PackMembership.Add(retired, "LL8 Extended"));
-        Assert.False(PackMembership.ShouldListInstalled(retired, "LL8 Extended", isCatalogPack: false));
+        Assert.True(PackMembership.ShouldListInstalled(retired, "LL8 Extended", isCatalogPack: false));
         Assert.Equal("local installation", File.ReadAllText(oldInstall));
         Assert.Equal("local world", File.ReadAllText(oldWorld));
+
+        File.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(new
+        {
+            schemaVersion = SettingsService.CurrentSchemaVersion,
+            playerName = "Player",
+            memorySettingIsTheHeap = true,
+            maxMemoryGb = 6,
+            clientRelativePath = "All The Mods 10",
+            addedPackRelativePaths = new[] { "All The Mods 10" },
+            hiddenPackRelativePaths = new[] { "LL8 Extended" }
+        }));
+        var persisted = new SettingsService(_paths);
+        var restored = persisted.Load();
+        Assert.True(restored.Ll8LocalVisibilityMigrated);
+        Assert.True(PackMembership.ShouldListInstalled(restored, "LL8 Extended", isCatalogPack: false));
+        Assert.True(PackMembership.Remove(restored, "LL8 Extended"));
+        persisted.Save(restored);
+        Assert.True(PackMembership.IsHidden(persisted.Load(), "LL8 Extended"));
     }
 
     [Fact]
