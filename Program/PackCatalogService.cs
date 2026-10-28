@@ -135,6 +135,7 @@ public sealed class PackCatalogService
                     if (source is null || !ValidSource(source)) continue;
                     var relative = Path.GetFileName(directory);
                     if (IsRetiredPack(relative)) continue;
+                    source = PortablePackSyncService.NormalizeTerraFirmaSource(relative, source);
                     // Preserve legacy default-repository repair.
                     if (relative.Equals(PortablePackSyncService.DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase) &&
                         PortablePackSyncService.IsLegacyDefaultSource(source)) continue;
@@ -281,6 +282,8 @@ public sealed class PackCatalogService
     private CachedEntry? ReadCache(CatalogSource entry)
     {
         var path = CachePath(entry.Source);
+        if (!File.Exists(path) && entry.Id == "terrafirma-rebirth" && entry.Source == PortablePackSyncService.TerraFirmaSource)
+            path = CachePath(new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest"));
         if (!File.Exists(path)) return null;
         if (new FileInfo(path).Length > 3L * MaximumBundleBytes) throw new InvalidDataException("Oversized library cache.");
         return JsonSerializer.Deserialize<CachedEntry>(File.ReadAllText(path), JsonOptions);
@@ -320,6 +323,14 @@ public sealed class PackCatalogService
         var jsonEntry = zip.GetEntry("library.json") ?? throw new InvalidDataException("Missing library metadata.");
         using var json = jsonEntry.Open();
         var content = JsonSerializer.Deserialize<CatalogDescription>(json, JsonOptions) ?? throw new InvalidDataException("Empty library metadata.");
+        // The stable pack ID keeps verified pre-rename offline bundles usable.
+        if (entry.Id == "terrafirma-rebirth" && content.Id == entry.Id &&
+            entry.RelativePath == PortablePackSyncService.TerraFirmaRelativePath &&
+            content.RelativePath == PortablePackSyncService.LegacyTerraFirmaRelativePath)
+        {
+            content.RelativePath = entry.RelativePath;
+            content.Name = PackDisplayName.For(entry.RelativePath, content.Name);
+        }
         ValidateContent(entry, content, revision);
         using var preview = zip.GetEntry("preview.jpg")!.Open();
         using var imageBytes = new MemoryStream();
@@ -378,7 +389,15 @@ public sealed class PackCatalogService
         }
         // Old verified disk indices can still name a withdrawn repository.
         // Keep their other entries, including packs discovered only on GitHub.
-        return index.Packs.Where(entry => !IsRetiredPack(entry.RelativePath)).ToList();
+        return index.Packs.Where(entry => !IsRetiredPack(entry.RelativePath)).Select(entry =>
+            entry.Id == "terrafirma-rebirth" &&
+            entry.RelativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
+                ? entry with
+                {
+                    RelativePath = PortablePackSyncService.TerraFirmaRelativePath,
+                    Source = PortablePackSyncService.NormalizeTerraFirmaSource(entry.RelativePath, entry.Source)
+                }
+                : entry).ToList();
     }
 
     internal static bool IsRetiredPack(string path) =>

@@ -29,9 +29,9 @@ public sealed class PackCatalogTests : IDisposable
     public void MigrationKeepsInstalledAndSelectedButAnEmptyListStaysEmpty()
     {
         Directory.CreateDirectory(Path.Combine(_paths.Packs, "All The Mods 10", "mods"));
-        var old = new AppSettings { ClientRelativePath = "TerraFirma Rebirth" };
+        var old = new AppSettings { ClientRelativePath = PortablePackSyncService.TerraFirmaRelativePath };
         PackMembership.Initialize(old, _paths);
-        Assert.Equal(new[] { "All The Mods 10", "TerraFirma Rebirth" }, old.AddedPackRelativePaths);
+        Assert.Equal(new[] { "All The Mods 10", PortablePackSyncService.TerraFirmaRelativePath }, old.AddedPackRelativePaths);
         old.AddedPackRelativePaths = [];
         PackMembership.Initialize(old, _paths);
         Assert.Empty(old.AddedPackRelativePaths);

@@ -183,6 +183,9 @@ public sealed class SettingsService
 
     public AppSettings Load()
     {
+        // Migration failures must reach startup, before the generic settings
+        // recovery can replace the player's selection with safe defaults.
+        new TerraFirmaPackMigrationService(_paths, _logger).Migrate();
         var settingsFile = _paths.SettingsFile;
 
         if (!File.Exists(settingsFile))

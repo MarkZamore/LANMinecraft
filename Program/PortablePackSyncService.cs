@@ -48,6 +48,11 @@ public sealed partial class PortablePackSyncService
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string PackManifestAssetName = "pack-manifest.json";
     public const string DefaultPackRelativePath = "All The Mods 10";
+    public const string LegacyTerraFirmaRelativePath = "TerraFirma Rebirth";
+    public const string TerraFirmaRelativePath = "TerraFirma Rebirth 2";
+
+    public static PackSyncSource TerraFirmaSource { get; } =
+        new("MarkZamore", "TerraFirma-Rebirth-2", "pack-latest");
 
     public static PackSyncSource DefaultPackSource { get; } =
         new("MarkZamore", "All-The-Mods-10", "pack-latest");
@@ -68,8 +73,8 @@ public sealed partial class PortablePackSyncService
     public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
         new(DefaultPackRelativePath, DefaultPackSource),
         new(
-            "TerraFirma Rebirth",
-            new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")),
+            TerraFirmaRelativePath,
+            TerraFirmaSource),
         // Plain Minecraft on the newest version there is, with a recipe viewer
         // and nothing else. It is the only build here that brings no client jar
         // of its own: the launcher fetches Mojang's for the version its manifest
@@ -83,6 +88,8 @@ public sealed partial class PortablePackSyncService
     {
         var name = packRelativePath?.Trim().Trim('\\', '/');
         if (string.IsNullOrEmpty(name)) return null;
+        if (name.Equals(LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase))
+            return TerraFirmaSource;
         foreach (var pack in KnownPacks)
         {
             if (string.Equals(pack.RelativePath, name, StringComparison.OrdinalIgnoreCase))
@@ -92,6 +99,14 @@ public sealed partial class PortablePackSyncService
         }
         return null;
     }
+
+    internal static PackSyncSource NormalizeTerraFirmaSource(string relativePath, PackSyncSource source) =>
+        (relativePath.Equals(LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase) ||
+         relativePath.Equals(TerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)) &&
+        source.Owner.Equals(TerraFirmaSource.Owner, StringComparison.OrdinalIgnoreCase) &&
+        source.Repo.Equals("TerraFirma-Rebirth", StringComparison.OrdinalIgnoreCase) &&
+        source.Tag.Equals(TerraFirmaSource.Tag, StringComparison.OrdinalIgnoreCase)
+            ? TerraFirmaSource : source;
 
     internal const string OfflineCheckWarning =
         "Не удалось проверить обновления сборки — играем с локальной версией.";
@@ -188,7 +203,7 @@ public sealed partial class PortablePackSyncService
                         $"the built-in {DefaultPackRelativePath} source is used and the marker is rewritten.");
                     return Catalog?.SourceFor(packRelativePath) ?? DefaultPackSource;
                 }
-                return marker;
+                return NormalizeTerraFirmaSource(packRelativePath, marker);
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
