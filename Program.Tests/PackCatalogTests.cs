@@ -146,11 +146,10 @@ public sealed class PackCatalogTests : IDisposable
         var offlineStartup = new PackCatalogService(_paths, _logger, offlineHttp);
         await offlineStartup.RefreshOnceAsync();
         Assert.False(offlineStartup.HasOnlineCatalog);
-        Assert.Equal(PortablePackSyncService.DefaultPackRelativePath,
-            Assert.Single(offlineStartup.PacksForDisplay(settings)).Entry.RelativePath);
+        Assert.Empty(offlineStartup.PacksForDisplay(settings));
         Assert.NotNull(offlineStartup.Find(CatalogHost.Folder));
         Assert.True(PackMembership.Add(settings, CatalogHost.Folder));
-        Assert.Equal(2, offlineStartup.PacksForDisplay(settings).Count);
+        Assert.Single(offlineStartup.PacksForDisplay(settings));
         Assert.Contains(offlineStartup.PacksForDisplay(settings), pack => pack.Entry.RelativePath == CatalogHost.Folder);
         settings.AddedPackRelativePaths!.Clear();
         Assert.Empty(offlineStartup.PacksForDisplay(settings));
@@ -434,17 +433,6 @@ public sealed class PackCatalogTests : IDisposable
     public void AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks()
     {
         var service = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
-        var atm9 = Assert.IsType<CatalogPack>(service.Find("All The Mods 9"));
-        Assert.Equal("all-the-mods-9", atm9.Entry.Id);
-        Assert.Equal(new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest"), atm9.Entry.Source);
-        Assert.Equal("1.20.1", atm9.Content.MinecraftVersion);
-        Assert.Contains(atm9.Content.Mods, mod => mod.Id == "allthemodium");
-        Assert.Contains(atm9.Content.Mods, mod => mod.Id == "mekanism");
-        using (var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.all-the-mods-9.zip")!)
-        using (var archive = new ZipArchive(stream))
-        using (var metadata = archive.GetEntry("library.json")!.Open())
-        using (var description = JsonDocument.Parse(metadata))
-            Assert.Equal("forge", description.RootElement.GetProperty("loader").GetString()!.ToLowerInvariant());
         var defaultPack = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
         Assert.Equal("All The Mods 10", defaultPack.Name);
         Assert.Equal("all-the-mods-10", defaultPack.Entry.Id);
@@ -516,11 +504,18 @@ public sealed class PackCatalogTests : IDisposable
     [Fact]
     public async Task UnsafeProjectPageCannotReplaceTheVerifiedCatalogue()
     {
+        using var verifiedHost = new CatalogHost("https://example.org/verified-mod");
+        var verified = new PackCatalogService(_paths, _logger, verifiedHost.Client);
+        await verified.RefreshOnceAsync();
+        var manifest = verified.SessionManifest(verifiedHost.Source);
         using var host = new CatalogHost("javascript:alert(1)");
         var service = new PackCatalogService(_paths, _logger, host.Client);
+        var previous = Assert.IsType<CatalogPack>(service.Find(CatalogHost.Folder));
         await service.RefreshOnceAsync();
-        Assert.Null(service.Find(CatalogHost.Folder));
-        Assert.Equal(4, service.Packs.Count);
+        var retained = Assert.Single(service.Packs);
+        Assert.Equal(previous.Content.Revision, retained.Content.Revision);
+        Assert.Equal("https://example.org/verified-mod", Assert.Single(retained.Mods).WebsiteUri!.AbsoluteUri);
+        Assert.Equal(manifest, service.SessionManifest(host.Source));
     }
 
     [Theory]
@@ -547,28 +542,30 @@ public sealed class PackCatalogTests : IDisposable
     }
 
     [Fact]
-    public async Task WithdrawnPackIsNotRestoredFromOldIndexOrSourceMarker()
+    public async Task WithdrawnCatalogPackIsNotRestoredByItsLocalSourceMarker()
     {
         var cache = Path.Combine(_paths.Launcher, "Library");
         Directory.CreateDirectory(cache);
-        var retiredSource = new PackSyncSource("MarkZamore", "LL8-Extended", "pack-latest");
+        const string folder = "Previously listed pack";
+        var retiredSource = new PackSyncSource("MarkZamore", "Previously-Listed-Pack", "pack-latest");
         File.WriteAllText(Path.Combine(cache, "catalog.json"), JsonSerializer.Serialize(new
         {
             schemaVersion = 1,
-            packs = new[] { new CatalogSource("ll8-extended", "LL8 Extended", retiredSource) }
+            packs = Array.Empty<CatalogSource>(),
+            knownRelativePaths = new[] { folder }
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        var packDir = Path.Combine(_paths.Packs, "LL8 Extended");
+        var packDir = Path.Combine(_paths.Packs, folder);
         Directory.CreateDirectory(packDir);
         File.WriteAllText(Path.Combine(packDir, PortablePackSyncService.SourceMarkerFileName),
             JsonSerializer.Serialize(retiredSource, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         using var http = new HttpClient(new OfflineHandler());
         var catalog = new PackCatalogService(_paths, _logger, http);
-        Assert.Null(catalog.Find("LL8 Extended"));
+        Assert.Null(catalog.Find(folder));
         await catalog.RefreshOnceAsync();
-        Assert.Null(catalog.Find("LL8 Extended"));
-        Assert.DoesNotContain(catalog.Sources, source => source.Source.Repo == "LL8-Extended");
-        Assert.Null(new PortablePackSyncService(_paths, _logger, http) { Catalog = catalog }.TryResolveSource("LL8 Extended"));
-        Assert.Null(typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.ll8-extended.zip"));
+        Assert.Null(catalog.Find(folder));
+        Assert.Empty(catalog.Sources);
+        Assert.True(catalog.IsWithdrawn(folder));
+        Assert.Null(new PortablePackSyncService(_paths, _logger, http) { Catalog = catalog }.TryResolveSource(folder));
         Assert.True(Directory.Exists(packDir));
     }
 

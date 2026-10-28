@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "packs": [
+    {
+      "id": "all-the-mods-10",
+      "relativePath": "All The Mods 10",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-10",
+        "tag": "pack-latest"
+      }
+    },
+    {
+      "id": "terrafirma-rebirth",
+      "relativePath": "TerraFirma Rebirth",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "TerraFirma-Rebirth-2",
+        "tag": "pack-latest"
+      }
+    },
+    {
+      "id": "minecraft-26-2",
+      "relativePath": "Minecraft 26.2",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Minecraft-26.3",
+        "tag": "pack-latest"
+      }
+    },
+    {
+      "id": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      }
+    }
+  ]
+}

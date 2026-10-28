@@ -3,13 +3,103 @@
 namespace Minecraft.Tests;
 
 /// <summary>
-/// The builds the launcher is willing to fetch. A pack listed here is offered
-/// in the window before it exists on disk, so a friend who has never had it can
-/// press Play and get it; a pack that is not listed can only be seen by someone
-/// who already has its folder.
+/// The embedded GitHub snapshot is a fallback, not a separately maintained
+/// build list. A session's verified GitHub or disk index takes precedence.
 /// </summary>
 public sealed class KnownPackTests
 {
+    [Fact]
+    public void AnAuthoritativeEmptyIndexCannotFallBackToEmbeddedSourcesOrOldMarkers()
+    {
+        var paths = new AppPaths(Path.Combine(Path.GetTempPath(), "known-catalog-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            paths.Ensure();
+            Directory.CreateDirectory(Path.Combine(paths.Launcher, "Library"));
+            File.WriteAllText(Path.Combine(paths.Launcher, "Library", "catalog.json"), """{"schemaVersion":1,"packs":[]}""");
+            var pack = PortablePackSyncService.DefaultPackRelativePath;
+            var directory = paths.CombineUnderPacks(pack);
+            Directory.CreateDirectory(directory);
+            var marker = Path.Combine(directory, PortablePackSyncService.SourceMarkerFileName);
+            File.WriteAllText(marker, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1, owner = PortablePackSyncService.DefaultPackSource.Owner,
+                repo = "FormerRepository", tag = "pack-latest"
+            }));
+            var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
+            var sync = new PortablePackSyncService(paths, new Logger(paths.LogFile)) { Catalog = catalog };
+
+            Assert.True(catalog.IsWithdrawn(pack));
+            Assert.Null(sync.TryResolveSource(pack));
+            var before = File.ReadAllBytes(marker);
+            sync.EnsureDefaultSourceMarker(pack);
+            Assert.Equal(before, File.ReadAllBytes(marker));
+            File.Delete(marker);
+            Assert.Null(sync.TryResolveSource(pack));
+            sync.EnsureDefaultSourceMarker(pack);
+            Assert.False(File.Exists(marker));
+        }
+        finally { TempTree.Delete(paths.Root); }
+    }
+
+    [Fact]
+    public void ExplicitCustomMarkersAndAReintroducedGitHubPackRemainAvailable()
+    {
+        var paths = new AppPaths(Path.Combine(Path.GetTempPath(), "known-custom-" + Guid.NewGuid().ToString("N")));
+        try
+        {
+            paths.Ensure();
+            const string reintroduced = "LL8 Extended";
+            var source = new PackSyncSource("Publisher", "Reintroduced-Pack", "stable");
+            Directory.CreateDirectory(Path.Combine(paths.Launcher, "Library"));
+            File.WriteAllText(Path.Combine(paths.Launcher, "Library", "catalog.json"),
+                System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = 1,
+                    packs = new[] { new CatalogSource("reintroduced-pack", reintroduced, source) } },
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+            const string custom = "My Custom Pack";
+            var customDirectory = paths.CombineUnderPacks(custom);
+            Directory.CreateDirectory(customDirectory);
+            var customSource = new PackSyncSource("SomeoneElse", "Custom-Pack", "nightly");
+            File.WriteAllText(Path.Combine(customDirectory, PortablePackSyncService.SourceMarkerFileName),
+                System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = 1, owner = customSource.Owner, repo = customSource.Repo, tag = customSource.Tag },
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+            var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
+            var sync = new PortablePackSyncService(paths, new Logger(paths.LogFile)) { Catalog = catalog };
+
+            Assert.False(catalog.IsWithdrawn(reintroduced));
+            Assert.Equal(source, sync.TryResolveSource(reintroduced));
+            Assert.True(PackMembership.Add(new AppSettings { AddedPackRelativePaths = [] }, reintroduced));
+            Assert.False(catalog.IsKnownCatalogPath(custom));
+            Assert.Equal(customSource, sync.TryResolveSource(custom));
+        }
+        finally { TempTree.Delete(paths.Root); }
+    }
+
+    [Fact]
+    public void FallbackPacksAndSourcesComeFromTheEmbeddedGitHubIndex()
+    {
+        using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.catalog.json");
+        Assert.NotNull(stream);
+        using var document = System.Text.Json.JsonDocument.Parse(stream);
+        Assert.Equal(1, document.RootElement.GetProperty("schemaVersion").GetInt32());
+        var snapshot = document.RootElement.GetProperty("packs").EnumerateArray().ToArray();
+        var sources = PackCatalogService.SeedSources().ToArray();
+        var known = PortablePackSyncService.KnownPacks;
+        Assert.NotEmpty(snapshot);
+        Assert.Equal(snapshot.Length, sources.Length);
+        Assert.Equal(sources.Length, known.Count);
+        for (var index = 0; index < snapshot.Length; index++)
+        {
+            var entry = snapshot[index];
+            Assert.Equal(entry.GetProperty("id").GetString(), sources[index].Id);
+            Assert.Equal(WorldLocations.CanonicalBuildPath(entry.GetProperty("relativePath").GetString()), sources[index].RelativePath);
+            var source = entry.GetProperty("source");
+            Assert.Equal(new PackSyncSource(source.GetProperty("owner").GetString()!,
+                source.GetProperty("repo").GetString()!, source.GetProperty("tag").GetString()!), sources[index].Source);
+            Assert.Equal(new PortablePackSyncService.KnownPack(sources[index].RelativePath, sources[index].Source), known[index]);
+        }
+    }
+
     [Fact]
     public void TheBuiltInPackIsTheFirstOne()
     {
