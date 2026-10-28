@@ -65,7 +65,7 @@ public sealed class SteamBootstrapTests : IDisposable
     [Fact]
     public async Task StartAsync_WithoutSteamRunning_ReportsItAndKeepsWorking()
     {
-        var api = new FakeSteamApi { SteamRunning = false };
+        var api = new FakeSteamApi { SteamRunning = false, InitializeSucceeds = false };
         await using var service = new SteamClientService(api);
 
         var status = await service.StartAsync(CancellationToken.None);
@@ -74,6 +74,7 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.False(status.IsReady);
         Assert.Contains("Steam не запущен", status.Message, StringComparison.Ordinal);
         Assert.False(api.Initialized);
+        Assert.Equal(1, api.InitializeCount);
     }
 
     [Fact]
@@ -118,15 +119,162 @@ public sealed class SteamBootstrapTests : IDisposable
     }
 
     [Fact]
+    public async Task UnconfirmedFalseProcessHint_AuthenticatedApiStartsStaysReadyAndRetryIsANoop()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = false,
+            InitializeSucceeds = true,
+            LoggedOn = true,
+            SteamId = 76561198000000001,
+            Persona = "MarkZamore"
+        };
+        api.FriendList.Add(new SteamFriendInfo(76561198000000002, "anuvenn", true, 0));
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+
+        var first = await service.StartAsync();
+        Assert.True(first.IsReady);
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+
+        Assert.Equal(first, service.Status);
+        Assert.Equal(first, await service.StartAsync());
+        Assert.Single(service.Friends);
+        Assert.True(api.RelayInitialized);
+        Assert.Equal(1, api.InitializeCount);
+        Assert.Equal(0, api.ShutdownCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedInitialization_CannotAuthenticateEvenWhenLoggedOnIsReported(bool processHint)
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = processHint,
+            InitializeSucceeds = false,
+            LoggedOn = true,
+            SteamId = 76561198000000001
+        };
+        await using var service = new SteamClientService(api);
+
+        var result = await service.StartAsync();
+
+        Assert.False(result.IsReady);
+        Assert.False(api.Initialized);
+        Assert.False(api.RelayInitialized);
+        Assert.Equal(1, api.InitializeCount);
+        Assert.False(service.SetPresence("lanmc", "1"));
+    }
+
+    [Theory]
+    [InlineData(false, 76561198000000001UL)]
+    [InlineData(true, 0UL)]
+    public async Task FalseProcessHint_DoesNotReplaceLogonOrIdentityProof(bool loggedOn, ulong steamId)
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = false,
+            InitializeSucceeds = true,
+            LoggedOn = loggedOn,
+            SteamId = steamId
+        };
+        await using var service = new SteamClientService(api);
+
+        var result = await service.StartAsync();
+
+        Assert.Equal(SteamAvailability.NotLoggedIn, result.Availability);
+        Assert.False(result.IsReady);
+        Assert.False(api.Initialized);
+        Assert.Equal(1, api.ShutdownCount);
+    }
+
+    [Fact]
+    public async Task ProcessHintOnceConfirmed_ThenFalseEndsTheSessionDespiteStaleLogon()
+    {
+        var api = new FakeSteamApi
+        {
+            SteamRunning = false,
+            LoggedOn = true,
+            SteamId = 76561198000000001
+        };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        var first = await service.StartAsync();
+        Assert.True(first.IsReady);
+        api.SteamRunning = true;
+        Assert.Equal(first, await service.StartAsync());
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+
+        api.SteamRunning = false;
+
+        Assert.Equal(SteamClientService.SteamLostMessage, (await ended).Message);
+        Assert.True(api.LoggedOn); // The confirmed exit wins over a stale user reading.
+        Assert.False(service.Status.IsReady);
+    }
+
+    [Fact]
+    public async Task UnconfirmedFalseProcessHint_SignOutStillEndsTheSession()
+    {
+        var api = new FakeSteamApi { SteamRunning = false, LoggedOn = true, SteamId = 76561198000000001 };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync()).IsReady);
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+
+        api.LoggedOn = false;
+
+        Assert.Equal(SteamClientService.SteamLostMessage, (await ended).Message);
+        Assert.False(service.Status.IsReady);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AccountChangesWithoutAReconnect_StillEndTheOldAuthenticatedSession(bool processHint)
+    {
+        var api = new FakeSteamApi { SteamRunning = processHint, LoggedOn = true, SteamId = 76561198000000001 };
+        await using var service = new SteamClientService(api, livenessCheckInterval: TimeSpan.FromMilliseconds(20));
+        Assert.True((await service.StartAsync()).IsReady);
+        var ended = WaitFor(service, SteamAvailability.NotLoggedIn);
+
+        api.SteamId = 76561198000000002;
+
+        Assert.Equal(SteamClientService.AccountChangedMessage, (await ended).Message);
+        Assert.False(service.Status.IsReady);
+    }
+
+    [Fact]
+    public async Task UnconfirmedFalseProcessHint_ServerLossStillTimesOutAndExplicitRetryReinitializes()
+    {
+        var api = new FakeSteamApi { SteamRunning = false, LoggedOn = true, SteamId = 76561198000000001 };
+        await using var service = new SteamClientService(api,
+            livenessCheckInterval: TimeSpan.FromMilliseconds(20), reconnectLimit: TimeSpan.FromMilliseconds(150));
+        Assert.True((await service.StartAsync()).IsReady);
+        var reconnecting = WaitFor(service, SteamAvailability.Reconnecting);
+        var ended = WaitFor(service, SteamAvailability.SteamNotRunning);
+        api.RaiseServerConnectionChanged(new SteamServerConnectionChange(false, 3, true));
+        api.LoggedOn = false;
+        Assert.Equal(SteamClientService.ReconnectingMessage, (await reconnecting).Message);
+        Assert.Equal(SteamAvailability.Reconnecting, (await service.StartAsync()).Availability);
+        Assert.Equal(SteamClientService.ReconnectTimedOutMessage, (await ended).Message);
+
+        api.LoggedOn = true;
+
+        Assert.True((await service.StartAsync()).IsReady);
+        Assert.Equal(2, api.InitializeCount);
+        Assert.Equal(1, api.ShutdownCount);
+    }
+
+    [Fact]
     public async Task StartAsync_AfterSteamAppears_SucceedsOnRetry()
     {
-        var api = new FakeSteamApi { SteamRunning = false };
+        var api = new FakeSteamApi { SteamRunning = false, InitializeSucceeds = false };
         await using var service = new SteamClientService(api);
 
         var blocked = await service.StartAsync(CancellationToken.None);
         Assert.Equal(SteamAvailability.SteamNotRunning, blocked.Availability);
 
         api.SteamRunning = true;
+        api.InitializeSucceeds = true;
         api.LoggedOn = true;
         api.SteamId = 76561198000000002;
         api.Persona = "anuvenn";
@@ -157,19 +305,22 @@ public sealed class SteamBootstrapTests : IDisposable
 
         // The player closes Steam.
         api.SteamRunning = false;
+        api.InitializeSucceeds = false;
         api.LoggedOn = false;
 
         var afterLoss = await service.StartAsync(CancellationToken.None);
         Assert.False(afterLoss.IsReady);
         Assert.Equal(SteamAvailability.SteamNotRunning, afterLoss.Availability);
+        Assert.Equal(2, api.InitializeCount); // The unavailable client was still probed through real Init.
 
         // ...starts it again, and the same button now reconnects.
         api.SteamRunning = true;
+        api.InitializeSucceeds = true;
         api.LoggedOn = true;
         var recovered = await service.StartAsync(CancellationToken.None);
         Assert.True(recovered.IsReady);
         Assert.Equal(76561198000000001UL, recovered.SteamId64);
-        Assert.Equal(2, api.InitializeCount);
+        Assert.Equal(3, api.InitializeCount);
     }
 
     /// <summary>
@@ -178,12 +329,14 @@ public sealed class SteamBootstrapTests : IDisposable
     /// session on the first such blip and stayed without Steam until somebody
     /// pressed Retry - which a guest found out about by being unable to play.
     /// </summary>
-    [Fact]
-    public async Task WhenSteamServersDrop_WhileSteamRuns_TheSessionWaitsAndComesBackByItself()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WhenSteamServersDrop_WhileSteamRuns_TheSessionWaitsAndComesBackByItself(bool processHint)
     {
         var api = new FakeSteamApi
         {
-            SteamRunning = true,
+            SteamRunning = processHint,
             LoggedOn = true,
             SteamId = 76561198000000001,
             Persona = "MarkZamore"
@@ -438,6 +591,7 @@ public sealed class SteamBootstrapTests : IDisposable
 internal sealed class FakeSteamApi : ISteamApiFacade
 {
     public bool SteamRunning { get; set; }
+    public bool InitializeSucceeds { get; set; } = true;
     public bool LoggedOn { get; set; }
     public ulong SteamId { get; set; }
     public string Persona { get; set; } = string.Empty;
@@ -451,9 +605,9 @@ internal sealed class FakeSteamApi : ISteamApiFacade
     public bool Initialize(out string failureReason)
     {
         InitializeCount++;
-        if (!SteamRunning)
+        if (!InitializeSucceeds)
         {
-            failureReason = "Steam is not running";
+            failureReason = "Steam API initialization is unavailable";
             return false;
         }
 

@@ -99,13 +99,13 @@ public sealed class PortablePackSyncServiceE2ETests : IDisposable
             $"single-jar repair downloaded {repaired.BytesDownloaded} bytes of {packBytes}");
         Assert.Equal(peerWrite, File.GetLastWriteTimeUtc(peer));
 
-        // 5. An extra file inside a managed root is deleted without downloads.
+        // 5. An unknown file has no ownership proof and is preserved.
         var extra = Path.Combine(packDir, "mods", "not-in-manifest.jar");
         await File.WriteAllBytesAsync(extra, [9, 9, 9]);
         var mirrored = await service.SyncAsync(
             PortablePackSyncService.DefaultPackRelativePath, null, CancellationToken.None);
-        Assert.Equal(PackSyncOutcome.Updated, mirrored.Outcome);
-        Assert.False(File.Exists(extra));
+        Assert.Equal(PackSyncOutcome.UpToDate, mirrored.Outcome);
+        Assert.True(File.Exists(extra));
         Assert.Equal(0, mirrored.BytesDownloaded);
     }
 

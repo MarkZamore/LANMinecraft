@@ -17,6 +17,7 @@ public sealed class CatalogMod
     public string Version { get; set; } = "";
     public string? ParentId { get; set; }
     public bool IsLibrary { get; set; }
+    public bool IsLoadedMod { get; set; } = true;
     public string? WebsiteUrl { get; set; }
     public bool WebsiteAvailable { get; set; } = true;
 }
@@ -47,10 +48,10 @@ public sealed class CatalogPack
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
     public string Name => PackDisplayName.For(Entry.RelativePath, Content.Name);
-    // The published catalogue lists actual mod projects, including addons.
-    // Its library flag excludes technical dependencies; files and resources
-    // are not catalogue mods and never contribute to this count.
-    public int ModCount => Content.Mods.Count(mod => !mod.IsLibrary);
+    // Published metadata contains the actual loaded mod IDs, including embedded
+    // dependencies. The library flag only controls the presentation category.
+    public int ModCount => Content.Mods.Where(mod => mod.IsLoadedMod)
+        .Select(mod => mod.Id).Distinct(StringComparer.Ordinal).Count();
     public string VersionLabel
     {
         get

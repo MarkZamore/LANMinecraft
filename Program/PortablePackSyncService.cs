@@ -46,6 +46,7 @@ public sealed partial class PortablePackSyncService
     public PackCatalogService? Catalog { get; set; }
     public const string SourceMarkerFileName = "portable-pack-source.json";
     public const string SyncStateFileName = ".portable-pack-sync.json";
+    public const string ApplyPendingFileName = ".portable-pack-apply.json";
     public const string PackManifestAssetName = "pack-manifest.json";
     public const string DefaultPackRelativePath = "All The Mods 10";
     public const string LegacyTerraFirmaRelativePath = "TerraFirma Rebirth";
@@ -147,6 +148,69 @@ public sealed partial class PortablePackSyncService
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
     private readonly Func<string, long, bool> _freeSpaceProbe;
+
+    /// <summary>An interrupted write must be repaired before any local launch.</summary>
+    public static bool IsUpdatePending(string packDirectory) =>
+        File.Exists(Path.Combine(packDirectory, ApplyPendingFileName));
+
+    /// <summary>
+    /// The authoritative active paths of a synced pack. Missing state means a
+    /// custom/legacy pack; damaged existing state must never activate unknown
+    /// files as if the pack were custom.
+    /// </summary>
+    internal static IReadOnlySet<string>? ReadManagedPaths(string packDirectory)
+    {
+        var path = Path.Combine(packDirectory, SyncStateFileName);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(path), JsonOptions);
+            if (state?.SchemaVersion != SyncStateCacheGeneration || state.Files is not { Count: > 0 })
+                throw new InvalidDataException("Pack sync state has no valid managed file snapshot.");
+            var packRoot = Path.GetFullPath(packDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (relative, file) in state.Files)
+            {
+                ValidateManifestPath(relative, packRoot);
+                if (file is null || file.SizeBytes < 0)
+                    throw new InvalidDataException("Pack sync state contains an invalid managed file.");
+                ValidateSha256(file.Sha256, relative);
+                paths.Add(relative);
+            }
+            return paths;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Pack sync state is damaged; repair the pack before launching.", ex);
+        }
+    }
+
+    internal sealed record ManagedFileSnapshot(string Path, long SizeBytes, string Sha256);
+
+    /// <summary>Historical ownership proofs, including older installations without instance state.</summary>
+    internal static IReadOnlyList<ManagedFileSnapshot> ReadRetiredFiles(string packDirectory)
+    {
+        var path = Path.Combine(packDirectory, SyncStateFileName);
+        if (!File.Exists(path)) return [];
+        try
+        {
+            var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(path), JsonOptions);
+            if (state?.SchemaVersion != SyncStateCacheGeneration)
+                throw new InvalidDataException("Pack sync state has an unsupported managed file snapshot.");
+            var packRoot = Path.GetFullPath(packDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return (state.RetiredFiles ?? []).Select(file => new ManagedFileSnapshot(
+                ValidateManifestPath(file.Path, packRoot),
+                file.SizeBytes >= 0 ? file.SizeBytes : throw new InvalidDataException("Negative retired file size."),
+                ValidateSha256(file.Sha256, file.Path ?? "")))
+                .Where(file => !IsProtectedRootName(file.Path.Split('/')[0])).ToArray();
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Pack sync state is damaged; repair the pack before launching.", ex);
+        }
+    }
 
     public PortablePackSyncService(
         AppPaths paths,
@@ -399,6 +463,7 @@ public sealed partial class PortablePackSyncService
         }
 
         var packDir = _paths.CombineUnderPacks(packRelativePath);
+        EnsureGameStopped(packRelativePath);
         SweepAbandonedEntries(packDir, StagingDirectoryName + "*");
         var hadManifest = PackManifestService.HasManifest(packDir);
         progress?.Report(new RuntimePreparationProgress(
@@ -418,6 +483,9 @@ public sealed partial class PortablePackSyncService
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException)
         {
             _logger.Warn($"Pack sync manifest for {packRelativePath} is unavailable or invalid: {ex.Message}");
+            if (IsUpdatePending(packDir))
+                throw new PackApplyFailedException(new IOException(
+                    "Обновление сборки было прервано. Подключитесь к интернету и повторите «Играть».", ex));
             if (hadManifest)
             {
                 return new PackSyncResult(PackSyncOutcome.OfflineFallback, null, 0, 0, OfflineCheckWarning);
@@ -433,7 +501,7 @@ public sealed partial class PortablePackSyncService
         {
             throw;
         }
-        catch (Exception ex) when (hadManifest &&
+        catch (Exception ex) when (hadManifest && !IsUpdatePending(packDir) &&
                                    ex is HttpRequestException or IOException or InvalidDataException
                                        or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
@@ -451,12 +519,24 @@ public sealed partial class PortablePackSyncService
         CancellationToken token)
     {
         var statePath = Path.Combine(packDir, SyncStateFileName);
-        var diff = await Task.Run(() => ComputeDiff(packDir, statePath, manifest, token), token).ConfigureAwait(false);
+        PackSyncDiff diff;
+        try
+        {
+            diff = await Task.Run(() => ComputeDiff(packDir, statePath, manifest, token), token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // An unreadable local file cannot be certified as an intact offline
+            // installation; in particular it can belong to a running game.
+            throw new PackApplyFailedException(ex);
+        }
 
         if (string.Equals(diff.StateRevision, manifest.Revision, StringComparison.Ordinal) &&
             diff.ChangedPaths.Count == 0 &&
             diff.Extras.Count == 0)
         {
+            WriteSyncState(statePath, packDir, manifest);
+            File.Delete(Path.Combine(packDir, ApplyPendingFileName));
             progress?.Report(new RuntimePreparationProgress(
                 RuntimePreparationStage.SyncingPack,
                 "Сборка актуальна",
@@ -502,6 +582,10 @@ public sealed partial class PortablePackSyncService
                     }
                     try
                     {
+                        EnsureGameStopped(Path.GetRelativePath(_paths.Packs, packDir));
+                        AtomicFile.WriteAllText(
+                            Path.Combine(packDir, ApplyPendingFileName),
+                            JsonSerializer.Serialize(new { schemaVersion = 1, revision = manifest.Revision }, JsonOptions));
                         ApplyChanges(
                             packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
                         // Inside the same try as the files they describe. Once
@@ -512,6 +596,7 @@ public sealed partial class PortablePackSyncService
                         // this update took away.
                         WriteSyncState(statePath, packDir, manifest);
                         WriteSourceMarker(packDir, source);
+                        File.Delete(Path.Combine(packDir, ApplyPendingFileName));
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                                    or NotSupportedException)
@@ -555,6 +640,15 @@ public sealed partial class PortablePackSyncService
             diff.ChangedPaths.Count + diff.Extras.Count,
             bytesDownloaded,
             removedModsWarning);
+    }
+
+    private void EnsureGameStopped(string packRelativePath)
+    {
+        static string Normalize(string path) => path.Replace('\\', '/').Trim('/');
+        if (new ClientPresenceService(_paths, _logger).ReadLiveSessions().Any(session =>
+                string.Equals(Normalize(session.PackRelativePath), Normalize(packRelativePath),
+                    StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Закройте запущенную игру перед обновлением сборки.");
     }
 
     /// <summary>
@@ -833,19 +927,10 @@ public sealed partial class PortablePackSyncService
                 continue;
             }
 
-            string sha;
-            if (state.Files.TryGetValue(file.Path, out var cached) &&
-                cached.SizeBytes == info.Length &&
-                cached.LastWriteUtcTicks == info.LastWriteTimeUtc.Ticks &&
-                !string.IsNullOrWhiteSpace(cached.Sha256))
-            {
-                sha = cached.Sha256;
-            }
-            else
-            {
-                sha = HashFile(info.FullName);
-            }
-            if (!HashesEqual(sha, file.Sha256))
+            // Archive timestamps, replaced git history and same-length edits
+            // must not make stale bytes look current. The manifest's actual
+            // size and content hash are the complete reuse criterion.
+            if (info.Length != file.SizeBytes || !HashesEqual(HashFile(info.FullName), file.Sha256))
             {
                 changedPaths.Add(file.Path);
             }
@@ -854,7 +939,7 @@ public sealed partial class PortablePackSyncService
         return new PackSyncDiff(
             state.Revision,
             changedPaths,
-            FindExtras(packDir, manifest),
+            FindExtras(packDir, state, manifest),
             FindRemovedMods(state, manifest));
     }
 
@@ -959,33 +1044,49 @@ public sealed partial class PortablePackSyncService
     }
 
     /// <summary>
-    /// Everything a synced pack ships is listed in its manifest, so anything
-    /// else under the pack directory is what the pack used to be. Leaving such
-    /// a folder behind would also make this machine hash a different pack than
-    /// a fresh install of the same revision, and peers compare that hash.
+    /// Remove only files with established pack ownership. A directory name or
+    /// an unfamiliar jar is never proof that a player did not put it there.
     /// </summary>
-    private static List<string> FindExtras(string packDir, ValidatedManifest manifest)
+    private static List<string> FindExtras(string packDir, SyncStateDto state, ValidatedManifest manifest)
     {
-        var extras = new List<string>();
-        if (!Directory.Exists(packDir)) return extras;
-        foreach (var entry in Directory.EnumerateFileSystemEntries(packDir))
+        var extras = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!Directory.Exists(packDir)) return [];
+        var packRoot = Path.GetFullPath(packDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var relative in state.Files.Keys)
         {
-            var name = Path.GetFileName(entry);
-            if (IsProtectedRootName(name) || IsStagingEntryName(name)) continue;
-            if (File.Exists(entry))
+            try
             {
-                if (!manifest.FilesByPath.ContainsKey(name)) extras.Add(name);
-                continue;
+                ValidateManifestPath(relative, packRoot);
+                if (!IsProtectedRootName(relative.Split('/')[0]) &&
+                    !manifest.FilesByPath.ContainsKey(relative) &&
+                    File.Exists(Path.Combine(packDir, relative.Replace('/', Path.DirectorySeparatorChar))))
+                    extras.Add(relative);
             }
-            if (!Directory.Exists(entry)) continue;
-            foreach (var file in Directory.EnumerateFiles(entry, "*", SearchOption.AllDirectories))
+            catch (InvalidDataException)
             {
-                var relative = Path.GetRelativePath(packDir, file).Replace('\\', '/');
-                if (IsServiceRelativePath(relative)) continue;
-                if (!manifest.FilesByPath.ContainsKey(relative)) extras.Add(relative);
+                // Local state is not trusted with paths outside the managed tree.
             }
         }
-        return extras;
+        foreach (var legacy in manifest.LegacyFiles)
+        {
+            if (!manifest.FilesByPath.ContainsKey(legacy.Path) &&
+                !IsProtectedRootName(legacy.Path.Split('/')[0]) &&
+                HasFileWithHash(packDir, legacy)) extras.Add(legacy.Path);
+        }
+        foreach (var legacy in state.RetiredFiles ?? [])
+        {
+            if (legacy is null) continue;
+            try
+            {
+                var relative = ValidateManifestPath(legacy.Path, packRoot);
+                if (!manifest.FilesByPath.ContainsKey(relative) && !IsProtectedRootName(relative.Split('/')[0]) &&
+                    legacy.SizeBytes >= 0 && HasFileWithHash(packDir,
+                        new ValidatedFile(relative, legacy.SizeBytes, ValidateSha256(legacy.Sha256, relative))))
+                    extras.Add(relative);
+            }
+            catch (InvalidDataException) { }
+        }
+        return extras.Order(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static void ExtractAndVerifyStagedSources(
@@ -1132,6 +1233,7 @@ public sealed partial class PortablePackSyncService
 
     private void WriteSyncState(string statePath, string packDir, ValidatedManifest manifest)
     {
+        var previous = ReadSyncState(statePath);
         var state = new SyncStateDto
         {
             SchemaVersion = SyncStateCacheGeneration,
@@ -1140,6 +1242,8 @@ public sealed partial class PortablePackSyncService
         foreach (var file in manifest.Files)
         {
             var info = new FileInfo(Path.Combine(packDir, file.Path.Replace('/', Path.DirectorySeparatorChar)));
+            if (!info.Exists || info.Length != file.SizeBytes || !HashesEqual(HashFile(info.FullName), file.Sha256))
+                throw new InvalidDataException($"Applied pack file does not match its manifest: {file.Path}");
             state.Files[file.Path] = new SyncStateFileDto
             {
                 SizeBytes = info.Length,
@@ -1147,6 +1251,30 @@ public sealed partial class PortablePackSyncService
                 Sha256 = file.Sha256
             };
         }
+        // Keep historical proofs after the canonical old files have gone: a
+        // player's instance may first be migrated on a later launch, even after
+        // a repaired download or an idempotent synchronization.
+        var retired = new Dictionary<string, RemoteFileDto>(StringComparer.OrdinalIgnoreCase);
+        var packRoot = Path.GetFullPath(packDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        void RememberRetired(string? path, long size, string? sha)
+        {
+            try
+            {
+                var relative = ValidateManifestPath(path, packRoot);
+                if (size < 0 || IsProtectedRootName(relative.Split('/')[0]) || manifest.FilesByPath.ContainsKey(relative)) return;
+                var hash = ValidateSha256(sha, relative);
+                retired[relative + "\0" + hash] = new RemoteFileDto { Path = relative, SizeBytes = size, Sha256 = hash };
+            }
+            catch (InvalidDataException) { }
+        }
+        foreach (var file in previous.RetiredFiles ?? [])
+            if (file is not null) RememberRetired(file.Path, file.SizeBytes, file.Sha256);
+        foreach (var (path, file) in previous.Files)
+            if (file is not null) RememberRetired(path, file.SizeBytes, file.Sha256);
+        foreach (var file in manifest.LegacyFiles)
+            RememberRetired(file.Path, file.SizeBytes, file.Sha256);
+        state.RetiredFiles = retired.Values.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(file => file.Sha256, StringComparer.OrdinalIgnoreCase).ToList();
         AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, JsonOptions));
     }
 
@@ -1202,7 +1330,7 @@ public sealed partial class PortablePackSyncService
                 var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(statePath), JsonOptions);
                 if (state?.SchemaVersion == SyncStateCacheGeneration)
                 {
-                    state.Files = new Dictionary<string, SyncStateFileDto>(state.Files, StringComparer.OrdinalIgnoreCase);
+                    state.Files = new Dictionary<string, SyncStateFileDto>(state.Files ?? [], StringComparer.OrdinalIgnoreCase);
                     return state;
                 }
             }
@@ -1338,7 +1466,15 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return new ValidatedManifest(revision, files, assets, filesByPath, assetByCoveredPath);
+        var legacyFiles = new List<ValidatedFile>();
+        foreach (var legacy in manifest.LegacyFiles ?? [])
+        {
+            if (legacy is null || legacy.SizeBytes < 0)
+                throw new InvalidDataException("Pack sync manifest contains an invalid legacy file.");
+            var path = ValidateManifestPath(legacy.Path, packRoot);
+            legacyFiles.Add(new ValidatedFile(path, legacy.SizeBytes, ValidateSha256(legacy.Sha256, path)));
+        }
+        return new ValidatedManifest(revision, files, assets, filesByPath, assetByCoveredPath, legacyFiles);
     }
 
     private static string ValidateManifestPath(string? value, string packRoot)
@@ -1359,6 +1495,7 @@ public sealed partial class PortablePackSyncService
         }
         if (string.Equals(path, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(path, SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(path, ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(path, InstanceStateFileName, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException($"Pack sync manifest may not ship a service file: {path}");
@@ -1367,6 +1504,14 @@ public sealed partial class PortablePackSyncService
         if (!full.StartsWith(packRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException($"Pack sync manifest path escapes the pack: {path}");
+        }
+        var current = packRoot;
+        foreach (var segment in path.Split('/').Prepend(""))
+        {
+            if (segment.Length > 0) current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) &&
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException($"Pack sync path passes through a link: {path}");
         }
         return path;
     }
@@ -1417,6 +1562,7 @@ public sealed partial class PortablePackSyncService
     private static bool IsServiceRelativePath(string relativePath) =>
         string.Equals(relativePath, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(relativePath, SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(relativePath, ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(relativePath, InstanceStateFileName, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsProtectedRootName(string name) =>
@@ -1430,8 +1576,18 @@ public sealed partial class PortablePackSyncService
 
     private static string HashFile(string path)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            }
+            catch (IOException) when (attempt < ReplaceAttempts)
+            {
+                Thread.Sleep(ReplaceRetryDelay * attempt);
+            }
+        }
     }
 
     private static bool HashesEqual(string left, string right) =>
@@ -1557,7 +1713,8 @@ public sealed partial class PortablePackSyncService
         IReadOnlyList<ValidatedFile> Files,
         IReadOnlyList<ValidatedAsset> Assets,
         Dictionary<string, ValidatedFile> FilesByPath,
-        Dictionary<string, ValidatedAsset> AssetByCoveredPath);
+        Dictionary<string, ValidatedAsset> AssetByCoveredPath,
+        IReadOnlyList<ValidatedFile> LegacyFiles);
 
     private sealed class SourceMarkerDto
     {
@@ -1581,6 +1738,8 @@ public sealed partial class PortablePackSyncService
         /// </summary>
         public int? ModCount { get; set; }
         public List<RemoteFileDto>? Files { get; set; }
+        /// <summary>Previously published hashes, used only to identify legacy managed files.</summary>
+        public List<RemoteFileDto>? LegacyFiles { get; set; }
         public List<RemoteAssetDto>? Assets { get; set; }
     }
 
@@ -1605,6 +1764,7 @@ public sealed partial class PortablePackSyncService
         public int SchemaVersion { get; set; }
         public string Revision { get; set; } = "";
         public Dictionary<string, SyncStateFileDto> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<RemoteFileDto>? RetiredFiles { get; set; } = [];
     }
 
     private sealed class SyncStateFileDto

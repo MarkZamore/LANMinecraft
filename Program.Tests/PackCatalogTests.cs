@@ -112,8 +112,8 @@ public sealed class PackCatalogTests : IDisposable
         Assert.False(PackMembership.Contains(settings, CatalogHost.Folder));
         Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
         var originalPack = service.Find(CatalogHost.Folder)!;
-        Assert.Equal(2, originalPack.ModCount);
-        Assert.Equal("Minecraft 26.2 (2 мода)", originalPack.VersionLabel);
+        Assert.Equal(3, originalPack.ModCount);
+        Assert.Equal("Minecraft 26.2 (3 мода)", originalPack.VersionLabel);
         var before = host.Requests.Count;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource(CatalogHost.Folder));
@@ -127,18 +127,18 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(before + 1, host.Requests.Count);
 
         // The next startup receives the changed published mod list. It must
-        // replace the count from the disk cache without counting dependencies.
+        // replace the count from the disk cache, including dependencies.
         using var changedHost = new CatalogHost(mods: [
             .. initialMods,
             new() { Id = "another", Name = "Another mod" },
             new() { Id = "another_helper", Name = "Another library", IsLibrary = true }
         ], revision: "next-revision");
         var nextStartup = new PackCatalogService(_paths, _logger, changedHost.Client);
-        Assert.Equal(2, nextStartup.Find(CatalogHost.Folder)!.ModCount);
-        await nextStartup.RefreshOnceAsync();
         Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
-        Assert.Equal("Minecraft 26.2 (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
-        Assert.Equal(2, originalPack.ModCount);
+        await nextStartup.RefreshOnceAsync();
+        Assert.Equal(5, nextStartup.Find(CatalogHost.Folder)!.ModCount);
+        Assert.Equal("Minecraft 26.2 (5 модов)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
+        Assert.Equal(3, originalPack.ModCount);
 
         // Discovery persists without an EXE update, but offline presentation
         // stays limited to explicitly added packs from that verified cache.
@@ -534,12 +534,13 @@ public sealed class PackCatalogTests : IDisposable
     [InlineData(22, "мода")]
     [InlineData(111, "модов")]
     [InlineData(200, "модов")]
-    public void VersionLabelCountsOnlyModsAndUsesRussianPlural(int count, string word)
+    public void VersionLabelCountsUniqueModIdsIncludingLibrariesAndUsesRussianPlural(int count, string word)
     {
         var pack = new PackCatalogService(_paths, _logger).Packs[0];
         pack.Content.Mods = Enumerable.Range(0, count)
-            .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })
-            .Append(new CatalogMod { Id = "dependency", Name = "Library", IsLibrary = true })
+            .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index, IsLibrary = index % 2 == 0 })
+            .Concat(count > 0 ? [new CatalogMod { Id = "mod_0", Name = "Repeated ID" }] : Array.Empty<CatalogMod>())
+            .Append(new CatalogMod { Id = "language_provider", Name = "Language provider", IsLibrary = true, IsLoadedMod = false })
             .ToList();
         Assert.Equal(count, pack.ModCount);
         Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} ({count} {word})", pack.VersionLabel);

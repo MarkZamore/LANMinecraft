@@ -88,6 +88,7 @@ public sealed class SteamClientService : IAsyncDisposable
     private SteamClientStatus _status = SteamClientStatus.NotStarted;
     private int _serversLost;
     private int _signedInElsewhere;
+    private int _runningHintConfirmed;
     private DateTimeOffset? _reconnectingSince;
     private bool _disposed;
 
@@ -147,7 +148,10 @@ public sealed class SteamClientService : IAsyncDisposable
             // A status of Ready is only trustworthy while Steam is still
             // there; if it went away, this call is the recovery path.
             if (current.IsReady && IsSteamAlive()) return current;
-            if (current.IsReady || pumpAlive) TearDownApi("Steam закрылся; переподключение.");
+            // A terminal liveness result may already have stopped the pump,
+            // while its initialized API still belongs to the old session.
+            if (current.Availability != SteamAvailability.NotStarted || pumpAlive)
+                TearDownApi("Предыдущая сессия Steam завершена; переподключение.");
             Publish(new SteamClientStatus(SteamAvailability.Starting, 0, string.Empty, "Подключение к Steam…"));
 
             try
@@ -161,11 +165,12 @@ public sealed class SteamClientService : IAsyncDisposable
                     SteamAvailability.Failed, 0, string.Empty, FailedMessagePrefix + ex.Message));
             }
 
-            if (!_api.IsSteamRunning())
-            {
-                return Publish(new SteamClientStatus(
-                    SteamAvailability.SteamNotRunning, 0, string.Empty, SteamNotRunningMessage));
-            }
+            // SteamAPI_IsSteamRunning can remain false even while the real
+            // API initializes and ISteamUser confirms an authenticated user.
+            // A true hint, once observed in this API session, can still prove
+            // a later client exit. An unconfirmed false hint cannot veto Init.
+            Volatile.Write(ref _runningHintConfirmed, 0);
+            _ = HasConfirmedClientExit();
 
             if (!_api.Initialize(out var failureReason))
             {
@@ -179,6 +184,13 @@ public sealed class SteamClientService : IAsyncDisposable
                 return Publish(new SteamClientStatus(availability, 0, string.Empty, message));
             }
 
+            if (HasConfirmedClientExit())
+            {
+                _api.Shutdown();
+                return Publish(new SteamClientStatus(
+                    SteamAvailability.SteamNotRunning, 0, string.Empty, SteamLostMessage));
+            }
+
             if (!_api.IsLoggedOn())
             {
                 _api.Shutdown();
@@ -186,9 +198,15 @@ public sealed class SteamClientService : IAsyncDisposable
                     SteamAvailability.NotLoggedIn, 0, string.Empty, NotLoggedInMessage));
             }
 
-            _api.InitRelayNetworkAccess();
             var steamId = _api.GetLocalSteamId();
             var persona = _api.GetPersonaName();
+            if (steamId == 0)
+            {
+                _api.Shutdown();
+                return Publish(new SteamClientStatus(
+                    SteamAvailability.NotLoggedIn, 0, string.Empty, NotLoggedInMessage));
+            }
+            _api.InitRelayNetworkAccess();
             Volatile.Write(ref _serversLost, 0);
             Volatile.Write(ref _signedInElsewhere, 0);
             // Read the friend list before anyone is told the session is ready:
@@ -299,21 +317,21 @@ public sealed class SteamClientService : IAsyncDisposable
     /// </remarks>
     private bool CheckLiveness(DateTimeOffset now)
     {
-        bool running;
+        bool clientExited;
         bool signedIn;
         try
         {
-            running = _api.IsSteamRunning();
-            signedIn = running && _api.IsLoggedOn();
+            clientExited = HasConfirmedClientExit();
+            signedIn = !clientExited && _api.IsLoggedOn();
         }
         catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
         {
-            running = false;
+            clientExited = true;
             signedIn = false;
         }
 
         var current = Status;
-        if (!running)
+        if (clientExited)
         {
             _logger?.Warn("Steam is no longer running; the session ended.");
             Publish(new SteamClientStatus(
@@ -357,12 +375,9 @@ public sealed class SteamClientService : IAsyncDisposable
             return true;
         }
 
-        _reconnectingSince = null;
-        if (current.Availability != SteamAvailability.Reconnecting) return true;
-
         var steamId = _api.GetLocalSteamId();
         var persona = _api.GetPersonaName();
-        if (steamId != current.SteamId64)
+        if (steamId == 0 || current.SteamId64 != 0 && steamId != current.SteamId64)
         {
             // Everything bound to the old account - the profile played as, who
             // may connect - would be wrong under the new one.
@@ -371,6 +386,10 @@ public sealed class SteamClientService : IAsyncDisposable
             return false;
         }
 
+        _reconnectingSince = null;
+        if (current.Availability != SteamAvailability.Reconnecting) return true;
+        Volatile.Write(ref _serversLost, 0);
+        Volatile.Write(ref _signedInElsewhere, 0);
         _logger?.Info($"Steam is signed in to its servers again as {persona} ({steamId}); the session carries on.");
         RefreshFriends();
         Publish(ReadyStatus(steamId, persona));
@@ -437,12 +456,24 @@ public sealed class SteamClientService : IAsyncDisposable
     {
         try
         {
-            return _api.IsSteamRunning() && _api.IsLoggedOn();
+            var current = Status;
+            return !HasConfirmedClientExit() && _api.IsLoggedOn() &&
+                current.SteamId64 != 0 && _api.GetLocalSteamId() == current.SteamId64;
         }
         catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
         {
             return false;
         }
+    }
+
+    private bool HasConfirmedClientExit()
+    {
+        if (_api.IsSteamRunning())
+        {
+            Volatile.Write(ref _runningHintConfirmed, 1);
+            return false;
+        }
+        return Volatile.Read(ref _runningHintConfirmed) != 0;
     }
 
     /// <summary>

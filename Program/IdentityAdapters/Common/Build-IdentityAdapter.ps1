@@ -96,6 +96,8 @@ foreach ($requiredFile in @(
     (Join-Path $commonRoot "PortableXaeroWaypointTransformer.java"),
     (Join-Path $commonRoot "PortableLanAutoPublishHooks.java"),
     (Join-Path $commonRoot "PortableLanAutoPublishTransformer.java"),
+    (Join-Path $commonRoot "PortableSteamDiscoveryHooks.java"),
+    (Join-Path $commonRoot "PortableSteamDiscoveryTransformer.java"),
     (Join-Path $commonRoot "PortableGuestMovementHooks.java"),
     (Join-Path $commonRoot "PortableGuestMovementTransformer.java"),
     (Join-Path $adapterRoot "PortableIdentityHooks.java"),
@@ -191,6 +193,7 @@ try {
         "PortableIdentityReflection",
         "PortableSkinProfiles",
         "PortableLanAutoPublishHooks",
+        "PortableSteamDiscoveryHooks",
         "PortablePerPlayerChunksHooks",
         "PortableGuestMovementHooks",
         "PortableXaeroWaypointHooks")

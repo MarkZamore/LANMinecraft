@@ -53,25 +53,24 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
             // Server Properties looks for the start button by name and dies on
             // the null when it is not there, which is what a skipped body left
             // behind - the world opened and the game came down with it.
-            AbstractInsnNode exit = method.instructions.getLast();
-            while (exit != null && exit.getOpcode() != Opcodes.RETURN) {
-                exit = exit.getPrevious();
+            // e4steam 0.3.4 routes this screen to its own form in a
+            // cancellable HEAD injection. Its early RETURN is as important
+            // as the vanilla tail: publishing follows either completed native
+            // initialization path, while ATTEMPTED guards re-entry.
+            for (AbstractInsnNode exit : method.instructions.toArray()) {
+                if (exit.getOpcode() != Opcodes.RETURN) continue;
+                InsnList publish = new InsnList();
+                publish.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                publish.add(new MethodInsnNode(
+                    Opcodes.INVOKESTATIC,
+                    HOOKS,
+                    "autoPublish",
+                    "(Ljava/lang/Object;)Z",
+                    false));
+                publish.add(new InsnNode(Opcodes.POP));
+                method.instructions.insertBefore(exit, publish);
+                patched = true;
             }
-            if (exit == null) {
-                continue;
-            }
-
-            InsnList publish = new InsnList();
-            publish.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            publish.add(new MethodInsnNode(
-                Opcodes.INVOKESTATIC,
-                HOOKS,
-                "autoPublish",
-                "(Ljava/lang/Object;)Z",
-                false));
-            publish.add(new InsnNode(Opcodes.POP));
-            method.instructions.insertBefore(exit, publish);
-            patched = true;
         }
 
         if (!patched) {

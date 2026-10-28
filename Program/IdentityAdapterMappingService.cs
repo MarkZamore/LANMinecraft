@@ -187,6 +187,7 @@ internal sealed class IdentityAdapterMappingService
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
         AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, perPlayerProperties);
+        var discoveryScreen = AddSteamDiscoveryProperties(mappings, perPlayerProperties, runtime.Descriptor);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
             { YggdrasilSessionService, TextureUrlChecker, GameProfile };
         if (lanScreen is not null)
@@ -195,6 +196,11 @@ internal sealed class IdentityAdapterMappingService
             wanted.Add(lanScreen.ObfName);
         }
 
+        if (discoveryScreen is not null)
+        {
+            wanted.Add(discoveryScreen.RuntimeName);
+            wanted.Add(discoveryScreen.ObfName);
+        }
         AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
         AddGuestMovementTargets(mappings, wanted, guestMovement);
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
@@ -284,6 +290,52 @@ internal sealed class IdentityAdapterMappingService
     /// hook that half works.
     /// </summary>
     /// <returns>The screen to patch, or null where the hook cannot be had.</returns>
+    private static MappedClass? AddSteamDiscoveryProperties(
+        RuntimeNames? mappings, Dictionary<string, string> properties, PackRuntimeDescriptor descriptor)
+    {
+        const string multiplayer = "net/minecraft/client/gui/screens/multiplayer/JoinMultiplayerScreen";
+        properties["steamDiscoveryEnabled"] = "false";
+        properties["steamDiscoveryScreenClasses"] = multiplayer;
+        var transport = SteamTransportCatalog.Find(descriptor);
+        // Private worker, fields, join signature and metadata were reviewed
+        // against the actual author JARs for these two releases only.
+        if (transport is null || transport.Version is not ("0.3.2" or "0.3.4")) return null;
+        var screen = mappings?.FindClass(multiplayer);
+        var data = mappings?.FindClass("net/minecraft/client/multiplayer/ServerData");
+        var lan = mappings?.FindClass("net/minecraft/client/server/LanServer");
+        var list = mappings?.FindClass("net/minecraft/client/server/LanServerDetection$LanServerList");
+        if (screen is null || data is null || lan is null || list is null) return null;
+        var init = screen.FindMethod("init", descriptor => descriptor == "()V");
+        var removed = screen.FindMethod("removed", descriptor => descriptor == "()V");
+        var join = screen.FindMethod("join", descriptor => descriptor == $"(L{data.ObfName};)V");
+        var lanList = screen.FindField("lanServerList");
+        var servers = list.FindField("servers");
+        var dirty = list.FindField("isDirty");
+        var address = lan.FindMethod("getAddress", descriptor => descriptor == "()Ljava/lang/String;");
+        var ip = data.FindField("ip");
+        if (init is null || removed is null || join is null || lanList is null || servers is null ||
+            dirty is null || address is null || ip is null) return null;
+        properties["steamDiscoveryEnabled"] = "true";
+        properties["steamDiscoveryScreenClasses"] = JoinAliases(screen);
+        properties["steamDiscoveryInitMethods"] = JoinAliases(init);
+        properties["steamDiscoveryRemovedMethods"] = JoinAliases(removed);
+        properties["steamDiscoveryJoinMethods"] = JoinAliases(join);
+        properties["steamDiscoveryJoinDescriptors"] = JoinAliases($"(L{data.RuntimeName};)V", join.ObfDescriptor);
+        properties["steamDiscoveryLanListFields"] = JoinAliases(lanList);
+        properties["steamDiscoveryLanServersFields"] = JoinAliases(servers);
+        properties["steamDiscoveryLanDirtyFields"] = JoinAliases(dirty);
+        properties["steamDiscoveryLanServerClasses"] = JoinDottedAliases(lan);
+        properties["steamDiscoveryLanListClasses"] = JoinAliases(list);
+        properties["steamDiscoveryServerDataClasses"] = JoinAliases(data);
+        properties["steamDiscoveryLanAddressMethods"] = JoinAliases(address);
+        properties["steamDiscoveryServerAddressFields"] = JoinAliases(ip);
+        properties["steamDiscoveryMinecraftVersion"] = descriptor.MinecraftVersion;
+        // Reflection below is profiled against these pinned author's bytes.
+        // Updating the transport requires reviewing its private worker/join API.
+        properties["steamDiscoveryTransportVersion"] = transport.Version;
+        return screen;
+    }
+
     private static MappedClass? AddLanPublishProperties(
         RuntimeNames? mappings,
         out Dictionary<string, string> properties)
@@ -1006,6 +1058,7 @@ internal sealed class IdentityAdapterMappingService
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
         AddChunkPacingProperties(mappings, properties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, properties);
+        var discoveryScreen = AddSteamDiscoveryProperties(mappings, properties, runtime.Descriptor);
         AddServeDistanceProperties(mappings, properties);
 
         AddSkinProperties(properties);
@@ -1023,6 +1076,11 @@ internal sealed class IdentityAdapterMappingService
         {
             requiredTargets.Add(ShareToLanScreen);
             requiredTargets.Add(lanScreen.ObfName);
+        }
+        if (discoveryScreen is not null)
+        {
+            requiredTargets.Add(discoveryScreen.RuntimeName);
+            requiredTargets.Add(discoveryScreen.ObfName);
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         AddGuestMovementTargets(mappings, requiredTargets, guestMovement);
@@ -1352,6 +1410,10 @@ internal sealed class IdentityAdapterMappingService
         /// <summary>The classes this build asks about, by their official names.</summary>
         private static HashSet<string> Required { get; } = new(StringComparer.Ordinal)
         {
+            "net/minecraft/client/gui/screens/multiplayer/JoinMultiplayerScreen",
+            "net/minecraft/client/multiplayer/ServerData",
+            "net/minecraft/client/server/LanServer",
+            "net/minecraft/client/server/LanServerDetection$LanServerList",
             LoginListener,
             GameListener,
             CommonListener,

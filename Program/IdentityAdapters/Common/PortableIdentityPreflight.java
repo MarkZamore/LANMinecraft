@@ -45,6 +45,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableXaeroWaypointTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
+                transformer = new PortableSteamDiscoveryTransformer();
             } else if (isAlias("movementListenerClasses", className)) {
                 transformer = new PortableGuestMovementTransformer();
             } else if (isAlias("chunkMapClasses", className) ||
@@ -82,6 +84,8 @@ public final class PortableIdentityPreflight {
                 verifyXaeroWaypointTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
+                verifySteamDiscoveryTargets(archive, className, transformed);
             } else if (isAlias("movementListenerClasses", className)) {
                 verifyGuestMovementTargets(className, transformed);
             } else if (isAlias("chunkMapClasses", className) ||
@@ -142,6 +146,39 @@ public final class PortableIdentityPreflight {
      * The one-press publish: one call to the hook, and every member the hook
      * reaches for through reflection, in the mapping this class was found under.
      */
+    private static void verifySteamDiscoveryTargets(ZipFile archive, String className, byte[] transformed) throws Exception {
+        int index = aliasIndex("steamDiscoveryScreenClasses", className);
+        ClassNode screen = readClass(archive, className);
+        requireMethod(screen, "steamDiscoveryInitMethods", 0);
+        requireMethod(screen, "steamDiscoveryRemovedMethods", 0);
+        boolean joinFound = screen.methods.stream().anyMatch(method ->
+            Arrays.asList(aliases("steamDiscoveryJoinMethods")).contains(method.name) &&
+            Arrays.asList(aliases("steamDiscoveryJoinDescriptors")).contains(method.desc));
+        if (!joinFound) throw new IllegalStateException("Required Steam discovery join descriptor is missing.");
+        requireField(screen, "steamDiscoveryLanListFields");
+        ClassNode list = readClass(archive, alias("steamDiscoveryLanListClasses", index));
+        requireField(list, "steamDiscoveryLanServersFields");
+        requireField(list, "steamDiscoveryLanDirtyFields");
+        ClassNode data = readClass(archive, alias("steamDiscoveryServerDataClasses", index));
+        requireField(data, "steamDiscoveryServerAddressFields");
+        ClassNode lan = readClass(archive, alias("steamDiscoveryLanServerClasses", index).replace('.', '/'));
+        requireMethod(lan, "steamDiscoveryLanAddressMethods", 0);
+        if (lan.methods.stream().noneMatch(method -> method.name.equals("<init>") &&
+            method.desc.equals("(Ljava/lang/String;Ljava/lang/String;)V")))
+            throw new IllegalStateException("Unsupported LAN server entry constructor.");
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        for (String name : new String[] { "begin", "end", "join" }) {
+            int calls = 0;
+            for (MethodNode method : patched.methods) for (AbstractInsnNode instruction : method.instructions)
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") &&
+                    call.name.equals(name)) calls++;
+            if (calls < 1 || (!name.equals("begin") && calls != 1))
+                throw new IllegalStateException("Unsupported Steam discovery hook count for " + name + ".");
+        }
+    }
+
     private static void verifyLanSharePublishTargets(
         ZipFile archive,
         String screenClass,
@@ -153,10 +190,13 @@ public final class PortableIdentityPreflight {
         ClassNode patched = new ClassNode();
         new ClassReader(transformed).accept(patched, 0);
         int hookCalls = 0;
+        int initReturns = 0;
         for (MethodNode method : patched.methods) {
+            boolean init = Arrays.asList(aliases("lanShareInitMethods")).contains(method.name) && method.desc.equals("()V");
             for (var instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
+                if (init && instruction.getOpcode() == Opcodes.RETURN) initReturns++;
                 if (instruction instanceof MethodInsnNode call &&
                     call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks") &&
                     call.name.equals("autoPublish") &&
@@ -165,9 +205,9 @@ public final class PortableIdentityPreflight {
                 }
             }
         }
-        if (hookCalls != 1) {
+        if (initReturns == 0 || hookCalls != initReturns) {
             throw new IllegalStateException(
-                "LAN share screen transformer inserted " + hookCalls + " publish hooks instead of 1.");
+                "LAN share screen transformer inserted " + hookCalls + " publish hooks for " + initReturns + " init returns.");
         }
 
         ClassNode integrated = readClass(archive, alias("integratedServerClasses", mappingIndex));

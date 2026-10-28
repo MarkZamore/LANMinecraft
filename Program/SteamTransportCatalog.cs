@@ -114,17 +114,20 @@ public static class SteamTransportCatalog
         new(ManagedComponentService.E4steamComponentId, 30_019, "e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar",
             [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.0/e4steam-fabric-quilt-mc26.1-26.2-v0.3.0.jar")],
             3_632_179, "6578e4d71a5e1499d35aeff699ac84ade6047e104a0439efca9d13cdea0ad443"),
+        new(ManagedComponentService.E4steamComponentId, 32_012, "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar",
+            [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")],
+            3_735_682, "9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a"),
     ];
 
-    /// <summary>The release every build here comes from.</summary>
+    /// <summary>The baseline release retained by the other existing transport pins.</summary>
     public const string Version = "0.3.2";
 
     /// <summary>
     /// Every build its author publishes, and therefore every pack this
     /// launcher can carry into a Steam session.
     ///
-    /// All nineteen. There is no shortlist any more and no version of
-    /// Minecraft between 1.7 and 26.2 that is left out for want of a row: a
+    /// Nineteen platform builds. The Forge 1.18.2-1.20.2 row uses the author
+    /// fix in 0.3.4; the other eighteen pins remain unchanged. A
     /// player who assembles a pack of their own gets Steam play if e4steam has
     /// a build for it, and it has one for almost everything.
     ///
@@ -237,11 +240,11 @@ public static class SteamTransportCatalog
                 [1, 17, 1],
                 [1, 18, 2]),
             new(
-                Version,
-                "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar",
-                3_735_682,
-                "9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a",
-                32_012,
+                "0.3.4",
+                "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
+                3_817_117,
+                "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc",
+                34_012,
                 [PackLoaderKind.Forge],
                 [1, 18, 2],
                 [1, 20, 3]),

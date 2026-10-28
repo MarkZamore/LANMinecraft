@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Minecraft;
+using Xunit.Abstractions;
 
 namespace Minecraft.Tests;
 
@@ -23,7 +24,7 @@ namespace Minecraft.Tests;
 /// so rather than failing. That is deliberate - it means CI, which has neither,
 /// stays green while a developer, who has both, gets the check.
 /// </summary>
-public sealed class IdentityAdapterAgainstInstalledPacksTests
+public sealed class IdentityAdapterAgainstInstalledPacksTests(ITestOutputHelper output)
 {
     /// <summary>
     /// The launcher's data folder: the one holding Launcher and Packs. Named by
@@ -87,7 +88,15 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests
             }
         }
 
-        if (checks.Count == 0) return;
+        output.WriteLine($"Real bytecode preflight targets: {checks.Count}");
+        if (checks.Count == 0)
+        {
+            // An explicit local audit must not silently pass because the
+            // installed runtime layout changed and no jar was found.
+            Assert.True(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("LANMINECRAFT_ROOT")),
+                "LANMINECRAFT_ROOT was specified, but no installed pack supplied a preflight target.");
+            return;
+        }
         await RunAsync(checks, atOnce: 8);
 
         Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
@@ -120,13 +129,23 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests
             return null;
         }
 
-        var clientJar = FindClientJar(runtimeRoot);
+        // InstallRoot names the Minecraft data directory; AppPaths takes the
+        // directory containing Minecraft and the launcher executable.
+        var paths = new AppPaths(Directory.GetParent(install)!.FullName);
+        var sharedLibraries = SharedRuntimeStore.Libraries(paths);
+        var shared = Directory.Exists(sharedLibraries);
+        var libraries = shared ? sharedLibraries : Path.Combine(runtimeRoot, "libraries");
+        var versions = shared ? SharedRuntimeStore.Versions(paths) : Path.Combine(runtimeRoot, "versions");
+        var clientJar = FindClientJar(libraries, versions, descriptor.MinecraftVersion);
         if (clientJar is null) return null;
 
         try
         {
-            return new IdentityAdapterMappingService(new AppPaths(install)).Build(
-                new PreparedRuntime(runtimeRoot, "profile", "java", clientJar, descriptor),
+            return new IdentityAdapterMappingService(paths).Build(
+                new PreparedRuntime(runtimeRoot, "profile", "java", clientJar, descriptor)
+                {
+                    LibrariesRoot = libraries
+                },
                 Path.Combine(install, "Personal", "Instances", name));
         }
         catch (Exception ex) when (ex is NotSupportedException or InvalidDataException or IOException)
@@ -142,21 +161,51 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests
     /// against: Forge and NeoForge leave an -srg jar beside the libraries, and
     /// Fabric runs the vanilla one under versions.
     /// </summary>
-    private static string? FindClientJar(string runtimeRoot)
+    private static string? FindClientJar(string librariesRoot, string versionsRoot, string minecraftVersion)
     {
-        var libraries = Path.Combine(runtimeRoot, "libraries", "net", "minecraft", "client");
+        var vanilla = Path.Combine(versionsRoot, minecraftVersion, minecraftVersion + ".jar");
+        if (File.Exists(vanilla)) return vanilla;
+        var libraries = Path.Combine(librariesRoot, "net", "minecraft", "client");
         if (Directory.Exists(libraries))
         {
             var srg = Directory.EnumerateFiles(libraries, "client-*-srg.jar", SearchOption.AllDirectories)
+                .Where(path => IdentityAdapterMappingService.IsFiledUnderVersion(path, minecraftVersion))
                 .OrderBy(path => path, StringComparer.Ordinal).LastOrDefault();
             if (srg is not null) return srg;
         }
 
-        var versions = Path.Combine(runtimeRoot, "versions");
-        return Directory.Exists(versions)
-            ? Directory.EnumerateFiles(versions, "*.jar", SearchOption.AllDirectories)
-                .OrderBy(path => path, StringComparer.Ordinal).LastOrDefault()
-            : null;
+        return null;
+    }
+
+    [Fact]
+    public void SharedStorePreflight_UsesOnlyTheRequestedMinecraft()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "identity-preflight-store-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var libraries = Path.Combine(root, "Launcher", "Shared", "libraries");
+            var versions = Path.Combine(root, "Launcher", "Shared", "versions");
+            var expected = Path.Combine(libraries, "net", "minecraft", "client", "1.20.1-20230612.114412",
+                "client-1.20.1-20230612.114412-srg.jar");
+            var other = Path.Combine(libraries, "net", "minecraft", "client", "1.21.1-20240808.144430",
+                "client-1.21.1-20240808.144430-srg.jar");
+            Directory.CreateDirectory(Path.GetDirectoryName(expected)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(other)!);
+            File.WriteAllBytes(expected, []);
+            File.WriteAllBytes(other, []);
+
+            Assert.Equal(expected, FindClientJar(libraries, versions, "1.20.1"));
+            Assert.Null(FindClientJar(libraries, versions, "1.18.2"));
+
+            var vanilla = Path.Combine(versions, "1.18.2", "1.18.2.jar");
+            Directory.CreateDirectory(Path.GetDirectoryName(vanilla)!);
+            File.WriteAllBytes(vanilla, []);
+            Assert.Equal(vanilla, FindClientJar(libraries, versions, "1.18.2"));
+        }
+        finally
+        {
+            TempTree.Delete(root);
+        }
     }
 
     /// <summary>The preflight's complaint about one class, or null if it passed.</summary>

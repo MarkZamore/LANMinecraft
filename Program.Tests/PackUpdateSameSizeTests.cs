@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -76,9 +78,8 @@ public sealed class PackUpdateSameSizeTests : IDisposable
     }
 
     /// <summary>
-    /// And within one revision the hashes are still kept: an instance the
-    /// player edited is theirs, and nothing re-reads the whole pack to find out
-    /// what it already knows.
+    /// Even though the source is hashed on every preparation, an unclaimed
+    /// instance file edited by the player still keeps its three-way merge.
     /// </summary>
     [Fact]
     public async Task WithinOneRevision_ALocalEditIsStillTheirs()
@@ -114,10 +115,23 @@ public sealed class PackUpdateSameSizeTests : IDisposable
         Assert.Equal("renderDistance = 4\n", Read(instanceCopy));
     }
 
-    private static void WriteRevision(string packDir, string revision) =>
-        File.WriteAllText(
-            Path.Combine(packDir, PortablePackSyncService.SyncStateFileName),
-            "{\"schemaVersion\":1,\"revision\":\"" + revision + "\",\"files\":{}}");
+    private static void WriteRevision(string packDir, string revision)
+    {
+        var statePath = Path.Combine(packDir, PortablePackSyncService.SyncStateFileName);
+        var files = Directory.EnumerateFiles(packDir, "*", SearchOption.AllDirectories)
+            .Where(path => !string.Equals(path, statePath, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(path => Path.GetRelativePath(packDir, path).Replace('\\', '/'), path =>
+            {
+                var info = new FileInfo(path);
+                return new
+                {
+                    sizeBytes = info.Length,
+                    lastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
+                    sha256 = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))
+                };
+            });
+        File.WriteAllText(statePath, JsonSerializer.Serialize(new { schemaVersion = 1, revision, files }));
+    }
 
     private static string Read(string path) => File.ReadAllText(path).Replace("\r\n", "\n");
 }
