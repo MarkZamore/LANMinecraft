@@ -14,6 +14,9 @@ public final class PortableIdentityAgent {
     }
 
     public static void premain(String arguments, Instrumentation instrumentation) {
+        // A profile's verified cosmetic producer is independent of identity/LAN
+        // compatibility and never needs the bootstrap hooks below.
+        instrumentation.addTransformer(new PortableWindowTitleTransformer(), false);
         if (!Boolean.getBoolean("minecraft.portable.identity.enabled")) {
             return;
         }

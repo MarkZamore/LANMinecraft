@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace Minecraft;
 
@@ -91,7 +90,7 @@ public sealed class PackInstanceService : IDisposable
             var gameDir = GetInstanceDirectory(packRelativePath);
             if (Directory.Exists(gameDir))
             {
-                SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
+                SanitizeInstanceForLocalPlay(gameDir);
                 if (removeSessionLogs)
                 {
                     LogCleanupService.RetainRecentSessionDiagnostics(gameDir);
@@ -245,7 +244,7 @@ public sealed class PackInstanceService : IDisposable
 
         EnsureMods(packDir, gameDir, state, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, token);
-        SanitizeInstanceForLocalPlay(gameDir, Path.GetFileName(packRelativePath));
+        SanitizeInstanceForLocalPlay(gameDir);
         CapDrawDistances(gameDir);
         RestoreModOwnedDirectories(gameDir);
         state.SchemaVersion = StateCacheGeneration;
@@ -715,7 +714,7 @@ public sealed class PackInstanceService : IDisposable
         return (string.Join(newline, lines.Select(line => line.TrimEnd('\r'))), changed);
     }
 
-    private static void SanitizeInstanceForLocalPlay(string gameDir, string buildName)
+    private static void SanitizeInstanceForLocalPlay(string gameDir)
     {
         // config/jei/world/server holds the player's own bookmarks for peer
         // worlds - packs never seed it (ShouldExcludeDirectory keeps it out of
@@ -729,21 +728,6 @@ public sealed class PackInstanceService : IDisposable
                 File.Delete(file);
                 DeleteEmptyParents(Path.GetDirectoryName(file), configRoot);
             }
-        }
-
-        var clientConfigPath = Path.Combine(gameDir, "kubejs", "config", "client.json");
-        if (!File.Exists(clientConfigPath)) return;
-        try
-        {
-            var root = JsonNode.Parse(File.ReadAllText(clientConfigPath)) as JsonObject;
-            if (root is null || root["window_title"] is null) return;
-            var title = string.IsNullOrWhiteSpace(buildName) ? "Minecraft" : buildName.Trim();
-            if (string.Equals(root["window_title"]?.GetValue<string>(), title, StringComparison.Ordinal)) return;
-            root["window_title"] = title;
-            AtomicFile.WriteAllText(clientConfigPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException)
-        {
         }
     }
 

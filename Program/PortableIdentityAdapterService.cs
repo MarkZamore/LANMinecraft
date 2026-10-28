@@ -46,8 +46,92 @@ public sealed class PortableIdentityAdapterService : IDisposable
             var adapterHash = HashFile(adapterPath);
             var statePath = Path.Combine(directory, "adapter-state.json");
             var state = ReadState(statePath);
-            if (state is not null && IsStateValid(state, runtime, targetRoot, adapterHash))
+            WindowTitleSettings titleSettings;
+            try
             {
+                var packDirectory = _paths.CombineUnderPacks(Path.GetFileName(targetRoot));
+                titleSettings = WindowTitleSettings.Load(packDirectory, runtime, targetRoot);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                _logger.Warn("The pack's window title settings could not be read: " + ex.Message);
+                titleSettings = WindowTitleSettings.Disabled;
+            }
+            if (state is not null && IsStateValid(state, runtime, targetRoot, adapterHash) &&
+                state.Properties.GetValueOrDefault("windowTitleConfigSha256", "") == titleSettings.ContentSha256 &&
+                state.Properties.GetValueOrDefault("windowTitleText", "") == titleSettings.Text &&
+                state.Properties.GetValueOrDefault("windowTitleEnabled", "false") == (titleSettings.Enabled ? "true" : "false"))
+            {
+                return CreateJvmArguments(adapterPath, state.Properties);
+            }
+
+            async Task<IReadOnlyList<string>> CompleteAsync(IdentityAdapterConfiguration? core)
+            {
+                var properties = core?.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                    ?? new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["enabled"] = "false",
+                        ["identityHooksEnabled"] = "false"
+                    };
+                var targets = core?.Targets.ToList() ?? [];
+                var mappingPath = core?.MappingPath;
+                properties["windowTitleEnabled"] = "false";
+                properties["windowTitleText"] = titleSettings.Text;
+                properties["windowTitleConfigSha256"] = titleSettings.ContentSha256;
+                if (titleSettings.Enabled)
+                {
+                    try
+                    {
+                        var title = WindowTitleMappingService.Build(runtime, titleSettings);
+                        foreach (var target in title.Targets)
+                            await RunPreflightAsync(runtime.JavaPath, adapterPath, title.Properties, target, token)
+                                .ConfigureAwait(false);
+                        foreach (var pair in title.Properties) properties[pair.Key] = pair.Value;
+                        foreach (var target in title.Targets)
+                            if (!targets.Contains(target)) targets.Add(target);
+                        mappingPath ??= title.Targets.Count > 0 ? title.Targets[0].JarPath : null;
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException
+                                                   or InvalidOperationException or TimeoutException)
+                    {
+                        _logger.Warn("The pack's stable window title could not be verified; keeping the native title: " + ex.Message);
+                    }
+                }
+                if (targets.Count == 0 || mappingPath is null) return [];
+                var verified = new IdentityAdapterConfiguration(mappingPath, properties, targets);
+                var mappingInfo = new FileInfo(verified.MappingPath);
+                var targetStates = verified.Targets.Select(target =>
+                {
+                    var info = new FileInfo(target.JarPath);
+                    return new IdentityAdapterTargetState
+                    {
+                        JarPath = target.JarPath,
+                        ClassName = target.ClassName,
+                        SizeBytes = info.Length,
+                        LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
+                        Sha256 = HashFile(target.JarPath)
+                    };
+                }).ToList();
+                state = new IdentityAdapterState
+                {
+                    SchemaVersion = AdapterCacheGeneration,
+                    DescriptorHash = runtime.Descriptor.DescriptorHash,
+                    TargetRoot = targetRoot,
+                    AdapterSha256 = adapterHash,
+                    MappingPath = verified.MappingPath,
+                    MappingSizeBytes = mappingInfo.Length,
+                    MappingLastWriteUtcTicks = mappingInfo.LastWriteTimeUtc.Ticks,
+                    MappingSha256 = HashFile(verified.MappingPath),
+                    Properties = verified.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+                    Targets = targetStates,
+                    VerifiedAtUtc = DateTimeOffset.UtcNow
+                };
+                state.ConfigurationSha256 = ComputeConfigurationHash(state);
+                AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
+                _logger.Info(
+                    $"Portable UUID adapter verified for {runtime.Descriptor.MinecraftVersion} " +
+                    $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}. " +
+                    $"In the game: {DescribeGameFeatures(state.Properties)}.");
                 return CreateJvmArguments(adapterPath, state.Properties);
             }
 
@@ -77,7 +161,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {ex.Message} " +
                     "The pack starts without them: everyone keeps the UUID Minecraft gives them offline, " +
                     "and the skin chosen in the launcher is not shown, because these hooks are what show it.");
-                return [];
+                return await CompleteAsync(null).ConfigureAwait(false);
             }
 
             if (configuration.Properties.GetValueOrDefault("identityHooksEnabled") == "false")
@@ -152,8 +236,16 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     $"The UUID hooks do not fit Minecraft {runtime.Descriptor.MinecraftVersion} " +
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +
                     "Asking for the skin hooks on their own.");
-                configuration = _mappings.BuildSkins(runtime, targetRoot, refusal);
-                refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+                try
+                {
+                    configuration = _mappings.BuildSkins(runtime, targetRoot, refusal);
+                    refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException)
+                {
+                    _logger.Warn("Skin hooks could not be prepared; verifying the window title independently: " + ex.Message);
+                    return await CompleteAsync(null).ConfigureAwait(false);
+                }
             }
 
             if (refusal is not null)
@@ -163,43 +255,10 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}: {refusal} " +
                     "The pack starts without them: everyone keeps the UUID Minecraft gives them offline, " +
                     "and the skin chosen in the launcher is not shown.");
-                return [];
+                return await CompleteAsync(null).ConfigureAwait(false);
             }
 
-            var mappingInfo = new FileInfo(configuration.MappingPath);
-            var targetStates = configuration.Targets.Select(target =>
-            {
-                var info = new FileInfo(target.JarPath);
-                return new IdentityAdapterTargetState
-                {
-                    JarPath = target.JarPath,
-                    ClassName = target.ClassName,
-                    SizeBytes = info.Length,
-                    LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
-                    Sha256 = HashFile(target.JarPath)
-                };
-            }).ToList();
-            state = new IdentityAdapterState
-            {
-                SchemaVersion = AdapterCacheGeneration,
-                DescriptorHash = runtime.Descriptor.DescriptorHash,
-                TargetRoot = targetRoot,
-                AdapterSha256 = adapterHash,
-                MappingPath = configuration.MappingPath,
-                MappingSizeBytes = mappingInfo.Length,
-                MappingLastWriteUtcTicks = mappingInfo.LastWriteTimeUtc.Ticks,
-                MappingSha256 = HashFile(configuration.MappingPath),
-                Properties = configuration.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-                Targets = targetStates,
-                VerifiedAtUtc = DateTimeOffset.UtcNow
-            };
-            state.ConfigurationSha256 = ComputeConfigurationHash(state);
-            AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
-            _logger.Info(
-                $"Portable UUID adapter verified for {runtime.Descriptor.MinecraftVersion} " +
-                $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}. " +
-                $"In the game: {DescribeGameFeatures(state.Properties)}.");
-            return CreateJvmArguments(adapterPath, state.Properties);
+            return await CompleteAsync(configuration).ConfigureAwait(false);
         }
         finally
         {
@@ -219,6 +278,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     private static string DescribeGameFeatures(Dictionary<string, string> properties)
     {
         var present = new List<string>();
+        if (Says(properties, "windowTitleEnabled")) present.Add("stable window title");
         if (Says(properties, "lanPublishEnabled")) present.Add("one-press LAN");
         if (properties.ContainsKey("setChunkViewDistanceMethods")) present.Add("serve distance");
         if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
@@ -421,6 +481,9 @@ public sealed class PortableIdentityAdapterService : IDisposable
         string targetRoot,
         string adapterHash)
     {
+        // A title-only result may follow a transient core/skin preflight failure.
+        // Keep its title for this launch, but retry the core on the next one.
+        if (state.Properties.GetValueOrDefault("enabled", "true") == "false") return false;
         if (state.SchemaVersion != AdapterCacheGeneration ||
             !string.Equals(state.DescriptorHash, runtime.Descriptor.DescriptorHash, StringComparison.Ordinal) ||
             !string.Equals(state.TargetRoot, targetRoot, StringComparison.OrdinalIgnoreCase) ||

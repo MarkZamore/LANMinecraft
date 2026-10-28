@@ -7,11 +7,13 @@ import java.util.Arrays;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 public final class PortableIdentityPreflight {
@@ -29,7 +31,9 @@ public final class PortableIdentityPreflight {
             byte[] original = readClassBytes(archive, className);
 
             ClassFileTransformer transformer;
-            if (PortableProfileNameTransformer.isTarget(className)) {
+            if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
+                transformer = new PortableWindowTitleTransformer();
+            } else if (PortableProfileNameTransformer.isTarget(className)) {
                 transformer = new PortableProfileNameTransformer();
             } else if (isAlias("ftbTeleportClasses", className)) {
                 transformer = new PortableFtbTeleportTransformer();
@@ -61,7 +65,9 @@ public final class PortableIdentityPreflight {
                 throw new IllegalStateException("Portable identity transformer did not modify " + className + ".");
             }
             new ClassReader(transformed);
-            if (PortableProfileNameTransformer.isTarget(className)) {
+            if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
+                verifyWindowTitleTarget(className, original, transformed);
+            } else if (PortableProfileNameTransformer.isTarget(className)) {
                 // Exact method shape is checked by the optional transformer;
                 // it reaches only a bootstrap hook, no game-specific members.
             } else if (isAlias("loginClasses", className)) {
@@ -89,6 +95,47 @@ public final class PortableIdentityPreflight {
             }
         }
         System.out.println("Portable identity preflight passed: " + className + " in " + jarPath);
+    }
+
+    /** Prove that only one native String producer changed, never updateTitle or networking. */
+    private static void verifyWindowTitleTarget(String className, byte[] original, byte[] transformed) {
+        ClassNode before = new ClassNode();
+        new ClassReader(original).accept(before, 0);
+        ClassNode after = new ClassNode();
+        new ClassReader(transformed).accept(after, 0);
+        if (!className.equals(before.name) || !className.equals(after.name) ||
+            before.methods.size() != after.methods.size()) {
+            throw new IllegalStateException("Window title transformer changed the class/method set.");
+        }
+        int changed = 0;
+        for (int index = 0; index < before.methods.size(); index++) {
+            MethodNode old = before.methods.get(index);
+            MethodNode current = after.methods.get(index);
+            if (!old.name.equals(current.name) || !old.desc.equals(current.desc) || old.access != current.access) {
+                throw new IllegalStateException("Window title transformer changed a method signature.");
+            }
+            if (Arrays.equals(methodBytes(old), methodBytes(current))) continue;
+            changed++;
+            if (!isAlias("createTitleMethods", old.name) || !old.desc.equals("()Ljava/lang/String;")) {
+                throw new IllegalStateException("Window title transformer changed a non-title method: " + old.name);
+            }
+            AbstractInsnNode first = current.instructions.getFirst();
+            if (!(first instanceof LdcInsnNode text) ||
+                !System.getProperty("minecraft.portable.identity.windowTitleText", "").equals(text.cst) ||
+                first.getNext() == null || first.getNext().getOpcode() != Opcodes.ARETURN ||
+                first.getNext().getNext() != null || !current.tryCatchBlocks.isEmpty()) {
+                throw new IllegalStateException("Window title producer is not a constant String return.");
+            }
+        }
+        if (changed != 1) throw new IllegalStateException("Window title transformer changed " + changed + " methods, expected 1.");
+    }
+
+    private static byte[] methodBytes(MethodNode method) {
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "PortableTitleMethodProof", null, "java/lang/Object", null);
+        method.accept(writer);
+        writer.visitEnd();
+        return writer.toByteArray();
     }
 
     /**
