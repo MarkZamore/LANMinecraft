@@ -1,9 +1,11 @@
 import json
+import io
+import hashlib
 import pathlib
 import tempfile
 import unittest
 import zipfile
-from pack_library import build_library, stage_library, verify_library
+from pack_library import build_library, read_mods, stage_library, verify_library
 
 
 class LibraryPublisherTests(unittest.TestCase):
@@ -92,6 +94,66 @@ class LibraryPublisherTests(unittest.TestCase):
         self.write_content()
         with self.assertRaisesRegex(ValueError, "Cyclic"):
             build_library(self.pack, "r1")
+
+    def test_embedded_mods_are_published_once_including_dependencies_of_normal_mods(self):
+        self.pages["nested_helper"] = "https://www.curseforge.com/minecraft/mc-mods/nested-helper"
+        self.write_pages()
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr("META-INF/neoforge.mods.toml", '[[mods]]\nmodId="nested_helper"\ndisplayName="Nested Helper"\nversion="1.0"\n')
+        for carrier in ("base", "addon"):
+            with zipfile.ZipFile(self.pack / "mods" / (carrier + ".jar"), "a") as archive:
+                archive.writestr("META-INF/jarjar/metadata.json", json.dumps({"jars": [{"path": "META-INF/jarjar/helper.jar"}]}))
+                archive.writestr("META-INF/jarjar/helper.jar", nested.getvalue())
+                archive.writestr("META-INF/jarjar/not-registered.jar", nested.getvalue())
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            mods = json.loads(archive.read("library.json"))["mods"]
+        self.assertEqual(5, len(mods))
+        self.assertEqual(1, sum(mod["id"] == "nested_helper" for mod in mods))
+        self.assertTrue(all(mod["isLoadedMod"] for mod in mods))
+
+    def test_non_mod_components_are_visible_libraries_without_fabric_or_invented_loaded_ids(self):
+        with zipfile.ZipFile(self.pack / "mods/scalablecatsforce-library.jar", "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", "FMLModType: LANGPROVIDER\nImplementation-Version: 3.3.1\n")
+        self.pages["scalablecatsforce"] = "https://www.curseforge.com/minecraft/mc-mods/scalable-cats-force"
+        self.write_pages()
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            mods = json.loads(archive.read("library.json"))["mods"]
+        component = next(mod for mod in mods if mod["id"] == "scalablecatsforce")
+        self.assertFalse(component["isLoadedMod"])
+        self.assertTrue(component["isLibrary"])
+        self.assertEqual("3.3.1", component["version"])
+
+    def test_forge_metadata_uses_manifest_version_and_ignores_fabric_only_nested_libraries(self):
+        fabric = io.BytesIO()
+        with zipfile.ZipFile(fabric, "w") as archive:
+            archive.writestr("fabric.mod.json", json.dumps({"id": "fabric_only", "version": "1.0"}))
+        carrier = io.BytesIO()
+        with zipfile.ZipFile(carrier, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", "Implementation-Version: 2.4.1\n")
+            archive.writestr("META-INF/mods.toml", '[[mods]]\nmodId="real_mod"\nversion="${file.jarVersion}"\n')
+            archive.writestr("META-INF/jarjar/metadata.json", json.dumps({"jars": [{"path": "META-INF/jarjar/fabric.jar"}]}))
+            archive.writestr("META-INF/jarjar/fabric.jar", fabric.getvalue())
+        mods = read_mods(carrier.getvalue(), "carrier.jar", loader="forge")
+        self.assertEqual(["real_mod"], [mod["id"] for mod in mods])
+        self.assertEqual("2.4.1", mods[0]["version"])
+
+    def test_actual_loader_inventory_resolves_selected_ids_and_versions_and_rejects_stale_jars(self):
+        inventory = {"schemaVersion": 1,
+                     "minecraftVersion": "1.21.1", "loader": {"type": "NeoForge"},
+                     "sourceJars": {jar.relative_to(self.pack).as_posix(): hashlib.sha256(jar.read_bytes()).hexdigest()
+                                    for jar in (self.pack / "mods").glob("*.jar")},
+                     "mods": [{"id": mid, "name": mid.title(), "version": "selected-2.0"}
+                              for mid in ("base", "addon", "helper")]}
+        (self.pack / "library/loaded-mods.json").write_text(json.dumps(inventory))
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            mods = json.loads(archive.read("library.json"))["mods"]
+        self.assertEqual({"base", "addon", "helper"}, {mod["id"] for mod in mods})
+        self.assertEqual({"selected-2.0"}, {mod["version"] for mod in mods})
+        with zipfile.ZipFile(self.pack / "mods/base.jar", "a") as archive:
+            archive.writestr("changed.txt", "new author version")
+        with self.assertRaisesRegex(ValueError, "inventory does not match"):
+            build_library(self.pack, "r2")
 
 
 if __name__ == "__main__":

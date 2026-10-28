@@ -52,13 +52,15 @@ public sealed class PackHashService : IDisposable
 
     private string CalculateCore(string clientDir, CancellationToken token)
     {
+        EnsureCompleteUpdate(clientDir);
+        var managedPaths = PortablePackSyncService.ReadManagedPaths(clientDir);
         var cache = ReadCache();
         var packKey = PackKey(clientDir);
         cache.Packs.TryGetValue(packKey, out var previousPack);
         var currentFiles = new Dictionary<string, CachedPackFile>(StringComparer.OrdinalIgnoreCase);
         var records = new List<string>();
 
-        foreach (var file in EnumerateIncludedFiles(clientDir))
+        foreach (var file in EnumerateIncludedFiles(clientDir, managedPaths))
         {
             token.ThrowIfCancellationRequested();
             var info = new FileInfo(file);
@@ -66,7 +68,10 @@ public sealed class PackHashService : IDisposable
             var cacheKey = HashBytes(Encoding.UTF8.GetBytes(relative));
             var lastWriteTicks = info.LastWriteTimeUtc.Ticks;
             string sha256;
-            if (previousPack?.Files.TryGetValue(cacheKey, out var cached) == true &&
+            // A synced pack's active set comes from its manifest, and its
+            // integrity comes from bytes. Archive timestamps survive updates
+            // and cannot prove that a cached digest is still correct.
+            if (managedPaths is null && previousPack?.Files.TryGetValue(cacheKey, out var cached) == true &&
                 cached.SizeBytes == info.Length &&
                 cached.LastWriteUtcTicks == lastWriteTicks &&
                 !string.IsNullOrWhiteSpace(cached.Sha256))
@@ -89,6 +94,7 @@ public sealed class PackHashService : IDisposable
 
         records.Sort(StringComparer.OrdinalIgnoreCase);
         var hash = HashBytes(Encoding.UTF8.GetBytes(string.Join('\n', records)));
+        EnsureCompleteUpdate(clientDir);
         cache.Packs[packKey] = new CachedPack { Hash = hash, Files = currentFiles };
         WriteCache(cache);
         return hash;
@@ -109,8 +115,29 @@ public sealed class PackHashService : IDisposable
     private string PackKey(string clientDir) =>
         Path.GetRelativePath(_paths.Packs, clientDir).Replace('\\', '/').ToLowerInvariant();
 
-    private IEnumerable<string> EnumerateIncludedFiles(string clientDir)
+    private IEnumerable<string> EnumerateIncludedFiles(string clientDir, IReadOnlySet<string>? managedPaths)
     {
+        if (managedPaths is not null)
+        {
+            // Enumerate the authoritative paths directly: unknown preserved
+            // files and directory links are not part of the installed runtime.
+            foreach (var path in managedPaths)
+            {
+                var relative = path.Replace('\\', '/');
+                var slash = relative.IndexOf('/');
+                var included = slash < 0
+                    ? IncludedFiles.Contains(relative, StringComparer.OrdinalIgnoreCase)
+                    : IncludedRoots.Contains(relative[..slash], StringComparer.OrdinalIgnoreCase);
+                if (!included || ShouldSkip(relative)) continue;
+                var file = Path.Combine(clientDir, relative.Replace('/', Path.DirectorySeparatorChar));
+                EnsureOrdinaryManagedPath(clientDir, relative);
+                if (!File.Exists(file))
+                    throw new InvalidDataException($"Managed pack file is missing: {relative}");
+                yield return file;
+            }
+            yield break;
+        }
+
         foreach (var root in IncludedRoots)
         {
             var directory = Path.Combine(clientDir, root);
@@ -125,6 +152,24 @@ public sealed class PackHashService : IDisposable
         {
             var file = Path.Combine(clientDir, fileName);
             if (File.Exists(file)) yield return file;
+        }
+    }
+
+    private static void EnsureCompleteUpdate(string clientDir)
+    {
+        if (PortablePackSyncService.IsUpdatePending(clientDir))
+            throw new InvalidOperationException("The pack update is incomplete; its compatibility hash is not ready.");
+    }
+
+    private static void EnsureOrdinaryManagedPath(string clientDir, string relative)
+    {
+        var current = clientDir;
+        foreach (var segment in relative.Split('/').Prepend(""))
+        {
+            if (segment.Length > 0) current = Path.Combine(current, segment);
+            if ((Directory.Exists(current) || File.Exists(current)) &&
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("A managed compatibility hash cannot follow a filesystem link.");
         }
     }
 

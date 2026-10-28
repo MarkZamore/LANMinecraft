@@ -125,10 +125,9 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         using var httpClient = new HttpClient(CreateReleaseHandler(next));
         var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
 
-        // It is still deleted - the pack is what the manifest says it is - but
-        // nobody is told a mod was taken out of the pack, because none was.
-        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
-        Assert.False(File.Exists(Path.Combine(packDir, "mods", "mine-9.9.jar")));
+        // Unknown files are preserved, and never described as author removals.
+        Assert.Equal(PackSyncOutcome.UpToDate, result.Outcome);
+        Assert.True(File.Exists(Path.Combine(packDir, "mods", "mine-9.9.jar")));
         Assert.Null(result.Warning);
     }
 
@@ -328,13 +327,13 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
-        Assert.Equal(2, result.FilesChanged);
+        Assert.Equal(1, result.FilesChanged);
         var request = Assert.Single(handler.RequestUris);
         Assert.Contains(PortablePackSyncService.PackManifestAssetName, request.AbsolutePath, StringComparison.Ordinal);
         AssertFileContent(packDir, keptMod);
         Assert.False(File.Exists(LivePath(packDir, removedMod.Path)));
         Assert.False(Directory.Exists(Path.Combine(packDir, "mods", "sub")));
-        Assert.False(File.Exists(Path.Combine(packDir, "mods", "rogue.jar")));
+        Assert.True(File.Exists(Path.Combine(packDir, "mods", "rogue.jar")));
         Assert.True(File.Exists(Path.Combine(packDir, "logs", "latest.log")));
         Assert.True(File.Exists(Path.Combine(packDir, "options.txt")));
         Assert.True(File.Exists(Path.Combine(packDir, ".portable-instance.json")));
@@ -346,14 +345,16 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     public async Task RootOutsideTheManifest_Removed_PlayerOwnedEntriesSurvive()
     {
         var mod = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("keep"));
+        var legacyScript = new PackFile("scripts/legacy.zs", Encoding.UTF8.GetBytes("legacy"));
         var packManifest = PackManifestFile("{\"schemaVersion\":1}");
         await InstallAsync(
-            BuildRelease("rev-1", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]),
+            BuildRelease("rev-1", [mod, legacyScript, packManifest],
+                [JarAsset(mod), JarAsset(legacyScript), JarAsset(packManifest)]),
             DefaultPack);
         var packDir = PackDir(DefaultPack);
         // A root the previous pack shipped and this one knows nothing about.
-        Directory.CreateDirectory(Path.Combine(packDir, "scripts"));
-        File.WriteAllText(Path.Combine(packDir, "scripts", "legacy.zs"), "legacy");
+        Directory.CreateDirectory(Path.Combine(packDir, "user-scripts"));
+        File.WriteAllText(Path.Combine(packDir, "user-scripts", "personal.zs"), "personal");
         Directory.CreateDirectory(Path.Combine(packDir, "xaero", "minimap"));
         File.WriteAllText(Path.Combine(packDir, "xaero", "minimap", "waypoints.txt"), "player");
 
@@ -363,6 +364,7 @@ public sealed class PortablePackSyncServiceTests : IDisposable
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.False(Directory.Exists(Path.Combine(packDir, "scripts")));
+        Assert.Equal("personal", File.ReadAllText(Path.Combine(packDir, "user-scripts", "personal.zs")));
         Assert.True(File.Exists(Path.Combine(packDir, "xaero", "minimap", "waypoints.txt")));
         AssertFileContent(packDir, mod);
     }
@@ -758,6 +760,163 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SameSizeAndTimestampCorruption_IsRepairedFromActualHash()
+    {
+        var mod = new PackFile("mods/foo.jar", Encoding.UTF8.GetBytes("original"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("1", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]);
+        await InstallAsync(release, DefaultPack);
+        var path = LivePath(PackDir(DefaultPack), mod.Path);
+        var timestamp = File.GetLastWriteTimeUtc(path);
+        File.WriteAllText(path, "tampered");
+        File.SetLastWriteTimeUtc(path, timestamp);
+
+        var handler = CreateReleaseHandler(release);
+        using var httpClient = new HttpClient(handler);
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.Equal(1, result.FilesChanged);
+        AssertFileContent(PackDir(DefaultPack), mod);
+        Assert.Equal(2, handler.RequestUris.Count);
+    }
+
+    [Fact]
+    public async Task LegacyWithoutState_OnlyVerifiedHistoricalFilesAreRemoved()
+    {
+        var kept = new PackFile("mods/kept.jar", Encoding.UTF8.GetBytes("unchanged"));
+        var retired = new PackFile("mods/retired-helper.jar", Encoding.UTF8.GetBytes("old helper"));
+        var retiredScript = new PackFile("kubejs/startup_scripts/retired.js", Encoding.UTF8.GetBytes("old script"));
+        var changedByPlayer = new PackFile("config/old.toml", Encoding.UTF8.GetBytes("author"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var packDir = PackDir(DefaultPack);
+        foreach (var file in new[] { kept, retired, retiredScript, changedByPlayer, packManifest })
+        {
+            var path = LivePath(packDir, file.Path);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, file.Content);
+        }
+        File.WriteAllText(LivePath(packDir, changedByPlayer.Path), "player");
+        Directory.CreateDirectory(Path.Combine(packDir, "saves", "personal", "playerdata"));
+        File.WriteAllText(Path.Combine(packDir, "saves", "personal", "playerdata", "player.dat"), "world");
+        File.WriteAllText(Path.Combine(packDir, "mods", "unknown.jar"), "user mod");
+        var keptTimestamp = File.GetLastWriteTimeUtc(LivePath(packDir, kept.Path));
+        var release = BuildRelease("1", [kept, packManifest], [JarAsset(kept), JarAsset(packManifest)],
+            [retired, retiredScript, changedByPlayer]);
+        var handler = CreateReleaseHandler(release);
+        using var httpClient = new HttpClient(handler);
+
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.Equal(0, result.BytesDownloaded);
+        Assert.Single(handler.RequestUris);
+        Assert.False(File.Exists(LivePath(packDir, retired.Path)));
+        Assert.False(File.Exists(LivePath(packDir, retiredScript.Path)));
+        Assert.Equal("player", File.ReadAllText(LivePath(packDir, changedByPlayer.Path)));
+        Assert.Equal("user mod", File.ReadAllText(Path.Combine(packDir, "mods", "unknown.jar")));
+        Assert.Equal("world", File.ReadAllText(Path.Combine(packDir, "saves", "personal", "playerdata", "player.dat")));
+        Assert.Equal(keptTimestamp, File.GetLastWriteTimeUtc(LivePath(packDir, kept.Path)));
+        var retiredProofs = PortablePackSyncService.ReadRetiredFiles(packDir);
+        Assert.Equal(3, retiredProofs.Count);
+        Assert.Contains(retiredProofs, file => file.Path == retired.Path && file.Sha256 == retired.Sha);
+        var again = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(PackSyncOutcome.UpToDate, again.Outcome);
+        Assert.Equal(retiredProofs, PortablePackSyncService.ReadRetiredFiles(packDir));
+    }
+
+    [Fact]
+    public async Task InterruptedApply_BlocksOfflineFallback_ThenRetryConvergesAndIsIdempotent()
+    {
+        var first = new PackFile("mods/a.jar", Encoding.UTF8.GetBytes("v1"));
+        var second = new PackFile("mods/b.jar", Encoding.UTF8.GetBytes("v1"));
+        var retired = new PackFile("mods/retired.jar", Encoding.UTF8.GetBytes("old"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("old-history-200", [first, second, retired, packManifest],
+            [JarAsset(first), JarAsset(second), JarAsset(retired), JarAsset(packManifest)]), DefaultPack);
+        var packDir = PackDir(DefaultPack);
+        Directory.CreateDirectory(Path.Combine(packDir, "screenshots"));
+        File.WriteAllText(Path.Combine(packDir, "screenshots", "personal.png"), "personal");
+        File.Delete(LivePath(packDir, second.Path));
+        Directory.CreateDirectory(LivePath(packDir, second.Path));
+        File.WriteAllText(Path.Combine(LivePath(packDir, second.Path), "blocker"), "fixture");
+        var newFirst = first with { Content = Encoding.UTF8.GetBytes("v2") };
+        var newSecond = second with { Content = Encoding.UTF8.GetBytes("v2") };
+        var release = BuildRelease("1", [newFirst, newSecond, packManifest],
+            [JarAsset(newFirst), JarAsset(newSecond), JarAsset(packManifest)]);
+        using (var httpClient = new HttpClient(CreateReleaseHandler(release)))
+            await Assert.ThrowsAsync<PackApplyFailedException>(() =>
+                CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None));
+        Assert.True(PortablePackSyncService.IsUpdatePending(packDir));
+        AssertFileContent(packDir, newFirst);
+
+        using (var offline = new HttpClient(new RecordingHandler(_ =>
+                   new HttpResponseMessage(HttpStatusCode.NotFound))))
+            await Assert.ThrowsAsync<PackApplyFailedException>(() =>
+                CreateService(offline).SyncAsync(DefaultPack, null, CancellationToken.None));
+        Assert.True(PortablePackSyncService.IsUpdatePending(packDir));
+        Directory.Delete(LivePath(packDir, second.Path), recursive: true);
+        var handler = CreateReleaseHandler(release);
+        using var retryClient = new HttpClient(handler);
+        var result = await CreateService(retryClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.False(PortablePackSyncService.IsUpdatePending(packDir));
+        AssertFileContent(packDir, newFirst);
+        AssertFileContent(packDir, newSecond);
+        Assert.False(File.Exists(LivePath(packDir, retired.Path)));
+        Assert.Equal("personal", File.ReadAllText(Path.Combine(packDir, "screenshots", "personal.png")));
+        Assert.Equal(2, handler.RequestUris.Count); // verified a.jar is reused, only b.jar is fetched
+
+        handler.RequestUris.Clear();
+        var again = await CreateService(retryClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(PackSyncOutcome.UpToDate, again.Outcome);
+        Assert.Equal(0, again.BytesDownloaded);
+        Assert.Single(handler.RequestUris);
+    }
+
+    [Fact]
+    public async Task InterruptedDownload_LeavesTheOldRevisionIntactAndRetryReusesCorrectFiles()
+    {
+        var old = new PackFile("mods/changed.jar", Encoding.UTF8.GetBytes("old"));
+        var kept = new PackFile("mods/kept.jar", Encoding.UTF8.GetBytes("keep"));
+        var retired = new PackFile("kubejs/server_scripts/removed.js", Encoding.UTF8.GetBytes("old script"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("old-history-200", [old, kept, retired, packManifest],
+            [JarAsset(old), JarAsset(kept), JarAsset(retired), JarAsset(packManifest)]), DefaultPack);
+        var packDir = PackDir(DefaultPack);
+        var keptTimestamp = File.GetLastWriteTimeUtc(LivePath(packDir, kept.Path));
+        var changed = old with { Content = Encoding.UTF8.GetBytes("new") };
+        var release = BuildRelease("1", [changed, kept, packManifest],
+            [JarAsset(changed), JarAsset(kept), JarAsset(packManifest)]);
+        var assetName = JarAsset(changed).Name;
+        using (var interrupted = new HttpClient(new RecordingHandler(request =>
+               {
+                   var asset = LastPathSegment(request.RequestUri!);
+                   return new HttpResponseMessage(HttpStatusCode.OK)
+                   {
+                       Content = asset == assetName
+                           ? new StreamContent(new InterruptedReadStream(release[asset]))
+                           : new ByteArrayContent(release[asset])
+                   };
+               })))
+        {
+            var result = await CreateService(interrupted).SyncAsync(DefaultPack, null, CancellationToken.None);
+            Assert.Equal(PackSyncOutcome.OfflineFallback, result.Outcome);
+        }
+        AssertFileContent(packDir, old);
+        AssertFileContent(packDir, retired);
+        Assert.False(PortablePackSyncService.IsUpdatePending(packDir));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(packDir, ".pack-sync-stage*"));
+        using var retry = new HttpClient(CreateReleaseHandler(release));
+        var updated = await CreateService(retry).SyncAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(PackSyncOutcome.Updated, updated.Outcome);
+        Assert.Equal(changed.Content.Length, updated.BytesDownloaded);
+        AssertFileContent(packDir, changed);
+        Assert.False(File.Exists(LivePath(packDir, retired.Path)));
+        Assert.Equal(keptTimestamp, File.GetLastWriteTimeUtc(LivePath(packDir, kept.Path)));
+    }
+
+    [Fact]
     public async Task Progress_ReportsSyncingPack()
     {
         var mod = new PackFile("mods/foo-1.0.jar", Encoding.UTF8.GetBytes("mod-one"));
@@ -867,13 +1026,17 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     private static Dictionary<string, byte[]> BuildRelease(
         string revision,
         IReadOnlyList<PackFile> files,
-        IReadOnlyList<PackAsset> assets)
+        IReadOnlyList<PackAsset> assets,
+        IReadOnlyList<PackFile>? legacyFiles = null)
     {
         var manifest = new
         {
             schemaVersion = 1,
             packId = DefaultPack,
             revision,
+            legacyFiles = (legacyFiles ?? [])
+                .Select(file => new { path = file.Path, sizeBytes = (long)file.Content.Length, sha256 = file.Sha })
+                .ToArray(),
             files = files
                 .Select(file => new { path = file.Path, sizeBytes = (long)file.Content.Length, sha256 = file.Sha })
                 .ToArray(),
@@ -937,6 +1100,15 @@ public sealed class PortablePackSyncServiceTests : IDisposable
                 RequestUris.Add(request.RequestUri!);
             }
             return Task.FromResult(responseFactory(request));
+        }
+    }
+
+    private sealed class InterruptedReadStream(byte[] content) : MemoryStream(content, writable: false)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position > 0) throw new IOException("The fixture connection was interrupted after its first byte.");
+            return base.ReadAsync(buffer[..Math.Min(1, buffer.Length)], cancellationToken);
         }
     }
 

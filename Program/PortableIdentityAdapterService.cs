@@ -280,6 +280,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         var present = new List<string>();
         if (Says(properties, "windowTitleEnabled")) present.Add("stable window title");
         if (Says(properties, "lanPublishEnabled")) present.Add("one-press LAN");
+        if (Says(properties, "steamDiscoveryEnabled")) present.Add("Steam worlds in Multiplayer");
         if (properties.ContainsKey("setChunkViewDistanceMethods")) present.Add("serve distance");
         if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
         if (Says(properties, "chunkPacingEnabled")) present.Add("paced chunk sending");

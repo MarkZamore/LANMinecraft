@@ -51,7 +51,7 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
     }
     # Allow small intentional theory additions without pinning a cosmetic
     # exact count. A lost filter must never expand this into the full suite.
-    if ($results.Count -gt 137) { throw 'The release profile exceeded its 137-case budget; review its selectors.' }
+    if ($results.Count -gt 150) { throw 'The release profile exceeded its 150-case budget; review its selectors.' }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)
     $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($definition in $trx.SelectNodes("//*[local-name()='UnitTest']")) {

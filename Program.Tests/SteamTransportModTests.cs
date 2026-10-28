@@ -20,14 +20,14 @@ public sealed class SteamTransportModTests
     public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
     {
         Assert.Equal("0.3.2", SteamTransportCatalog.Version);
+        Assert.Equal(18, SteamTransportCatalog.Builds.Count(build => build.Version == "0.3.2"));
         Assert.All(SteamTransportCatalog.Builds, build =>
         {
-            Assert.Equal(SteamTransportCatalog.Version, build.Version);
             Assert.Equal(64, build.Sha256.Length);
             Assert.True(build.SizeBytes > 0);
             Assert.NotEmpty(build.Loaders);
             Assert.Equal(
-                $"https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/{build.FileName}",
+                $"https://github.com/Kamilhik/e4steam/releases/download/v{build.Version}/{build.FileName}",
                 Assert.Single(build.DownloadUris).AbsoluteUri);
         });
 
@@ -43,11 +43,15 @@ public sealed class SteamTransportModTests
         // 1.19.2 and 1.20.1, which is most of the Forge packs worth playing.
         var forge = Assert.Single(
             SteamTransportCatalog.Builds,
-            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar");
-        Assert.Equal(3_735_682, forge.SizeBytes);
+            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar");
+        Assert.Equal(3_817_117, forge.SizeBytes);
         Assert.Equal(
-            "9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a",
+            "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc",
             forge.Sha256);
+        var previousForge = Assert.Single(SteamTransportCatalog.SupersededBuilds,
+            build => build.FileName == "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar");
+        Assert.Equal(3_735_682, previousForge.SizeBytes);
+        Assert.Equal("9a0fc4e1a8c170f37e04cf8469091990d5c1f0953b334481dbb5eab9475e3e1a", previousForge.Sha256);
 
         // No two builds may share a cache folder, or one would overwrite another.
         var folders = SteamTransportCatalog.Builds.Select(build => build.CacheFileId).ToList();
@@ -72,11 +76,11 @@ public sealed class SteamTransportModTests
     [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
     // Forge, which used to be refused outright. Both versions still carry
     // packs people play.
-    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
     // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
-    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
     [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.2.jar")]
     [InlineData(PackLoaderKind.Forge, "1.17", null)]
     [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
