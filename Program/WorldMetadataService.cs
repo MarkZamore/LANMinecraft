@@ -158,15 +158,14 @@ public sealed class WorldMetadataService
     /// </summary>
     public static bool BelongsToBuild(string? recordedBuildRelativePath, string? selectedBuildRelativePath)
     {
-        var recorded = recordedBuildRelativePath?.Trim().Trim('\\', '/');
+        var recorded = WorldLocations.CanonicalBuildPath(recordedBuildRelativePath);
         if (string.IsNullOrEmpty(recorded)) return true;
 
-        var selected = selectedBuildRelativePath?.Trim().Trim('\\', '/');
+        var selected = WorldLocations.CanonicalBuildPath(selectedBuildRelativePath);
         if (string.IsNullOrEmpty(selected)) return true;
 
-        // A name is a name. A pack that is renamed leaves the worlds of its
-        // former name behind, which is the price of not carrying a table of
-        // every name anything has ever had.
+        // Only TerraFirma's explicitly preserved rename is an alias. Worlds
+        // recorded under every other pack name keep their original boundary.
         return string.Equals(recorded, selected, StringComparison.OrdinalIgnoreCase);
     }
 

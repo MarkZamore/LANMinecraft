@@ -41,7 +41,7 @@ public static class WorldLocations
     public static string ForBuild(string worldsRoot, string buildRelativePath)
     {
         ArgumentNullException.ThrowIfNull(worldsRoot);
-        var name = (buildRelativePath ?? string.Empty).Trim().Trim('\\', '/');
+        var name = CanonicalBuildPath(buildRelativePath);
         if (name.Length == 0) return worldsRoot;
         foreach (var invalid in Path.GetInvalidFileNameChars())
         {
@@ -49,6 +49,16 @@ public static class WorldLocations
         }
 
         return Path.Combine(worldsRoot, name);
+    }
+
+    // Archived worlds and transfers can retain the name from before this
+    // pack's rename, even after the installed folders have been migrated.
+    internal static string CanonicalBuildPath(string? buildRelativePath)
+    {
+        var name = (buildRelativePath ?? string.Empty).Trim().Trim('\\', '/');
+        return name.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
+            ? PortablePackSyncService.TerraFirmaRelativePath
+            : name;
     }
 
     /// <summary>

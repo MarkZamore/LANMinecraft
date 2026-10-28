@@ -12,10 +12,10 @@
     },
     {
       "id": "terrafirma-rebirth",
-      "relativePath": "TerraFirma Rebirth",
+      "relativePath": "TerraFirma Rebirth 2",
       "source": {
         "owner": "MarkZamore",
-        "repo": "TerraFirma-Rebirth",
+        "repo": "TerraFirma-Rebirth-2",
         "tag": "pack-latest"
       }
     },

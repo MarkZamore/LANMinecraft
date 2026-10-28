@@ -392,7 +392,11 @@ public sealed class WorldViewModel
 
 public static class PackDisplayName
 {
-    public static string For(string relativePath, string name) => name;
+    public static string For(string relativePath, string name) =>
+        (relativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase) ||
+         relativePath.Equals(PortablePackSyncService.TerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)) &&
+        name.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
+            ? PortablePackSyncService.TerraFirmaRelativePath : name;
 }
 
 public sealed class ClientBuildViewModel

@@ -84,6 +84,7 @@
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.Repeated_settings_loads_and_saves_do_not_rewrite_current_settings|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.An_actual_settings_change_is_saved|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MigrationKeepsInstalledAndSelectedButAnEmptyListStaysEmpty|
+      FullyQualifiedName=Minecraft.Tests.TerraFirmaPackMigrationTests.InstalledPackKeepsWorldsPersonalFilesAndSettingsAndCanRunAgain|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.AddDoesNotDownloadAndRemovalSurvivesSettingsReload|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.NewPackIsDiscoveredOnceAndPlayUsesTheStartupVersionWithoutManifestRequests|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.OfflineAndCorruptRemoteBundleKeepTheLastVerifiedCatalogAndManifest|
