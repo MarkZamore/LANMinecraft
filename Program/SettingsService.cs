@@ -197,6 +197,7 @@ public sealed class SettingsService
             var json = File.ReadAllText(settingsFile);
             var hasConfiguredMemory = HasJsonProperty(json, "maxMemoryGb");
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
+            RestoreLocalLl8Visibility(settings);
             PackMembership.Initialize(settings, _paths);
             // Weighing the pack means opening every jar in it, which on a
             // full build is most of a second and is paid again the first time
@@ -264,6 +265,9 @@ public sealed class SettingsService
 
     public void Save(AppSettings settings)
     {
+        // A new settings object may already hold an explicit "remove from list"
+        // choice. Only loading an old on-disk file is allowed to undo 408's hide.
+        settings.Ll8LocalVisibilityMigrated = true;
         PackMembership.Initialize(settings, _paths);
         settings = ApplyFallbacks(settings, PackMemory, MeasuredMemory);
         AtomicFile.WriteAllTextIfChanged(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
@@ -326,9 +330,19 @@ public sealed class SettingsService
         return settings;
     }
 
+    private void RestoreLocalLl8Visibility(AppSettings settings)
+    {
+        if (settings.Ll8LocalVisibilityMigrated) return;
+        if (MinecraftProcessService.HasPackData(_paths.CombineUnderPacks("LL8 Extended")))
+            settings.HiddenPackRelativePaths?.RemoveAll(path =>
+                string.Equals(path, "LL8 Extended", StringComparison.OrdinalIgnoreCase));
+        settings.Ll8LocalVisibilityMigrated = true;
+    }
+
     private AppSettings CreateSafeDefaults()
     {
-        var settings = ApplyFallbacks(new AppSettings(), PackMemory, MeasuredMemory, useRecommendedMemory: true);
+        var settings = ApplyFallbacks(new AppSettings { Ll8LocalVisibilityMigrated = true },
+            PackMemory, MeasuredMemory, useRecommendedMemory: true);
         PackMembership.Initialize(settings, _paths, fresh: true);
         return settings;
     }
