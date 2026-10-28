@@ -479,9 +479,10 @@ public partial class MainWindow : Window
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
         var builds = Directory.EnumerateDirectories(_paths.Packs)
             .Where(MinecraftProcessService.HasPackData)
+            .Where(path => _catalog?.IsWithdrawn(Path.GetFileName(path)) != true)
             .Where(path => PackMembership.ShouldListInstalled(_settings, Path.GetFileName(path),
-                isCatalogPack: _catalog?.Find(Path.GetFileName(path)) is not null ||
-                               PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is not null))
+                isCatalogPack: _catalog?.IsKnownCatalogPath(Path.GetFileName(path)) ??
+                               (PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is not null)))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {

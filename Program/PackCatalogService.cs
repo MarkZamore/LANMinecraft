@@ -90,6 +90,8 @@ public sealed class PackCatalogService
     public static readonly Uri IndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/catalog.json");
     private const int MaximumBundleBytes = 8 * 1024 * 1024;
     private const int MaximumManifestBytes = 8 * 1024 * 1024;
+    private const int MaximumSourceHistoryPerPack = 16;
+    private const int MaximumSourceHistoryEntries = 1600;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -97,6 +99,9 @@ public sealed class PackCatalogService
     private readonly string _cache;
     private readonly Dictionary<string, string> _manifests = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<CatalogSource> _sources;
+    private readonly Dictionary<string, CatalogSource> _effectiveSources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _knownCatalogPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<CatalogSource> _sourceHistory = [];
     private readonly List<CatalogSource> _markerSources = [];
     private readonly Dictionary<string, CatalogPack> _packs = new(StringComparer.OrdinalIgnoreCase);
     private Task? _refresh;
@@ -111,6 +116,8 @@ public sealed class PackCatalogService
         _sources = SeedSources().ToList();
         foreach (var entry in _sources)
         {
+            _effectiveSources[entry.RelativePath] = entry;
+            _knownCatalogPaths.Add(entry.RelativePath);
             using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.Id + ".zip");
             if (stream is null) continue;
             using var bytes = new MemoryStream();
@@ -120,7 +127,14 @@ public sealed class PackCatalogService
         try
         {
             var indexPath = Path.Combine(_cache, "catalog.json");
-            if (File.Exists(indexPath)) MergeSources(ParseIndex(File.ReadAllText(indexPath)));
+            if (File.Exists(indexPath))
+            {
+                var json = File.ReadAllText(indexPath);
+                var entries = ParseIndex(json);
+                _effectiveSources.Clear();
+                ReplaceIndex(entries);
+                RestoreIndexState(json);
+            }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library index cache: " + ex.Message); }
         // A custom pack's explicit source marker keeps its precedence, and is checked at startup too.
@@ -135,7 +149,6 @@ public sealed class PackCatalogService
                     var source = JsonSerializer.Deserialize<PackSyncSource>(File.ReadAllText(marker), JsonOptions);
                     if (source is null || !ValidSource(source)) continue;
                     var relative = Path.GetFileName(directory);
-                    if (IsRetiredPack(relative)) continue;
                     source = PortablePackSyncService.NormalizeTerraFirmaSource(relative, source);
                     // Preserve legacy default-repository repair.
                     if (relative.Equals(PortablePackSyncService.DefaultPackRelativePath, StringComparison.OrdinalIgnoreCase) &&
@@ -145,7 +158,12 @@ public sealed class PackCatalogService
                 catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library source marker: " + ex.Message); }
             }
         }
-        foreach (var entry in _sources.ToArray()) LoadCachedEntry(entry);
+        foreach (var entry in _sources.ToArray())
+        {
+            var effective = _effectiveSources[entry.RelativePath];
+            if (effective.Source != entry.Source) LoadCachedEntry(effective);
+            LoadCachedEntry(entry);
+        }
         foreach (var entry in _markerSources) LoadCachedEntry(entry, presentation: false);
     }
 
@@ -158,8 +176,20 @@ public sealed class PackCatalogService
     }
     public IReadOnlyList<CatalogPack> Packs { get { lock (_gate) return _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray(); } }
     public IReadOnlyList<CatalogSource> Sources { get { lock (_gate) return _sources.ToArray(); } }
-    public PackSyncSource? SourceFor(string relativePath) { lock (_gate) return _sources.FirstOrDefault(s =>
-        s.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase))?.Source; }
+    public PackSyncSource? SourceFor(string relativePath) { lock (_gate) return _effectiveSources.GetValueOrDefault(relativePath)?.Source; }
+    public bool IsKnownCatalogPath(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath); }
+    public bool IsWithdrawn(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath) &&
+        !_sources.Any(entry => entry.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)); }
+    public PackSyncSource ResolveHistoricalSourceMarker(string relativePath, PackSyncSource marker)
+    {
+        lock (_gate)
+        {
+            if (!_effectiveSources.TryGetValue(relativePath, out var effective)) return marker;
+            return _sourceHistory.Any(old => old.Id == effective.Id &&
+                old.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase) && old.Source == marker)
+                    ? effective.Source : marker;
+        }
+    }
     public CatalogPack? Find(string relativePath) { lock (_gate) return _packs.GetValueOrDefault(relativePath); }
 
     public string SessionManifest(PackSyncSource source)
@@ -190,10 +220,16 @@ public sealed class PackCatalogService
                 var indexBytes = await ReadBoundedAsync(IndexUri, 256 * 1024, ct).ConfigureAwait(false);
                 var index = Encoding.UTF8.GetString(indexBytes);
                 var entries = ParseIndex(index);
-                lock (_gate) HasOnlineCatalog = true;
-                // Source changes become active only after that pack's manifest and bundle validate.
-                candidates = entries.Concat(candidates.Where(old => !entries.Any(next =>
-                    next.RelativePath.Equals(old.RelativePath, StringComparison.OrdinalIgnoreCase)))).ToArray();
+                lock (_gate)
+                {
+                    ReplaceIndex(entries);
+                    HasOnlineCatalog = true;
+                }
+                // Membership comes from the whole index, even if one listed
+                // pack cannot update. Its last verified source stays effective
+                // until that pack's new manifest and bundle validate.
+                candidates = entries;
+                foreach (var entry in candidates) LoadCachedEntry(entry);
             }
             catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library discovery: " + ex.Message); }
             using var parallel = new SemaphoreSlim(4);
@@ -217,7 +253,7 @@ public sealed class PackCatalogService
             try
             {
                 AtomicFile.WriteAllTextIfChanged(Path.Combine(_cache, "catalog.json"),
-                    JsonSerializer.Serialize(new CatalogIndex { SchemaVersion = 1, Packs = Sources.ToList() }, JsonOptions));
+                    JsonSerializer.Serialize(IndexSnapshot(), JsonOptions));
             }
             catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library index could not be saved: " + ex.Message); }
         }
@@ -251,8 +287,11 @@ public sealed class PackCatalogService
         lock (_gate)
         {
             _manifests[Key(entry.Source)] = raw;
-            if (presentation) MergeSources([entry]);
-            if (pack is not null) _packs[entry.RelativePath] = pack;
+            if (presentation && IsCurrentEntry(entry))
+            {
+                PromoteEffectiveSource(entry);
+                if (pack is not null) _packs[entry.RelativePath] = pack;
+            }
         }
         try { AtomicFile.WriteAllTextIfChanged(CachePath(entry.Source), JsonSerializer.Serialize(value, JsonOptions)); }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache could not be saved: " + ex.Message); }
@@ -274,8 +313,15 @@ public sealed class PackCatalogService
                 if (descriptor.GetProperty("revision").GetString() != revision) throw new InvalidDataException("Corrupt library cache revision.");
                 pack = DecodeBundle(entry, cached.Bundle, revision);
             }
-            _manifests[Key(entry.Source)] = cached.Manifest;
-            if (pack is not null) _packs[entry.RelativePath] = pack;
+            lock (_gate)
+            {
+                _manifests[Key(entry.Source)] = cached.Manifest;
+                if (presentation && IsCurrentEntry(entry))
+                {
+                    PromoteEffectiveSource(entry);
+                    if (pack is not null) _packs[entry.RelativePath] = pack;
+                }
+            }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache " + entry.RelativePath + ": " + ex.Message); }
     }
@@ -388,9 +434,7 @@ public sealed class PackCatalogService
                 entry.Id.Length > 100 || !ids.Add(entry.Id) || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
                 throw new InvalidDataException("Invalid/duplicate library source.");
         }
-        // Old verified disk indices can still name a withdrawn repository.
-        // Keep their other entries, including packs discovered only on GitHub.
-        return index.Packs.Where(entry => !IsRetiredPack(entry.RelativePath)).Select(entry =>
+        return index.Packs.Select(entry =>
             entry.Id == "terrafirma-rebirth" &&
             entry.RelativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
                 ? entry with
@@ -401,35 +445,101 @@ public sealed class PackCatalogService
                 : entry).ToList();
     }
 
-    internal static bool IsRetiredPack(string path) =>
-        string.Equals(path, "LL8 Extended", StringComparison.OrdinalIgnoreCase);
-
     public static bool ValidFolder(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 &&
         value is not ("." or "..") && value == value.Trim() && value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && !value.EndsWith('.');
     private static bool ValidSource(PackSyncSource source) => !string.IsNullOrWhiteSpace(source.Owner) && !string.IsNullOrWhiteSpace(source.Repo) &&
         !string.IsNullOrWhiteSpace(source.Tag) && Regex.IsMatch(source.Owner, @"^[A-Za-z0-9_-]{1,100}$") &&
         Regex.IsMatch(source.Repo, @"^[A-Za-z0-9_.-]{1,100}$") && Regex.IsMatch(source.Tag, @"^[A-Za-z0-9_.-]{1,100}$");
-    private void MergeSources(IEnumerable<CatalogSource> entries)
+    private void ReplaceIndex(IReadOnlyList<CatalogSource> entries)
     {
+        var previous = _effectiveSources.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        _sources.Clear();
+        _sources.AddRange(entries);
+        _effectiveSources.Clear();
         foreach (var entry in entries)
         {
-            var index = _sources.FindIndex(s => s.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
-            if (index < 0) _sources.Add(entry);
-            else _sources[index] = entry;
+            _knownCatalogPaths.Add(entry.RelativePath);
+            _effectiveSources[entry.RelativePath] = previous.TryGetValue(entry.RelativePath, out var old) && old.Id == entry.Id
+                ? old : entry;
         }
+        foreach (var path in _packs.Keys.ToArray())
+            if (!IsCurrentEntry(_packs[path].Entry)) _packs.Remove(path);
+    }
+
+    private bool IsCurrentEntry(CatalogSource entry) => _sources.Any(current => current.Id == entry.Id &&
+        current.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+    private void PromoteEffectiveSource(CatalogSource entry)
+    {
+        if (_effectiveSources.TryGetValue(entry.RelativePath, out var old) && old.Id == entry.Id && old.Source != entry.Source)
+            RememberSource(old);
+        _effectiveSources[entry.RelativePath] = entry;
+    }
+
+    private void RememberSource(CatalogSource entry)
+    {
+        _sourceHistory.RemoveAll(old => old.Id == entry.Id &&
+            old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase) && old.Source == entry.Source);
+        _sourceHistory.Add(entry);
+        while (_sourceHistory.Count(old => old.Id == entry.Id &&
+                   old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase)) > MaximumSourceHistoryPerPack)
+        {
+            var index = _sourceHistory.FindIndex(old => old.Id == entry.Id &&
+                old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
+            _sourceHistory.RemoveAt(index);
+        }
+        if (_sourceHistory.Count > MaximumSourceHistoryEntries)
+            _sourceHistory.RemoveRange(0, _sourceHistory.Count - MaximumSourceHistoryEntries);
+    }
+
+    private void RestoreIndexState(string json)
+    {
+        var index = JsonSerializer.Deserialize<CatalogIndex>(json, JsonOptions)!;
+        foreach (var path in index.KnownRelativePaths ?? [])
+            if (ValidFolder(path)) _knownCatalogPaths.Add(path);
+        if (index.SourceHistory is { Count: <= MaximumSourceHistoryEntries } history)
+            foreach (var entry in history)
+                if (entry is not null && ValidFolder(entry.RelativePath) && !string.IsNullOrWhiteSpace(entry.Id) &&
+                    entry.Id.Length <= 100 && entry.Source is not null && ValidSource(entry.Source)) RememberSource(entry);
+        if (index.EffectiveSources is null) return;
+        try
+        {
+            var effective = ParseIndex(JsonSerializer.Serialize(new CatalogIndex
+                { SchemaVersion = 1, Packs = index.EffectiveSources }, JsonOptions));
+            foreach (var entry in effective)
+                if (IsCurrentEntry(entry)) _effectiveSources[entry.RelativePath] = entry;
+        }
+        catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library effective source cache: " + ex.Message); }
+    }
+
+    private CatalogIndex IndexSnapshot()
+    {
+        lock (_gate) return new CatalogIndex
+        {
+            SchemaVersion = 1,
+            Packs = _sources.ToList(),
+            EffectiveSources = _effectiveSources.Values.ToList(),
+            KnownRelativePaths = _knownCatalogPaths.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+            SourceHistory = _sourceHistory.ToList()
+        };
     }
     private static bool IsRecoverable(Exception ex) => ex is IOException or InvalidDataException or HttpRequestException or JsonException or
         InvalidOperationException or ArgumentException or OperationCanceledException or NotSupportedException or System.Security.SecurityException or
         KeyNotFoundException or FormatException or OverflowException or UnauthorizedAccessException;
     public static IEnumerable<CatalogSource> SeedSources()
     {
-        string[] ids = ["all-the-mods-10", "terrafirma-rebirth", "minecraft-26-2", "all-the-mods-9"];
-        return PortablePackSyncService.KnownPacks.Select((p, i) => new CatalogSource(ids[i], p.RelativePath, p.Source));
+        using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.catalog.json")
+            ?? throw new InvalidDataException("Missing embedded library index.");
+        using var reader = new StreamReader(stream);
+        return ParseIndex(reader.ReadToEnd());
     }
     private sealed class CatalogIndex
     {
         public int SchemaVersion { get; set; }
-        public List<CatalogSource> Packs { get; set; } = [];
+        public List<CatalogSource> Packs { get; set; } = null!;
+        public List<CatalogSource>? EffectiveSources { get; set; }
+        public List<string>? KnownRelativePaths { get; set; }
+        public List<CatalogSource>? SourceHistory { get; set; }
     }
     private sealed class CachedEntry
     {

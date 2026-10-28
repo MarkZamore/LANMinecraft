@@ -95,6 +95,16 @@
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.An_explicit_encoding_keeps_the_atomic_writers_existing_byte_format|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.Repeated_settings_loads_and_saves_do_not_rewrite_current_settings|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.An_actual_settings_change_is_saved|
+      FullyQualifiedName=Minecraft.Tests.CatalogSourceMarkerTests.AutomaticOldMarkerFollowsOnlyVerifiedSourceAndSurvivesOfflineRestartBeforeSync|
+      FullyQualifiedName=Minecraft.Tests.CatalogSourceMarkerTests.ExplicitUnrelatedForkMarkerKeepsPrecedenceAcrossCatalogRenameAndOfflineRestart|
+      FullyQualifiedName=Minecraft.Tests.KnownPackTests.FallbackPacksAndSourcesComeFromTheEmbeddedGitHubIndex|
+      FullyQualifiedName=Minecraft.Tests.KnownPackTests.AnAuthoritativeEmptyIndexCannotFallBackToEmbeddedSourcesOrOldMarkers|
+      FullyQualifiedName=Minecraft.Tests.KnownPackTests.ExplicitCustomMarkersAndAReintroducedGitHubPackRemainAvailable|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.RemovedEntriesStayRemovedOfflineWhileListedPackKeepsItsVerifiedBundleOnUpdateFailure|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.SuccessfulEmptyIndexRemovesAllOffersAndDoesNotResurrectEmbeddedEntriesOffline|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.MissingOrMalformedIndexKeepsTheLastAuthoritativeMembership|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.ChangedRepositoryBecomesEffectiveOnlyAfterVerificationIncludingAcrossOfflineRestart|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogPlayMembershipTests.GitHubRemovalHidesInstalledAndOfferedEntriesWithoutDeletingWorldsOrCustomPacks|
       FullyQualifiedName=Minecraft.Tests.PackCatalogDisplayNameTests.StartupCatalogueNameUpdateRefreshesPlayListWhileKeepingTheSameInstallationAndPlayerSettings|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MigrationKeepsInstalledAndSelectedButAnEmptyListStaysEmpty|
       FullyQualifiedName=Minecraft.Tests.TerraFirmaPackMigrationTests.InstalledPackKeepsWorldsPersonalFilesAndSettingsAndCanRunAgain|

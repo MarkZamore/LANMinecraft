@@ -59,30 +59,22 @@ public sealed partial class PortablePackSyncService
         new("MarkZamore", "All-The-Mods-10", "pack-latest");
 
     /// <summary>
-    /// A pack the launcher knows how to fetch, and therefore may offer before it
-    /// exists on disk. Without an entry here a pack can only be seen by someone
-    /// who already has its folder, which is no way to hand a new build to
-    /// friends: they have nothing to press Play on.
+    /// One entry from the embedded GitHub index snapshot, retained as an
+    /// offline fallback and for callers without a session catalogue.
     /// </summary>
     public sealed record KnownPack(string RelativePath, PackSyncSource Source);
 
     /// <summary>
-    /// Every build the launcher offers. The first is the built-in one that a
-    /// fresh install lands on; the rest are offered beside it, each syncing from
-    /// its own repository.
+    /// Compatibility access to the embedded GitHub snapshot. The verified
+    /// online or cached session index determines the active catalogue.
     /// </summary>
-    public static IReadOnlyList<KnownPack> KnownPacks { get; } = Array.AsReadOnly<KnownPack>([
-        new(DefaultPackRelativePath, DefaultPackSource),
-        new(
-            TerraFirmaRelativePath,
-            TerraFirmaSource),
-        // Plain Minecraft on the newest version there is, with a recipe viewer
-        // and nothing else. It is the only build here that brings no client jar
-        // of its own: the launcher fetches Mojang's for the version its manifest
-        // names, so the whole download is one megabyte.
-        new("Minecraft 26.2", new PackSyncSource("MarkZamore", "Minecraft-26.2", "pack-latest")),
-        new("All The Mods 9", new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest")),
-    ]);
+    public static IReadOnlyList<KnownPack> KnownPacks => EmbeddedKnownPacks.Value;
+
+    // ParseIndex applies historical source aliases which reference this class.
+    // Defer reading the resource until after static source initialization.
+    private static readonly Lazy<IReadOnlyList<KnownPack>> EmbeddedKnownPacks = new(() =>
+        Array.AsReadOnly(PackCatalogService.SeedSources()
+            .Select(entry => new KnownPack(entry.RelativePath, entry.Source)).ToArray()));
 
     /// <summary>The source for a pack the launcher knows, or null for a custom one.</summary>
     public static PackSyncSource? KnownSourceFor(string? packRelativePath)
@@ -248,7 +240,8 @@ public sealed partial class PortablePackSyncService
     public PackSyncSource? TryResolveSource(string packRelativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
-        if (PackCatalogService.IsRetiredPack(packRelativePath)) return null;
+        var catalog = Catalog;
+        if (catalog?.IsWithdrawn(packRelativePath) == true) return null;
         var markerPath = Path.Combine(_paths.CombineUnderPacks(packRelativePath), SourceMarkerFileName);
         if (File.Exists(markerPath))
         {
@@ -265,9 +258,10 @@ public sealed partial class PortablePackSyncService
                     _logger.Info(
                         $"Pack sync source marker still names {marker.Repo}; " +
                         $"the built-in {DefaultPackRelativePath} source is used and the marker is rewritten.");
-                    return Catalog?.SourceFor(packRelativePath) ?? DefaultPackSource;
+                    return catalog is null ? DefaultPackSource : catalog.SourceFor(packRelativePath);
                 }
-                return NormalizeTerraFirmaSource(packRelativePath, marker);
+                var normalized = NormalizeTerraFirmaSource(packRelativePath, marker);
+                return catalog?.ResolveHistoricalSourceMarker(packRelativePath, normalized) ?? normalized;
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
@@ -276,7 +270,7 @@ public sealed partial class PortablePackSyncService
             }
         }
 
-        return Catalog?.SourceFor(packRelativePath) ?? KnownSourceFor(packRelativePath);
+        return catalog is null ? KnownSourceFor(packRelativePath) : catalog.SourceFor(packRelativePath);
     }
 
     /// <summary>
@@ -287,6 +281,10 @@ public sealed partial class PortablePackSyncService
     public void EnsureDefaultSourceMarker(string packRelativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
+        var catalog = Catalog;
+        if (catalog?.IsWithdrawn(packRelativePath) == true) return;
+        var source = catalog is null ? DefaultPackSource : catalog.SourceFor(packRelativePath);
+        if (source is null) return;
         var packDir = _paths.CombineUnderPacks(packRelativePath);
         var markerPath = Path.Combine(packDir, SourceMarkerFileName);
         if (File.Exists(markerPath))
@@ -294,7 +292,7 @@ public sealed partial class PortablePackSyncService
             var marker = TryReadSourceMarker(markerPath);
             if (marker is null || !IsLegacyDefaultSource(marker)) return;
         }
-        WriteSourceMarker(packDir, DefaultPackSource);
+        WriteSourceMarker(packDir, source);
     }
 
     /// <summary>

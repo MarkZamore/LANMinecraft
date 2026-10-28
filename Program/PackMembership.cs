@@ -34,7 +34,6 @@ public static class PackMembership
     public static bool Add(AppSettings settings, string path)
     {
         if (!PackCatalogService.ValidFolder(path)) throw new ArgumentException("Invalid pack folder.", nameof(path));
-        if (PackCatalogService.IsRetiredPack(path)) return false;
         settings.AddedPackRelativePaths ??= [];
         var unhidden = settings.HiddenPackRelativePaths?.RemoveAll(p => p.Equals(path, StringComparison.OrdinalIgnoreCase)) > 0;
         if (Contains(settings, path)) return unhidden;
