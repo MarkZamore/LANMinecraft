@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -262,9 +262,14 @@ public sealed class PackInstanceService : IDisposable
         EnsureOrdinaryPath(gameDir, statePath);
         var state = ReadState(statePath, packRelativePath);
 
+        // One preparation is one snapshot, however many personal files it
+        // preserves. Per-file snapshots would let the next startup's retention
+        // pass erase part of this same update's backup after five files.
+        string? conflictRoot = null;
+        string GetConflictRoot() => conflictRoot ??= CreateConflictRoot(packRelativePath);
         RemoveVerifiedRetiredFiles(packDir, gameDir, token);
-        EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), token);
-        SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, managedPaths, token);
+        EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), GetConflictRoot, token);
+        SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, managedPaths, GetConflictRoot, token);
         SanitizeInstanceForLocalPlay(gameDir);
         CapDrawDistances(gameDir);
         RestoreModOwnedDirectories(gameDir);
@@ -299,6 +304,7 @@ public sealed class PackInstanceService : IDisposable
         string clientJarName,
         InstanceState state,
         IReadOnlySet<string>? managedPaths,
+        Func<string> getConflictRoot,
         CancellationToken token)
     {
         var previousFiles = new Dictionary<string, SourceFileState>(state.Files, StringComparer.OrdinalIgnoreCase);
@@ -320,7 +326,7 @@ public sealed class PackInstanceService : IDisposable
             EnsureOrdinaryPath(gameDir, destination);
             if (File.Exists(destination))
             {
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                conflictRoot ??= getConflictRoot();
                 var preservedFile = Path.Combine(conflictRoot, relative + ".user-file");
                 Directory.CreateDirectory(Path.GetDirectoryName(preservedFile)!);
                 File.Copy(destination, preservedFile, overwrite: true);
@@ -343,7 +349,7 @@ public sealed class PackInstanceService : IDisposable
             EnsureOrdinaryPath(gameDir, destination);
             if (Directory.Exists(destination))
             {
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                conflictRoot ??= getConflictRoot();
                 var preservedDirectory = Path.Combine(conflictRoot, relative.Replace('/', Path.DirectorySeparatorChar) + ".user-directory");
                 Directory.CreateDirectory(Path.GetDirectoryName(preservedDirectory)!);
                 Directory.Move(destination, preservedDirectory);
@@ -370,7 +376,7 @@ public sealed class PackInstanceService : IDisposable
                 // one does not - it only buries the copies that matter.
                 if (!IsAlreadyPreserved(packRelativePath, relative, localHash))
                 {
-                    conflictRoot ??= CreateConflictRoot(packRelativePath);
+                    conflictRoot ??= getConflictRoot();
                     PreserveLocalFile(destination, conflictRoot, relative);
                 }
                 CopySourceFile(sourcePath, destination);
@@ -386,7 +392,7 @@ public sealed class PackInstanceService : IDisposable
                 }
                 else if (!HashesEqual(HashFile(destination), source.Sha256))
                 {
-                    conflictRoot ??= CreateConflictRoot(packRelativePath);
+                    conflictRoot ??= getConflictRoot();
                     CopySourceFile(sourcePath, Path.Combine(conflictRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
                     conflictCount++;
                 }
@@ -400,7 +406,7 @@ public sealed class PackInstanceService : IDisposable
 
             if (!destinationExists)
             {
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                conflictRoot ??= getConflictRoot();
                 CopySourceFile(sourcePath, Path.Combine(conflictRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
                 conflictCount++;
                 continue;
@@ -413,7 +419,7 @@ public sealed class PackInstanceService : IDisposable
             }
             else if (!HashesEqual(destinationHash, source.Sha256))
             {
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                conflictRoot ??= getConflictRoot();
                 CopySourceFile(sourcePath, Path.Combine(conflictRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
                 conflictCount++;
             }
@@ -435,7 +441,7 @@ public sealed class PackInstanceService : IDisposable
                 // The pack owned it and the pack dropped it; a local copy left
                 // behind would be a file the pack no longer knows about, still
                 // being read by the game.
-                conflictRoot ??= CreateConflictRoot(packRelativePath);
+                conflictRoot ??= getConflictRoot();
                 PreserveLocalFile(destination, conflictRoot, removed.Key);
                 File.Delete(destination);
                 DeleteEmptyParents(Path.GetDirectoryName(destination), gameDir);
@@ -464,7 +470,7 @@ public sealed class PackInstanceService : IDisposable
     }
 
     private void EnsureMods(string packDir, string gameDir, InstanceState state, IReadOnlySet<string>? managedPaths,
-        SteamTransportBuild? transport, CancellationToken token)
+        SteamTransportBuild? transport, Func<string> getConflictRoot, CancellationToken token)
     {
         var source = Path.Combine(packDir, "mods");
         var destination = Path.Combine(gameDir, "mods");
@@ -485,7 +491,7 @@ public sealed class PackInstanceService : IDisposable
                     if (IsCurrentLauncherTransport(relative, path, transport)) continue;
                     if (!state.ModFiles.TryGetValue(relative, out var previous) ||
                         !HashesEqual(HashFile(path), previous.Sha256))
-                        PreserveLocalFile(path, CreateConflictRoot(state.PackRelativePath), "mods/" + relative);
+                        PreserveLocalFile(path, getConflictRoot(), "mods/" + relative);
                     File.Delete(path);
                 }
             }
@@ -511,7 +517,7 @@ public sealed class PackInstanceService : IDisposable
             var transportPath = transport is null ? "" : Path.Combine(destination, transport.FileName);
             var keepTransport = File.Exists(transportPath) &&
                 IsCurrentLauncherTransport(transport!.FileName, transportPath, transport);
-            var conflictRoot = CreateConflictRoot(state.PackRelativePath);
+            var conflictRoot = getConflictRoot();
             var preserved = Path.Combine(conflictRoot, "mods-local");
             Directory.Move(destination, preserved);
             if (keepTransport)
@@ -524,12 +530,12 @@ public sealed class PackInstanceService : IDisposable
 
         Directory.CreateDirectory(destination);
         EnsureOrdinaryPath(packDir, source);
-        var allHardLinks = MirrorMods(source, destination, state, managedPaths, transport, token);
+        var allHardLinks = MirrorMods(source, destination, state, managedPaths, transport, getConflictRoot, token);
         state.ModsMode = allHardLinks ? "HardLink" : "Copy";
     }
 
     private bool MirrorMods(string sourceDir, string destinationDir, InstanceState state, IReadOnlySet<string>? managedPaths,
-        SteamTransportBuild? transport, CancellationToken token)
+        SteamTransportBuild? transport, Func<string> getConflictRoot, CancellationToken token)
     {
         var current = new Dictionary<string, SourceFileState>(StringComparer.OrdinalIgnoreCase);
         var allHardLinks = true;
@@ -552,7 +558,7 @@ public sealed class PackInstanceService : IDisposable
                 {
                     if (!state.ModFiles.TryGetValue(relative, out var previous) ||
                         !HashesEqual(HashFile(destination), previous.Sha256))
-                        PreserveLocalFile(destination, CreateConflictRoot(state.PackRelativePath), "mods/" + relative);
+                        PreserveLocalFile(destination, getConflictRoot(), "mods/" + relative);
                     File.Delete(destination);
                 }
                 if (!TryCreateHardLink(destination, sourcePath))
@@ -578,7 +584,7 @@ public sealed class PackInstanceService : IDisposable
             // and the player retains their bytes in PackConflicts.
             if (!state.ModFiles.TryGetValue(relative, out var previous) ||
                 !HashesEqual(HashFile(file), previous.Sha256))
-                PreserveLocalFile(file, CreateConflictRoot(state.PackRelativePath), "mods/" + relative);
+                PreserveLocalFile(file, getConflictRoot(), "mods/" + relative);
             File.Delete(file);
         }
         foreach (var directory in Directory.EnumerateDirectories(destinationDir, "*", SearchOption.AllDirectories)

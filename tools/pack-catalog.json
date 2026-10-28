@@ -22,12 +22,20 @@
     },
     {
       "id": "minecraft-26-2",
-      "relativePath": "Minecraft 26.2",
+      "relativePath": "Minecraft 26.3",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-26.3",
         "tag": "pack-latest"
-      }
+      },
+      "legacyRelativePaths": ["Minecraft 26.2"],
+      "legacySources": [
+        {
+          "owner": "MarkZamore",
+          "repo": "Minecraft-26.2",
+          "tag": "pack-latest"
+        }
+      ]
     },
     {
       "id": "caves-and-dungeons",
@@ -35,6 +43,15 @@
       "source": {
         "owner": "MarkZamore",
         "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      }
+    },
+    {
+      "id": "all-the-mods-9",
+      "relativePath": "All The Mods 9",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-9",
         "tag": "pack-latest"
       }
     }

@@ -9,7 +9,33 @@ using System.Windows.Media.Imaging;
 
 namespace Minecraft;
 
-public sealed record CatalogSource(string Id, string RelativePath, PackSyncSource Source);
+public sealed record CatalogSource(string Id, string RelativePath, PackSyncSource Source)
+{
+    public List<string> LegacyRelativePaths { get; init; } = [];
+    public List<PackSyncSource> LegacySources { get; init; } = [];
+
+    public bool Equals(CatalogSource? other) => other is not null &&
+        Id == other.Id && RelativePath == other.RelativePath && Source == other.Source &&
+        (LegacyRelativePaths is null ? other.LegacyRelativePaths is null :
+            other.LegacyRelativePaths is not null && LegacyRelativePaths.SequenceEqual(other.LegacyRelativePaths, StringComparer.Ordinal)) &&
+        (LegacySources is null ? other.LegacySources is null :
+            other.LegacySources is not null && LegacySources.SequenceEqual(other.LegacySources));
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Id, StringComparer.Ordinal);
+        hash.Add(RelativePath, StringComparer.Ordinal);
+        hash.Add(Source);
+        hash.Add(LegacyRelativePaths?.Count ?? -1);
+        if (LegacyRelativePaths is not null)
+            foreach (var path in LegacyRelativePaths) hash.Add(path, StringComparer.Ordinal);
+        hash.Add(LegacySources?.Count ?? -1);
+        if (LegacySources is not null)
+            foreach (var source in LegacySources) hash.Add(source);
+        return hash.ToHashCode();
+    }
+}
 public sealed class CatalogMod
 {
     public string Id { get; set; } = "";
@@ -420,7 +446,7 @@ public sealed class PackCatalogService
         }
     }
 
-    private static List<CatalogSource> ParseIndex(string json)
+    private static List<CatalogSource> ParseIndex(string json, bool useEmbeddedAliases = true)
     {
         var index = JsonSerializer.Deserialize<CatalogIndex>(json, JsonOptions);
         if (index is null || index.SchemaVersion != 1 || index.Packs is null || index.Packs.Count > 100)
@@ -433,16 +459,20 @@ public sealed class PackCatalogService
             if (entry is null || !ValidFolder(entry.RelativePath) || string.IsNullOrWhiteSpace(entry.Id) ||
                 entry.Id.Length > 100 || !ids.Add(entry.Id) || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
                 throw new InvalidDataException("Invalid/duplicate library source.");
+            if (entry.LegacyRelativePaths is null || entry.LegacySources is null || entry.LegacyRelativePaths.Count > 16 ||
+                entry.LegacySources.Count > 16 || entry.LegacyRelativePaths.Any(path => !ValidFolder(path) || path.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase)) ||
+                entry.LegacySources.Any(source => source is null || !ValidSource(source)))
+                throw new InvalidDataException("Invalid library rename aliases.");
         }
-        return index.Packs.Select(entry =>
-            entry.Id == "terrafirma-rebirth" &&
-            entry.RelativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
-                ? entry with
-                {
-                    RelativePath = PortablePackSyncService.TerraFirmaRelativePath,
-                    Source = PortablePackSyncService.NormalizeTerraFirmaSource(entry.RelativePath, entry.Source)
-                }
-                : entry).ToList();
+        // Normalize verified historical folder names without changing index
+        // membership. The embedded index is parsed without recursively reading
+        // itself to obtain its own aliases.
+        IReadOnlyList<CatalogSource> aliases = useEmbeddedAliases ? SeedSources().ToArray() : [];
+        var canonical = index.Packs.Select(entry => CanonicalSource(entry, aliases)).ToList();
+        if (canonical.Select(entry => entry.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != canonical.Count ||
+            canonical.Select(entry => Key(entry.Source)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != canonical.Count)
+            throw new InvalidDataException("Invalid/duplicate library rename targets.");
+        return canonical;
     }
 
     public static bool ValidFolder(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 &&
@@ -523,6 +553,38 @@ public sealed class PackCatalogService
             SourceHistory = _sourceHistory.ToList()
         };
     }
+    private static CatalogSource CanonicalSource(CatalogSource entry, IReadOnlyList<CatalogSource> embeddedAliases)
+    {
+        if (entry.Id == "terrafirma-rebirth" &&
+            entry.RelativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase))
+            entry = entry with
+            {
+                RelativePath = PortablePackSyncService.TerraFirmaRelativePath,
+                Source = PortablePackSyncService.NormalizeTerraFirmaSource(entry.RelativePath, entry.Source)
+            };
+        var seed = embeddedAliases.FirstOrDefault(candidate => candidate.Id.Equals(entry.Id, StringComparison.OrdinalIgnoreCase) &&
+            candidate.LegacyRelativePaths.Contains(entry.RelativePath, StringComparer.OrdinalIgnoreCase));
+        if (seed is null) return entry;
+        var paths = entry.LegacyRelativePaths.Concat(seed.LegacyRelativePaths)
+            .Where(path => !path.Equals(seed.RelativePath, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var sources = entry.LegacySources.Concat(seed.LegacySources)
+            .DistinctBy(Key, StringComparer.OrdinalIgnoreCase).ToList();
+        if (paths.Count > 16 || sources.Count > 16)
+            throw new InvalidDataException("Too many merged library rename aliases.");
+        // A folder alias does not authorize replacing a newly published source.
+        // Redirect only a source explicitly identified by the embedded rename;
+        // every other source still goes through the normal verification gate.
+        var knownSource = PackRenameMigration.SourceEquals(entry.Source, seed.Source) ||
+            seed.LegacySources.Any(source => PackRenameMigration.SourceEquals(source, entry.Source));
+        return entry with
+        {
+            RelativePath = seed.RelativePath,
+            Source = knownSource ? seed.Source : entry.Source,
+            LegacyRelativePaths = paths,
+            LegacySources = sources
+        };
+    }
     private static bool IsRecoverable(Exception ex) => ex is IOException or InvalidDataException or HttpRequestException or JsonException or
         InvalidOperationException or ArgumentException or OperationCanceledException or NotSupportedException or System.Security.SecurityException or
         KeyNotFoundException or FormatException or OverflowException or UnauthorizedAccessException;
@@ -531,7 +593,7 @@ public sealed class PackCatalogService
         using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.catalog.json")
             ?? throw new InvalidDataException("Missing embedded library index.");
         using var reader = new StreamReader(stream);
-        return ParseIndex(reader.ReadToEnd());
+        return ParseIndex(reader.ReadToEnd(), useEmbeddedAliases: false);
     }
     private sealed class CatalogIndex
     {

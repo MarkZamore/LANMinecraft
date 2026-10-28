@@ -89,6 +89,52 @@ public sealed class PackInstanceMigrationTests : IDisposable
         AssertPreserved(paths, "player-extra.jar.user-file", "player-extra");
     }
 
+    [Fact]
+    public async Task OneUpdateWithManyPersonalFiles_UsesOneRetainedConflictSnapshot()
+    {
+        var (paths, pack, service) = CreatePack();
+        using var scope = service;
+        Write(pack, "mods/current.jar", "author-current");
+        Write(pack, "config/owned.toml", "author-config-v1");
+        Write(pack, "launcher/pack-owned.txt", "config/owned.toml\n");
+        await service.PrepareAsync(PackName);
+        var game = service.GetInstanceDirectory(PackName);
+        var personalJars = Enumerable.Range(0, PackInstanceService.KeptConflictSnapshots + 3)
+            .ToDictionary(index => $"personal-{index}.jar", index => $"personal-bytes-{index}");
+        foreach (var (name, bytes) in personalJars) Write(game, "mods/" + name, bytes);
+        Replace(game, "config/owned.toml", "personal-config");
+        Replace(pack, "config/owned.toml", "author-config-v2");
+
+        await service.PrepareAsync(PackName);
+        PackInstanceService.PruneOldConflictSnapshots(paths.PackConflicts);
+
+        Assert.Single(Directory.EnumerateDirectories(Path.Combine(paths.PackConflicts, PackName)));
+        foreach (var (name, bytes) in personalJars) AssertPreserved(paths, name + ".user-file", bytes);
+        AssertPreserved(paths, "owned.toml.user-file", "personal-config");
+        Assert.Equal("author-config-v2", Read(game, "config/owned.toml"));
+        await service.PrepareAsync(PackName);
+        Assert.Single(Directory.EnumerateDirectories(Path.Combine(paths.PackConflicts, PackName)));
+    }
+
+    [Fact]
+    public async Task FailedUnknownJarPreservation_LeavesTheOriginalAndPreviousInstanceState()
+    {
+        var (paths, pack, service) = CreatePack();
+        using var scope = service;
+        Write(pack, "mods/current.jar", "author-current");
+        await service.PrepareAsync(PackName);
+        var game = service.GetInstanceDirectory(PackName);
+        Write(game, "mods/personal.jar", "irreplaceable-personal-bytes");
+        var statePath = Path.Combine(game, ".portable-instance.json");
+        var previousState = File.ReadAllBytes(statePath);
+        File.WriteAllText(paths.PackConflicts, "fixture prevents creating the backup directory");
+
+        await Assert.ThrowsAsync<IOException>(() => service.PrepareAsync(PackName));
+
+        Assert.Equal("irreplaceable-personal-bytes", Read(game, "mods/personal.jar"));
+        Assert.Equal(previousState, File.ReadAllBytes(statePath));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

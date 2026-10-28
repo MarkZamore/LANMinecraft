@@ -15,8 +15,6 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class PortableSkinProfiles {
-    private static final java.util.concurrent.atomic.AtomicBoolean immutableProfilesReported =
-        new java.util.concurrent.atomic.AtomicBoolean();
     private static volatile long registryModified = Long.MIN_VALUE;
     private static volatile Map<UUID, SkinEntry> entries = Collections.emptyMap();
 
@@ -59,24 +57,60 @@ public final class PortableSkinProfiles {
             if (!(invocation.getCause() instanceof UnsupportedOperationException)) {
                 throw new IllegalStateException("Portable skin could not be attached to GameProfile.", invocation);
             }
-            // From authlib 7.0.61 - Minecraft 1.21.9 - a profile built without
-            // properties gets the shared PropertyMap.EMPTY, whose backing map is
-            // an ImmutableListMultimap, and GameProfile became a record whose
-            // properties field cannot be reassigned either. So the profile
-            // cannot be given a skin after it exists; it would have to be built
-            // with one, which is a different hook in a different place. Mutating
-            // EMPTY is not the way out - every profile without properties shares
-            // that one instance, so a skin put there would be everybody's.
-            //
-            // Said once and then dropped: the pack plays, everyone keeps the
-            // UUID the launcher gave them, and only the skin is missing.
-            if (immutableProfilesReported.compareAndSet(false, true)) {
-                System.out.println(
-                    "[PortableIdentity] This Minecraft keeps player profiles unchangeable once made, so the skin "
-                        + "chosen in the launcher is not shown. Everything else about the pack is unaffected.");
-            }
+            // Modern authlib's record and PropertyMap are immutable. Its
+            // constructor receives propertiesFor before storing the final
+            // field, and the authlib reader uses withSkin for later registry
+            // updates. Never mutate the shared PropertyMap.EMPTY.
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Portable skin could not be attached to GameProfile.", exception);
+        }
+    }
+
+    /** Replaces only the texture property, before an immutable profile is built. */
+    public static Object propertiesFor(UUID id, String name, Object properties) {
+        SkinEntry entry = loadEntries().get(id);
+        if (entry == null || properties == null) {
+            return properties;
+        }
+        try {
+            ClassLoader loader = properties.getClass().getClassLoader();
+            Class<?> propertyType = Class.forName("com.mojang.authlib.properties.Property", true, loader);
+            String encoded = Base64.getEncoder().encodeToString(
+                createTextureJson(id, name, entry).getBytes(StandardCharsets.UTF_8));
+            Object texture = createProperty(propertyType, encoded);
+            Class<?> multimapType = Class.forName("com.google.common.collect.Multimap", true, loader);
+            Class<?> mutableType = Class.forName("com.google.common.collect.LinkedHashMultimap", true, loader);
+            Object copy = mutableType.getMethod("create").invoke(null);
+            invokeCompatible(copy, "putAll", properties);
+            invokeCompatible(copy, "removeAll", "textures");
+            invokeCompatible(copy, "put", "textures", texture);
+            return properties.getClass().getConstructor(multimapType).newInstance(copy);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Portable skin properties could not be built.", exception);
+        }
+    }
+
+    /** The reader can see skins announced after an immutable profile was made. */
+    public static Object withSkin(Object profile) {
+        if (profile == null) {
+            return null;
+        }
+        if (!profile.getClass().isRecord()) {
+            apply(profile);
+            return profile;
+        }
+        try {
+            UUID id = (UUID) PortableIdentityReflection.getField(profile, "id");
+            if (id == null || !loadEntries().containsKey(id)) {
+                return profile;
+            }
+            String name = (String) PortableIdentityReflection.getField(profile, "name");
+            Object properties = PortableIdentityReflection.getField(profile, "properties");
+            Object replacement = propertiesFor(id, name, properties);
+            return profile.getClass().getConstructor(UUID.class, String.class, properties.getClass())
+                .newInstance(id, name, replacement);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Portable skin profile could not be rebuilt.", exception);
         }
     }
 

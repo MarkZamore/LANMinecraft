@@ -64,7 +64,10 @@ public sealed class WindowTitleAdapterCacheTests : IDisposable
         {
             ["windowTitleEnabled"] = "true",
             ["windowTitleText"] = "Fixture",
-            ["windowTitleConfigSha256"] = "policy-fingerprint"
+            ["windowTitleConfigSha256"] = "policy-fingerprint",
+            [PortableIdentityAdapterService.ManagedTransportFingerprintProperty] =
+                PortableIdentityAdapterService.ComputeManagedTransportFingerprint(
+                    SteamTransportCatalog.Find(runtime.Descriptor), gameDirectory)
         });
         var targetState = Activator.CreateInstance(targetType, nonPublic: true)!;
         Set(targetState, "JarPath", target);

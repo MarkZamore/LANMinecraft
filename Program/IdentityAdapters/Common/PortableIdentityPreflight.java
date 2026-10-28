@@ -43,6 +43,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableMenuRegistrationTransformer();
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 transformer = new PortableXaeroWaypointTransformer();
+            } else if (isConfigured("pauseScreenClasses") && isAlias("pauseScreenClasses", className)) {
+                transformer = new PortableLanAutoPublishTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
@@ -82,17 +84,20 @@ public final class PortableIdentityPreflight {
                 verifyMenuRegistrationTargets(className, original, transformed);
             } else if (isAlias("xaeroWaypointTeleportClasses", className)) {
                 verifyXaeroWaypointTargets(archive, className, transformed);
+            } else if (isConfigured("pauseScreenClasses") && isAlias("pauseScreenClasses", className)) {
+                verifyPauseReportingTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
                 verifySteamDiscoveryTargets(archive, className, transformed);
             } else if (isAlias("movementListenerClasses", className)) {
-                verifyGuestMovementTargets(className, transformed);
+                verifyGuestMovementTargets(className, original, transformed);
             } else if (isAlias("chunkMapClasses", className) ||
                 isAlias("serverPlayerClasses", className) ||
                 isAlias("trackedEntityClasses", className)) {
                 verifyPerPlayerChunkTargets(className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
+                !(isConfigured("skinManagerClasses") && isAlias("skinManagerClasses", className)) &&
                 !isAlias("textureUrlCheckerClasses", className) &&
                 !isAlias("gameProfileClasses", className)) {
                 throw new IllegalStateException("Unexpected portable identity target: " + className);
@@ -142,8 +147,113 @@ public final class PortableIdentityPreflight {
         return writer.toByteArray();
     }
 
+    private static void verifyPauseReportingTargets(
+        ZipFile archive, String className, byte[] transformed) throws Exception {
+        if ("true".equals(System.getProperty("minecraft.portable.identity.pauseLanRowEnabled"))) {
+            verifyLanPauseRowTargets(archive, className, transformed);
+            return;
+        }
+        int mappingIndex = aliasIndex("pauseScreenClasses", className);
+        ClassNode pause = readClass(archive, className);
+        requireMethod(pause, "pauseCreateMenuMethods", 0);
+        String componentDescriptor = "L" + alias("componentClasses", mappingIndex).replace('.', '/') + ";";
+        for (String property : new String[] { "pauseMultiplayerFields", "pausePlayerReportingFields" }) {
+            boolean nativeLabelFound = false;
+            for (FieldNode field : pause.fields) {
+                if (isAlias(property, field.name) && (field.access & Opcodes.ACC_STATIC) != 0 &&
+                    field.desc.equals(componentDescriptor)) nativeLabelFound = true;
+            }
+            if (!nativeLabelFound) {
+                throw new IllegalStateException("The native pause label is missing: " + pause.name + "." + property);
+            }
+        }
+        requireMethodDescriptor(pause, "pauseOpenScreenButtonMethods", "pauseOpenScreenButtonDescriptors");
+
+        ClassNode reporting = readClass(archive,
+            alias("reportingScreenClasses", mappingIndex).replace('.', '/'));
+        String screen = alias("screenClasses", mappingIndex).replace('.', '/');
+        boolean constructorFound = false;
+        for (MethodNode method : reporting.methods) {
+            if (method.name.equals("<init>") && method.desc.equals("(L" + screen + ";)V")) {
+                constructorFound = true;
+            }
+        }
+        if (!constructorFound) {
+            throw new IllegalStateException("The native reporting screen constructor is missing: " + reporting.name);
+        }
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hooks = 0;
+        for (MethodNode method : patched.methods) {
+            for (AbstractInsnNode instruction : method.instructions) {
+                if (instruction instanceof MethodInsnNode call &&
+                    call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks") &&
+                    call.name.equals("pauseButton") &&
+                    call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;Ljava/util/function/Supplier;)Ljava/lang/Object;")) {
+                    if (!isAlias("pauseCreateMenuMethods", method.name) || !method.desc.equals("()V")) {
+                        throw new IllegalStateException("The reporting hook changed an unrelated pause method.");
+                    }
+                    hooks++;
+                }
+            }
+        }
+        requireHookCount(className, "pauseButton", hooks, 1);
+    }
+
+    private static void verifyLanPauseRowTargets(
+        ZipFile archive, String className, byte[] transformed) throws Exception {
+        int index = aliasIndex("pauseScreenClasses", className);
+        ClassNode pause = readClass(archive, className);
+        requireMethod(pause, "pauseCreateMenuMethods", 0);
+        requireField(pause, "pausePlayerReportingFields");
+        requireMethodDescriptor(pause, "pauseOpenScreenButtonMethods", "pauseOpenScreenButtonDescriptors");
+        ClassNode rows = readClass(archive, alias("pauseRowHelperClasses", index));
+        requireMethodDescriptor(rows, "pauseRowAddMethods", "pauseRowAddDescriptors");
+        ClassNode widget = readClass(archive, alias("widgetClasses", index));
+        requireMethod(widget, "widgetGetWidthMethods", 0);
+        requireMethod(widget, "widgetSetWidthMethods", 1);
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", index).replace('.', '/'));
+        requireField(minecraft, "minecraftLevelFields");
+        ClassNode component = readClass(archive, alias("componentClasses", index).replace('.', '/'));
+        boolean translatable = component.methods.stream().anyMatch(method ->
+            isAlias("componentTranslatableMethods", method.name) &&
+            (method.access & Opcodes.ACC_STATIC) != 0 && method.desc.startsWith("(Ljava/lang/String;)L"));
+        if (!translatable) throw new IllegalStateException("The native translated LAN caption method is missing.");
+        String screen = alias("screenClasses", index).replace('.', '/');
+        String level = alias("levelClasses", index).replace('.', '/');
+        ClassNode worldOptions = readClass(archive, alias("worldOptionsScreenClasses", index).replace('.', '/'));
+        ClassNode reporting = readClass(archive, alias("reportingScreenClasses", index).replace('.', '/'));
+        requireConstructor(worldOptions, "(L" + screen + ";L" + level + ";)V");
+        requireConstructor(reporting, "(L" + screen + ";)V");
+        if (!"true".equals(System.getProperty("minecraft.portable.identity.lanPublishExplicitRequestOnly"))) {
+            throw new IllegalStateException("The native world-options screen needs explicit-only LAN publication.");
+        }
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int hooks = 0;
+        for (MethodNode method : patched.methods) for (AbstractInsnNode instruction : method.instructions) {
+            if (instruction instanceof MethodInsnNode call &&
+                call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks") &&
+                call.name.equals("addLanPauseRow") &&
+                call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/Object;)Ljava/lang/Object;")) {
+                if (!isAlias("pauseCreateMenuMethods", method.name) || !method.desc.equals("()V")) {
+                    throw new IllegalStateException("The explicit LAN row changed an unrelated pause method.");
+                }
+                hooks++;
+            }
+        }
+        requireHookCount(className, "addLanPauseRow", hooks, 1);
+    }
+
+    private static void requireConstructor(ClassNode owner, String descriptor) {
+        if (owner.methods.stream().noneMatch(method -> method.name.equals("<init>") && method.desc.equals(descriptor))) {
+            throw new IllegalStateException("The native screen constructor is missing: " + owner.name + descriptor);
+        }
+    }
+
     /**
-     * The one-press publish: one call to the hook, and every member the hook
+     * The one-press publish: one hook per normal init exit, and every member the hook
      * reaches for through reflection, in the mapping this class was found under.
      */
     private static void verifySteamDiscoveryTargets(ZipFile archive, String className, byte[] transformed) throws Exception {
@@ -207,11 +317,32 @@ public final class PortableIdentityPreflight {
         }
         if (initReturns == 0 || hookCalls != initReturns) {
             throw new IllegalStateException(
-                "LAN share screen transformer inserted " + hookCalls + " publish hooks for " + initReturns + " init returns.");
+                "LAN share screen transformer inserted " + hookCalls +
+                    " publish hooks for " + initReturns + " normal init exits.");
         }
 
         ClassNode integrated = readClass(archive, alias("integratedServerClasses", mappingIndex));
-        requireMethod(integrated, "publishServerMethods", 3);
+        if (isConfigured("multiplayerScopeClasses")) {
+            requireMethod(integrated, "publishServerMethods", 2);
+            ClassNode scope = readClass(archive,
+                alias("multiplayerScopeClasses", mappingIndex).replace('.', '/'));
+            boolean lanConstantFound = false;
+            for (FieldNode field : scope.fields) {
+                if (isAlias("lanMultiplayerScopeFields", field.name) &&
+                    (field.access & Opcodes.ACC_STATIC) != 0 &&
+                    field.desc.equals("L" + scope.name + ";")) {
+                    lanConstantFound = true;
+                }
+            }
+            if (!lanConstantFound) {
+                throw new IllegalStateException("Required native LAN scope constant is missing: " + scope.name);
+            }
+        } else {
+            requireMethod(integrated, "publishServerMethods", 3);
+        }
+        if (isConfigured("publishServerDescriptors")) {
+            requireMethodDescriptor(integrated, "publishServerMethods", "publishServerDescriptors");
+        }
 
         ClassNode server = readClass(archive, alias("serverClasses", mappingIndex));
         requireMethod(server, "getWorldDataMethods", 0);
@@ -227,12 +358,22 @@ public final class PortableIdentityPreflight {
         ClassNode minecraft = readClass(archive, alias("minecraftClasses", mappingIndex).replace('.', '/'));
         requireMethod(minecraft, "minecraftGetInstanceMethods", 0);
         requireMethod(minecraft, "getSingleplayerServerMethods", 0);
-        requireMethod(minecraft, "setScreenMethods", 1);
+        if (isConfigured("minecraftScheduleMethods")) {
+            requireInheritedMethod(archive, minecraft, "minecraftScheduleMethods", "(Ljava/lang/Runnable;)V");
+        }
         requireMethod(minecraft, "updateTitleMethods", 0);
         requireField(minecraft, "minecraftGuiFields");
 
         ClassNode gui = readClass(archive, alias("guiClasses", mappingIndex));
-        requireMethod(gui, "guiChatMethods", 0);
+        requireMethod("true".equals(System.getProperty("minecraft.portable.identity.setScreenOnGui"))
+            ? gui : minecraft, "setScreenMethods", 1);
+        if (isConfigured("guiHudFields")) {
+            requireField(gui, "guiHudFields");
+            ClassNode hud = readClass(archive, alias("hudClasses", mappingIndex));
+            requireMethod(hud, "guiChatMethods", 0);
+        } else {
+            requireMethod(gui, "guiChatMethods", 0);
+        }
 
         ClassNode chat = readClass(archive, alias("chatComponentClasses", mappingIndex));
         requireMethod(chat, "chatAddMessageMethods", 1);
@@ -520,19 +661,66 @@ public final class PortableIdentityPreflight {
     }
 
     /**
-     * Both movement handlers, and only those two.
+     * Both movement checks, and only those two.
      *
      * Counted rather than found, because the same question is asked four more
      * times in this class about things that are not a guest's to decide. One
-     * call means a handler was missed and the guest is still thrown back in
-     * vehicles or on foot; more than two means the answer was widened past
-     * where it was meant to go.
+     * call means one mode was missed. On newer clients the on-foot handler
+     * delegates to a private helper; its sole caller must be that handler.
+     * The total stays two, with no hooks in unrelated permission sites.
      */
-    private static void verifyGuestMovementTargets(String className, byte[] transformed) throws Exception {
+    private static void verifyGuestMovementTargets(
+        String className, byte[] original, byte[] transformed) throws Exception {
+        ClassNode source = new ClassNode();
+        new ClassReader(original).accept(source, 0);
         ClassNode patched = new ClassNode();
         new ClassReader(transformed).accept(patched, 0);
+        java.util.Set<String> sites = new java.util.HashSet<>();
+        for (String mode : new String[] { "Player", "Vehicle" }) {
+            MethodNode handler = null;
+            for (MethodNode method : source.methods) {
+                if (isAlias("handleMove" + mode + "Methods", method.name) &&
+                    isAlias("handleMove" + mode + "Descriptors", method.desc)) {
+                    if (handler != null) throw new IllegalStateException("Ambiguous movement handler in " + className);
+                    handler = method;
+                }
+            }
+            if (handler == null) throw new IllegalStateException("Missing movement handler in " + className);
+            MethodNode site = handler;
+            if (mode.equals("Player") && movementOwnerChecks(handler) == 0) {
+                site = null;
+                if (isConfigured("movementCheckHelperMethods") && isConfigured("movementCheckHelperDescriptors")) {
+                    for (MethodNode candidate : source.methods) {
+                        if ((candidate.access & Opcodes.ACC_PRIVATE) == 0 ||
+                            (candidate.access & Opcodes.ACC_STATIC) != 0 || !candidate.desc.equals("(Z)Z") ||
+                            !isAlias("movementCheckHelperMethods", candidate.name) ||
+                            !isAlias("movementCheckHelperDescriptors", candidate.desc) ||
+                            movementIndirectReference(source, candidate)) continue;
+                        int callers = 0;
+                        boolean onlyPlayer = true;
+                        for (MethodNode caller : source.methods) {
+                            for (var instruction : caller.instructions) {
+                                if (instruction instanceof MethodInsnNode call && call.owner.equals(source.name) &&
+                                    call.name.equals(candidate.name) && call.desc.equals(candidate.desc)) {
+                                    callers++;
+                                    onlyPlayer &= (caller == handler || movementPositionCaller(source, caller, handler)) &&
+                                        (call.getOpcode() == Opcodes.INVOKEVIRTUAL || call.getOpcode() == Opcodes.INVOKESPECIAL);
+                                }
+                            }
+                        }
+                        if (callers != 1 || !onlyPlayer || movementOwnerChecks(candidate) != 1) continue;
+                        if (site != null) throw new IllegalStateException("Ambiguous movement helper in " + className);
+                        site = candidate;
+                    }
+                }
+            }
+            if (site == null || movementOwnerChecks(site) != 1)
+                throw new IllegalStateException("No exclusive owner check for " + mode + " movement in " + className);
+            sites.add(site.name + site.desc);
+        }
         int trusted = 0;
         for (MethodNode method : patched.methods) {
+            int methodTrusted = 0;
             for (var instruction = method.instructions.getFirst();
                  instruction != null;
                  instruction = instruction.getNext()) {
@@ -540,10 +728,75 @@ public final class PortableIdentityPreflight {
                     call.owner.equals("minecraft/portable/identity/PortableGuestMovementHooks") &&
                     call.name.equals("trustedLikeTheHost")) {
                     trusted++;
+                    methodTrusted++;
+                }
+            }
+            boolean selected = sites.contains(method.name + method.desc);
+            requireHookCount(className + "." + method.name + method.desc,
+                "trustedLikeTheHost", methodTrusted, selected ? 1 : 0);
+            if (selected && movementOwnerChecks(method) != 0)
+                throw new IllegalStateException("Movement owner check was not replaced in " + className + "." + method.name);
+        }
+        requireHookCount(className, "trustedLikeTheHost", trusted, 2);
+    }
+
+    private static int movementOwnerChecks(MethodNode method) {
+        int count = 0;
+        for (var instruction : method.instructions) {
+            if (instruction instanceof MethodInsnNode call && call.getOpcode() == Opcodes.INVOKEVIRTUAL &&
+                call.desc.equals("()Z") && isAlias("singleplayerOwnerMethods", call.name) &&
+                isAlias("singleplayerOwnerClasses", call.owner)) count++;
+        }
+        return count;
+    }
+
+    private static boolean movementPositionCaller(ClassNode owner, MethodNode position, MethodNode player) {
+        if ((position.access & Opcodes.ACC_PRIVATE) == 0 ||
+            (position.access & Opcodes.ACC_STATIC) != 0 || !position.desc.equals("(DDDFFZZ)V") ||
+            !isConfigured("movementPositionMethods") || !isConfigured("movementPositionDescriptors") ||
+            !isConfigured("movementTeleportAckMethods") || !isConfigured("movementTeleportAckDescriptors") ||
+            !isAlias("movementPositionMethods", position.name) || !isAlias("movementPositionDescriptors", position.desc) ||
+            movementIndirectReference(owner, position)) return false;
+        int playerCalls = 0;
+        int acknowledgementCalls = 0;
+        for (MethodNode caller : owner.methods) {
+            for (var instruction : caller.instructions) {
+                if (!(instruction instanceof MethodInsnNode call) || !call.owner.equals(owner.name) ||
+                    !call.name.equals(position.name) || !call.desc.equals(position.desc)) continue;
+                if (call.getOpcode() != Opcodes.INVOKEVIRTUAL && call.getOpcode() != Opcodes.INVOKESPECIAL) return false;
+                if (caller == player) playerCalls++;
+                else if ((caller.access & Opcodes.ACC_STATIC) == 0 &&
+                    isAlias("movementTeleportAckMethods", caller.name) && isAlias("movementTeleportAckDescriptors", caller.desc))
+                    acknowledgementCalls++;
+                else return false;
+            }
+        }
+        return playerCalls == 1 && acknowledgementCalls == 1;
+    }
+
+    private static boolean movementIndirectReference(ClassNode owner, MethodNode target) {
+        for (MethodNode caller : owner.methods) {
+            for (var instruction : caller.instructions) {
+                if (instruction instanceof org.objectweb.asm.tree.LdcInsnNode constant &&
+                    movementReference(constant.cst, owner.name, target)) return true;
+                if (instruction instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode dynamic) {
+                    if (movementReference(dynamic.bsm, owner.name, target)) return true;
+                    for (Object argument : dynamic.bsmArgs) if (movementReference(argument, owner.name, target)) return true;
                 }
             }
         }
-        requireHookCount(className, "trustedLikeTheHost", trusted, 2);
+        return false;
+    }
+
+    private static boolean movementReference(Object value, String owner, MethodNode target) {
+        if (value instanceof org.objectweb.asm.Handle handle) return handle.getOwner().equals(owner) &&
+            handle.getName().equals(target.name) && handle.getDesc().equals(target.desc);
+        if (value instanceof org.objectweb.asm.ConstantDynamic dynamic) {
+            if (movementReference(dynamic.getBootstrapMethod(), owner, target)) return true;
+            for (int index = 0; index < dynamic.getBootstrapMethodArgumentCount(); index++)
+                if (movementReference(dynamic.getBootstrapMethodArgument(index), owner, target)) return true;
+        }
+        return false;
     }
 
     private static void requireHookCount(String className, String hook, int found, int wanted) {
@@ -588,6 +841,33 @@ public final class PortableIdentityPreflight {
             }
         }
         throw new IllegalStateException("Required identity method is missing: " + owner.name + "." + String.join("/", names));
+    }
+
+    private static void requireMethodDescriptor(
+        ClassNode owner, String methodsProperty, String descriptorsProperty) {
+        var names = Arrays.asList(aliases(methodsProperty));
+        var descriptors = Arrays.asList(aliases(descriptorsProperty));
+        for (MethodNode method : owner.methods) {
+            if (names.contains(method.name) && descriptors.contains(method.desc)) return;
+        }
+        throw new IllegalStateException(
+            "Required identity method descriptor is missing: " + owner.name + "." +
+                String.join("/", names) + " " + descriptors);
+    }
+
+    private static void requireInheritedMethod(
+        ZipFile archive, ClassNode owner, String propertyName, String descriptor) throws Exception {
+        var names = Arrays.asList(aliases(propertyName));
+        for (ClassNode current = owner; current != null;) {
+            for (MethodNode method : current.methods) {
+                if (names.contains(method.name) && method.desc.equals(descriptor)) return;
+            }
+            current = current.superName == null || current.superName.equals("java/lang/Object")
+                ? null : readClass(archive, current.superName);
+        }
+        throw new IllegalStateException(
+            "Required inherited identity method is missing: " + owner.name + "." +
+                String.join("/", names) + descriptor);
     }
 
     private static int argumentCount(String descriptor) {

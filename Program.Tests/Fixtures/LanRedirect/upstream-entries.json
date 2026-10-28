@@ -1,0 +1,72 @@
+[
+  {
+    "Entry": "link/e4steam/mixin/ShareToLanScreenMixin.class",
+    "SizeBytes": 1621,
+    "Sha256": "b8f0b900cfa574ea334ae26c8e8dc6fbc5eb5826944895f9a2951808fe0eada7",
+    "SourceJar": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+    "SourceJarSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0"
+  },
+  {
+    "Entry": "link/e4steam/mixin/MultiplayerOptionsScreenMixin.class",
+    "SizeBytes": 1681,
+    "Sha256": "3f55740518026f2cbba748ef4a8c5cfc9a71a236b11525f2101f2502e097d504",
+    "SourceJar": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+    "SourceJarSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0"
+  },
+  {
+    "Entry": "link/e4steam/mixin/WorldOptionsScreenMixin.class",
+    "SizeBytes": 4194,
+    "Sha256": "ac8d1f501b09a82621c2d15a14a9a675c9d1001fd3281d8438b5a8d34196dae3",
+    "SourceJar": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+    "SourceJarSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0"
+  },
+  {
+    "Entry": "META-INF/LICENSE-e4steam.txt",
+    "SizeBytes": 11339,
+    "Sha256": "4b6cef4f8f9a16cc15680ec9d7d23d95c9fdd270331610eefd86c7522c975b36",
+    "SourceJar": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+    "SourceJarSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0"
+  },
+  {
+    "Entry": "org/spongepowered/asm/mixin/injection/callback/CallbackInfo.class",
+    "SizeBytes": 2515,
+    "Sha256": "5f29db64eaf381791a43a06b8f6489ec63b9101801b3708b366f54c82f262292",
+    "SourceJar": "sponge-mixin-0.17.4+mixin.0.8.7.jar",
+    "SourceJarSha256": "1f0ae44db7295f8626f33b1dc0ad7f043d8954a8d6847247875fcc5dfcecc934"
+  },
+  {
+    "Entry": "org/spongepowered/asm/mixin/injection/callback/Cancellable.class",
+    "SizeBytes": 322,
+    "Sha256": "7df30bbd44cbb73a65c10c0d542757fa66aa5b1454731b5d7555f8a89ad2ce5e",
+    "SourceJar": "sponge-mixin-0.17.4+mixin.0.8.7.jar",
+    "SourceJarSha256": "1f0ae44db7295f8626f33b1dc0ad7f043d8954a8d6847247875fcc5dfcecc934"
+  },
+  {
+    "Entry": "org/spongepowered/asm/mixin/injection/callback/CancellationException.class",
+    "SizeBytes": 824,
+    "Sha256": "77c885b5aa095dfb721d490d4428e05a8c13be8cb6e0435ef700990c8e39cca2",
+    "SourceJar": "sponge-mixin-0.17.4+mixin.0.8.7.jar",
+    "SourceJarSha256": "1f0ae44db7295f8626f33b1dc0ad7f043d8954a8d6847247875fcc5dfcecc934"
+  },
+  {
+    "Entry": "org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable.class",
+    "SizeBytes": 5022,
+    "Sha256": "5e7defe493529f043b713855628acc0edf232c8d293b5a4fc566c31b6f5acf58",
+    "SourceJar": "sponge-mixin-0.17.4+mixin.0.8.7.jar",
+    "SourceJarSha256": "1f0ae44db7295f8626f33b1dc0ad7f043d8954a8d6847247875fcc5dfcecc934"
+  },
+  {
+    "Entry": "LICENSE.txt",
+    "SizeBytes": 1046,
+    "Sha256": "8f71659370c5268d9a1dc962a46232540e8fca63462586d8efaa95aab492a208",
+    "SourceJar": "sponge-mixin-0.17.4+mixin.0.8.7.jar",
+    "SourceJarSha256": "1f0ae44db7295f8626f33b1dc0ad7f043d8954a8d6847247875fcc5dfcecc934"
+  },
+  {
+    "Entry": "forge/link/e4steam/mixin/ShareToLanScreenMixin.class",
+    "SizeBytes": 1608,
+    "Sha256": "021407d44fa742a98c7329b9626df355033e78d8f212c128ee460b109f5bed8c",
+    "SourceJar": "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
+    "SourceJarSha256": "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc"
+  }
+]

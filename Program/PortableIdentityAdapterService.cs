@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,20 +14,29 @@ public sealed class PortableIdentityAdapterService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int AdapterCacheGeneration = 11;
+    private const int AdapterCacheGeneration = 12;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
+    internal const string ManagedTransportFingerprintProperty = "managedTransportFingerprint";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly IdentityAdapterMappingService _mappings;
+    private readonly Func<PackRuntimeDescriptor, SteamTransportBuild?> _transportSelection;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public PortableIdentityAdapterService(AppPaths paths, Logger logger)
+        : this(paths, logger, SteamTransportCatalog.Find)
+    {
+    }
+
+    internal PortableIdentityAdapterService(
+        AppPaths paths, Logger logger, Func<PackRuntimeDescriptor, SteamTransportBuild?> transportSelection)
     {
         _paths = paths;
         _logger = logger;
         _mappings = new IdentityAdapterMappingService(paths);
+        _transportSelection = transportSelection;
     }
 
     public async Task<IReadOnlyList<string>> PrepareJvmArgumentsAsync(
@@ -46,6 +56,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             var adapterHash = HashFile(adapterPath);
             var statePath = Path.Combine(directory, "adapter-state.json");
             var state = ReadState(statePath);
+            var managedTransportFingerprint = ComputeManagedTransportFingerprint(
+                _transportSelection(runtime.Descriptor), targetRoot);
             WindowTitleSettings titleSettings;
             try
             {
@@ -75,6 +87,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     };
                 var targets = core?.Targets.ToList() ?? [];
                 var mappingPath = core?.MappingPath;
+                properties[ManagedTransportFingerprintProperty] = managedTransportFingerprint;
                 properties["windowTitleEnabled"] = "false";
                 properties["windowTitleText"] = titleSettings.Text;
                 properties["windowTitleConfigSha256"] = titleSettings.ContentSha256;
@@ -485,6 +498,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
         // A title-only result may follow a transient core/skin preflight failure.
         // Keep its title for this launch, but retry the core on the next one.
         if (state.Properties.GetValueOrDefault("enabled", "true") == "false") return false;
+        if (state.Properties.GetValueOrDefault(ManagedTransportFingerprintProperty, "") !=
+            ComputeManagedTransportFingerprint(_transportSelection(runtime.Descriptor), targetRoot)) return false;
         if (state.SchemaVersion != AdapterCacheGeneration ||
             !string.Equals(state.DescriptorHash, runtime.Descriptor.DescriptorHash, StringComparison.Ordinal) ||
             !string.Equals(state.TargetRoot, targetRoot, StringComparison.OrdinalIgnoreCase) ||
@@ -540,6 +555,37 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         var info = new FileInfo(path);
         return info.Exists && info.Length == size && info.LastWriteTimeUtc.Ticks == lastWriteUtcTicks;
+    }
+
+    internal static string ComputeManagedTransportFingerprint(SteamTransportBuild? selected, string gameDirectory)
+    {
+        var text = new StringBuilder("managed-transport-v1\0");
+        if (selected is null)
+        {
+            text.Append("none");
+        }
+        else
+        {
+            var actual = "missing";
+            try
+            {
+                var path = Path.Combine(gameDirectory, "mods", selected.FileName);
+                if (File.Exists(path)) actual = HashFile(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                actual = "unreadable";
+            }
+            // Paths and timestamps are deliberately excluded. Every reuse
+            // hashes the actual bytes, including same-size/same-mtime changes.
+            text.Append(selected.Version).Append('\0')
+                .Append(selected.CacheFileId.ToString(CultureInfo.InvariantCulture)).Append('\0')
+                .Append(selected.FileName).Append('\0')
+                .Append(selected.SizeBytes.ToString(CultureInfo.InvariantCulture)).Append('\0')
+                .Append(selected.Sha256.ToLowerInvariant()).Append('\0')
+                .Append(actual);
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))).ToLowerInvariant();
     }
 
     private static string ResolveConsoleJava(string configuredPath)

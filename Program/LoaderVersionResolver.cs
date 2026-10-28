@@ -1,156 +1,242 @@
+using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace Minecraft;
 
-/// <summary>
-/// Asks each loader's own publisher which version of it to use for a version of
-/// Minecraft.
-/// </summary>
-/// <remarks>
-/// The other half of letting somebody build a pack by putting jars in a folder.
-/// The mods say which loader and which Minecraft; nothing in them says which
-/// build of that loader, and there is no sensible way for a player to know
-/// either - Fabric is on 0.19.3 while NeoForge for the same game is on 21.1.248
-/// and Forge on 47.4.10, and none of those numbers can be guessed from the
-/// others.
-///
-/// Each publisher answers a different way, so each is asked its own way:
-/// Fabric and Quilt both serve a JSON list of loader builds for a given game
-/// version, newest first, with a <c>stable</c> flag; NeoForge publishes a Maven
-/// metadata file whose versions carry the game version in their own numbering
-/// (Minecraft 1.21.1 is NeoForge 21.1.x); and Forge publishes a promotions file
-/// keyed by game version, where "recommended" is the build it stands behind and
-/// "latest" is the newest one.
-///
-/// Nothing here is cached to disk. A pack is resolved once, when its manifest is
-/// written, and from then on the manifest holds the answer - which is the point
-/// of writing one.
-/// </remarks>
-public sealed class LoaderVersionResolver(HttpClient httpClient, Logger? logger = null)
+internal interface IAutoRuntimeCatalog
 {
-    private const string FabricMeta = "https://meta.fabricmc.net/v2/versions/loader/";
-    private const string QuiltMeta = "https://meta.quiltmc.org/v3/versions/loader/";
-    private const string NeoForgeMaven =
-        "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
-    private const string ForgePromotions =
-        "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json";
+    Task<IReadOnlyList<string>> MinecraftVersionsAsync(CancellationToken token);
+    Task<IReadOnlyList<string>> LoaderVersionsAsync(PackLoaderKind loader, string minecraft, CancellationToken token);
+    Task<string?> FmlVersionAsync(PackLoaderKind loader, string minecraft, string loaderVersion, CancellationToken token);
+    Task<string?> FabricApiVersionAsync(string minecraft, string quiltVersion, CancellationToken token);
+}
 
-    private static readonly Regex MavenVersion = new(@"<version>([^<]+)</version>", RegexOptions.Compiled);
+/// <summary>Official release metadata, cached for one launcher session.</summary>
+public sealed class LoaderVersionResolver(HttpClient httpClient, Logger? logger = null, AppPaths? paths = null) : IAutoRuntimeCatalog
+{
+    private const string MinecraftManifest = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+    private const string NeoMaven = "https://maven.neoforged.net/releases/net/neoforged/neoforge/";
+    private const string ForgeMaven = "https://maven.minecraftforge.net/net/minecraftforge/forge/";
+    private static readonly Regex Stable = new(@"^\d+(?:\.\d+)+$", RegexOptions.Compiled);
+    private readonly ConcurrentDictionary<string, Task<string>> _responses = new(StringComparer.Ordinal);
+    private readonly QuiltFabricApiResolver _quiltFabricApi = new(httpClient, paths);
+    private readonly TimeSpan _downloadStallTimeout = ManagedComponentService.DownloadStallTimeout;
 
-    /// <summary>
-    /// The version of <paramref name="loader"/> to use for
-    /// <paramref name="minecraftVersion"/>, or null when its publisher has none
-    /// or could not be reached.
-    /// </summary>
-    public async Task<string?> ResolveAsync(
-        PackLoaderKind loader,
-        string minecraftVersion,
-        CancellationToken token)
+    internal LoaderVersionResolver(HttpClient httpClient, Logger? logger, AppPaths? paths, TimeSpan downloadStallTimeout)
+        : this(httpClient, logger, paths)
     {
-        if (loader == PackLoaderKind.Vanilla) return null;
-        try
+        if (downloadStallTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(downloadStallTimeout));
+        _downloadStallTimeout = downloadStallTimeout;
+    }
+
+    public Task<string?> FabricApiVersionAsync(string minecraft, string quiltVersion, CancellationToken token) =>
+        _quiltFabricApi.ResolveAsync(minecraft, quiltVersion, token);
+
+    public async Task<string?> ResolveAsync(PackLoaderKind loader, string minecraftVersion, CancellationToken token)
+    {
+        try { return (await LoaderVersionsAsync(loader, minecraftVersion, token).ConfigureAwait(false)).FirstOrDefault(); }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidDataException or TaskCanceledException)
         {
-            var version = loader switch
-            {
-                PackLoaderKind.Fabric => await FromLoaderMetaAsync(FabricMeta, minecraftVersion, token),
-                PackLoaderKind.Quilt => await FromLoaderMetaAsync(QuiltMeta, minecraftVersion, token),
-                PackLoaderKind.NeoForge => await FromNeoForgeAsync(minecraftVersion, token),
-                PackLoaderKind.Forge => await FromForgeAsync(minecraftVersion, token),
-                _ => null
-            };
-            if (version is not null)
-            {
-                logger?.Info($"{loader} for Minecraft {minecraftVersion} is {version}, as its publisher lists it.");
-            }
-            else
-            {
-                logger?.Warn($"{loader} publishes no build for Minecraft {minecraftVersion}.");
-            }
-            return version;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            logger?.Warn($"Which {loader} to use for Minecraft {minecraftVersion} could not be looked up: {ex.Message}");
+            token.ThrowIfCancellationRequested();
+            logger?.Warn("Could not resolve " + loader + " for Minecraft " + minecraftVersion + ": " + ex.Message);
             return null;
         }
     }
 
-    /// <summary>Fabric and Quilt: newest stable, or newest of any kind.</summary>
-    private async Task<string?> FromLoaderMetaAsync(string endpoint, string minecraftVersion, CancellationToken token)
+    public async Task<IReadOnlyList<string>> MinecraftVersionsAsync(CancellationToken token)
     {
-        var json = await httpClient.GetStringAsync(endpoint + Uri.EscapeDataString(minecraftVersion), token)
-            .ConfigureAwait(false);
-        using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind != JsonValueKind.Array) return null;
-
-        string? newestOfAny = null;
-        foreach (var entry in document.RootElement.EnumerateArray())
-        {
-            if (!entry.TryGetProperty("loader", out var loader) ||
-                !loader.TryGetProperty("version", out var version) ||
-                version.ValueKind != JsonValueKind.String)
-            {
-                continue;
-            }
-
-            var value = version.GetString();
-            if (string.IsNullOrWhiteSpace(value)) continue;
-            newestOfAny ??= value;
-            // The list is newest first, so the first stable one is the answer.
-            if (loader.TryGetProperty("stable", out var stable) && stable.ValueKind == JsonValueKind.True)
-            {
-                return value;
-            }
-        }
-        return newestOfAny;
+        using var json = JsonDocument.Parse(await ReadAsync(MinecraftManifest, token).ConfigureAwait(false));
+        if (!json.RootElement.TryGetProperty("versions", out var versions) || versions.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Официальный каталог Minecraft не содержит список выпусков.");
+        return versions.EnumerateArray().Where(entry => entry.TryGetProperty("type", out var type) && type.GetString() == "release")
+            .Select(entry => entry.GetProperty("id").GetString()).Where(version => version is not null && Stable.IsMatch(version))
+            .Select(version => version!).Distinct(StringComparer.Ordinal).OrderByDescending(version => version, VersionOrder.Instance).ToArray();
     }
 
-    /// <summary>
-    /// NeoForge numbers itself after the game: Minecraft 1.21.1 is NeoForge
-    /// 21.1.x, and 1.21 with no patch is 21.0.x.
-    /// </summary>
-    private async Task<string?> FromNeoForgeAsync(string minecraftVersion, CancellationToken token)
+    public async Task<IReadOnlyList<string>> LoaderVersionsAsync(PackLoaderKind loader, string minecraft, CancellationToken token)
     {
-        var parts = VersionOrder.Parse(minecraftVersion);
-        if (parts.Length < 2 || parts[0] != 1) return null;
-        var prefix = $"{parts[1]}.{(parts.Length > 2 ? parts[2] : 0)}.";
-
-        var xml = await httpClient.GetStringAsync(NeoForgeMaven, token).ConfigureAwait(false);
-        string? best = null;
-        foreach (Match match in MavenVersion.Matches(xml))
+        if (!Stable.IsMatch(minecraft)) throw new InvalidDataException("Для автоподбора нужен стабильный выпуск Minecraft.");
+        if (loader is PackLoaderKind.Fabric or PackLoaderKind.Quilt)
         {
-            var version = match.Groups[1].Value.Trim();
-            if (!version.StartsWith(prefix, StringComparison.Ordinal)) continue;
-            // Betas are published beside releases and are not what a pack that
-            // was never told anything should be given.
-            if (version.Contains("beta", StringComparison.OrdinalIgnoreCase)) continue;
-            if (best is null || VersionOrder.CompareVersions(version, best) > 0) best = version;
+            var endpoint = loader == PackLoaderKind.Fabric ? "https://meta.fabricmc.net/v2/versions/loader/" : "https://meta.quiltmc.org/v3/versions/loader/";
+            using var document = JsonDocument.Parse(await ReadAsync(endpoint + Uri.EscapeDataString(minecraft), token).ConfigureAwait(false));
+            if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("Некорректный каталог загрузчика " + loader + ".");
+            return document.RootElement.EnumerateArray().Where(entry => entry.TryGetProperty("loader", out _))
+                .Select(entry => entry.GetProperty("loader"))
+                .Where(entry => entry.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.String && Stable.IsMatch(version.GetString()!) &&
+                    // Quilt has no stable flag. Numeric releases exclude -beta/-rc;
+                    // an explicit false in either publisher's response still wins.
+                    (entry.TryGetProperty("stable", out var stable) ? stable.ValueKind == JsonValueKind.True : loader == PackLoaderKind.Quilt))
+                .Select(entry => entry.GetProperty("version").GetString()!).Distinct(StringComparer.Ordinal)
+                .OrderByDescending(version => version, VersionOrder.Instance).ToArray();
         }
-        return best;
+        if (loader is not (PackLoaderKind.Forge or PackLoaderKind.NeoForge)) return [];
+        var endpointMaven = loader == PackLoaderKind.Forge ? ForgeMaven : NeoMaven;
+        var xml = XDocument.Parse(await ReadAsync(endpointMaven + "maven-metadata.xml", token).ConfigureAwait(false));
+        var published = xml.Descendants().Where(element => element.Name.LocalName == "version").Select(element => element.Value.Trim());
+        if (loader == PackLoaderKind.NeoForge)
+        {
+            var parts = VersionOrder.Parse(minecraft);
+            var prefix = parts[0] == 1
+                ? parts[1] + "." + (parts.Length > 2 ? parts[2] : 0) + "."
+                : string.Join('.', parts.Length == 2 ? parts.Concat([0]) : parts) + ".";
+            return published.Where(version => Stable.IsMatch(version) && version.StartsWith(prefix, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal).OrderByDescending(version => version, VersionOrder.Instance).ToArray();
+        }
+        return published.Where(version => version.StartsWith(minecraft + "-", StringComparison.Ordinal))
+            .Select(version => version[(minecraft.Length + 1)..])
+            .Where(version => Stable.IsMatch(ComparisonVersion(loader, minecraft, version)))
+            .Distinct(StringComparer.Ordinal).OrderByDescending(version => ComparisonVersion(loader, minecraft, version), VersionOrder.Instance).ToArray();
     }
 
-    /// <summary>Forge: the build it recommends, else the newest it has.</summary>
-    private async Task<string?> FromForgeAsync(string minecraftVersion, CancellationToken token)
+    public async Task<string?> FmlVersionAsync(PackLoaderKind loader, string minecraft, string loaderVersion, CancellationToken token)
     {
-        var json = await httpClient.GetStringAsync(ForgePromotions, token).ConfigureAwait(false);
-        using var document = JsonDocument.Parse(json);
-        if (!document.RootElement.TryGetProperty("promos", out var promos) ||
-            promos.ValueKind != JsonValueKind.Object)
+        if (loader is not (PackLoaderKind.Forge or PackLoaderKind.NeoForge)) return null;
+        var artifact = loader == PackLoaderKind.Forge && !loaderVersion.StartsWith(minecraft + "-", StringComparison.Ordinal)
+            ? minecraft + "-" + loaderVersion : loaderVersion;
+        var endpoint = (loader == PackLoaderKind.Forge ? ForgeMaven : NeoMaven) + Uri.EscapeDataString(artifact) + "/";
+        var stem = (loader == PackLoaderKind.Forge ? "forge-" : "neoforge-") + artifact;
+        var pom = XDocument.Parse(await ReadAsync(endpoint + Uri.EscapeDataString(stem) + ".pom", token).ConfigureAwait(false));
+        foreach (var dependency in pom.Descendants().Where(element => element.Name.LocalName == "dependency"))
         {
-            return null;
-        }
-
-        foreach (var suffix in new[] { "-recommended", "-latest" })
-        {
-            if (promos.TryGetProperty(minecraftVersion + suffix, out var value) &&
-                value.ValueKind == JsonValueKind.String)
+            string? Part(string name) => dependency.Elements().FirstOrDefault(element => element.Name.LocalName == name)?.Value.Trim();
+            var group = Part("groupId");
+            var name = Part("artifactId");
+            var version = Part("version");
+            if (group == "net.neoforged.fancymodloader" && name == "loader" && version is not null && Stable.IsMatch(version)) return version;
+            if (name == "javafmllanguage" && group is "net.minecraftforge" or "net.neoforged" && version is not null)
             {
-                var version = value.GetString();
-                if (!string.IsNullOrWhiteSpace(version)) return version;
+                var language = version.StartsWith(minecraft + "-", StringComparison.Ordinal) ? version[(minecraft.Length + 1)..] : version;
+                if (Stable.IsMatch(language)) return language;
+            }
+        }
+        // Forge's official POM often contains no dependencies at all. Its
+        // installer still names the exact language loader in install_profile.json.
+        return await InstallerFmlVersionAsync(loader, minecraft, artifact, endpoint, stem, token).ConfigureAwait(false);
+    }
+
+    private async Task<string?> InstallerFmlVersionAsync(PackLoaderKind loader, string minecraft, string artifact,
+        string endpoint, string stem, CancellationToken token)
+    {
+        var fileName = stem + "-installer.jar";
+        var uri = endpoint + Uri.EscapeDataString(fileName);
+        var checksum = (await ReadAsync(uri + ".sha1", token).ConfigureAwait(false)).Trim()
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+        if (!Regex.IsMatch(checksum, "^[0-9a-fA-F]{40}$")) throw new InvalidDataException("Некорректная контрольная сумма установщика загрузчика.");
+        string? cache = paths is null ? null : Path.Combine(paths.SharedRuntime, "installers", loader.ToString().ToLowerInvariant(), artifact, fileName);
+        if (cache is not null) ValidateCachePath(cache);
+        byte[]? bytes = null;
+        if (cache is not null && File.Exists(cache) && new FileInfo(cache).Length <= MaximumInstallerBytes)
+        {
+            var existing = await File.ReadAllBytesAsync(cache, token).ConfigureAwait(false);
+            if (InstallerMatches(existing, checksum)) bytes = existing;
+        }
+        if (bytes is null)
+        {
+            bytes = await DownloadAsync(uri, MaximumInstallerBytes, token).ConfigureAwait(false);
+            if (!InstallerMatches(bytes, checksum)) throw new InvalidDataException("Установщик загрузчика не совпал с контрольной суммой издателя.");
+            if (cache is not null)
+            {
+                ValidateCachePath(cache);
+                AtomicFile.WriteAllBytes(cache, bytes);
+            }
+        }
+        using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
+        foreach (var name in new[] { "version.json", "install_profile.json" })
+        {
+            var entry = archive.GetEntry(name);
+            if (entry is null) continue;
+            if (entry.Length > 4 * 1024 * 1024) throw new InvalidDataException("Метаданные установщика слишком большие.");
+            using var stream = entry.Open();
+            using var json = JsonDocument.Parse(stream);
+            foreach (var owner in new[] {json.RootElement}.Concat(json.RootElement.TryGetProperty("versionInfo", out var info) ? [info] : []))
+            {
+                if (!owner.TryGetProperty("libraries", out var libraries) || libraries.ValueKind != JsonValueKind.Array) continue;
+                foreach (var library in libraries.EnumerateArray())
+                {
+                    if (!library.TryGetProperty("name", out var coordinate) || coordinate.ValueKind != JsonValueKind.String) continue;
+                    var pieces = coordinate.GetString()!.Split(':');
+                    if (pieces.Length < 3) continue;
+                    if (pieces[0] == "net.neoforged.fancymodloader" && pieces[1] == "loader" && Stable.IsMatch(pieces[2])) return pieces[2];
+                    if (pieces[1] != "javafmllanguage" || pieces[0] is not ("net.minecraftforge" or "net.neoforged")) continue;
+                    var language = pieces[2].StartsWith(minecraft + "-", StringComparison.Ordinal)
+                        ? pieces[2][(minecraft.Length + 1)..] : pieces[2];
+                    if (Stable.IsMatch(language)) return language;
+                }
             }
         }
         return null;
+    }
+
+    private const long MaximumInstallerBytes = 96L * 1024 * 1024;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5350", Justification = "Forge and NeoForge publish SHA-1 checksums for their installer artifacts.")]
+    private static bool InstallerMatches(byte[] bytes, string sha1) =>
+        string.Equals(Convert.ToHexString(SHA1.HashData(bytes)), sha1, StringComparison.OrdinalIgnoreCase);
+
+    private void ValidateCachePath(string cache)
+    {
+        paths!.EnsureUnderRoot(cache);
+        for (var current = cache; !string.Equals(current, paths.Root, StringComparison.OrdinalIgnoreCase); current = Path.GetDirectoryName(current)!)
+        {
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Кеш загрузчика не должен проходить через ссылки.");
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { }
+        }
+    }
+
+    internal static string ComparisonVersion(PackLoaderKind loader, string minecraft, string version) =>
+        loader == PackLoaderKind.Forge && version.EndsWith("-" + minecraft, StringComparison.Ordinal)
+            ? version[..^(minecraft.Length + 1)] : version;
+
+    private async Task<string> ReadAsync(string uri, CancellationToken token)
+    {
+        var task = _responses.GetOrAdd(uri, _ => FetchAsync(uri, token));
+        try { return await task.WaitAsync(token).ConfigureAwait(false); }
+        catch { _responses.TryRemove(new KeyValuePair<string, Task<string>>(uri, task)); throw; }
+    }
+
+    private async Task<string> FetchAsync(string uri, CancellationToken token)
+    {
+        var bytes = await DownloadAsync(uri, 8 * 1024 * 1024, token).ConfigureAwait(false);
+        return System.Text.Encoding.UTF8.GetString(bytes);
+    }
+
+    private async Task<byte[]> DownloadAsync(string uri, long maximum, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(_downloadStallTimeout);
+        try
+        {
+            using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("Данные загрузчика слишком большие.");
+            deadline.CancelAfter(_downloadStallTimeout);
+            await using var input = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            deadline.CancelAfter(_downloadStallTimeout);
+            using var output = new MemoryStream();
+            var buffer = new byte[8192];
+            int count;
+            while ((count = await input.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) != 0)
+            {
+                if (output.Length + count > maximum) throw new InvalidDataException("Данные загрузчика слишком большие.");
+                output.Write(buffer, 0, count);
+                deadline.CancelAfter(_downloadStallTimeout);
+            }
+            return output.ToArray();
+        }
+        catch (OperationCanceledException exception) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new HttpRequestException("Загрузка остановилась: источник не передаёт данные загрузчика.", exception);
+        }
     }
 }

@@ -165,6 +165,9 @@ public partial class MainWindow : Window
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
+            // Run outside SettingsService.Load's recovery fallback: a rename
+            // collision must stop startup without resetting personal settings.
+            new PackRenameMigration(_paths, _logger).Apply(_settings, PackCatalogService.SeedSources(), _settingsService.Save);
             StartupTrace.Mark("настройки");
             // The four the first frame cannot do without: the builds list and
             // the pack hash it asks for, the worlds list, and the preset the
@@ -1343,7 +1346,7 @@ public partial class MainWindow : Window
             var settings = RequireSettings();
             if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
             {
-                throw new InvalidOperationException($"No Minecraft pack with {PackManifestService.ManifestFileName} was found in ./Minecraft/Packs.");
+                throw new InvalidOperationException("В папке Minecraft/Packs не найдены сборки. Добавьте папку сборки с подпапкой mods.");
             }
 
             if (!string.Equals(settings.ClientRelativePath, build.RelativePath, StringComparison.OrdinalIgnoreCase))

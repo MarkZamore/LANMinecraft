@@ -113,7 +113,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
         var originalPack = service.Find(CatalogHost.Folder)!;
         Assert.Equal(3, originalPack.ModCount);
-        Assert.Equal("Minecraft 26.2 (3 мода)", originalPack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 (3 мода)", originalPack.VersionLabel);
         var before = host.Requests.Count;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource(CatalogHost.Folder));
@@ -137,7 +137,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
         await nextStartup.RefreshOnceAsync();
         Assert.Equal(5, nextStartup.Find(CatalogHost.Folder)!.ModCount);
-        Assert.Equal("Minecraft 26.2 (5 модов)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
+        Assert.Equal("Minecraft 26.3 (5 модов)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
         Assert.Equal(3, originalPack.ModCount);
 
         // Discovery persists without an EXE update, but offline presentation
@@ -183,7 +183,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Null(service.Find("My Custom Pack"));
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource("My Custom Pack"));
         Assert.Contains("revision", service.SessionManifest(host.Source), StringComparison.Ordinal);
@@ -197,7 +197,7 @@ public sealed class PackCatalogTests : IDisposable
         await service.RefreshOnceAsync(new CancellationToken(true));
         var count = host.Requests.Count;
         Assert.True(service.IsReady);
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         await service.RefreshOnceAsync();
         Assert.Equal(count, host.Requests.Count);
     }
@@ -241,7 +241,7 @@ public sealed class PackCatalogTests : IDisposable
         using var host = new CatalogHost { InvalidIndex = true };
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
-        Assert.Equal(4, service.Packs.Count);
+        Assert.Equal(5, service.Packs.Count);
         Assert.DoesNotContain(service.Sources, p => p.RelativePath.Contains("..", StringComparison.Ordinal));
         Assert.False(PackCatalogService.ValidFolder("../escape"));
     }
@@ -314,7 +314,7 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new Thickness(0, 0, -20, 0), view.Margin);
             AssertLibraryScrollGutter(list);
             var cards = panel.Children.Cast<FrameworkElement>().ToArray();
-            Assert.Equal(4, cards.Length);
+            Assert.Equal(5, cards.Length);
             Assert.All(cards, card =>
             {
                 Assert.Equal(240, card.ActualWidth, 3);
@@ -655,7 +655,7 @@ public sealed class PackCatalogTests : IDisposable
             {
                 var hash = Convert.ToHexStringLower(SHA256.HashData(_bundle));
                 var payloadHash = Convert.ToHexStringLower(SHA256.HashData(Payload));
-                return Json(new { schemaVersion = 1, revision = CorruptBundle ? "changed" : _revision, minecraftVersion = "26.2",
+                return Json(new { schemaVersion = 1, revision = CorruptBundle ? "changed" : _revision, minecraftVersion = "26.3",
                     files = new[] { new { path = "mods/payload.jar", sha256 = payloadHash, sizeBytes = Payload.Length } },
                     assets = new[] { new { name = "payload.jar", kind = "jar", sha256 = payloadHash, sizeBytes = Payload.Length, covers = new[] { "mods/payload.jar" } } },
                     library = new { name = "library-" + hash + ".zip", sha256 = hash, sizeBytes = _bundle.Length, revision = CorruptBundle ? "changed" : _revision } });

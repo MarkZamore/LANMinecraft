@@ -129,6 +129,37 @@ if ($skinTarget) {
     }
 }
 
+# Modern immutable profiles need more than the domain-rule test. Replay the
+# actual profile constructor and authlib reader/unpacker with their own
+# manifest's dependency versions, rather than whichever Guava happens to be
+# first in the shared library cache.
+$modernAuthlibTargets = @($targets | Where-Object {
+    $_.ClassName -eq 'com/mojang/authlib/GameProfile' -and
+    [IO.Path]::GetFileName($_.JarPath) -match '^authlib-(\d+)\.' -and
+    [int]$Matches[1] -ge 6
+} | Group-Object JarPath | ForEach-Object { $_.Group[0] })
+foreach ($profileTarget in $modernAuthlibTargets) {
+    $matchingVersion = $null
+    $versionsRoot = Join-Path $installRoot 'Launcher\Shared\versions'
+    foreach ($versionDirectory in Get-ChildItem -LiteralPath $versionsRoot -Directory | Sort-Object Name) {
+        $manifestPath = Join-Path $versionDirectory.FullName ($versionDirectory.Name + '.json')
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { continue }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        foreach ($library in $manifest.libraries) {
+            if ($library.name -notlike 'com.mojang:authlib:*') { continue }
+            $runtimeJar = [IO.Path]::GetFullPath((Join-Path $installRoot ('Launcher\Shared\libraries\' + $library.downloads.artifact.path)))
+            if ($runtimeJar -eq [IO.Path]::GetFullPath($profileTarget.JarPath)) {
+                $matchingVersion = $versionDirectory.Name
+                break
+            }
+        }
+        if ($matchingVersion) { break }
+    }
+    if (-not $matchingVersion) { throw 'No installed runtime manifest matches the authlib selected by this adapter state.' }
+    & (Join-Path $projectRoot 'tools\Test-PortableSkinProfiles.ps1') `
+        -InstallRoot $installRoot -AdapterJar $AdapterJar -JavaHome $JavaHome -MinecraftVersions @($matchingVersion)
+}
+
 Write-Host ""
 if ($failed -gt 0) {
     throw "$failed preflight check(s) failed."
