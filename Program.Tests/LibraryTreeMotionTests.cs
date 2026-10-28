@@ -72,6 +72,10 @@ public sealed class LibraryTreeMotionTests
             try
             {
                 window.Show();
+                // The loose fixture bypasses App's constructor. Match its
+                // software renderer for this HWND without changing other tests.
+                var target = Assert.IsType<System.Windows.Interop.HwndTarget>(PresentationSource.FromVisual(window)?.CompositionTarget);
+                target.RenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
                 Frame(40);
                 var content = Assert.IsType<Border>(item.Template.FindName("ChildrenReveal", item));
                 var toggle = Assert.IsType<System.Windows.Controls.Primitives.ToggleButton>(item.Template.FindName("Expander", item));
@@ -83,9 +87,15 @@ public sealed class LibraryTreeMotionTests
                 var focus = FocusManager.GetFocusedElement(window);
 
                 item.IsExpanded = true;
-                Frame(45);
                 if (SystemParameters.ClientAreaAnimation)
                 {
+                    // Attaching the clock leaves Height at zero until WPF's
+                    // first animation tick. A wall-clock delay cannot establish
+                    // that tick for an offscreen window under concurrent load.
+                    WaitFor(() => content.HasAnimatedProperties && double.IsFinite(content.Height) && content.Height > 0,
+                        TimeSpan.FromSeconds(2), () => $"WPF did not expose nonzero reveal progress while the animation was running. " +
+                            $"Height={content.Height:R}; ActualHeight={content.ActualHeight:R}; Animated={content.HasAnimatedProperties}; " +
+                            $"ChildDesiredHeight={content.Child.DesiredSize.Height:R}; Loaded={item.IsLoaded}; Renderer={target.RenderMode}.");
                     Assert.True(content.HasAnimatedProperties);
                     Assert.True(content.Height > 0);
                     var currentHeight = content.Height;
@@ -96,6 +106,7 @@ public sealed class LibraryTreeMotionTests
                     item.IsExpanded = true;
                     Assert.InRange(Math.Abs(currentHeight - content.Height), 0, 0.01);
                 }
+                else Frame(45);
                 Frame(200);
                 Assert.Equal(Visibility.Visible, content.Visibility);
                 Assert.True(double.IsNaN(content.Height));
@@ -129,6 +140,13 @@ public sealed class LibraryTreeMotionTests
             }
             finally { window.Close(); }
         });
+    }
+
+    private static void WaitFor(Func<bool> condition, TimeSpan timeout, Func<string> failure)
+    {
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition() && elapsed.Elapsed < timeout) Frame(10);
+        Assert.True(condition(), condition() ? null : failure());
     }
 
     private static void Frame(int milliseconds)

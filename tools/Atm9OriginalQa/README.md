@@ -18,6 +18,18 @@ preparation is deliberately exercised and captured by the snapshot. This is a
 technical offline QA identity; it does not test the launcher's Steam account
 identity or claim an actual Steam guest/overlay connection.
 
+After those services, integrated mode invokes the production
+`LocalAiProvisioningService.PrepareAsync` and applies its environment bindings
+before starting Java. A pack without `launcher/local-ai.json` receives the same
+ordinary preparation as before. A descriptor prepares the pinned official
+runtime/model and instance configuration in this independent fixture; Verity
+inside Java owns backend start and shutdown. The harness starts no backend and
+does not keep it alive. `local-ai-preparation.json` records file provisioning
+separately from readiness, Russian conversation and game/backend lifetime;
+those runtime checks require their own evidence. No microphone is enabled by
+the harness. File preparation may perform the same large first-run downloads
+as the production Play action.
+
 The Java agent is launch-only test instrumentation, never a Forge mod or a
 distribution file. It performs no bytecode transformation. Until a coordinator
 writes the ready marker after observing a fully loaded title menu, it does not
@@ -46,6 +58,19 @@ harness build. After that worktree's full Java/launcher build has completed,
 backfill DLLs from another checkout. Integrated launches use the production
 `MinecraftProcessService.PlayingHere` helper to supply the dashed local QA UUID,
 so normal chunk pacing recognizes the host's own client.
+
+The existing tool also accepts `prepare ... --pack-name "All the Mods 9 Modified"`
+to create that separate profile in a new independent fixture. Its source must
+be the final frozen pack, never an old Modified installation. The recorded
+launcher assembly hash must belong to the selected isolated launcher worktree.
+
+For a focused runtime mixin diagnostic, append the standalone `--mixin-export`
+flag to `launch`. It passes the standard Mixin export setting with the filter
+`net.minecraft.world.item.BoatItem`; the resulting native transformed class is
+under the fixture game's `.mixin.out` directory. The flag introduces no
+transformer or payload injection, changes no mixin requirements, and grants no
+compatibility PASS. Preserve the class and relevant startup warning for caller
+analysis. Export files remain private QA evidence, not pack content.
 
 Skin verification is explicitly opt-in. `--skin-from-install-root <installation>`
 reads only the chosen `SkinPath` from that installation's settings; alternatively

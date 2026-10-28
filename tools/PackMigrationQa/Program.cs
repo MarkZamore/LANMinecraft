@@ -14,18 +14,21 @@ if (args.Length > 0 && args[0] == "history-proof")
     return;
 }
 if (args.Length < 2) throw new ArgumentException(
-    "Usage: PackMigrationQa <workspace> <dist-directory> [new-artifacts-output] [--legacy]");
+    "Usage: PackMigrationQa <workspace> <dist-directory> [new-artifacts-output] [--legacy] " +
+    "[--pack <relative-path>] [--source-repo <repository>]");
 var workspace = Path.GetFullPath(args[0]);
 var dist = Path.GetFullPath(args[1]);
-var legacy = args.Contains("--legacy", StringComparer.Ordinal);
-var output = Path.GetFullPath(args.Skip(2).FirstOrDefault(arg => arg != "--legacy") ??
-    Path.Combine(workspace, "artifacts", "atm9-original", "qa-migration",
+var options = MigrationOptions.Parse(args.Skip(2).ToArray());
+var pack = options.Pack;
+var source = new PackSyncSource("MarkZamore", options.SourceRepository, "pack-latest");
+var legacy = options.Legacy;
+var output = Path.GetFullPath(options.Output ??
+    Path.Combine(workspace, "artifacts", pack == "All The Mods 9" ? "atm9-original" : "pack-migration", "qa-migration",
         DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + (legacy ? "-legacy" : "-state")));
 var artifacts = Path.Combine(workspace, "artifacts") + Path.DirectorySeparatorChar;
 if (!output.StartsWith(artifacts, StringComparison.OrdinalIgnoreCase) || Directory.Exists(output))
     throw new ArgumentException("Use a new independent output directory inside workspace artifacts.");
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
-const string pack = "All The Mods 9";
 var originals = new AppPaths(workspace);
 var paths = new AppPaths(Path.Combine(output, "installation"));
 paths.Ensure();
@@ -35,7 +38,8 @@ Directory.CreateDirectory(canonical);
 Directory.CreateDirectory(game);
 var reportPath = Path.Combine(output, "report.json");
 var report = new Dictionary<string, object?> { ["status"] = "RUNNING", ["legacyWithoutState"] = legacy,
-    ["personalWorldsCopied"] = false, ["originalInstallationModified"] = false };
+    ["personalWorldsCopied"] = false, ["originalInstallationModified"] = false,
+    ["packRelativePath"] = pack, ["source"] = source };
 void WriteReport() => File.WriteAllText(reportPath, JsonSerializer.Serialize(report, json));
 WriteReport();
 try
@@ -60,7 +64,7 @@ try
         File.WriteAllText(Path.Combine(game, ".portable-instance.json"), oldInstanceState.GetRawText());
     }
     File.WriteAllText(Path.Combine(canonical, PortablePackSyncService.SourceMarkerFileName),
-        JsonSerializer.Serialize(new { schemaVersion = 1, owner = "MarkZamore", repo = "All-The-Mods-9", tag = "pack-latest" }));
+        JsonSerializer.Serialize(new { schemaVersion = 1, owner = source.Owner, repo = source.Repo, tag = source.Tag }));
     File.WriteAllText(Path.Combine(output, "source-snapshot.json"), JsonSerializer.Serialize(snapshots, json));
     report["copiedManagedFiles"] = snapshots.Count;
     report["copiedManagedBytes"] = snapshots.Sum(file => file.SizeBytes);
@@ -99,7 +103,7 @@ try
     report["reusableFiles"] = reusable.Length;
     report["reusableBytes"] = reusable.Sum(file => file.SizeBytes);
     var logger = new Logger(paths.LogFile);
-    using var handler = new LocalReleaseHandler(dist);
+    using var handler = new LocalReleaseHandler(dist, source);
     using var http = new HttpClient(handler);
     var service = new PortablePackSyncService(paths, logger, http);
     var changed = expected.Where(file => !Matches(canonical, file)).ToArray();
@@ -273,10 +277,16 @@ static async Task ProveHistoricalHelpers(string[] options)
     Check(installation.Contains(Path.DirectorySeparatorChar + "artifacts" + Path.DirectorySeparatorChar,
         StringComparison.OrdinalIgnoreCase), "Historical proof requires a disposable artifacts fixture.");
     var output = Path.GetDirectoryName(installation)!;
-    Check(ReadJson(Path.Combine(output, "report.json")).GetProperty("status").GetString() == "PASS",
+    var migrationReport = ReadJson(Path.Combine(output, "report.json"));
+    Check(migrationReport.GetProperty("status").GetString() == "PASS",
         "Historical proof requires a previously passed independent migration fixture.");
     var paths = new AppPaths(installation);
-    const string packName = "All The Mods 9";
+    var packName = migrationReport.TryGetProperty("packRelativePath", out var packValue)
+        ? packValue.GetString()! : "All The Mods 9";
+    var source = migrationReport.TryGetProperty("source", out var sourceValue)
+        ? JsonSerializer.Deserialize<PackSyncSource>(sourceValue.GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!
+        : new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest");
     var canonical = paths.CombineUnderPacks(packName);
     var game = paths.CombineUnderInstances(packName);
     var historical = ReadJson(options[2]);
@@ -300,7 +310,7 @@ static async Task ProveHistoricalHelpers(string[] options)
             File.Copy(Safe(options[3], helper.Path), target);
         }
     }
-    using var handler = new LocalReleaseHandler(Path.GetFullPath(options[1]));
+    using var handler = new LocalReleaseHandler(Path.GetFullPath(options[1]), source);
     using var http = new HttpClient(handler);
     var logger = new Logger(paths.LogFile);
     var sync = new PortablePackSyncService(paths, logger, http);
@@ -330,7 +340,43 @@ static async Task ProveHistoricalHelpers(string[] options)
 sealed record Snapshot(string Kind, string Path, long SizeBytes, string Sha256);
 sealed record ExpectedFile(string Path, long SizeBytes, string Sha256);
 
-sealed class LocalReleaseHandler(string dist) : HttpMessageHandler
+sealed record MigrationOptions(string Pack, string SourceRepository, bool Legacy, string? Output)
+{
+    public static MigrationOptions Parse(string[] arguments)
+    {
+        var pack = "All The Mods 9";
+        var repository = "All-The-Mods-9";
+        var repositorySpecified = false;
+        var legacy = false;
+        string? output = null;
+        for (var index = 0; index < arguments.Length; index++)
+        {
+            var argument = arguments[index];
+            if (argument == "--legacy") { legacy = true; continue; }
+            if (argument is "--pack" or "--source-repo")
+            {
+                if (++index >= arguments.Length || string.IsNullOrWhiteSpace(arguments[index]) ||
+                    arguments[index].StartsWith("--", StringComparison.Ordinal))
+                    throw new ArgumentException("Missing value for " + argument);
+                if (argument == "--pack") pack = arguments[index];
+                else { repository = arguments[index]; repositorySpecified = true; }
+                continue;
+            }
+            if (argument.StartsWith("--", StringComparison.Ordinal) || output is not null)
+                throw new ArgumentException("Unexpected migration QA argument: " + argument);
+            output = argument;
+        }
+        if (Path.IsPathRooted(pack) || pack.Split('/', '\\').Any(part => part is "" or "." or ".."))
+            throw new ArgumentException("--pack must be a relative pack path.");
+        if (!pack.Equals("All The Mods 9", StringComparison.OrdinalIgnoreCase) && !repositorySpecified)
+            throw new ArgumentException("A different --pack requires its own explicit --source-repo.");
+        if (repository.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('-' or '_' or '.')))
+            throw new ArgumentException("--source-repo must be a GitHub repository name.");
+        return new MigrationOptions(pack, repository, legacy, output);
+    }
+}
+
+sealed class LocalReleaseHandler(string dist, PackSyncSource source) : HttpMessageHandler
 {
     public string? InterruptAsset { get; set; }
     public bool Offline { get; set; }
@@ -341,7 +387,7 @@ sealed class LocalReleaseHandler(string dist) : HttpMessageHandler
         Interlocked.Increment(ref Requests);
         var uri = request.RequestUri!;
         if (uri.Scheme != "https" || uri.Host != "github.com" ||
-            !uri.AbsolutePath.StartsWith("/MarkZamore/All-The-Mods-9/releases/download/pack-latest/", StringComparison.Ordinal))
+            !uri.AbsolutePath.StartsWith($"/{source.Owner}/{source.Repo}/releases/download/{source.Tag}/", StringComparison.Ordinal))
             throw new InvalidOperationException("Unexpected network request in offline migration QA.");
         if (Offline) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
         var name = Uri.UnescapeDataString(uri.Segments[^1]);

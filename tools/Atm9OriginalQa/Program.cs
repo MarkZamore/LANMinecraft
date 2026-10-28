@@ -15,7 +15,7 @@ using Minecraft;
 // a marked independent fixture. No personal instance/world is an input.
 if (args.Length < 2) throw new ArgumentException(
     "Usage: prepare <fixture-root> --source <pack> [--cache-root <installation>] [--mode baseline|integrated]; " +
-    "launch <fixture-root> --label <new-label> --agent <qa-agent.jar> [--heap 10240] [--world ATM9Qa...] [--fresh-world ATM9Qa...]; " +
+    "launch <fixture-root> --label <new-label> --agent <qa-agent.jar> [--heap 10240] [--world ATM9Qa...] [--fresh-world ATM9Qa...] [--mixin-export]; " +
     "adopt <migration-installation> --cache-root <prepared-qa-installation>; ready|stop|audit <fixture-root> --label <label>");
 var command = args[0];
 var root = FixturePath(args[1]);
@@ -286,6 +286,31 @@ else
     if (!Directory.Exists(game)) CopyTree(paths.CombineUnderPacks(packName), game, skipInfrastructure: true);
     instance = new PackInstanceContext(paths.CombineUnderPacks(packName), game, prepared.ClientJarPath);
 }
+var home = Path.Combine(root, "java-home");
+Directory.CreateDirectory(home);
+// Reproduce the production order: prepare the ordinary instance, managed
+// transport and identity adapter before the optional file-only AI bootstrap.
+// The author Verity runtime in Java owns its backend; the harness owns no AI
+// process handle and the original pack without a descriptor is unchanged.
+var localAi = fixture.Mode == "integrated"
+    ? await new LocalAiProvisioningService(paths).PrepareAsync(
+        instance.PackDirectory, instance.GameDirectory, home, Progress(), preparing.Token)
+    : null;
+if (localAi is not null)
+{
+    var requirements = LocalAiProvisioningService.ReadRequirements(instance.PackDirectory)!;
+    Write(Path.Combine(evidence, "local-ai-preparation.json"), new
+    {
+        provider = "ollama", requirements.Model, requirements.Language,
+        modPath = requirements.ModPath, modSha256 = requirements.ModSha256,
+        endpoint = localAi.Endpoint.AbsoluteUri,
+        localAi.ModelsDirectory, localAi.RuntimeExecutable,
+        productionFilesPrepared = true, nativeBackendStartedByHarness = false,
+        nativeBackendReadinessVerified = false, gameBackendLifetimeVerified = false,
+        microphoneActivatedByHarness = false,
+        processOwner = "Verity in Java; file-only production provisioning has no launcher process lifetime."
+    });
+}
 if (world is not null && !File.Exists(Path.Combine(instance.GameDirectory, "saves", world, "level.dat")))
     throw new IOException("QuickPlay requires an existing disposable QA world created and saved in this fixture.");
 if (freshWorld is not null && Directory.Exists(Path.Combine(instance.GameDirectory, "saves", freshWorld)))
@@ -300,7 +325,6 @@ var launchPath = new MinecraftPath(instance.GameDirectory)
     Assets = launcher.MinecraftPath.Assets, Resource = launcher.MinecraftPath.Resource, Runtime = launcher.MinecraftPath.Runtime
 };
 launchPath.CreateDirs();
-var home = Path.Combine(root, "java-home");
 var temporary = Path.Combine(root, "java-temp", label);
 Directory.CreateDirectory(home); Directory.CreateDirectory(temporary);
 var session = MSession.CreateOfflineSession(player);
@@ -375,6 +399,13 @@ var arguments = new List<string>
     "-Dlanminecraft.qa.evidence=" + evidence, "-javaagent:" + agent
 };
 if (freshWorld is not null) arguments.Add("-Dlanminecraft.qa.freshWorld=" + freshWorld);
+if (options.ContainsKey("mixin-export"))
+{
+    // Standard Mixin diagnostics only. Export the actual runtime BoatItem after
+    // the normal mixin chain; no QA transformer or replacement class is added.
+    arguments.Add("-Dmixin.debug.export=true");
+    arguments.Add("-Dmixin.debug.export.filter=net.minecraft.world.item.BoatItem");
+}
 if (skinRegistryPath is not null) arguments.Add("-Dminecraft.portable.skin.registry=" + skinRegistryPath);
 if (fixture.Mode == "integrated")
 {
@@ -423,6 +454,7 @@ foreach (var pair in new Dictionary<string, string>
 {
     Directory.CreateDirectory(pair.Value); process.StartInfo.Environment[pair.Key] = pair.Value;
 }
+localAi?.ConfigureEnvironment(process.StartInfo.Environment);
 using var output = new StreamWriter(Path.Combine(evidence, "console.log"), false, new UTF8Encoding(false)) { AutoFlush = true };
 var outputGate = new object();
 void Record(string? value) { if (value is not null) lock (outputGate) output.WriteLine(value); }
@@ -444,6 +476,11 @@ Write(Path.Combine(evidence, "launch-evidence.json"), new
     steamOverlayDisabled = process.StartInfo.Environment.ContainsKey("SteamNoOverlayUIDrawing"),
     javaArgumentFileUsed = true,
     selectedSkinPrepared = skinRegistryPath is not null,
+    localAiFilesPrepared = localAi is not null,
+    localAiEnvironmentConfigured = localAi is not null,
+    nativeAiBackendReadinessVerified = false,
+    mixinDebugExport = options.ContainsKey("mixin-export"),
+    mixinDebugExportFilter = options.ContainsKey("mixin-export") ? "net.minecraft.world.item.BoatItem" : null,
     note = "Isolated offline QA identity. Native observation/creation/stop agent is test instrumentation, never a shipped mod."
 });
 Console.WriteLine($"CLIENT_STARTED pid={process.Id} mode={fixture.Mode} label={label}");
@@ -465,10 +502,16 @@ static IProgress<RuntimePreparationProgress> Progress() => new Progress<RuntimeP
 static Dictionary<string, string> ParseOptions(string[] values)
 {
     var result = new Dictionary<string, string>(StringComparer.Ordinal);
-    for (var i = 0; i < values.Length; i += 2)
+    for (var i = 0; i < values.Length; i++)
     {
+        if (values[i] == "--mixin-export")
+        {
+            if (!result.TryAdd("mixin-export", "true")) throw new ArgumentException("Duplicate --mixin-export flag.");
+            continue;
+        }
         if (!values[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= values.Length || !result.TryAdd(values[i][2..], values[i + 1]))
             throw new ArgumentException("Options must be unique --name value pairs.");
+        i++;
     }
     return result;
 }

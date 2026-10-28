@@ -57,6 +57,9 @@ public sealed class CatalogDescription
     public string Revision { get; set; } = "";
     public string Summary { get; set; } = "";
     public string Description { get; set; } = "";
+    public string ModsTitle { get; set; } = "Моды";
+    public List<string>? VisibleModIds { get; set; }
+    public List<string>? BaseModIds { get; set; }
     public List<CatalogMod> Mods { get; set; } = [];
 }
 public sealed class CatalogModNode(CatalogMod mod, string? packId = null)
@@ -94,13 +97,19 @@ public sealed class CatalogPack
     }
     public string Summary => Content.Summary;
     public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
+    public string ModsTitle => Content.ModsTitle;
     public List<CatalogModNode> Mods { get; } = [];
     public List<CatalogModNode> Libraries { get; } = [];
+    public bool HasLibraries => Libraries.Count != 0;
 
     public void BuildTree()
     {
-        var nodes = Content.Mods.ToDictionary(m => m.Id, m => new CatalogModNode(m, Content.Id), StringComparer.Ordinal);
-        foreach (var mod in Content.Mods.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
+        Mods.Clear();
+        Libraries.Clear();
+        var visible = Content.VisibleModIds?.ToHashSet(StringComparer.Ordinal);
+        var presented = Content.Mods.Where(mod => visible is null || visible.Contains(mod.Id)).ToList();
+        var nodes = presented.ToDictionary(m => m.Id, m => new CatalogModNode(m, Content.Id), StringComparer.Ordinal);
+        foreach (var mod in presented.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             var node = nodes[mod.Id];
             if (mod.IsLibrary) Libraries.Add(node);
@@ -428,11 +437,23 @@ public sealed class PackCatalogService
             string.IsNullOrWhiteSpace(doc.MinecraftVersion) || string.IsNullOrWhiteSpace(doc.Description) ||
             doc.Description.Length > 32000 || doc.Summary is null || doc.Summary.Length > 1000 || doc.Mods is null || doc.Mods.Count > 10000)
             throw new InvalidDataException("Invalid library metadata or revision.");
+        if (string.IsNullOrWhiteSpace(doc.ModsTitle) || doc.ModsTitle.Length > 120 ||
+            doc.VisibleModIds is { Count: > 10000 } || doc.BaseModIds is { Count: > 10000 })
+            throw new InvalidDataException("Invalid mod list presentation.");
         var mods = new Dictionary<string, CatalogMod>(StringComparer.Ordinal);
         foreach (var mod in doc.Mods)
             if (mod is null || string.IsNullOrWhiteSpace(mod.Id) || string.IsNullOrWhiteSpace(mod.Name) ||
                 (mod.WebsiteUrl is not null && CatalogModPages.Parse(mod.WebsiteUrl) is null) ||
                 mod.Name.Length > 256 || !mods.TryAdd(mod.Id, mod)) throw new InvalidDataException("Invalid/duplicate mod.");
+        var baseIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in doc.BaseModIds ?? [])
+            if (string.IsNullOrWhiteSpace(id) || !baseIds.Add(id))
+                throw new InvalidDataException("Invalid/duplicate base mod ID.");
+        var visibleIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in doc.VisibleModIds ?? [])
+            if (string.IsNullOrWhiteSpace(id) || !visibleIds.Add(id) || baseIds.Contains(id) ||
+                !mods.TryGetValue(id, out var mod) || !mod.IsLoadedMod || mod.IsLibrary)
+                throw new InvalidDataException("Invalid visible mod ID.");
         foreach (var mod in doc.Mods)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal) { mod.Id };
