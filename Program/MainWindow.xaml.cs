@@ -485,7 +485,8 @@ public partial class MainWindow : Window
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
-                Name = PackDisplayName.For(Path.GetFileName(path), Path.GetFileName(path)),
+                Name = _catalog?.Find(Path.GetFileName(path))?.Name ??
+                       PackDisplayName.For(Path.GetFileName(path), Path.GetFileName(path)),
                 RelativePath = Path.GetRelativePath(_paths.Packs, path),
                 FullPath = path
             })
@@ -509,7 +510,8 @@ public partial class MainWindow : Window
             {
                 // A star, not a word: the list is narrow and the name is what a
                 // player reads. Pressing Play on a starred build downloads it.
-                Name = PackDisplayName.For(known.RelativePath, known.RelativePath) + "*",
+                Name = (_catalog?.Find(known.RelativePath)?.Name ??
+                        PackDisplayName.For(known.RelativePath, known.RelativePath)) + "*",
                 RelativePath = known.RelativePath,
                 FullPath = _paths.CombineUnderPacks(known.RelativePath),
                 IsInstalled = false
@@ -525,6 +527,7 @@ public partial class MainWindow : Window
         var buildPathsMatch = _builds.Count == builds.Count &&
             _builds.Zip(builds).All(pair =>
                 string.Equals(pair.First.RelativePath, pair.Second.RelativePath, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(pair.First.Name, pair.Second.Name, StringComparison.Ordinal) &&
                 pair.First.IsInstalled == pair.Second.IsInstalled);
         if (!buildPathsMatch)
         {

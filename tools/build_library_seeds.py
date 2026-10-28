@@ -21,7 +21,7 @@ def main():
     # Generate and verify every pack before replacing any embedded seed.
     verified = []
     for entry in index["packs"]:
-        pack = args.packs_root / entry["relativePath"]
+        pack = args.packs_root / entry.get("sourcePath", entry["relativePath"])
         revision = subprocess.check_output(["git", "-C", str(pack), "rev-parse", "HEAD"], text=True).strip()
         stage = args.staging / entry["id"]
         descriptor = stage_library(pack, stage, revision)
