@@ -1,4 +1,7 @@
 using System.Text;
+using System.Diagnostics;
+using System.Text.Json;
+using CmlLib.Core.Version;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -58,11 +61,18 @@ public sealed class MinecraftLaunchPolicyTests : IDisposable
         Assert.Contains("-XX:+ExitOnOutOfMemoryError", arguments);
     }
 
-    private List<string> BuildArguments(string pack, string game) =>
-        MinecraftProcessService.BuildBaseJvmArguments(
-            pack, game, Path.Combine(_root, "temp"), Path.Combine(_root, "home"),
+    private IReadOnlyList<string> BuildArguments(string pack, string game)
+    {
+        var arguments = MinecraftProcessService.BuildBaseJvmArguments(
+            game, Path.Combine(_root, "temp"), Path.Combine(_root, "home"),
             Path.Combine(_root, "skin-registry.json"), Path.Combine(_root, "identity-registry.json"),
             "86ecf95a-859f-4ca4-8576-c25eb8fc39cb");
+        var start = new ProcessStartInfo();
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        start.ArgumentList.Add("PolicyFixtureMain");
+        using var version = new JsonVersion(JsonDocument.Parse("""{"id":"fixture","mainClass":"PolicyFixtureMain"}"""), new JsonVersionParserOptions());
+        return MinecraftProcessService.CompleteJvmArguments(start, version, pack);
+    }
 
     private static void Write(string root, string relative, string content)
     {

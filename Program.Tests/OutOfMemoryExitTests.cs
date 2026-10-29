@@ -166,10 +166,11 @@ public sealed class OutOfMemoryExitTests
     [Fact]
     public void EverySessionLeavesWhatItActuallyHeld()
     {
-        // The line the game is started with names both ends of the heap, since
-        // they are no longer the same number on a machine short of memory.
+        // Log the actual completed JVM prefix, including both heap bounds.
+        // FinalJvmArgumentsTests checks those bounds through CML and Java;
+        // the application suffix holds session credentials and is excluded.
         Assert.Contains(
-            "-Xms{InitialHeapMbFor(maximumRamMb)}M -Xmx{maximumRamMb}M",
+            "finalArguments.TakeWhile(argument => argument != mainClass)",
             Read("Program", "MinecraftProcessService.cs"),
             StringComparison.Ordinal);
 

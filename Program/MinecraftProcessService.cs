@@ -4,9 +4,12 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using CmlLib.Core;
 using CmlLib.Core.Auth;
 using CmlLib.Core.ProcessBuilder;
+using CmlLib.Core.Version;
 
 namespace Minecraft;
 
@@ -569,8 +572,8 @@ public sealed class MinecraftProcessService
         // handed to the JVM. MArgument does not override ToString, so logging
         // the arguments themselves printed the type name sixty times over.
         var extraJvmArguments = BuildBaseJvmArguments(
-            packDir, gameDir, javaTempDir, javaHome, skinRegistryPath, identityRegistryPath,
-            identityContext.MinecraftUuid, _packJvmArguments);
+            gameDir, javaTempDir, javaHome, skinRegistryPath, identityRegistryPath,
+            identityContext.MinecraftUuid);
         extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
         extraJvmArguments.AddRange(JavaCompatibilityArguments);
         extraJvmArguments.AddRange(identityJvmArguments);
@@ -584,9 +587,6 @@ public sealed class MinecraftProcessService
         // report carries holds the command line. There are no secrets in this
         // list, and it is the first thing worth reading when a game will not
         // start.
-        _logger.Info(
-            $"Java: -Xms{InitialHeapMbFor(maximumRamMb)}M -Xmx{maximumRamMb}M " +
-            string.Join(' ', extraJvmArguments));
         // The size the window is built at, rather than the size it is dragged
         // to half a second after it appears; see StartupClientSize.
         var startupSize = _gameWindowPlacement.StartupClientSize();
@@ -614,6 +614,20 @@ public sealed class MinecraftProcessService
             ExtraJvmArguments = extraJvmArguments.Select(argument => new MArgument(argument)).ToList()
         };
         var minecraftProcess = launcher.BuildProcess(profile, launchOption);
+        IReadOnlyList<string> finalArguments;
+        try
+        {
+            finalArguments = CompleteJvmArguments(minecraftProcess.StartInfo, profile, packDir, _packJvmArguments);
+        }
+        catch
+        {
+            minecraftProcess.Dispose();
+            throw;
+        }
+        // Only JVM options are logged. The application suffix includes the
+        // session/access token and must never enter this diagnostic line.
+        var mainClass = profile.GetInheritedProperty(version => version.MainClass);
+        _logger.Info("Java: " + string.Join(' ', finalArguments.TakeWhile(argument => argument != mainClass)));
         minecraftProcess.StartInfo.WorkingDirectory = gameDir;
         minecraftProcess.StartInfo.UseShellExecute = false;
         minecraftProcess.StartInfo.CreateNoWindow = true;
@@ -1410,14 +1424,12 @@ public sealed class MinecraftProcessService
     }
 
     internal static List<string> BuildBaseJvmArguments(
-        string packDir,
         string gameDir,
         string javaTempDir,
         string javaHome,
         string skinRegistryPath,
         string identityRegistryPath,
-        string? minecraftUuid,
-        PackJvmArgumentsService? packJvmArguments = null)
+        string? minecraftUuid)
     {
         var extraJvmArguments = new List<string>
         {
@@ -1490,15 +1502,102 @@ public sealed class MinecraftProcessService
             // generation on its own. Anything added here must survive
             // `java <flag> -version` on the pinned runtime first.
         };
-        // What the pack itself asks to be started with. ModernFix's lazy model
-        // loading used to be added here for every pack, because it is worth a
-        // great deal of heap and can only be set as a property - and that was a
-        // decision about somebody else's mods, made for versions the launcher
-        // had not met. It belongs to the pack, and now lives in its
-        // launcher/jvm-args.txt.
-        extraJvmArguments.AddRange((packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir));
         return extraJvmArguments;
     }
+
+    /// <summary>Apply explicit pack options after every native default, before the inherited main class.</summary>
+    internal static IReadOnlyList<string> CompleteJvmArguments(
+        ProcessStartInfo startInfo,
+        IVersion version,
+        string packDir,
+        PackJvmArgumentsService? packJvmArguments = null)
+    {
+        var original = ReadProcessArguments(startInfo);
+        var mainClass = version.GetInheritedProperty(item => item.MainClass);
+        if (string.IsNullOrEmpty(mainClass)) throw new InvalidOperationException("The launch profile has no inherited main class.");
+        var boundaries = original.Select((argument, index) => (argument, index))
+            .Where(item => item.argument == mainClass).Select(item => item.index).ToArray();
+        if (boundaries.Length != 1)
+            throw new InvalidOperationException("The native main-class boundary is missing or ambiguous; pack JVM options were not applied.");
+        var packArguments = (packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir);
+        if (packArguments.Count == 0) return original;
+        var insertion = boundaries[0];
+        // A modular/JAR launch keeps its entrypoint switch beside its operand.
+        if (insertion > 0 && original[insertion - 1] is "-m" or "--module" or "-jar") insertion--;
+
+        // Java itself uses the last -Dkey. Only keys explicitly supplied by the
+        // pack are collapsed; unrelated properties and all non-property flags
+        // preserve their native order. Repeated pack keys also keep their last value.
+        var lastPackProperty = new Dictionary<string, int>(StringComparer.Ordinal);
+        var packPropertyKeys = new string?[packArguments.Count];
+        for (var index = 0; index < packArguments.Count; index++)
+        {
+            if (JvmOptionsWithValue.Contains(packArguments[index]))
+            {
+                if (index + 1 >= packArguments.Count) throw new InvalidOperationException("A pack JVM option has no value.");
+                index++;
+            }
+            else if (JvmPropertyName(packArguments[index]) is { } key)
+            {
+                packPropertyKeys[index] = key;
+                lastPackProperty[key] = index;
+            }
+        }
+        var final = new List<string>();
+        for (var index = 0; index < insertion; index++)
+        {
+            var argument = original[index];
+            if (JvmOptionsWithValue.Contains(argument))
+            {
+                if (index + 1 >= insertion) throw new InvalidOperationException("A native JVM option has no value before the main class.");
+                final.Add(argument); final.Add(original[++index]);
+            }
+            else if (JvmPropertyName(argument) is not { } key || !lastPackProperty.ContainsKey(key)) final.Add(argument);
+        }
+        for (var index = 0; index < packArguments.Count; index++)
+            if (packPropertyKeys[index] is not { } key || lastPackProperty[key] == index) final.Add(packArguments[index]);
+        final.AddRange(original.Skip(insertion));
+        startInfo.Arguments = "";
+        startInfo.ArgumentList.Clear();
+        foreach (var argument in final) startInfo.ArgumentList.Add(argument);
+        return final;
+    }
+
+    private static readonly HashSet<string> JvmOptionsWithValue = new(StringComparer.Ordinal)
+    {
+        "-cp", "-classpath", "--class-path", "-p", "--module-path", "--upgrade-module-path",
+        "--add-modules", "--limit-modules", "--add-reads", "--add-exports", "--add-opens",
+        "--patch-module", "--enable-native-access", "--source"
+    };
+
+    private static string? JvmPropertyName(string argument)
+    {
+        if (!argument.StartsWith("-D", StringComparison.Ordinal) || argument.Length <= 2) return null;
+        var equals = argument.IndexOf('=', 2);
+        var key = equals < 0 ? argument[2..] : argument[2..equals];
+        return key.Length == 0 ? null : key;
+    }
+
+    private static List<string> ReadProcessArguments(ProcessStartInfo startInfo)
+    {
+        if (startInfo.ArgumentList.Count > 0) return startInfo.ArgumentList.ToList();
+        // argv[0] has different Windows quoting rules; a dummy executable keeps
+        // every actual JVM/application token under the ordinary argument rules.
+        var native = CommandLineToArgvW("java " + startInfo.Arguments, out var count);
+        if (native == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            return Enumerable.Range(1, count - 1)
+                .Select(index => Marshal.PtrToStringUni(Marshal.ReadIntPtr(native, index * IntPtr.Size))!).ToList();
+        }
+        finally { _ = LocalFree(native); }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr handle);
 
     private static string ReadLatestLogTail(string gameDir)
     {

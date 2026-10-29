@@ -280,6 +280,10 @@
       FullyQualifiedName=Minecraft.Tests.PackInstanceContentPolicyTests.NetworkKeys_DoNotExcludePackTomlOrDeletePersonalToml|
       FullyQualifiedName=Minecraft.Tests.LogVolumeTests.PackLoggingData_IsInstalledUnchangedAndItsJavaOptionIsLoaded|
       FullyQualifiedName=Minecraft.Tests.LogVolumeTests.APackWithoutLoggingData_ReceivesNoLoggingConfigurationOrOption|
-      FullyQualifiedName=Minecraft.Tests.IdentityAdapterContentBoundaryTests.PackMenuCompatibilityCannotReturnThroughPackagedAgentOrLegacyProperties</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterContentBoundaryTests.PackMenuCompatibilityCannotReturnThroughPackagedAgentOrLegacyProperties|
+      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.ActualCmlLoggingDefaultAndPackChoiceReachTheJvmWithCorrectPrecedence|
+      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.PropertiesAreGenericAndAgentsClasspathsAndApplicationTokensKeepTheirOrder|
+      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.MissingOrAmbiguousNativeBoundaryFailsWithoutChangingTheProcess|
+      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.EmptyPackListLeavesArgumentListAndNativeDuplicatePropertiesUntouched</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
