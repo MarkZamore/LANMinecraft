@@ -50,6 +50,10 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         var launcher = new MinecraftLauncher(new MinecraftPath(_root));
         using var process = launcher.BuildProcess(version, options);
         var nativeCommandLine = process.StartInfo.Arguments;
+        Assert.Contains("application value с пробелами", nativeCommandLine, StringComparison.Ordinal);
+        // Windows Java converts the native command line through its active code page.
+        // Use the untouched CML launch as the native oracle; keep Unicode strict in .NET.
+        var nativeBaseline = await CaptureUntouchedNative(process.StartInfo);
         var expectedNative = parent.Logging!.Argument!.Replace("${path}", options.Path.GetLogConfigFilePath(parent.Logging.LogFile!.Id!));
         Assert.Contains(expectedNative[Logging.Length..], nativeCommandLine, StringComparison.Ordinal);
         Assert.DoesNotContain(Logging + "config/log4j2.xml", nativeCommandLine, StringComparison.Ordinal);
@@ -71,10 +75,15 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         try { await process.WaitForExitAsync(timeout.Token); }
         catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
         var output = await stdout; var error = await stderr;
-        Assert.True(process.ExitCode == 0, output + error);
+        var diagnostic = $"Untouched CML stdout:\n{nativeBaseline.Stdout}\nUntouched CML stderr:\n{nativeBaseline.Stderr}\nFinal stdout:\n{output}\nFinal stderr:\n{error}";
+        Assert.True(nativeBaseline.ExitCode == 0, diagnostic);
+        Assert.True(process.ExitCode == 0, diagnostic);
+        var baselineArguments = NativeArgumentRows(nativeBaseline.Stdout);
+        var finalArguments = NativeArgumentRows(output);
+        Assert.True(baselineArguments.Length == 2 && finalArguments.Length == 2, diagnostic);
+        Assert.True(baselineArguments.SequenceEqual(finalArguments, StringComparer.Ordinal), diagnostic);
         Assert.Contains("LOGGING=" + (packOverride ? "config/log4j2.xml" : expectedNative[Logging.Length..]), output, StringComparison.Ordinal);
         Assert.Contains("KEEP=unchanged", output, StringComparison.Ordinal);
-        Assert.Contains("ARG0=" + Convert.ToBase64String(Encoding.UTF8.GetBytes("application value с пробелами")), output, StringComparison.Ordinal);
         Assert.Contains("ARG1=" + Convert.ToBase64String(Encoding.UTF8.GetBytes("-Dlog4j.configurationFile=application-only")), output, StringComparison.Ordinal);
     }
 
@@ -120,6 +129,29 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         Assert.Equal(before, MinecraftProcessService.CompleteJvmArguments(start, version, Pack("# no overrides\n")));
         Assert.Equal(before, start.ArgumentList); Assert.Equal("", start.Arguments);
     }
+    private static string[] NativeArgumentRows(string output) => output
+        .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+        .Where(line => line.StartsWith("ARG", StringComparison.Ordinal))
+        .ToArray();
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> CaptureUntouchedNative(ProcessStartInfo original)
+    {
+        var start = new ProcessStartInfo(original.FileName)
+        {
+            Arguments = original.Arguments, WorkingDirectory = original.WorkingDirectory,
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        };
+        foreach (var entry in original.Environment) start.Environment[entry.Key] = entry.Value;
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
+        return (process.ExitCode, await stdout, await stderr);
+    }
+
     private static string Tool(string name)
     {
         var home = Environment.GetEnvironmentVariable("JAVA_HOME");
