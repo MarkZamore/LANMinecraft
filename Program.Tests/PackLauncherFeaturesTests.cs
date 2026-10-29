@@ -30,7 +30,8 @@ public sealed class PackLauncherFeaturesTests : IDisposable
         var paths = new AppPaths(_root); paths.Ensure();
         var pack = paths.CombineUnderPacks(PortablePackSyncService.DefaultPackRelativePath);
         PortablePackSyncService.ValidateSnapshot(Manifest(1), pack);
-        foreach (var features in new[] { """["local-ai-native-v1"]""", """["curated-mod-list-v1"]""", """["local-ai-native-v1","curated-mod-list-v1"]""" })
+        foreach (var features in new[] { """["local-ai-native-v1"]""", """["curated-mod-list-v1"]""", """["local-ai-native-v1","curated-mod-list-v1"]""",
+                     """["launch-context-v1"]""", """["local-ai-native-v1","curated-mod-list-v1","launch-context-v1"]""" })
             PortablePackSyncService.ValidateSnapshot(Manifest(2, features), pack);
 
         // A previously installed pack must not convert a capability failure

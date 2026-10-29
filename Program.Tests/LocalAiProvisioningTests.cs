@@ -82,8 +82,8 @@ public sealed class LocalAiProvisioningTests : IDisposable
     [InlineData("modPath", "mods/../outside.jar")]
     [InlineData("modSha256", "incorrect")]
     [InlineData("provider", "remote")]
-    [InlineData("model", "another:model")]
-    [InlineData("language", "en")]
+    [InlineData("model", "../escape:model")]
+    [InlineData("language", "en/US")]
     [InlineData("schemaVersion", "one")]
     [InlineData("reserveMemoryMb", "3072")]
     public void DescriptorRejectsUnreviewedOrUnsafeBindings(string name, string value)
@@ -131,7 +131,7 @@ public sealed class LocalAiProvisioningTests : IDisposable
         var wrong = Zip(("META-INF/mods.toml", Encoding.UTF8.GetBytes("[[mods]]\nmodId=\"somebody_else\"\n")));
         var (_, pack, _, _) = Installation(false); Write(pack, "mods/verity.jar", wrong);
         await Assert.ThrowsAsync<InvalidDataException>(() => LocalAiProvisioningService.VerifyModAsync(pack,
-            new LocalAiRequirements("qwen3:1.7b", "mods/verity.jar", Sha(wrong), 3072, "ru"), default));
+            new LocalAiRequirements("qwen3:1.7b", "mods/verity.jar", Sha(wrong), 3072, "ru", "verity"), default));
     }
 
     [Fact]
@@ -201,34 +201,32 @@ public sealed class LocalAiProvisioningTests : IDisposable
         Assert.Equal(new byte[] { 7, 8 }, File.ReadAllBytes(Path.Combine(native, "personal-folder/keep.bin")));
     }
 
-    [Fact]
-    public void ConfigurationPreservesSettingsCommentsAndMicrophoneChoice()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("# Player choices\r\n[AISettings]\r\naiEndpoint = 'http://player-choice'\r\naiModel = 'personal'\r\n[VoiceSettings]\r\nuseTTS = false\r\nttsProvider = 'PLAYER_CHOICE'\r\n[SpeechSettings]\r\nsttProvider = 'PLAYER_CHOICE'\r\n")]
+    [InlineData("# The launcher does not parse or repair a mod's personal configuration\n[not valid TOML")]
+    public async Task FullPreparationNeverCreatesOrRewritesModConfiguration(string? configuration)
     {
-        var original = "# Personal\r\n[AISettings]\r\naiProvider = \"REMOTE\" # comment\r\ncustomPrompt = '''one\r\n[VoiceSettings]\r\nthree'''\r\n[VoiceSettings]\r\nvolume = 0.25\r\n[SpeechSettings]\r\nmicrophoneEnabled = false\r\n[Other.Settings]\r\naiModel = \"player-defined\"\r\n";
-        Write(_root, "config/verity-common.toml", Encoding.UTF8.GetBytes(original));
-        LocalAiConfiguration.Apply(_root, new Uri("http://127.0.0.1:12345"), "qwen3:1.7b");
-        var path = Path.Combine(_root, "config/verity-common.toml"); var text = File.ReadAllText(path); var time = File.GetLastWriteTimeUtc(path);
-        Assert.Contains("aiProvider = \"OLLAMA\" # comment", text); Assert.Contains("aiThink = false", text);
-        Assert.Contains("volume = 0.25", text); Assert.Contains("microphoneEnabled = false", text);
-        Assert.Contains("customPrompt = '''one\r\n[VoiceSettings]\r\nthree'''", text);
-        Assert.Contains("[Other.Settings]\r\naiModel = \"player-defined\"", text);
-        LocalAiConfiguration.Apply(_root, new Uri("http://127.0.0.1:12345"), "qwen3:1.7b");
-        Assert.Equal(text, File.ReadAllText(path)); Assert.Equal(time, File.GetLastWriteTimeUtc(path));
-    }
+        var (paths, pack, instance, home) = Installation();
+        var (pin, files) = Distribution();
+        using var handler = new Handler(request => new(HttpStatusCode.OK)
+            { Content = new ByteArrayContent(files[request.RequestUri!.AbsoluteUri]) });
+        using var http = new HttpClient(handler);
+        var service = new LocalAiProvisioningService(paths, http, pin);
+        var file = Path.Combine(instance, "config", "verity-common.toml");
+        if (configuration is not null) Write(instance, "config/verity-common.toml", Encoding.UTF8.GetBytes(configuration));
+        var timestamp = File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default;
 
-    [Fact]
-    public void VoiceChoicesSurviveTheNextPlayWhileTheDynamicAiEndpointChanges()
-    {
-        LocalAiConfiguration.Apply(_root, new Uri("http://127.0.0.1:12345"), "qwen3:1.7b");
-        var path = Path.Combine(_root, "config/verity-common.toml");
-        var text = File.ReadAllText(path).Replace("useTTS = true", "useTTS = false", StringComparison.Ordinal)
-            .Replace("ttsProvider = \"LOCAL\"", "ttsProvider = \"PLAYER_CHOICE\"", StringComparison.Ordinal)
-            .Replace("sttProvider = \"NATIVE\"", "sttProvider = \"PLAYER_CHOICE\"", StringComparison.Ordinal);
-        File.WriteAllText(path, text);
-        LocalAiConfiguration.Apply(_root, new Uri("http://127.0.0.1:23456"), "qwen3:1.7b");
-        text = File.ReadAllText(path);
-        Assert.Contains("useTTS = false", text); Assert.Contains("ttsProvider = \"PLAYER_CHOICE\"", text);
-        Assert.Contains("sttProvider = \"PLAYER_CHOICE\"", text); Assert.Contains("http://127.0.0.1:23456", text);
+        var launch = await service.PrepareAsync(pack, instance, home, null, default);
+        Assert.NotNull(launch);
+        await service.PrepareAsync(pack, instance, home, null, default);
+
+        if (configuration is null) Assert.False(Directory.Exists(Path.Combine(instance, "config")));
+        else
+        {
+            Assert.Equal(Encoding.UTF8.GetBytes(configuration), File.ReadAllBytes(file));
+            Assert.Equal(timestamp, File.GetLastWriteTimeUtc(file));
+        }
     }
 
     [Fact]
@@ -253,6 +251,24 @@ public sealed class LocalAiProvisioningTests : IDisposable
         File.WriteAllBytes(library, [0, 0, 0]);
         await service.PrepareAsync(pack, instance, home, null, default); Assert.Equal(3, requests);
         Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(library));
+    }
+
+    [Fact]
+    public async Task DescriptorChangedDuringPreparationCannotFinish()
+    {
+        var (paths, pack, instance, home) = Installation();
+        var (pin, files) = Distribution();
+        using var handler = new Handler(request =>
+        {
+            Write(pack, "launcher/local-ai.json", Encoding.UTF8.GetBytes(Descriptor(Jar).Replace("3072", "4096", StringComparison.Ordinal)));
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(files[request.RequestUri!.AbsoluteUri]) };
+        });
+        using var http = new HttpClient(handler);
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => new LocalAiProvisioningService(paths, http, pin)
+            .PrepareAsync(pack, instance, home, null, default));
+        Assert.Contains("descriptor changed during preparation", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(Path.Combine(instance, "config")));
+        Assert.False(Directory.Exists(Path.Combine(instance, "launcher-runtime")));
     }
 
     [Fact]

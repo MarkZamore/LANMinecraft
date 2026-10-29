@@ -255,6 +255,31 @@
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.CompletePreparationIsPortableRepairsRuntimeAndReusesDownloads|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiReserveChangesRecommendationAndAdvisoryWithoutChangingThePlayersHeap|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiDescriptorChangesAreReadDespiteUnchangedJarCacheLengthAndTimestamp|
-      FullyQualifiedName=Minecraft.Tests.PackLauncherFeaturesTests.KnownFeaturesAreAcceptedAndUnknownFeaturesRequireAnUpdateBeforeAnyDownload</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackLauncherFeaturesTests.KnownFeaturesAreAcceptedAndUnknownFeaturesRequireAnUpdateBeforeAnyDownload|
+      FullyQualifiedName=Minecraft.Tests.DrawDistanceSettingsTests.PreparationPreservesPlayerGraphicsBytesAndTimestamps|
+      FullyQualifiedName=Minecraft.Tests.DrawDistanceSettingsTests.FreshPreparationDoesNotSeedCustomGraphicsSettings|
+      FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.FullPreparationNeverCreatesOrRewritesModConfiguration|
+      FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.DescriptorChangedDuringPreparationCannotFinish|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.AbsentDescriptorDoesNotCreateOrChangeFiles|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.RequestedBindingsArePrivateToTheInstanceAndReplaceOnlyTheirContext|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.InvalidDescriptorsLeaveExistingContextUntouched|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.MissingOrUnsafeBindingCannotCreateAnOutput|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.OversizedOrMalformedDescriptorCannotCreateAnOutput|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.FilesystemLinksCannotRedirectDescriptorOrContext|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.FailedAtomicReplacementPreservesPriorBytesAndRemovesTemporaryFile|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.RuntimeDirectoryIsNeverCopiedOrDeletedByPackSynchronization|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.PublishedManifestsCannotShipPrivateRuntimeContext|
+      FullyQualifiedName=Minecraft.Tests.PackLaunchContextTests.ProductionLaunchWritesContextAfterBindingsAndBeforeJavaStarts|
+      FullyQualifiedName=Minecraft.Tests.LocalAiRecipeTests.PinnedPackRecipeOwnsGenericDistributionAndPreservesEveryModSetting|
+      FullyQualifiedName=Minecraft.Tests.LocalAiRecipeTests.LegacyRamMetadataHasNoRecipeFallbackInProductionPreparation|
+      FullyQualifiedName=Minecraft.Tests.LocalAiRecipeTests.ChangedRecipeDuringDownloadCannotReturnLaunchAndVerifiedCacheRemainsReusable|
+      FullyQualifiedName=Minecraft.Tests.LocalAiRecipeTests.ChangedDescriptorRecipeBindingCannotFinishEvenWhenTheNewRecipeIsValid|
+      FullyQualifiedName=Minecraft.Tests.LocalAiRecipeTests.RecipeCapabilityIsAcceptedAsAnExplicitManifestRequirement|
+      FullyQualifiedName=Minecraft.Tests.MinecraftLaunchPolicyTests.NativeModernFixSettings_ArePreservedWithoutGlobalNetworkTimeout|
+      FullyQualifiedName=Minecraft.Tests.MinecraftLaunchPolicyTests.ExplicitPackNetworkTimeout_IsRetainedByActualArgumentComposition|
+      FullyQualifiedName=Minecraft.Tests.PackInstanceContentPolicyTests.NetworkKeys_DoNotExcludePackTomlOrDeletePersonalToml|
+      FullyQualifiedName=Minecraft.Tests.LogVolumeTests.PackLoggingData_IsInstalledUnchangedAndItsJavaOptionIsLoaded|
+      FullyQualifiedName=Minecraft.Tests.LogVolumeTests.APackWithoutLoggingData_ReceivesNoLoggingConfigurationOrOption|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterContentBoundaryTests.PackMenuCompatibilityCannotReturnThroughPackagedAgentOrLegacyProperties</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

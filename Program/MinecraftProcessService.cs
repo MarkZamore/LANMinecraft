@@ -273,7 +273,6 @@ public sealed class MinecraftProcessService
             ? Math.Min(1024, maximumRamMb)
             : maximumRamMb;
 
-    private readonly GameLogConfigurationService _gameLogConfiguration;
     private readonly PackJvmArgumentsService _packJvmArguments;
     private readonly AppPaths _paths;
     private readonly ClientPresenceService _presence;
@@ -337,7 +336,6 @@ public sealed class MinecraftProcessService
         _paths = paths;
         _logger = logger;
         _presence = new ClientPresenceService(paths, logger);
-        _gameLogConfiguration = new GameLogConfigurationService(logger);
         _packJvmArguments = new PackJvmArgumentsService(logger);
         _identityService = identityService;
         _identityAdapter = identityAdapter;
@@ -425,7 +423,6 @@ public sealed class MinecraftProcessService
         var gameDir = instance.GameDirectory;
         EnsureWorldsDirectoryAndSavesLink(gameDir, settings.ClientRelativePath);
         ValidatePackCompatibility(packDir);
-        EnsureModernFixShutdownWorkaround(gameDir);
         _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext);
         // After the profiles are written: the reset edits playerdata and the
         // Player compound of level.dat in place, and the game reads them on join.
@@ -571,104 +568,10 @@ public sealed class MinecraftProcessService
         // Held as text, not as MArgument, so the line logged below is the line
         // handed to the JVM. MArgument does not override ToString, so logging
         // the arguments themselves printed the type name sixty times over.
-        var extraJvmArguments = new List<string>
-        {
-            "-Dfile.encoding=UTF-8",
-            "-Djava.net.preferIPv4Stack=true",
-            "-Djava.net.preferIPv6Addresses=false",
-            // Five seconds to reach a host, and then give up. Java leaves this
-            // unset, so a connection nobody answers waits on whatever the
-            // operating system allows - about twenty-one seconds on Windows -
-            // and a mod that opens a URL from the server tick freezes the world
-            // for everyone in it for that long. Server Side Horror does exactly
-            // that: it fetches a fake player's skin from api.mojang.com inside
-            // ServerPlayer.tick, and on a machine whose route there is blocked
-            // it stopped a shared world four times over, forty seconds at a
-            // stretch, until ModernFix's watchdog started dumping threads. The
-            // skin it was waiting for is not even used - the mod falls back to
-            // the default one.
-            //
-            // A handshake that has not happened in five seconds was not going
-            // to happen. The read timeout is deliberately left alone: reading
-            // is where a real download lives, and a slow one is still a
-            // download.
-            "-Dsun.net.client.defaultConnectTimeout=5000",
-            $"-Djava.io.tmpdir={javaTempDir}",
-            // A home of its own, inside the folder, because things reach for
-            // one. e4steam unpacks the three Steam native libraries into
-            // "$user.home/.e4steam-steam-natives" and reads no property that
-            // would move them, so on a machine where the launcher was meant to
-            // leave nothing behind it left three DLLs in the user's profile.
-            // Anything else that writes to a home directory lands here too,
-            // which is the point: the folder is the whole installation.
-            $"-Duser.home={javaHome}",
-            $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
-            $"-Dminecraft.portable.identity.registry={identityRegistryPath}",
-            // Who is playing at this machine. On the versions that cannot pace
-            // their own chunk sending the agent paces it for them, and leaves
-            // this one player out of it: his client is in the same process, so
-            // holding his ground back would cost him seconds on every world he
-            // opens and spare the wire nothing.
-            //
-            // It is a launch property rather than part of the adapter's
-            // configuration on purpose - the configuration is cached under a
-            // hash of itself, and this changes with whoever is signed in.
-            $"-Dminecraft.portable.identity.localPlayer={PlayingHere(identityContext.MinecraftUuid)}",
-            // Die at the first OutOfMemoryError instead of carrying on.
-            //
-            // The game's own answer to running out of memory while a world's
-            // data packs load is a screen offering to open that world with the
-            // vanilla data pack alone - and a modded world opened without its
-            // data packs loses every block, item and entity they define the
-            // moment it saves. The offer arrives seconds before the "out of
-            // memory" screen does, so the dangerous button is the one a player
-            // sees first. A JVM that exits on the spot never shows either, and
-            // the launcher says what happened instead.
-            "-XX:+ExitOnOutOfMemoryError",
-            // And a picture of the heap on the way out. A pack that runs out
-            // of memory says which mod was running and nothing about what was
-            // holding the gigabytes, and every guess after that is a guess: a
-            // whole evening went on inferring four gigabytes that one dump
-            // names in five minutes. It is written before the JVM's parting
-            // line, so the exit above does not cost it.
-            "-XX:+HeapDumpOnOutOfMemoryError",
-            $"-XX:HeapDumpPath={EnsureHeapDumpDirectory(gameDir)}",
-            // Every collection, with its length, into the same log the adapter
-            // writes its own minute report to - so a pause and a tick that
-            // went missing can be read against each other without lining up
-            // two files by hand. Three sessions were spent guessing whether
-            // multi-second stalls were the collector or the world save; the
-            // second was proved by removing it, the first was never proved at
-            // all because nothing wrote it down.
-            "-Xlog:gc:stdout:time,uptime"
-            // G1 tuned for a big modded heap. Left alone it grew the committed
-            // heap from 2 GB to 9.4 GB in one session in resize steps, each a
-            // pause a player feels as a stutter; Xms=Xmx below ends that. The
-            // 16 GB heap also defaults to 8 MB regions, which makes every
-            // block-palette or LOD array over 4 MB a "humongous" allocation
-            // with its own slow path - 32 MB regions put them back on the
-            // normal one. The pause goal keeps mixed collections under a
-            // frame and a half instead of the default 200 ms.
-            //
-            // Every flag here is a product option. G1NewSizePercent was here
-            // for one release and is not any more: it is experimental, the JVM
-            // refuses to start without -XX:+UnlockExperimentalVMOptions ahead
-            // of it, and a player got "Could not create the Java Virtual
-            // Machine" instead of a game. Unlocking experimental options for
-            // one refinement is not worth it - the pause goal sizes the young
-            // generation on its own. Anything added here must survive
-            // `java <flag> -version` on the pinned runtime first.
-        };
-        // What the pack itself asks to be started with. ModernFix's lazy model
-        // loading used to be added here for every pack, because it is worth a
-        // great deal of heap and can only be set as a property - and that was a
-        // decision about somebody else's mods, made for versions the launcher
-        // had not met. It belongs to the pack, and now lives in its
-        // launcher/jvm-args.txt.
-        extraJvmArguments.AddRange(_packJvmArguments.Load(packDir));
+        var extraJvmArguments = BuildBaseJvmArguments(
+            packDir, gameDir, javaTempDir, javaHome, skinRegistryPath, identityRegistryPath,
+            identityContext.MinecraftUuid, _packJvmArguments);
         extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
-        var gameLogArgument = _gameLogConfiguration.PrepareArgument(gameDir, packDir);
-        if (gameLogArgument is not null) extraJvmArguments.Add(gameLogArgument);
         extraJvmArguments.AddRange(JavaCompatibilityArguments);
         extraJvmArguments.AddRange(identityJvmArguments);
         // This renderer hooks LWJGL presentation, independently of Minecraft mappings,
@@ -739,6 +642,12 @@ public sealed class MinecraftProcessService
         var started = false;
         try
         {
+            PackLaunchContextService.Write(packDir, gameDir, localAi is null
+                ? new Dictionary<string, Uri>(StringComparer.Ordinal)
+                : new Dictionary<string, Uri>(StringComparer.Ordinal)
+                {
+                    [PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint
+                });
             if (!minecraftProcess.Start())
             {
                 throw new InvalidOperationException("Minecraft process could not be started.");
@@ -1500,32 +1409,95 @@ public sealed class MinecraftProcessService
         return directory;
     }
 
-    private void EnsureModernFixShutdownWorkaround(string gameDir)
+    internal static List<string> BuildBaseJvmArguments(
+        string packDir,
+        string gameDir,
+        string javaTempDir,
+        string javaHome,
+        string skinRegistryPath,
+        string identityRegistryPath,
+        string? minecraftUuid,
+        PackJvmArgumentsService? packJvmArguments = null)
     {
-        var configPath = Path.Combine(gameDir, "config", "modernfix-mixins.properties");
-        if (!File.Exists(configPath)) return;
-        const string key = "mixin.perf.dedicated_reload_executor";
-        const string expected = key + "=false";
-        var lines = File.ReadAllLines(configPath).ToList();
-        var found = false;
-        var changed = false;
-        for (var i = 0; i < lines.Count; i++)
+        var extraJvmArguments = new List<string>
         {
-            var line = lines[i].Trim();
-            if (line.StartsWith('#') || !line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase)) continue;
-            found = true;
-            if (string.Equals(line, expected, StringComparison.OrdinalIgnoreCase)) continue;
-            lines[i] = expected;
-            changed = true;
-        }
-        if (!found)
-        {
-            lines.Add(expected);
-            changed = true;
-        }
-        if (!changed) return;
-        File.WriteAllLines(configPath, lines);
-        _logger.Info("ModernFix dedicated reload executor disabled for reliable singleplayer shutdown.");
+            "-Dfile.encoding=UTF-8",
+            "-Djava.net.preferIPv4Stack=true",
+            "-Djava.net.preferIPv6Addresses=false",
+            $"-Djava.io.tmpdir={javaTempDir}",
+            // A home of its own, inside the folder, because things reach for
+            // one. e4steam unpacks the three Steam native libraries into
+            // "$user.home/.e4steam-steam-natives" and reads no property that
+            // would move them, so on a machine where the launcher was meant to
+            // leave nothing behind it left three DLLs in the user's profile.
+            // Anything else that writes to a home directory lands here too,
+            // which is the point: the folder is the whole installation.
+            $"-Duser.home={javaHome}",
+            $"-Dminecraft.portable.skin.registry={skinRegistryPath}",
+            $"-Dminecraft.portable.identity.registry={identityRegistryPath}",
+            // Who is playing at this machine. On the versions that cannot pace
+            // their own chunk sending the agent paces it for them, and leaves
+            // this one player out of it: his client is in the same process, so
+            // holding his ground back would cost him seconds on every world he
+            // opens and spare the wire nothing.
+            //
+            // It is a launch property rather than part of the adapter's
+            // configuration on purpose - the configuration is cached under a
+            // hash of itself, and this changes with whoever is signed in.
+            $"-Dminecraft.portable.identity.localPlayer={PlayingHere(minecraftUuid)}",
+            // Die at the first OutOfMemoryError instead of carrying on.
+            //
+            // The game's own answer to running out of memory while a world's
+            // data packs load is a screen offering to open that world with the
+            // vanilla data pack alone - and a modded world opened without its
+            // data packs loses every block, item and entity they define the
+            // moment it saves. The offer arrives seconds before the "out of
+            // memory" screen does, so the dangerous button is the one a player
+            // sees first. A JVM that exits on the spot never shows either, and
+            // the launcher says what happened instead.
+            "-XX:+ExitOnOutOfMemoryError",
+            // And a picture of the heap on the way out. A pack that runs out
+            // of memory says which mod was running and nothing about what was
+            // holding the gigabytes, and every guess after that is a guess: a
+            // whole evening went on inferring four gigabytes that one dump
+            // names in five minutes. It is written before the JVM's parting
+            // line, so the exit above does not cost it.
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            $"-XX:HeapDumpPath={EnsureHeapDumpDirectory(gameDir)}",
+            // Every collection, with its length, into the same log the adapter
+            // writes its own minute report to - so a pause and a tick that
+            // went missing can be read against each other without lining up
+            // two files by hand. Three sessions were spent guessing whether
+            // multi-second stalls were the collector or the world save; the
+            // second was proved by removing it, the first was never proved at
+            // all because nothing wrote it down.
+            "-Xlog:gc:stdout:time,uptime"
+            // G1 tuned for a big modded heap. Left alone it grew the committed
+            // heap from 2 GB to 9.4 GB in one session in resize steps, each a
+            // pause a player feels as a stutter; Xms=Xmx below ends that. The
+            // 16 GB heap also defaults to 8 MB regions, which makes every
+            // block-palette or LOD array over 4 MB a "humongous" allocation
+            // with its own slow path - 32 MB regions put them back on the
+            // normal one. The pause goal keeps mixed collections under a
+            // frame and a half instead of the default 200 ms.
+            //
+            // Every flag here is a product option. G1NewSizePercent was here
+            // for one release and is not any more: it is experimental, the JVM
+            // refuses to start without -XX:+UnlockExperimentalVMOptions ahead
+            // of it, and a player got "Could not create the Java Virtual
+            // Machine" instead of a game. Unlocking experimental options for
+            // one refinement is not worth it - the pause goal sizes the young
+            // generation on its own. Anything added here must survive
+            // `java <flag> -version` on the pinned runtime first.
+        };
+        // What the pack itself asks to be started with. ModernFix's lazy model
+        // loading used to be added here for every pack, because it is worth a
+        // great deal of heap and can only be set as a property - and that was a
+        // decision about somebody else's mods, made for versions the launcher
+        // had not met. It belongs to the pack, and now lives in its
+        // launcher/jvm-args.txt.
+        extraJvmArguments.AddRange((packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir));
+        return extraJvmArguments;
     }
 
     private static string ReadLatestLogTail(string gameDir)

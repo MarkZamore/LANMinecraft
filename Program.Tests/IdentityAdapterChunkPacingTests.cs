@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Minecraft;
 
@@ -169,40 +170,71 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     }
 
     /// <summary>
-    /// A guest is served a whole view well inside the half-minute his client
-    /// waits before deciding the server is gone.
-    ///
-    /// The budget is fixed rather than measured, because measuring it is
-    /// exactly what needs a client that can acknowledge a batch and no client
-    /// before 1.20.2 can. So it is checked against its consequence instead: the
-    /// widest view the launcher allows, at this many chunks a tick, has to
-    /// arrive with room to spare.
+    /// A native-chosen radius32 view exceeds the finite hold. Execute the real
+    /// transformer and pacing hook to prove overflow is handed to native code,
+    /// every held chunk later arrives and the original distance field survives.
     /// </summary>
     [Fact]
-    public void TheBudget_FillsAWholeViewLongBeforeTheClientGivesUp()
+    public async Task NativeChosenView32_IsCompleteWhenTheBoundedHoldOverflows()
     {
-        var chunksPerTick = NumberInTheAgent("CHUNKS_PER_TICK");
-        var wholeView = (2 * PackInstanceService.FurthestChunks + 1) *
-            (2 * PackInstanceService.FurthestChunks + 1);
-
-        var seconds = wholeView / (double)(chunksPerTick * 20);
-
-        Assert.True(seconds < 15, $"A whole view would take {seconds:F1} seconds to arrive.");
+        var common = Path.GetDirectoryName(RepositoryFile(
+            "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
+        var classes = Path.Combine(_root, "native-distance-probe");
+        Directory.CreateDirectory(classes);
+        var asm = string.Join(Path.PathSeparator, Path.Combine(common, "lib", "asm-9.8.jar"),
+            Path.Combine(common, "lib", "asm-tree-9.8.jar"));
+        await RunJava("javac", "--release", "17", "-cp", asm, "-d", classes,
+            Path.Combine(common, "PortableIdentityReflection.java"),
+            Path.Combine(common, "PortableLanAutoPublishHooks.java"),
+            Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
+            Path.Combine(common, "PortablePerPlayerChunksTransformer.java"),
+            RepositoryFile("Program.Tests", "Fixtures", "ChunkPacingDistanceProbe.java"));
+        foreach (var mode in new[] { "normal", "reflection-miss" })
+        {
+            var output = await RunJava("java", "-Xverify:all", "-cp", classes + Path.PathSeparator + asm,
+                "ChunkPacingDistanceProbe", mode);
+            Assert.Contains($"NATIVE_DISTANCE_AND_PACING_PASSED mode={mode}", output, StringComparison.Ordinal);
+            Assert.Contains("offered=4225", output, StringComparison.Ordinal);
+            Assert.Contains("delivered=4225", output, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
-    /// And the hold is deep enough for that whole view at once, which is what
-    /// a guest asks for the moment he joins. Past the limit chunks go out
-    /// unpaced, which is the safe way to overflow and the wrong way to spend a
-    /// join.
+    /// Resource budgets remain finite and unchanged. They no longer imply a
+    /// launcher range policy; the executable probe above covers native overflow.
     /// </summary>
     [Fact]
-    public void TheHold_TakesAWholeViewAtOnce()
+    public void TheFiniteNetworkBudgets_DoNotBecomeADistanceLimit()
     {
-        var wholeView = (2 * PackInstanceService.FurthestChunks + 1) *
-            (2 * PackInstanceService.FurthestChunks + 1);
+        const int nativeChosenRadius = 32;
+        var wholeView = (2 * nativeChosenRadius + 1) * (2 * nativeChosenRadius + 1);
+        Assert.Equal(4225, wholeView);
+        Assert.Equal(2048, NumberInTheAgent("HOLD_LIMIT"));
+        Assert.Equal(4, NumberInTheAgent("CHUNKS_PER_TICK"));
+        Assert.Equal(2, NumberInTheAgent("CHUNKS_PER_TICK_WHEN_SLOW"));
+        Assert.Equal(1, NumberInTheAgent("CHUNKS_PER_TICK_WHEN_VERY_SLOW"));
+        Assert.True(NumberInTheAgent("HOLD_LIMIT") < wholeView);
+        var source = File.ReadAllText(RepositoryFile(
+            "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"));
+        Assert.DoesNotContain("SERVE_DISTANCE_LIMIT", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("setChunkViewDistanceMethods", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("portable-serve-distance", source, StringComparison.Ordinal);
+    }
 
-        Assert.True(NumberInTheAgent("HOLD_LIMIT") >= wholeView);
+    private static async Task<string> RunJava(string tool, params string[] arguments)
+    {
+        var jdk = Environment.GetEnvironmentVariable("JAVA_HOME");
+        var start = new ProcessStartInfo(string.IsNullOrWhiteSpace(jdk) ? tool + ".exe" : Path.Combine(jdk, "bin", tool + ".exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
+        var output = await stdout + await stderr;
+        Assert.True(process.ExitCode == 0, output);
+        return output;
     }
 
     private static int NumberInTheAgent(string constant)

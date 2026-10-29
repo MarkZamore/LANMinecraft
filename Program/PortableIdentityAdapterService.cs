@@ -298,7 +298,6 @@ public sealed class PortableIdentityAdapterService : IDisposable
         if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
         if (Says(properties, "chunkPacingEnabled")) present.Add("paced chunk sending");
         if (Says(properties, "guestMovementEnabled")) present.Add("guests trusted with their own movement");
-        if (Says(properties, "menuRegistrationFixEnabled")) present.Add("menus registered once");
         return present.Count == 0 ? "nothing beyond skins and the UUID" : string.Join(", ", present);
     }
 

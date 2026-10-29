@@ -1,0 +1,2 @@
+# Preserve the exact native-tested logging payload used by published packs.
+tools/PackData/Logging/log4j2.xml -text

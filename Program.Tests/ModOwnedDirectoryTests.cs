@@ -2,12 +2,9 @@ using Minecraft;
 
 namespace Minecraft.Tests;
 
-// A mod may make a folder once, on its first run, and afterwards only read it.
-// KubeJS does exactly that with kubejs/assets: ClientAssetPacks asks
-// File.listFiles what is inside, that answers null rather than empty when the
-// folder is gone, and the null lands in Objects.requireNonNull - a red "KubeJS
-// client script errors" screen at every start. The launcher used to delete every
-// empty folder in an instance while tidying, which took that one with it.
+// Required layout comes from pack contents. Empty directories need a tracked
+// placeholder when the pack is distributed as files; player-created empty
+// directories are also retained during cleanup.
 public sealed class ModOwnedDirectoryTests : IDisposable
 {
     private readonly string _root = Path.Combine(
@@ -58,25 +55,39 @@ public sealed class ModOwnedDirectoryTests : IDisposable
         Assert.True(Directory.Exists(alsoEmpty), "An empty folder the launcher never made was deleted.");
     }
 
-    [Fact]
-    public async Task Preparation_PutsBackKubeJsFoldersThatAreGone()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Preparation_RestoresPackDeclaredDirectories(bool managedSnapshot)
     {
         var (paths, logger) = Prepare(_root);
         using var service = new PackInstanceService(paths, logger);
+        var pack = Path.Combine(paths.Packs, "TestPack");
+        var relative = "extension-resources/required/empty/.keep";
+        var marker = Path.Combine(pack, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+        File.WriteAllText(marker, "");
+        if (managedSnapshot)
+        {
+            var entries = new[] { relative, PackManifestService.ManifestFileName, "client.jar" }
+                .ToDictionary(path => path, path =>
+                {
+                    var bytes = File.ReadAllBytes(Path.Combine(pack, path.Replace('/', Path.DirectorySeparatorChar)));
+                    return new { sizeBytes = bytes.LongLength, sha256 = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)) };
+                });
+            File.WriteAllText(Path.Combine(pack, PortablePackSyncService.SyncStateFileName),
+                System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = 1, revision = "declared-layout", files = entries }));
+        }
         await service.PrepareAsync("TestPack");
-
-        var gameDir = service.GetInstanceDirectory("TestPack");
-        var kubejs = Path.Combine(gameDir, "kubejs");
-        // A pack with KubeJS in it, and the folder the mod would have made
-        // missing - which is the state the old tidying left behind.
-        Directory.CreateDirectory(Path.Combine(kubejs, "server_scripts"));
-        Assert.False(Directory.Exists(Path.Combine(kubejs, "assets")));
+        var declared = Path.Combine(service.GetInstanceDirectory("TestPack"), "extension-resources", "required", "empty");
+        Assert.True(Directory.Exists(declared));
+        Directory.Delete(declared, recursive: true);
 
         await service.PrepareAsync("TestPack");
 
         Assert.True(
-            Directory.Exists(Path.Combine(kubejs, "assets")),
-            "kubejs/assets was not put back, so KubeJS will fail on the next start.");
+            Directory.Exists(declared),
+            "A directory declared by pack files was not restored during preparation.");
     }
 
     [Fact]

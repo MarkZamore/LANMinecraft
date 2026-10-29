@@ -24,7 +24,7 @@ public static class LogCleanupService
     private const long LauncherLogBudgetBytes = 16L * 1024 * 1024;
     private const long InstanceLogBudgetBytes = 64L * 1024 * 1024;
 
-    /// <summary>The game's own DEBUG copy of a session; see GameLogConfigurationService.</summary>
+    /// <summary>The game's DEBUG copy; retention here is launcher diagnostics policy.</summary>
     private static readonly string[] DiscardedGameLogNames = ["debug.log"];
     private static readonly string[] SessionDiagnosticDirectories = ["logs", "debug", "crash-reports"];
     private const string DiscardedGameLogPattern = "debug-*.log.gz";
