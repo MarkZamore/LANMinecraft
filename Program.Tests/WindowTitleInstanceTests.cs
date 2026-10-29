@@ -40,7 +40,7 @@ public sealed class WindowTitleInstanceTests : IDisposable
         Assert.Equal(authorBytes, File.ReadAllBytes(kubePath));
         Assert.Equal(optionsBytes, File.ReadAllBytes(optionsPath));
         Assert.Equal(settingsBytes, File.ReadAllBytes(paths.SettingsFile));
-        Assert.False(File.Exists(privateBeforePrepare));
+        Assert.Equal(PrivateToml(), File.ReadAllBytes(privateBeforePrepare));
 
         var manualBytes = Utf8Bom("{ \"window_title\": \"My manual title\", \"other_setting\": false }\r\n");
         Write(kubePath, manualBytes);
@@ -52,10 +52,12 @@ public sealed class WindowTitleInstanceTests : IDisposable
 
         await service.CleanupGeneratedLocalArtifactsAsync("Title fixture", removeSessionLogs: false);
         AssertPreserved();
-        Assert.False(File.Exists(privateBeforeCleanup));
+        Assert.Equal(PrivateToml(), File.ReadAllBytes(privateBeforeCleanup));
         await service.PrepareAsync("Title fixture");
         AssertPreserved();
         Assert.Equal(authorBytes, File.ReadAllBytes(authorPath));
+        Assert.Equal(PrivateToml(), File.ReadAllBytes(privateBeforePrepare));
+        Assert.Equal(PrivateToml(), File.ReadAllBytes(privateBeforeCleanup));
 
         void AssertPreserved()
         {

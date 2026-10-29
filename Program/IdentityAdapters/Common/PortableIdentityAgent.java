@@ -50,7 +50,6 @@ public final class PortableIdentityAgent {
         instrumentation.addTransformer(new PortableXaeroWaypointTransformer(), false);
         instrumentation.addTransformer(new PortableFtbTeleportTransformer(), false);
         instrumentation.addTransformer(new PortableSolarFluxSyncTransformer(), false);
-        instrumentation.addTransformer(new PortableMenuRegistrationTransformer(), false);
         instrumentation.addTransformer(new PortableLanAutoPublishTransformer(), false);
         instrumentation.addTransformer(new PortableSteamDiscoveryTransformer(), false);
         instrumentation.addTransformer(new PortablePerPlayerChunksTransformer(), false);

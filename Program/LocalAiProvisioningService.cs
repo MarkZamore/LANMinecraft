@@ -4,74 +4,71 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Minecraft;
 
-public sealed record LocalAiRequirements(string Model, string ModPath, string ModSha256, int ReserveMemoryMb, string? Language);
+public sealed record LocalAiRequirements(string Model, string ModPath, string ModSha256, int ReserveMemoryMb, string? Language,
+    string? ModId = null, string? RecipeFile = null, string? RecipeSha256 = null);
 internal sealed record LocalAiPin(string Version, Uri ArchiveUri, long ArchiveSizeBytes, string ArchiveSha256, string ModelManifestSha256, byte[] ModelManifest);
 internal sealed record LocalAiBlob(string Sha256, long SizeBytes);
 
-/// <summary>Prepares files only. Verity, inside Java, owns its native Ollama process.</summary>
+/// <summary>Prepares provider files only. Pack-owned native code owns the backend lifecycle.</summary>
 public sealed class LocalAiProvisioningService
 {
     private readonly AppPaths _paths;
     private readonly HttpClient _http;
-    private readonly LocalAiPin _pin;
-    private readonly LocalAiBlob[] _blobs;
+    private readonly LocalAiPin? _testPin;
 
-    public LocalAiProvisioningService(AppPaths paths) : this(paths, PortableHttpClient.Shared, LocalAiPins.Official) { }
-    internal LocalAiProvisioningService(AppPaths paths, HttpClient http, LocalAiPin pin)
+    public LocalAiProvisioningService(AppPaths paths) : this(paths, PortableHttpClient.Shared) { }
+    internal LocalAiProvisioningService(AppPaths paths, HttpClient http)
     {
         _paths = paths;
         _http = http;
-        if (pin.ArchiveUri.Scheme != "https" || pin.ArchiveSizeBytes <= 0 || !LocalAiFiles.IsHash(pin.ArchiveSha256) ||
-            pin.Version.Length is < 1 or > 32 || pin.Version.Any(c => !char.IsAsciiDigit(c) && c != '.') ||
-            pin.ModelManifest.Length is < 1 or > 65536 || !LocalAiFiles.IsHash(pin.ModelManifestSha256) ||
-            Convert.ToHexStringLower(SHA256.HashData(pin.ModelManifest)) != pin.ModelManifestSha256)
-            throw new InvalidDataException("Invalid pinned local AI distribution.");
-        _pin = pin with { ModelManifest = pin.ModelManifest.ToArray() };
-        using var manifest = JsonDocument.Parse(_pin.ModelManifest);
-        _blobs = new[] { manifest.RootElement.GetProperty("config") }
-            .Concat(manifest.RootElement.GetProperty("layers").EnumerateArray()).Select(item =>
-            {
-                var digest = item.GetProperty("digest").GetString() ?? "";
-                var size = item.GetProperty("size").GetInt64();
-                if (!digest.StartsWith("sha256:", StringComparison.Ordinal) || !LocalAiFiles.IsHash(digest[7..]) || size <= 0)
-                    throw new InvalidDataException("Invalid local AI model layer.");
-                return new LocalAiBlob(digest[7..], size);
-            }).ToArray();
-        if (_blobs.Length is < 2 or > 32 || _blobs.Select(x => x.Sha256).Distinct().Count() != _blobs.Length)
-            throw new InvalidDataException("Invalid or duplicated local AI model layers.");
     }
+    // Synthetic test distributions only. Production callers must read a pack's
+    // pinned recipe; no archive/model distribution is compiled into the launcher.
+    internal LocalAiProvisioningService(AppPaths paths, HttpClient http, LocalAiPin pin) : this(paths, http)
+        => _testPin = LocalAiRecipeReader.ValidatePin(pin).Pin;
 
     public static LocalAiRequirements? ReadRequirements(string packDirectory)
     {
         var file = LocalAiFiles.Under(packDirectory, "launcher/local-ai.json");
         if (!File.Exists(file)) return null;
-        if (new FileInfo(file).Length > 65536) throw new InvalidDataException("Local AI descriptor is too large.");
-        using var doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 8 });
-        var root = doc.RootElement;
-        var allowed = new HashSet<string>(["schemaVersion", "provider", "model", "modId", "modPath", "modSha256", "reserveMemoryMb", "language"], StringComparer.Ordinal);
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Any(p => !allowed.Contains(p.Name) || !names.Add(p.Name)))
-            throw new InvalidDataException("Unsupported or duplicate local AI descriptor fields.");
-        string String(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String &&
-            v.GetString() is { Length: > 0 and <= 256 } s ? s : throw new InvalidDataException("Invalid local AI field: " + name);
-        var model = String("model"); var path = String("modPath"); var sha = String("modSha256").ToLowerInvariant();
-        var language = root.TryGetProperty("language", out _) ? String("language") : null;
-        if (!root.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
-            !schema.TryGetInt32(out var version) || version != 1 ||
-            String("provider") != "ollama" || model != "qwen3:1.7b" || String("modId") != "verity" ||
-            !path.StartsWith("mods/", StringComparison.Ordinal) || path.Count(c => c == '/') != 1 || path.Contains('\\') ||
-            !path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) || !LocalAiFiles.IsHash(sha) ||
-            language is not null and not "ru" ||
-            !root.TryGetProperty("reserveMemoryMb", out var memory) || memory.ValueKind != JsonValueKind.Number ||
-            !memory.TryGetInt32(out var reserve) || reserve is < 512 or > 131072)
-            throw new InvalidDataException("Unsupported local AI descriptor.");
-        _ = LocalAiFiles.Under(packDirectory, path);
-        return new LocalAiRequirements(model, path, sha, reserve, language);
+        try
+        {
+            using var doc = LocalAiRecipeReader.ParseMetadata(LocalAiRecipeReader.ReadBoundedFile(file, 65536));
+            var root = LocalAiRecipeReader.Object(doc.RootElement, "schemaVersion", "provider", "model", "modId", "modPath", "modSha256",
+                "reserveMemoryMb", "language", "recipeFile", "recipeSha256");
+            string Text(string name, int maximum = 256) => LocalAiRecipeReader.Text(root, name, maximum);
+            var model = Text("model"); _ = LocalAiModelReference.Parse(model);
+            var path = Text("modPath"); var sha = Text("modSha256", 64).ToLowerInvariant(); var modId = Text("modId", 64);
+            var language = root.TryGetProperty("language", out _) ? Text("language", 64) : null;
+            var reserve = LocalAiRecipeReader.Integer(root, "reserveMemoryMb");
+            if (LocalAiRecipeReader.Integer(root, "schemaVersion") != 1 || Text("provider", 32) != "ollama" ||
+                !Regex.IsMatch(modId, @"\A[a-z][a-z0-9_]{1,63}\z") ||
+                !path.StartsWith("mods/", StringComparison.Ordinal) || path.Count(c => c == '/') != 1 ||
+                !path.EndsWith(".jar", StringComparison.OrdinalIgnoreCase) || !LocalAiFiles.IsHash(sha) ||
+                language is not null && !Regex.IsMatch(language, @"\A[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*\z") ||
+                reserve is < 512 or > 131072) throw new InvalidDataException("Unsupported local AI descriptor.");
+            LocalAiRecipeReader.ValidateRelativePath(path); _ = LocalAiFiles.Under(packDirectory, path);
+            string? recipeFile = null, recipeHash = null;
+            var hasFile = root.TryGetProperty("recipeFile", out _); var hasHash = root.TryGetProperty("recipeSha256", out _);
+            if (hasFile != hasHash) throw new InvalidDataException("Local AI recipeFile and recipeSha256 must be supplied together.");
+            if (hasFile)
+            {
+                recipeFile = Text("recipeFile"); recipeHash = Text("recipeSha256", 64).ToLowerInvariant();
+                LocalAiRecipeReader.ValidateRelativePath(recipeFile);
+                if (!recipeFile.StartsWith("launcher/", StringComparison.Ordinal) || !recipeFile.EndsWith(".json", StringComparison.Ordinal) || !LocalAiFiles.IsHash(recipeHash))
+                    throw new InvalidDataException("A local AI recipe must be a pinned JSON file under launcher/.");
+                _ = LocalAiFiles.Under(packDirectory, recipeFile);
+            }
+            return new(model, path, sha, (int)reserve, language, modId, recipeFile, recipeHash);
+        }
+        catch (Exception error) when (error is JsonException or FormatException or KeyNotFoundException or InvalidOperationException or OverflowException)
+        { throw new InvalidDataException("Malformed local AI descriptor.", error); }
     }
 
     public async Task<LocalAiPreparedLaunch?> PrepareAsync(string packDirectory, string instanceDirectory, string javaHome,
@@ -80,42 +77,51 @@ public sealed class LocalAiProvisioningService
         var requirements = ReadRequirements(packDirectory);
         if (requirements is null) return null;
         _paths.EnsureUnderRoot(packDirectory); _paths.EnsureUnderRoot(instanceDirectory); _paths.EnsureUnderRoot(javaHome);
+        LocalAiRecipe recipe;
+        if (_testPin is { } injected)
+        {
+            var validated = LocalAiRecipeReader.ValidatePin(injected);
+            recipe = new(validated.Pin, validated.Blobs, LocalAiModelReference.Parse(requirements.Model),
+                new Uri("https://registry.ollama.ai/"), "Ollama");
+        }
+        else recipe = LocalAiRecipeReader.Read(packDirectory, requirements);
+        var pin = recipe.Pin; var blobs = recipe.Blobs;
         EnsureStopped(packDirectory);
         await VerifyModAsync(packDirectory, requirements, token).ConfigureAwait(false);
         await VerifyModAsync(instanceDirectory, requirements, token).ConfigureAwait(false);
         var cache = LocalAiFiles.Under(_paths.Launcher, "LocalAI");
         Directory.CreateDirectory(cache);
         await using var preparation = await AcquireLockAsync(cache, token).ConfigureAwait(false);
-        var nativeRoot = LocalAiFiles.Under(javaHome, "AppData/Local/Verity/ollama");
+        var nativeRoot = LocalAiFiles.Under(javaHome, recipe.InstallDirectory);
         LocalAiFiles.CleanupAbandonedStages(nativeRoot);
         // Fail before a multi-gigabyte transfer when even the compressed
         // distribution cannot fit. Per-file/extraction checks follow as well.
         var missingBytes = 0L;
-        if (!await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, "downloads/" + _pin.ArchiveSha256 + ".zip"),
-                _pin.ArchiveSizeBytes, _pin.ArchiveSha256, token).ConfigureAwait(false)) missingBytes += _pin.ArchiveSizeBytes;
-        foreach (var blob in _blobs)
+        if (!await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, "downloads/" + pin.ArchiveSha256 + ".zip"),
+                pin.ArchiveSizeBytes, pin.ArchiveSha256, token).ConfigureAwait(false)) missingBytes += pin.ArchiveSizeBytes;
+        foreach (var blob in blobs)
             if (!await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, "models/blobs/sha256-" + blob.Sha256),
                     blob.SizeBytes, blob.Sha256, token).ConfigureAwait(false)) missingBytes = checked(missingBytes + blob.SizeBytes);
         if (new DriveInfo(Path.GetPathRoot(cache)!).AvailableFreeSpace < missingBytes + 64L * 1024 * 1024)
             throw new IOException("Недостаточно места для локального ИИ и модели.");
         var store = new LocalAiFiles(cache, _http);
-        var archive = await store.GetAsync(_pin.ArchiveUri, _pin.ArchiveSizeBytes, _pin.ArchiveSha256,
-            "downloads/" + _pin.ArchiveSha256 + ".zip", "Локальный ИИ: Ollama", progress, token).ConfigureAwait(false);
+        var archive = await store.GetAsync(pin.ArchiveUri, pin.ArchiveSizeBytes, pin.ArchiveSha256,
+            "downloads/" + pin.ArchiveSha256 + ".zip", "Локальный ИИ: Ollama", progress, token).ConfigureAwait(false);
         var executable = await LocalAiFiles.ExtractRuntimeAsync(archive, nativeRoot, progress, token).ConfigureAwait(false);
         var models = LocalAiFiles.Under(cache, "models");
-        foreach (var blob in _blobs)
-            await store.GetAsync(new Uri("https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:" + blob.Sha256),
+        foreach (var blob in blobs)
+            await store.GetAsync(recipe.Model.BlobUri(recipe.Registry, blob.Sha256),
                 blob.SizeBytes, blob.Sha256, "models/blobs/sha256-" + blob.Sha256, "Локальный ИИ: модель", progress, token).ConfigureAwait(false);
-        var modelManifest = LocalAiFiles.Under(models, "manifests/registry.ollama.ai/library/qwen3/1.7b");
-        if (!await LocalAiFiles.MatchesAsync(modelManifest, _pin.ModelManifest.Length, _pin.ModelManifestSha256, token).ConfigureAwait(false))
-            AtomicFile.WriteAllBytes(modelManifest, _pin.ModelManifest);
+        var modelManifest = LocalAiFiles.Under(models, recipe.Model.ManifestPath(recipe.Registry));
+        if (!await LocalAiFiles.MatchesAsync(modelManifest, pin.ModelManifest.Length, pin.ModelManifestSha256, token).ConfigureAwait(false))
+            AtomicFile.WriteAllBytes(modelManifest, pin.ModelManifest);
         EnsureStopped(packDirectory);
         if (ReadRequirements(packDirectory) != requirements) throw new InvalidDataException("Local AI descriptor changed during preparation.");
         await VerifyModAsync(instanceDirectory, requirements, token).ConfigureAwait(false);
+        if (_testPin is null) _ = LocalAiRecipeReader.Read(packDirectory, requirements);
         using var port = new TcpListener(IPAddress.Loopback, 0);
         port.Start();
         var endpoint = new Uri("http://127.0.0.1:" + ((IPEndPoint)port.LocalEndpoint).Port);
-        LocalAiConfiguration.Apply(instanceDirectory, endpoint, requirements.Model);
         progress?.Report(new(RuntimePreparationStage.Ready, "Локальный ИИ: файлы готовы", 1));
         return new LocalAiPreparedLaunch(endpoint, models, executable);
     }
@@ -144,14 +150,29 @@ public sealed class LocalAiProvisioningService
     internal static async Task VerifyModAsync(string directory, LocalAiRequirements requirement, CancellationToken token)
     {
         var path = LocalAiFiles.Under(directory, requirement.ModPath);
-        if (!await LocalAiFiles.MatchesAsync(path, null, requirement.ModSha256, token).ConfigureAwait(false))
-            throw new InvalidDataException("Verity JAR differs from launcher/local-ai.json.");
-        using var zip = ZipFile.OpenRead(path);
-        var metadata = zip.GetEntry("META-INF/mods.toml");
-        if (metadata is null || metadata.Length > 65536) throw new InvalidDataException("Verity Forge metadata is missing.");
-        using var reader = new StreamReader(metadata.Open());
-        if (!Regex.IsMatch(await reader.ReadToEndAsync(token).ConfigureAwait(false), @"(?m)^\s*modId\s*=\s*[""']verity[""']\s*(?:#.*)?$"))
-            throw new InvalidDataException("The local AI JAR does not declare the Verity mod ID.");
+        if (requirement.ModId is null || !Regex.IsMatch(requirement.ModId, @"\A[a-z][a-z0-9_]{1,63}\z") || !File.Exists(path))
+            throw new InvalidDataException("The declared local AI mod binding is missing or invalid.");
+        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, true);
+        if (Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token).ConfigureAwait(false)) != requirement.ModSha256)
+            throw new InvalidDataException("The local AI mod JAR differs from launcher/local-ai.json.");
+        file.Position = 0;
+        using var zip = new ZipArchive(file, ZipArchiveMode.Read, leaveOpen: true);
+        var entries = zip.Entries.Where(entry => entry.FullName == "META-INF/mods.toml").Take(2).ToArray();
+        if (entries.Length != 1 || entries[0].Length > 65536) throw new InvalidDataException("Local AI Forge metadata is missing, duplicated or too large.");
+        await using var input = entries[0].Open(); using var content = new MemoryStream(); var buffer = new byte[8192];
+        int count;
+        while ((count = await input.ReadAsync(buffer, token).ConfigureAwait(false)) != 0)
+        {
+            if (content.Length + count > 65536) throw new InvalidDataException("Local AI Forge metadata exceeds its byte limit.");
+            content.Write(buffer, 0, count);
+        }
+        try
+        {
+            if (!LocalAiRecipeReader.DeclaresForgeMod(new UTF8Encoding(false, true).GetString(content.ToArray()), requirement.ModId))
+                throw new InvalidDataException("The local AI JAR does not declare its descriptor mod ID in [[mods]].");
+        }
+        catch (Exception error) when (error is JsonException or DecoderFallbackException or FormatException)
+        { throw new InvalidDataException("Malformed local AI Forge metadata.", error); }
     }
 }
 

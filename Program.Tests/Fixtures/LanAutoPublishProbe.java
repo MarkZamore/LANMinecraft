@@ -48,6 +48,7 @@ public final class LanAutoPublishProbe {
         check(screen.nativeInitializations == 1 && screen.widgetsReady, "native init was skipped");
         check(screen.nativeTailRuns == (earlyReturn ? 0 : 1), "native return path changed");
         check(server.attempts == 1 && server.published, "world did not publish once");
+        assertNativeDistancesUntouched(server);
         check(client.gui.current == screen && client.closes == 0, "screen closed before init lifecycle completed");
         check(client.queue.size() == 1, "screen close was not deferred exactly once");
         check(client.titles == 1 && client.gui.chat.messages == 1, "normal publication feedback lost");
@@ -72,6 +73,14 @@ public final class LanAutoPublishProbe {
         check(again.widgetsReady && server.attempts == 1, "second screen republished world");
         client.drain();
         check(client.closes == 2, "second screen was left on an already-open world");
+        assertNativeDistancesUntouched(server);
+    }
+
+    private static void assertNativeDistancesUntouched(Server server) {
+        check(server.level.source.viewDistance == 64 && server.level.source.writes == 0,
+            "LAN publication rewrote the native author/player view distance");
+        check(server.players.broadcasts == 0 && RadiusPacket.created == 0,
+            "LAN publication synthesized a distance announcement");
     }
 
     private static void failedPublish(boolean throwing) throws Exception {
@@ -102,6 +111,7 @@ public final class LanAutoPublishProbe {
     }
 
     private static Minecraft reset() {
+        RadiusPacket.created = 0;
         Minecraft.INSTANCE = new Minecraft();
         return Minecraft.INSTANCE;
     }
@@ -135,6 +145,20 @@ public final class LanAutoPublishProbe {
         property("publishSuccessMethods", "getSuccessMessage");
         property("updateTitleMethods", "updateTitle");
         property("setScreenMethods", "setScreen");
+        // All obsolete distance-write aliases are deliberately available. An
+        // old forced-distance implementation would execute here and fail the
+        // no-write assertion; missing metadata cannot make the test pass.
+        property("serverLevelClasses", DistanceLevel.class.getName());
+        property("chunkSourceClasses", DistanceSource.class.getName());
+        property("getAllLevelsMethods", "getAllLevels");
+        property("getChunkSourceMethods", "getChunkSource");
+        property("setChunkViewDistanceMethods", "setViewDistance");
+        property("playerListMethods", "getPlayerList");
+        property("getPlayersMethods", "getPlayers");
+        property("requestedViewDistanceMethods", "requestedViewDistance");
+        property("chunkRadiusPacketClasses", RadiusPacket.class.getName());
+        property("networkPacketClasses", Packet.class.getName());
+        property("broadcastAllMethods", "broadcastAll");
         if (modern) {
             property("multiplayerScopeClasses", Scope.class.getName());
             property("lanMultiplayerScopeFields", "LAN");
@@ -175,8 +199,33 @@ public final class LanAutoPublishProbe {
     public enum Scope { SINGLEPLAYER, LAN, ONLINE }
     public enum GameType { SURVIVAL, CREATIVE }
     public static final class WorldData { public boolean isAllowCommands() { return true; } }
+    public interface Packet { }
+    public static final class RadiusPacket implements Packet {
+        static int created;
+        public RadiusPacket(int ignored) { created++; }
+    }
+    public static final class DistanceSource {
+        public int viewDistance = 64, writes;
+        public void setViewDistance(int value) { writes++; viewDistance = value; }
+    }
+    public static final class DistanceLevel {
+        public DistanceSource source = new DistanceSource();
+        public DistanceSource getChunkSource() { return source; }
+    }
+    public static final class DistancePlayer {
+        public int requestedViewDistance() { return 96; }
+    }
+    public static final class DistancePlayerList {
+        public int broadcasts;
+        public java.util.List<DistancePlayer> getPlayers() { return java.util.List.of(new DistancePlayer()); }
+        public void broadcastAll(Packet packet) { broadcasts++; }
+    }
 
     public static final class Server {
+        public final DistanceLevel level = new DistanceLevel();
+        public final DistancePlayerList players = new DistancePlayerList();
+        public java.lang.Iterable<DistanceLevel> getAllLevels() { return java.util.List.of(level); }
+        public DistancePlayerList getPlayerList() { return players; }
         public boolean published;
         public boolean succeed = true;
         public boolean throwOnPublish;

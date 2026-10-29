@@ -5,9 +5,8 @@ namespace Minecraft.Tests;
 /// <summary>
 /// Logs are the one thing a launcher writes forever. A modded session produced
 /// a 35 MB debug.log here, a week of them fills a gigabyte, and the diagnostics
-/// feature copies all of it to a friend. These cases pin the budgets: what the
-/// game is allowed to write, what survives a cleanup, and what is worth
-/// another player's bandwidth.
+/// feature copies all of it to a friend. These cases pin pack-authored logging
+/// delivery, what survives a cleanup, and what is worth another player's bandwidth.
 /// </summary>
 public sealed class LogVolumeTests : IDisposable
 {
@@ -253,45 +252,54 @@ public sealed class LogVolumeTests : IDisposable
     }
 
     /// <summary>
-    /// The configuration handed to the game keeps the file players and crash
-    /// reports read, drops the DEBUG copy, and bounds its own rollovers.
+    /// Logging content and its selection are ordinary pack files; the launcher
+    /// delivers their exact bytes and loads only the requested Java option.
     /// </summary>
     [Fact]
-    public void TheGameLoggingConfiguration_KeepsLatestLogAndDropsTheRest()
+    public async Task PackLoggingData_IsInstalledUnchangedAndItsJavaOptionIsLoaded()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Some Build");
-        var pack = paths.CombineUnderPacks("Some Build");
-        Directory.CreateDirectory(instance);
-        Directory.CreateDirectory(pack);
+        var pack = CreateLoggingPack(paths);
+        Directory.CreateDirectory(Path.Combine(pack, "config"));
+        Directory.CreateDirectory(Path.Combine(pack, PackInstanceService.LauncherDataRoot));
+        var authored = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<Configuration status=\"WARN\"/>\r\n")).ToArray();
+        File.WriteAllBytes(Path.Combine(pack, "config", "log4j2.xml"), authored);
+        File.WriteAllText(Path.Combine(pack, PackInstanceService.LauncherDataRoot, "jvm-args.txt"),
+            "-Dauthor.choice=true\n-Dlog4j.configurationFile=config/log4j2.xml\n");
+        using var service = new PackInstanceService(paths, new Logger(paths.LogFile));
 
-        var argument = new GameLogConfigurationService().PrepareArgument(instance, pack);
+        var instance = await service.PrepareAsync("Some Build");
 
-        Assert.Equal("-Dlog4j.configurationFile=config/log4j2.xml", argument);
-        var written = File.ReadAllText(Path.Combine(instance, "config", "log4j2.xml"));
-        Assert.Contains("logs/latest.log", written, StringComparison.Ordinal);
-        // No appender writes the DEBUG copy - the file name appears only in
-        // the comment explaining why it is gone.
-        Assert.DoesNotContain("fileName=\"logs/debug.log\"", written, StringComparison.Ordinal);
-        Assert.DoesNotContain("<Root level=\"DEBUG\"", written, StringComparison.Ordinal);
-        Assert.Contains("SizeBasedTriggeringPolicy", written, StringComparison.Ordinal);
-        Assert.Contains("IfLastModified age=\"7d\"", written, StringComparison.Ordinal);
+        Assert.Equal(authored, File.ReadAllBytes(Path.Combine(instance.GameDirectory, "config", "log4j2.xml")));
+        Assert.Equal(authored, File.ReadAllBytes(Path.Combine(pack, "config", "log4j2.xml")));
+        Assert.Equal(["-Dauthor.choice=true", "-Dlog4j.configurationFile=config/log4j2.xml"],
+            new PackJvmArgumentsService().Load(pack));
     }
 
-    /// <summary>A pack that configured its own logging keeps it.</summary>
+    /// <summary>A pack without logging data receives no generated configuration or logging option.</summary>
     [Fact]
-    public void APackWithItsOwnLoggingConfiguration_IsLeftAlone()
+    public async Task APackWithoutLoggingData_ReceivesNoLoggingConfigurationOrOption()
     {
         var paths = CreatePaths();
-        var instance = paths.CombineUnderInstances("Some Build");
+        var pack = CreateLoggingPack(paths);
+        using var service = new PackInstanceService(paths, new Logger(paths.LogFile));
+
+        var instance = await service.PrepareAsync("Some Build");
+
+        Assert.Empty(new PackJvmArgumentsService().Load(pack));
+        Assert.False(File.Exists(Path.Combine(instance.GameDirectory, "config", "log4j2.xml")));
+        Assert.False(File.Exists(Path.Combine(pack, "config", "log4j2.xml")));
+    }
+
+    private static string CreateLoggingPack(AppPaths paths)
+    {
         var pack = paths.CombineUnderPacks("Some Build");
-        Directory.CreateDirectory(Path.Combine(pack, "config"));
-        File.WriteAllText(Path.Combine(pack, "config", "log4j2.xml"), "<Configuration/>");
-
-        var argument = new GameLogConfigurationService().PrepareArgument(instance, pack);
-
-        Assert.Null(argument);
-        Assert.False(File.Exists(Path.Combine(instance, "config", "log4j2.xml")));
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, "client.jar"), "technical fixture");
+        File.WriteAllText(Path.Combine(pack, PackManifestService.ManifestFileName),
+            """{"schemaVersion":1,"minecraftVersion":"1.20.1","loader":{"type":"vanilla"},"clientJar":"client.jar"}""");
+        return pack;
     }
 
     private AppPaths CreatePaths()

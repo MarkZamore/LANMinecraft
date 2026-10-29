@@ -183,7 +183,7 @@ internal static class ModRuntimeMetadata
     }
 
     // Split only outside quoted strings/arrays. In particular, a description cannot manufacture a dependency table.
-    private static IEnumerable<string> TomlStatements(string text)
+    internal static IEnumerable<string> TomlStatements(string text)
     {
         var statement = new StringBuilder();
         char quote = '\0';

@@ -13,8 +13,8 @@ namespace Minecraft.Tests;
 public sealed class SteamTransportModTests
 {
     /// <summary>
-    /// Every build the launcher will install is the file its author published,
-    /// to the byte. Sizes and hashes were taken from the release itself.
+    /// The current delivery profile separates exact author provenance from the
+    /// reviewed native UI derivatives; both coordinates remain explicit.
     /// </summary>
     [Fact]
     public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
@@ -29,27 +29,27 @@ public sealed class SteamTransportModTests
             Assert.True(build.SizeBytes > 0);
             Assert.NotEmpty(build.Loaders);
             Assert.Equal(
-                $"https://github.com/MarkZamore/e4steam/releases/download/v{build.Version}/{build.FileName}",
+                $"https://github.com/MarkZamore/e4steam/releases/download/{build.DeliveryTag ?? "v" + build.Version}/{build.FileName}",
                 Assert.Single(build.DownloadUris).AbsoluteUri);
             Assert.Equal(
-                $"https://github.com/Kamilhik/e4steam/releases/download/v{build.Version}/{build.FileName}",
+                $"https://github.com/Kamilhik/e4steam/releases/download/v{build.Version}/{build.AuthorFileName ?? build.FileName}",
                 build.UpstreamDownloadUri.AbsoluteUri);
         });
 
         (string File, long Size, string Sha, int[] Minimum, int[] Maximum)[] latest =
         [
-            ("e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar", 3_820_487,
-                "b1a6b34ca34edff830414a676de33a7ebe6fd3a43d0f18e687b717d45d87a312", [1, 17, 1], [1, 18, 2]),
-            ("e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar", 3_817_117,
-                "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc", [1, 18, 2], [1, 20, 3]),
-            ("e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar", 3_815_800,
-                "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0", [1, 20, 2], [26, 4]),
-            ("e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar", 3_816_090,
-                "0aaef192271c57c9af3be4a8b09e62101592953bb7c97c276df4b26c289aeef3", [1, 17], [1, 19]),
-            ("e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar", 3_812_904,
-                "ec692ae255704971b24bdff28724ec48224d6c87c7e5d568e4252b4df15a447d", [1, 19], [26, 1]),
-            ("e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar", 3_813_546,
-                "ea7ed37c3c2b8b41c7e458043b051725c22e81b9f9fa318a1474831cc484854e", [26, 1], [26, 4])
+            ("e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.1.jar", 3804498,
+                "259e0e17faa4748ed0c3b8adb58d7c7fcfe747c8ed03aa2fbbb5028192627cb9", [1, 17, 1], [1, 18, 2]),
+            ("e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar", 3801104,
+                "68ba6bdce76868e2cb43359a13416dfa1b011c628c13b6c4266b653c765b5c40", [1, 18, 2], [1, 20, 3]),
+            ("e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar", 3799786,
+                "d09f4f274e133bd43861f0577a20d83d84d9bea88bb95351f6f5af11f0b1e617", [1, 20, 2], [26, 4]),
+            ("e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.1.jar", 3800183,
+                "34b5cd1e81ec5a1e3ea1238078840c81c6cb3e6dd4ec035389125f34ff693e23", [1, 17], [1, 19]),
+            ("e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar", 3796976,
+                "8a8dfb209bb0d1d15acad996f88a4d6ec7548a8a282c6ea8307a2b62fc4df800", [1, 19], [26, 1]),
+            ("e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar", 3797595,
+                "d55953ff626dab390c0c29076a11d32b764ea543f3979c81f3bfce9889caa909", [26, 1], [26, 4])
         ];
         foreach (var expected in latest)
         {
@@ -61,6 +61,16 @@ public sealed class SteamTransportModTests
             Assert.Equal(expected.Maximum, build.ExclusiveMaximumMinecraftVersion);
         }
 
+        Assert.All(SteamTransportCatalog.Builds.Where(build => build.Version == SteamTransportCatalog.Version), build =>
+        {
+            Assert.Equal("native-lan-ui-v1", build.DeliveryTag);
+            Assert.NotNull(build.AuthorFileName);
+            Assert.Contains("-lanmc-native-ui.1.jar", build.FileName, StringComparison.Ordinal);
+            var original = Assert.Single(SteamTransportCatalog.SupersededBuilds, old => old.FileName == build.AuthorFileName);
+            Assert.NotEqual(original.Sha256, build.Sha256);
+            Assert.NotEqual(original.FileId, build.CacheFileId);
+        });
+
         // The author publishes no 0.3.4 retro JARs. Keep their newest actual
         // artifacts, with explicit per-build versions and original ranges.
         Assert.All(SteamTransportCatalog.Builds.Where(build => build.Version == "0.3.2"), build =>
@@ -69,10 +79,10 @@ public sealed class SteamTransportModTests
             Assert.Equal(1, build.MinimumMinecraftVersion[0]);
             Assert.InRange(build.MinimumMinecraftVersion[1], 7, 16);
         });
-        Assert.Equal(38, SteamTransportCatalog.SupersededBuilds.Count);
+        Assert.Equal(44, SteamTransportCatalog.SupersededBuilds.Count);
         Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.0.jar", StringComparison.Ordinal)));
         Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.2.jar", StringComparison.Ordinal)));
-        Assert.Equal(38, SteamTransportCatalog.SupersededBuilds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(44, SteamTransportCatalog.SupersededBuilds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         foreach (var build in SteamTransportCatalog.Builds.Where(build => build.Version == "0.3.2"))
         {
             var previous = Assert.Single(SteamTransportCatalog.SupersededBuilds, old => old.FileName == build.FileName);
@@ -96,29 +106,29 @@ public sealed class SteamTransportModTests
     /// </summary>
     [Theory]
     // NeoForge, as before.
-    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "26.3", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.3", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
     [InlineData(PackLoaderKind.NeoForge, "26.4", null)]
     [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
     // Forge, which used to be refused outright. Both versions still carry
     // packs people play.
-    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
     // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
-    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.1.jar")]
     [InlineData(PackLoaderKind.Forge, "1.17", null)]
     [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
     // Fabric and Quilt share the one build its author tested them both with.
-    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Fabric, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar")]
-    [InlineData(PackLoaderKind.Quilt, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Fabric, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
     [InlineData(PackLoaderKind.Fabric, "26.4", null)]
     [InlineData(PackLoaderKind.Quilt, "26.4", null)]
     [InlineData(PackLoaderKind.Fabric, "1.16.5", "e4steam-fabric-mc1.16.x-v0.3.2.jar")]
@@ -146,7 +156,7 @@ public sealed class SteamTransportModTests
         var selected = SteamTransportCatalog.Find(descriptor);
         Assert.Equal(expectedFile, selected?.FileName);
         if (expectedFile is not null)
-            Assert.Equal(expectedFile.Contains("-v0.3.4.jar", StringComparison.Ordinal)
+            Assert.Equal(expectedFile.Contains("-v0.3.4-", StringComparison.Ordinal)
                 ? SteamTransportCatalog.Version : "0.3.2", selected!.Version);
         Assert.Equal(expectedFile is not null, SteamPlayPolicy.IsSupported(descriptor));
     }

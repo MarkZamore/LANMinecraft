@@ -15,12 +15,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * What each player asked to see, on a Minecraft that does not remember.
  *
- * From 1.20.2 the server keeps ServerPlayer.requestedViewDistance and gives
- * every player the smaller of his number and the server's, so raising the
- * server's is the whole feature. Before that there is one number for everybody:
- * raising it to the furthest-asking guest raises it for the guest who set his
- * slider to four and meant it, and he then receives - and stores, and pays the
- * bandwidth for - eight times the chunks he wanted.
+ * From 1.20.2 the native server keeps ServerPlayer.requestedViewDistance.
+ * Earlier versions share one server radius, so a positive client choice is
+ * recorded here and honored within that actual native radius. No fixed floor,
+ * ceiling, server-distance setter or distance-announcement packet is supplied.
  *
  * So the number is caught as it arrives and written down here, and the two
  * places that read the server's number while working on one player are made to
@@ -60,10 +58,6 @@ public final class PortablePerPlayerChunksHooks {
     /** When each player was last put back on the chunk map, by nanoTime. */
     private static final Map<UUID, Long> RETRACKED = new ConcurrentHashMap<>();
 
-    /** The game's own floor and ceiling for a view distance. */
-    private static final int SMALLEST = 2;
-    private static final int LARGEST = 32;
-
     /** How often one player may cost the tick thread a whole ring. */
     private static final long COOLDOWN = 1_000_000_000L;
 
@@ -100,13 +94,7 @@ public final class PortablePerPlayerChunksHooks {
      */
     private static volatile int lastRequested;
 
-    /**
-     * The last number the server's own field actually gave up, and whether the
-     * failure to read it has been mentioned. Said once: this sits inside the
-     * loops that decide chunks, and a line per chunk would bury the log it is
-     * meant to explain.
-     */
-    private static volatile int lastGoodRadius;
+    /** A failed optional reflection read is reported once; native field reads remain intact. */
     private static volatile boolean complainedAboutRadius;
 
     /**
@@ -148,12 +136,8 @@ public final class PortablePerPlayerChunksHooks {
      * would still meet it, and because a ceiling that is never reached costs a
      * comparison per chunk.
      *
-     * A full view at the launcher's own ceiling of sixteen is 33 by 33, which
-     * is 1089 chunks and under seven seconds even at this rate; a view of eight
-     * is 289 and under two. Both are far inside the thirty seconds a client
-     * waits before it decides the server is gone. Vanilla starts at nine and
-     * then adapts, because its client says how fast it is keeping up; this
-     * cannot ask, so it errs the other way.
+     * This limits delivery rate only. Native, author and player distance
+     * choices decide the complete view; no distance follows from this budget.
      */
     private static final int CHUNKS_PER_TICK = 4;
 
@@ -188,8 +172,7 @@ public final class PortablePerPlayerChunksHooks {
 
     /**
      * How deep a hold may get before the pacing gives way and the game sends
-     * as it always did. Twice a full view at the serve ceiling, so a single
-     * arrival can never reach it - the one moment the feature exists for.
+     * as it always did. This is a memory/resource bound, not a view radius.
      * Reaching it means handing over at once, never dropping: a chunk this
      * hook drops is a hole in a world that heals only when its owner changes
      * his render distance.
@@ -252,8 +235,7 @@ public final class PortablePerPlayerChunksHooks {
     /**
      * How far the world is being served, and how often that number moved.
      *
-     * The distance is not fixed: the launcher serves as far as the furthest
-     * player asks, so it follows whoever wants most. Everything downstream is
+     * The distance follows the native server's actual field. Everything downstream is
      * measured from it - which chunks a player holds, and, on the versions
      * that are narrowed per player, how far he is told about entities. A
      * number that keeps moving therefore keeps dropping entities out of
@@ -311,32 +293,28 @@ public final class PortablePerPlayerChunksHooks {
      */
     public static void observeServerDistance(int requested) {
         lastRequested = requested;
-        try {
-            // A host moving his own slider narrows the world for everybody, and
-            // until this the launcher only noticed on its next five second
-            // look. Nothing is done there beyond saying so: this runs on the
-            // tick thread, inside the setter, before the field it will write.
-            PortableLanAutoPublishHooks.serverDistanceChanged(requested);
-        } catch (Throwable exception) {
-            // Then the keeper finds out on its own clock, as it always did.
-        }
     }
 
     /** Called where the server takes a client's settings, before it reads them. */
     public static void observeOptions(Object player, Object packet) {
+        UUID who = null;
         try {
+            who = uuidOf(player);
+            if (who == null) return;
             Object value = ASKED_DISTANCE.method(packet).invoke(packet);
-            if (!(value instanceof Integer)) {
+            if (!(value instanceof Integer) || ((Integer) value).intValue() <= 0) {
+                PENDING.remove(who);
+                remember(who, null);
                 return;
             }
-            UUID who = uuidOf(player);
-            if (who == null) {
-                return;
-            }
-            int asked = Math.max(SMALLEST, Math.min(((Integer) value).intValue(), LARGEST));
+            int asked = ((Integer) value).intValue();
             PENDING.put(who, Integer.valueOf(asked));
             settle(player, who);
         } catch (Throwable exception) {
+            if (who != null) {
+                PENDING.remove(who);
+                remember(who, null);
+            }
             // A number that could not be read is a player served the way the
             // game would have served him.
         }
@@ -511,17 +489,11 @@ public final class PortablePerPlayerChunksHooks {
      * the number - which chunks to send, which to forget, which tickets to
      * hold - stays inside what the server actually loaded.
      */
-    public static int radiusFor(Object chunkMap, Object player) {
-        int server = serverRadius(chunkMap);
-        // Never a number the game cannot work with. What this answers replaces
-        // a field read, and the game does arithmetic on it at once: loop bounds
-        // for which chunks a player holds, and (n - 1) * 16 for how far he is
-        // told about entities. A negative here is not "leave it alone", which
-        // is what this used to believe - it is a player standing in an empty
-        // world whose every entity flickers out of tracking and back, jumping
-        // as it returns. Where the server's own number cannot be had, the last
-        // one that could is the honest answer; before there has ever been one,
-        // the game's own floor is.
+    public static int radiusFor(Object chunkMap, int server, Object player) {
+        // The transformer preserves the original GETFIELD and passes its exact
+        // value. Missing/invalid client information falls back to that native
+        // operand; reflection failure never invents a radius or hides a native
+        // field access/null error.
         if (server != lastServerRadius) {
             // The first read is not a move; it is the first thing there was.
             if (lastServerRadius != 0) {
@@ -530,7 +502,7 @@ public final class PortablePerPlayerChunksHooks {
             lastServerRadius = server;
         }
         if (server <= 0) {
-            return lastGoodRadius > 0 ? lastGoodRadius : SMALLEST + 1;
+            return server;
         }
         int answer = effective(server, askedFor(player));
         return answer > 0 ? answer : server;
@@ -548,7 +520,7 @@ public final class PortablePerPlayerChunksHooks {
      * the server every tick.
      */
     private static int effective(int server, Integer asked) {
-        return asked == null ? server : Math.min(server, asked.intValue() + bias(server));
+        return asked == null ? server : (int) Math.min((long) server, (long) asked.intValue() + bias(server));
     }
 
     /**
@@ -607,7 +579,8 @@ public final class PortablePerPlayerChunksHooks {
      */
     public static boolean shouldSend(Object chunkMap, Object player, Object chunk) {
         try {
-            int radius = radiusFor(chunkMap, player);
+            int nativeRadius = serverRadius(chunkMap);
+            int radius = effective(nativeRadius, askedFor(player));
             if (radius <= 0) {
                 return true;
             }
@@ -617,7 +590,7 @@ public final class PortablePerPlayerChunksHooks {
                 - CHUNK_POS_X.field(playerPos).getInt(playerPos));
             int dz = Math.abs(CHUNK_POS_Z.field(chunkPos).getInt(chunkPos)
                 - CHUNK_POS_Z.field(playerPos).getInt(playerPos));
-            return Math.max(dx, dz) <= radius * 2 + 2;
+            return (long) Math.max(dx, dz) <= (long) radius * 2 + 2;
         } catch (Throwable exception) {
             return true;
         }
@@ -1081,6 +1054,7 @@ public final class PortablePerPlayerChunksHooks {
     /**
      * The largest number anybody HERE has asked for, or 0 where nobody present
      * has said anything yet.
+     * This read-only compatibility/diagnostic query never sets a server radius.
      *
      * Asked of the players who are actually on the server rather than of the
      * note, because the note is never cleaned: a guest who visited once and set
@@ -1150,23 +1124,18 @@ public final class PortablePerPlayerChunksHooks {
     }
 
     /**
-     * The number the server is serving, read from the field the patch replaced
-     * the reading of. Negative where it cannot be had, which the caller reads
-     * as "leave it alone".
+     * Optional native radius read for pacing/retracking. Negative means leave
+     * native delivery alone. Transformed reads use their actual GETFIELD value.
      */
     private static int serverRadius(Object chunkMap) {
         try {
-            int read = CHUNK_VIEW_DISTANCE.field(chunkMap).getInt(chunkMap);
-            if (read > 0) {
-                lastGoodRadius = read;
-            }
-            return read;
+            return CHUNK_VIEW_DISTANCE.field(chunkMap).getInt(chunkMap);
         } catch (Throwable exception) {
             if (!complainedAboutRadius) {
                 complainedAboutRadius = true;
                 System.out.println(
                     "[PortableIdentity] the server's view distance could not be read, so every player is "
-                        + "served the last number that could be: " + exception);
+                        + "left to the native field value and delivery decisions: " + exception);
             }
             return -1;
         }

@@ -50,10 +50,8 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         ProtectionDomain protectionDomain,
         byte[] classfileBuffer) {
         // The narrowing goes in only where the game cannot do it itself. The
-        // one seam beside it - watching how far the server is told to serve -
-        // goes in everywhere, because on every version the launcher writes that
-        // number behind PlayerList's back and would otherwise not hear the host
-        // move his own slider until its next look round.
+        // one seam beside it observes the setter argument only to recognize
+        // the native storage bias. It never rewrites the server's distance.
         boolean perPlayer = "true".equals(property("perPlayerChunksEnabled", "false"));
         // Held chunks are handed over by calling the delivery again, so pacing
         // can only be asked for where the delivery is already being decided.
@@ -122,8 +120,8 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
      *
      * The read it replaces is always "aload_0, getfield" - the field is on the
      * ChunkMap and there is only one ChunkMap in scope - and what goes in its
-     * place leaves the stack as it found it: the object that was about to be
-     * read from is consumed by the call instead, and an int comes back. No
+     * place preserves that original field read, passing its actual value to
+     * the helper. No guessed fallback distance replaces native behavior. No
      * local is touched and no branch is added, so nothing about the method's
      * frames changes.
      */
@@ -135,6 +133,7 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
             AbstractInsnNode next = instruction.getNext();
             if (instruction instanceof FieldInsnNode read &&
                 read.getOpcode() == Opcodes.GETFIELD &&
+                read.desc.equals("I") &&
                 contains(owners, read.owner) &&
                 contains(fields, read.name) &&
                 // What is on the stack has to be the map itself: "this" in the
@@ -142,16 +141,19 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
                 // class reaches out to it. Read from anything else and the
                 // player is not its subject, so it is left alone.
                 readsTheMap(read.getPrevious(), owners)) {
+                // [map] -> [map,map] -> original GETFIELD -> [map,int]
+                // -> [map,int,player] -> helper -> [int]. Original field access
+                // and its exceptions are retained; no branch/frame is added.
+                method.instructions.insertBefore(read, new InsnNode(Opcodes.DUP));
                 InsnList replacement = new InsnList();
                 replacement.add(new VarInsnNode(Opcodes.ALOAD, 1));
                 replacement.add(new MethodInsnNode(
                     Opcodes.INVOKESTATIC,
                     HOOKS,
                     "radiusFor",
-                    "(Ljava/lang/Object;Ljava/lang/Object;)I",
+                    "(Ljava/lang/Object;ILjava/lang/Object;)I",
                     false));
-                method.instructions.insertBefore(read, replacement);
-                method.instructions.remove(read);
+                method.instructions.insert(read, replacement);
                 replaced++;
             }
             instruction = next;

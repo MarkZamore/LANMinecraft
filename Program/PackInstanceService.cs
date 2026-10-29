@@ -3,7 +3,6 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 
 namespace Minecraft;
@@ -30,6 +29,7 @@ public sealed class PackInstanceService : IDisposable
         "dynamic-resource-pack-cache",
         "ftbbackups3",
         "ldlib2",
+        "launcher-runtime",
         "local",
         "logs",
         "moddata",
@@ -97,7 +97,6 @@ public sealed class PackInstanceService : IDisposable
             var gameDir = GetInstanceDirectory(packRelativePath);
             if (Directory.Exists(gameDir))
             {
-                SanitizeInstanceForLocalPlay(gameDir);
                 if (removeSessionLogs)
                 {
                     LogCleanupService.RetainRecentSessionDiagnostics(gameDir);
@@ -202,31 +201,6 @@ public sealed class PackInstanceService : IDisposable
     }
 
 
-    /// <summary>
-    /// Folders a mod makes once and never makes again.
-    ///
-    /// KubeJS creates kubejs/assets on its first run and from then on only
-    /// reads it: ClientAssetPacks asks File.listFiles what is inside, and that
-    /// answers null rather than empty when the folder is not there, straight
-    /// into Objects.requireNonNull. The player gets a red "KubeJS client script
-    /// errors" screen at every start.
-    ///
-    /// This build's kubejs/assets is empty - there is nothing to generate - so
-    /// git cannot carry it and the tidying below used to delete it for being
-    /// empty. The tidying no longer does; this puts the folder back where it
-    /// has already been taken.
-    /// </summary>
-    private static void RestoreModOwnedDirectories(string gameDir)
-    {
-        var kubejs = Path.Combine(gameDir, "kubejs");
-        if (!Directory.Exists(kubejs)) return;
-        foreach (var name in new[] { "assets", "data" })
-        {
-            var path = Path.Combine(kubejs, name);
-            if (!Directory.Exists(path)) Directory.CreateDirectory(path);
-        }
-    }
-
     private PackInstanceContext PrepareCore(string packRelativePath, CancellationToken token)
     {
         var packDir = _paths.CombineUnderPacks(packRelativePath);
@@ -270,9 +244,6 @@ public sealed class PackInstanceService : IDisposable
         RemoveVerifiedRetiredFiles(packDir, gameDir, token);
         EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), GetConflictRoot, token);
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, managedPaths, GetConflictRoot, token);
-        SanitizeInstanceForLocalPlay(gameDir);
-        CapDrawDistances(gameDir);
-        RestoreModOwnedDirectories(gameDir);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
         state.PackRevision = ReadPackRevision(packDir);
@@ -428,6 +399,8 @@ public sealed class PackInstanceService : IDisposable
         foreach (var removed in previousFiles.Where(entry => !currentFiles.ContainsKey(entry.Key)))
         {
             token.ThrowIfCancellationRequested();
+            var rootName = removed.Key.Split('/')[0];
+            if (InstanceOwnedDirectories.Contains(rootName) || InstanceOwnedFiles.Contains(rootName)) continue;
             var destination = Path.Combine(gameDir, removed.Key.Replace('/', Path.DirectorySeparatorChar));
             EnsureOrdinaryPath(gameDir, destination);
             if (!File.Exists(destination)) continue;
@@ -640,7 +613,7 @@ public sealed class PackInstanceService : IDisposable
             {
                 if (!ShouldExcludeDirectory(packDir, entry)) pending.Push(entry);
             }
-            else if (File.Exists(entry) && !ShouldExcludeSourceFile(entry))
+            else if (File.Exists(entry))
             {
                 yield return entry;
             }
@@ -660,7 +633,7 @@ public sealed class PackInstanceService : IDisposable
                 {
                     if (!ShouldExcludeDirectory(packDir, entry)) pending.Push(entry);
                 }
-                else if (File.Exists(entry) && !ShouldExcludeSourceFile(entry))
+                else if (File.Exists(entry))
                 {
                     yield return entry;
                 }
@@ -679,146 +652,6 @@ public sealed class PackInstanceService : IDisposable
                // The controls preset and whatever joins it: read by the launcher
                // straight from the pack, meaningless inside the game directory.
                relative.Equals(LauncherDataRoot, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ShouldExcludeSourceFile(string path)
-    {
-        if (!path.EndsWith(".toml", StringComparison.OrdinalIgnoreCase)) return false;
-        try
-        {
-            var info = new FileInfo(path);
-            if (info.Length > 1024 * 1024) return false;
-            var text = File.ReadAllText(path);
-            return text.Contains("serverIP", StringComparison.OrdinalIgnoreCase) &&
-                   text.Contains("serverProxyIP", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// How far a world is served, and so how far anyone can be shown one.
-    /// </summary>
-    /// <remarks>
-    /// This has to agree with SERVE_DISTANCE_LIMIT in PortableLanAutoPublishHooks,
-    /// and a test holds the two together. The number is what it is because a
-    /// view of thirty-two chunks is something over a hundred megabytes, a Steam
-    /// relay carries about four and a half a second, and a client hangs up on a
-    /// server that has sent it nothing for thirty.
-    /// </remarks>
-    internal const int FurthestChunks = 16;
-
-    private static readonly string[] DistanceOptions = ["renderDistance", "simulationDistance"];
-
-    /// <summary>
-    /// The shadow map is drawn from the sun, over its own distance, and costs a
-    /// second pass over everything inside it. Serving no further than sixteen
-    /// makes anything beyond that a shadow cast by ground the player was never
-    /// sent. Iris keeps it in a properties file of its own, by an equals sign
-    /// rather than a colon.
-    /// </summary>
-    private static readonly string[] ShadowOptions = ["maxShadowRenderDistance"];
-
-    private static readonly UTF8Encoding Utf8NoBom = new(false);
-
-    /// <summary>
-    /// Brings the game's own sliders down to what the launcher will serve.
-    ///
-    /// The server already refuses to serve further, and a client draws the
-    /// smaller of its own number and the server's - so without this the setting
-    /// reads thirty-two, the world shows sixteen, and the player is left to
-    /// decide which of the two is broken. Writing it into the file is the only
-    /// way the limit becomes something he can see: the settings screen shows
-    /// his own number and nothing else, and what the server allows is known
-    /// only to the renderer.
-    /// </summary>
-    private void CapDrawDistances(string gameDir)
-    {
-        var optionsPath = Path.Combine(gameDir, "options.txt");
-        try
-        {
-            var changed = CapFile(optionsPath, ':', DistanceOptions)
-                + CapFile(Path.Combine(gameDir, "config", "iris.properties"), '=', ShadowOptions);
-            if (changed == 0) return;
-            _logger?.Info(
-                $"Brought {changed} distance setting(s) down to {FurthestChunks} chunks, which is as far "
-                    + "as a world is ever served.");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger?.Warn($"The game's distance settings could not be capped: {ex.Message}");
-        }
-    }
-
-    /// <summary>Caps one file in place, and answers how many lines it changed.</summary>
-    private static int CapFile(string path, char separator, string[] keys)
-    {
-        if (!File.Exists(path)) return 0;
-        var (capped, changed) = Cap(File.ReadAllText(path, Utf8NoBom), separator, keys);
-        if (changed > 0) AtomicFile.WriteAllText(path, capped, Utf8NoBom);
-        return changed;
-    }
-
-    /// <summary>The game's own settings file, where a setting is name:value.</summary>
-    internal static (string Text, int Changed) CapDistances(string options) =>
-        Cap(options, ':', DistanceOptions);
-
-    /// <summary>Iris's settings file, where a setting is name=value.</summary>
-    internal static (string Text, int Changed) CapShadowDistance(string properties) =>
-        Cap(properties, '=', ShadowOptions);
-
-    /// <summary>
-    /// The text with any distance above the cap brought down to it. Every other
-    /// line, and the way the lines end, is left as it was.
-    /// </summary>
-    private static (string Text, int Changed) Cap(string options, char separator, string[] keys)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        var newline = options.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        var lines = options.Split('\n');
-        var changed = 0;
-        for (var index = 0; index < lines.Length; index++)
-        {
-            var line = lines[index].TrimEnd('\r');
-            var colon = line.IndexOf(separator);
-            if (colon <= 0) continue;
-            var key = line[..colon];
-            if (!keys.Contains(key, StringComparer.Ordinal)) continue;
-            if (!int.TryParse(
-                    line[(colon + 1)..],
-                    NumberStyles.Integer,
-                    CultureInfo.InvariantCulture,
-                    out var value)
-                || value <= FurthestChunks)
-            {
-                continue;
-            }
-
-            lines[index] = key + separator + FurthestChunks.ToString(CultureInfo.InvariantCulture);
-            changed++;
-        }
-
-        if (changed == 0) return (options, 0);
-        return (string.Join(newline, lines.Select(line => line.TrimEnd('\r'))), changed);
-    }
-
-    private static void SanitizeInstanceForLocalPlay(string gameDir)
-    {
-        // config/jei/world/server holds the player's own bookmarks for peer
-        // worlds - packs never seed it (ShouldExcludeDirectory keeps it out of
-        // the sync), so deleting it here only ever destroyed player data.
-        var configRoot = Path.Combine(gameDir, "config");
-        if (Directory.Exists(configRoot))
-        {
-            foreach (var file in Directory.EnumerateFiles(configRoot, "*.toml", SearchOption.AllDirectories).ToArray())
-            {
-                if (!ShouldExcludeSourceFile(file)) continue;
-                File.Delete(file);
-                DeleteEmptyParents(Path.GetDirectoryName(file), configRoot);
-            }
-        }
     }
 
     /// <summary>

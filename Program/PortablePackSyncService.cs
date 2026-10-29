@@ -119,7 +119,7 @@ public sealed partial class PortablePackSyncService
     private const int LegacyRemoteManifestGeneration = 1;
     private const int FeatureManifestGeneration = 2;
     private static readonly HashSet<string> SupportedLauncherFeatures =
-        new(["local-ai-native-v1", "curated-mod-list-v1"], StringComparer.Ordinal);
+        new(["local-ai-native-v1", "local-ai-recipe-v1", "curated-mod-list-v1", "launch-context-v1"], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
@@ -1520,7 +1520,8 @@ public sealed partial class PortablePackSyncService
                 throw new InvalidDataException($"Pack sync manifest path is invalid: {path}");
             }
         }
-        if (string.Equals(path, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
+        if (string.Equals(path.Split('/')[0], PackLaunchContextService.RuntimeDirectory, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(path, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(path, SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(path, ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(path, InstanceStateFileName, StringComparison.OrdinalIgnoreCase))

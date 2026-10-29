@@ -62,10 +62,6 @@
     <Resource Include="Assets\Background.png" />
     <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
                       LogicalName="Minecraft.WindowIconAssets.jar" />
-    <!-- Keeps the game from writing a full DEBUG copy of every session; see
-         GameLogConfigurationService. -->
-    <EmbeddedResource Include="GameLogConfiguration.xml"
-                      LogicalName="Minecraft.GameLogConfiguration.xml" />
     <!-- The version history the window shows; hand-written, one entry per
          commit, checked by the release workflow. See ChangelogService. -->
     <EmbeddedResource Include="Changelog.md"
