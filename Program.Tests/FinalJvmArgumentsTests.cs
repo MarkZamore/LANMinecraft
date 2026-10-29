@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using CmlLib.Core;
@@ -50,6 +52,7 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         var launcher = new MinecraftLauncher(new MinecraftPath(_root));
         using var process = launcher.BuildProcess(version, options);
         var nativeCommandLine = process.StartInfo.Arguments;
+        var nativeBaseline = await CaptureUntouchedNative(process.StartInfo);
         var expectedNative = parent.Logging!.Argument!.Replace("${path}", options.Path.GetLogConfigFilePath(parent.Logging.LogFile!.Id!));
         Assert.Contains(expectedNative[Logging.Length..], nativeCommandLine, StringComparison.Ordinal);
         Assert.DoesNotContain(Logging + "config/log4j2.xml", nativeCommandLine, StringComparison.Ordinal);
@@ -71,6 +74,25 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         try { await process.WaitForExitAsync(timeout.Token); }
         catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
         var output = await stdout; var error = await stderr;
+        var diagnosticRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(RepositoryFile("Program", "Minecraft.csproj"))!, "..", "artifacts", "ci-419-encoding"));
+        Directory.CreateDirectory(diagnosticRoot);
+        File.WriteAllText(Path.Combine(diagnosticRoot, $"pack-{packOverride}.json"), JsonSerializer.Serialize(new
+        {
+            packOverride,
+            win32GetACP = GetACP(),
+            win32GetOEMCP = GetOEMCP(),
+            dotnetCulture = System.Globalization.CultureInfo.CurrentCulture.Name,
+            java,
+            fixtureSourceSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(RepositoryFile("Program.Tests", "Fixtures", MainClass + ".java")))).ToLowerInvariant(),
+            expectedArgument0 = "application value с пробелами",
+            expectedArgument0Base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("application value с пробелами")),
+            originalCmlArguments = nativeCommandLine,
+            finalDotnetTokens = final,
+            finalArgumentsString = process.StartInfo.Arguments,
+            finalArgumentList = process.StartInfo.ArgumentList.ToArray(),
+            baseline = new { nativeBaseline.ExitCode, nativeBaseline.Stdout, nativeBaseline.Stderr },
+            processed = new { process.ExitCode, Stdout = output, Stderr = error }
+        }, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
         Assert.True(process.ExitCode == 0, output + error);
         Assert.Contains("LOGGING=" + (packOverride ? "config/log4j2.xml" : expectedNative[Logging.Length..]), output, StringComparison.Ordinal);
         Assert.Contains("KEEP=unchanged", output, StringComparison.Ordinal);
@@ -119,6 +141,27 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         var before = start.ArgumentList.ToArray();
         Assert.Equal(before, MinecraftProcessService.CompleteJvmArguments(start, version, Pack("# no overrides\n")));
         Assert.Equal(before, start.ArgumentList); Assert.Equal("", start.Arguments);
+    }
+    [DllImport("kernel32.dll")]
+    private static extern uint GetACP();
+    [DllImport("kernel32.dll")]
+    private static extern uint GetOEMCP();
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> CaptureUntouchedNative(ProcessStartInfo original)
+    {
+        var start = new ProcessStartInfo(original.FileName)
+        {
+            Arguments = original.Arguments, WorkingDirectory = original.WorkingDirectory,
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        };
+        foreach (var entry in original.Environment) start.Environment[entry.Key] = entry.Value;
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
+        return (process.ExitCode, await stdout, await stderr);
     }
     private static string Tool(string name)
     {
