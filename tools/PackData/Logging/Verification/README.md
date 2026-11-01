@@ -1,0 +1,11 @@
+# Bounded Connection exception diagnostics
+
+The six published profiles use Minecraft 1.20.1 / Forge 47.3.7 or 47.4.0, Minecraft 1.21.1 / NeoForge 21.1.248 or 21.1.265, and Minecraft 26.3 / NeoForge 26.3.0.99. Their exact native JAR and Connection class hashes are recorded in `all-current-callers-proof.json`.
+
+Each native `net.minecraft.network.Connection.exceptionCaught` emits four caught Throwable diagnostics at DEBUG: `Skipping packet due to errors`, `Timeout`, `Failed to sent packet` (the native spelling), and `Double fault`. The static initializer obtains the class logger through `LogUtils.getLogger`. Modern callers additionally emit `Exception caught in connection` at ERROR; normal INFO/WARN/ERROR are retained by the threshold filter.
+
+The narrow logger/filter retains only these four DEBUG diagnostics in the existing rolling latest.log and rejects unrelated Connection DEBUG output, including packet traces. It does not create debug.log, change packet traffic, fix a disconnect, alter mechanics or prove multiplayer success. Healthy connections add no matching exception diagnostics.
+
+Reproduce the isolated filter integration with real Log4j API/core JARs for each recorded version (2.19.0, 2.22.1 and 2.26.0): compile `ConnectionLogProbe.java` with those two JARs on the classpath, then run it in an empty temporary directory with `-Dlog4j.configurationFile=<absolute path to connection-throwable-filter.probe.xml>`. The generated `probe-filter.log` must contain four ArrayIndexOutOfBoundsException stacks, EXPECTED_INFO, EXPECTED_WARN and EXPECTED_ERROR with its stack. It must not contain UNWANTED_PACKET_TRACE or UNWANTED_OTHER_DEBUG. The fixture uses a standard pattern; unchanged Minecraft custom formatters are outside this isolated test.
+
+These are bytecode and real logging-library checks, not game runs. On future Minecraft or loader changes, recheck the native caller, logger and Throwable-bearing messages against the new JAR. An unavailable old NetworkManager runtime was not tested and is not claimed as supported by this proof.
