@@ -64,6 +64,9 @@
       FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.TheDependencyAudit_IsPartOfEveryRestore|
       FullyQualifiedName=Minecraft.Tests.PortabilityTests.EveryPathTheLauncherKnows_IsUnderTheRoot|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.ANeoForgeRuntimeWithNoMappingsOfItsOwn_IsReadFromMojangsAlone|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.PreflightSupport_ResolvesSiblingSrgWithoutTurningItIntoATransformTarget|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterPreflightClassSourcesTests.SplitNativeArchives_RequireTheirExactExplicitSupportingClasses|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterTransportCacheTests.SupportingClassSourceChange_InvalidatesEvenWithUnchangedSizeAndTimestamp|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterIntermediaryTests.AFabricRuntime_IsReadThroughMojangsOwnMappings|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamDiscoveryTests.Forge1201Discovery_UsesBothRuntimeNamesAndTheExactJoinDescriptor|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterLanReturnTests.ForgeCancellableAuthorForm_PublishesAfterInitializationOnEveryReturn|
@@ -71,6 +74,9 @@
       FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterTests.Native_title_producer_keeps_only_pack_name_across_simulated_lifecycle_without_changing_connections|
       FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterCacheTests.TitleOnlyDegradedState_IsRetriedEvenWhenEveryFileAndFingerprintMatches|
       FullyQualifiedName=Minecraft.Tests.DesignTokensTests.AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers|
+      FullyQualifiedName=Minecraft.Tests.PlayButtonCaptionTests.ThePlaySurface_StaysGreenWhilePreparingAndMutesOnlyWhenDisabled|
+      FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.PreparationAndRunningGameLeaveCatalogueAndDetailsScrollable|
+      FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarStaysVisibleWhenItsContentDoesNotOverflow|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheNativeClient_MaximizesAndRestoresWithoutChangingColumnsOrSelection|

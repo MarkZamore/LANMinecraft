@@ -79,6 +79,7 @@ foreach ($target in $state.targets) {
 }
 
 $propertyArguments = foreach ($key in $properties.Keys) { "-Dminecraft.portable.identity.$key=$($properties[$key])" }
+$classSourceArguments = @($state.preflightSources | ForEach-Object { "$($_.className)=$($_.jarPath)" })
 
 & $java -version
 Write-Host ""
@@ -90,7 +91,7 @@ Write-Host ""
 $failed = 0
 foreach ($target in $targets) {
     & $java @propertyArguments -cp $AdapterJar `
-        minecraft.portable.identity.PortableIdentityPreflight $target.JarPath $target.ClassName
+        minecraft.portable.identity.PortableIdentityPreflight $target.JarPath $target.ClassName @classSourceArguments
     if ($LASTEXITCODE -ne 0) {
         Write-Host "FAIL $($target.ClassName)"
         $failed++

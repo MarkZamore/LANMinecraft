@@ -81,7 +81,8 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests(ITestOutputHelper 
                 var name = Path.GetFileName(pack);
                 checks.Add(async () =>
                 {
-                    var complaint = await PreflightAsync(java, adapter, properties, jarPath, className);
+                    var complaint = await PreflightAsync(java, adapter, properties, jarPath, className,
+                        configuration.PreflightSources);
                     if (complaint is null) return;
                     lock (failures) failures.Add($"{name} :: {className}: {complaint}");
                 });
@@ -214,7 +215,8 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests(ITestOutputHelper 
         string adapter,
         IReadOnlyDictionary<string, string> properties,
         string jarPath,
-        string className)
+        string className,
+        IReadOnlyList<IdentityAdapterTarget>? sources = null)
     {
         var start = new ProcessStartInfo(java)
         {
@@ -232,6 +234,8 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests(ITestOutputHelper 
         start.ArgumentList.Add("minecraft.portable.identity.PortableIdentityPreflight");
         start.ArgumentList.Add(jarPath);
         start.ArgumentList.Add(className);
+        foreach (var source in sources ?? [])
+            start.ArgumentList.Add(source.ClassName + "=" + source.JarPath);
 
         using var process = Process.Start(start);
         if (process is null) return "the preflight could not be started";

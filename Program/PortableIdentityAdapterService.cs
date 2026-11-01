@@ -14,7 +14,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int AdapterCacheGeneration = 12;
+    private const int AdapterCacheGeneration = 13;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     internal const string ManagedTransportFingerprintProperty = "managedTransportFingerprint";
@@ -111,20 +111,28 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     }
                 }
                 if (targets.Count == 0 || mappingPath is null) return [];
-                var verified = new IdentityAdapterConfiguration(mappingPath, properties, targets);
+                var verified = new IdentityAdapterConfiguration(mappingPath, properties, targets)
+                {
+                    PreflightSources = core?.PreflightSources ?? []
+                };
                 var mappingInfo = new FileInfo(verified.MappingPath);
-                var targetStates = verified.Targets.Select(target =>
+                var snapshotHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                IdentityAdapterTargetState Snapshot(IdentityAdapterTarget target)
                 {
                     var info = new FileInfo(target.JarPath);
+                    if (!snapshotHashes.TryGetValue(target.JarPath, out var hash))
+                        snapshotHashes[target.JarPath] = hash = HashFile(target.JarPath);
                     return new IdentityAdapterTargetState
                     {
                         JarPath = target.JarPath,
                         ClassName = target.ClassName,
                         SizeBytes = info.Length,
                         LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
-                        Sha256 = HashFile(target.JarPath)
+                        Sha256 = hash
                     };
-                }).ToList();
+                }
+                var targetStates = verified.Targets.Select(Snapshot).ToList();
+                var sourceStates = verified.PreflightSources.Select(Snapshot).ToList();
                 state = new IdentityAdapterState
                 {
                     SchemaVersion = AdapterCacheGeneration,
@@ -137,6 +145,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     MappingSha256 = HashFile(verified.MappingPath),
                     Properties = verified.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
                     Targets = targetStates,
+                    PreflightSources = sourceStates,
                     VerifiedAtUtc = DateTimeOffset.UtcNow
                 };
                 state.ConfigurationSha256 = ComputeConfigurationHash(state);
@@ -199,7 +208,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 {
                     foreach (var target in candidate.Targets)
                     {
-                        await RunPreflightAsync(runtime.JavaPath, adapterPath, candidate.Properties, target, token)
+                        await RunPreflightAsync(runtime.JavaPath, adapterPath, candidate.Properties, target, token,
+                            candidate.PreflightSources)
                             .ConfigureAwait(false);
                         if (IsConfiguredAlias(candidate.Properties, "textureUrlCheckerClasses", target.ClassName))
                         {
@@ -341,7 +351,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
         string adapterPath,
         IReadOnlyDictionary<string, string> properties,
         IdentityAdapterTarget target,
-        CancellationToken token)
+        CancellationToken token,
+        IReadOnlyList<IdentityAdapterTarget>? classSources = null)
     {
         var javaPath = ResolveConsoleJava(configuredJavaPath);
         var startInfo = new ProcessStartInfo
@@ -363,6 +374,11 @@ public sealed class PortableIdentityAdapterService : IDisposable
         startInfo.ArgumentList.Add("minecraft.portable.identity.PortableIdentityPreflight");
         startInfo.ArgumentList.Add(target.JarPath);
         startInfo.ArgumentList.Add(target.ClassName);
+        foreach (var source in classSources ?? [])
+        {
+            _paths.EnsureUnderRoot(source.JarPath);
+            startInfo.ArgumentList.Add(source.ClassName + "=" + Path.GetFullPath(source.JarPath));
+        }
 
         var process = processFiles.Start();
         var standardOutput = process.StandardOutput.ReadToEndAsync(token);
@@ -515,6 +531,15 @@ public sealed class PortableIdentityAdapterService : IDisposable
             _paths.EnsureUnderRoot(target.JarPath);
             if (!FileMatches(target.JarPath, target.SizeBytes, target.LastWriteUtcTicks)) return false;
         }
+        var sourceHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in state.PreflightSources)
+        {
+            _paths.EnsureUnderRoot(source.JarPath);
+            if (!FileMatches(source.JarPath, source.SizeBytes, source.LastWriteUtcTicks)) return false;
+            if (!sourceHashes.TryGetValue(source.JarPath, out var hash))
+                sourceHashes[source.JarPath] = hash = HashFile(source.JarPath);
+            if (!string.Equals(hash, source.Sha256, StringComparison.Ordinal)) return false;
+        }
         return string.Equals(state.ConfigurationSha256, ComputeConfigurationHash(state), StringComparison.Ordinal);
     }
 
@@ -547,6 +572,9 @@ public sealed class PortableIdentityAdapterService : IDisposable
         {
             text.Append(target.ClassName).Append('=').AppendLine(target.Sha256);
         }
+        foreach (var source in state.PreflightSources.OrderBy(source => source.ClassName, StringComparer.Ordinal))
+            text.Append("source:").Append(source.ClassName).Append('=').Append(source.JarPath)
+                .Append('=').AppendLine(source.Sha256);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString()))).ToLowerInvariant();
     }
 
@@ -621,6 +649,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         public string ConfigurationSha256 { get; set; } = "";
         public Dictionary<string, string> Properties { get; set; } = new(StringComparer.Ordinal);
         public List<IdentityAdapterTargetState> Targets { get; set; } = [];
+        public List<IdentityAdapterTargetState> PreflightSources { get; set; } = [];
         public DateTimeOffset VerifiedAtUtc { get; set; }
     }
 
