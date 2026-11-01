@@ -60,8 +60,7 @@ internal static class Program
                 var catalog = new PackCatalogService(new AppPaths(Path.Combine(output, "catalog-cache")), new Logger(Path.Combine(output, "catalog.log")));
                 view.SetCatalog(catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
                 view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
-                foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
-                    if (child != view) child.Visibility = Visibility.Hidden;
+                HideLauncherPageWithRetainedLog(window);
                 view.Visibility = Visibility.Visible;
                 if (mode is "pack-detail" or "pack-mods")
                 {
@@ -149,6 +148,21 @@ internal static class Program
         var dirtyRectangleSwitchPresent = AppContext.TryGetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", out var dirtyRectanglesDisabled);
         var manifest = new { CapturedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), AssemblyConfiguration = assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration, AssemblyVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion, NativeControls = true, StartupHandlersRemoved = true, ProcessRenderMode = RenderOptions.ProcessRenderMode.ToString(), DirtyRectangleSwitchPresent = dirtyRectangleSwitchPresent, DirtyRectanglesDisabled = dirtyRectanglesDisabled, Notes = "Content-only native WPF render; window background included. No Steam/network startup. DPI set on native visual roots before measure. SoftwareOnly is set before WPF objects, matching the final launcher. Dirty-rectangle switch is supplied through the helper runtime configuration as in production. Native resize repaint, frame, Snap and live NameMarquee are not tested by this offscreen renderer.", Hashes = hashes };
         File.WriteAllText(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
+    }
+
+    private static void HideLauncherPageWithRetainedLog(Window window)
+    {
+        // Run the real navigation policy rather than reproducing its visibility
+        // assignments here. A retained log exposed a hidden Auto-row expansion.
+        var owner = (MainWindow)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
+        const BindingFlags fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (var name in new[] { "RootGrid", "LibraryView", "BodyScrollBar", "LogTextBox" })
+            typeof(MainWindow).GetField(name, fields)!.SetValue(owner, window.FindName(name));
+        typeof(MainWindow).GetField("_launcherVisibility", fields)!
+            .SetValue(owner, new Dictionary<UIElement, Visibility>());
+        var append = typeof(MainWindow).GetMethod("AppendLog", fields)!;
+        for (var line = 0; line < 80; line++) append.Invoke(owner, ["Retained measurement diagnostic " + line]);
+        typeof(MainWindow).GetMethod("HideLauncherVisibility", fields)!.Invoke(owner, null);
     }
 
     private static void Render(Window window, string path, double width, double height, double dpi)
@@ -241,7 +255,14 @@ internal static class Program
             try { bounds = element.TransformToAncestor(root).TransformBounds(new Rect(new Point(), element.RenderSize)); } catch (InvalidOperationException) { }
             return new { element.Name, Type = element.GetType().Name, Dpi = VisualTreeHelper.GetDpi(element).DpiScaleX, Visible = element.IsVisible, Visibility = element.Visibility.ToString(), Width = element.ActualWidth, Height = element.ActualHeight, DesiredWidth = element.DesiredSize.Width, DesiredHeight = element.DesiredSize.Height, Bounds = bounds.HasValue ? new { bounds.Value.X, bounds.Value.Y, bounds.Value.Width, bounds.Value.Height } : null, GridRow = Grid.GetRow(element), GridColumn = Grid.GetColumn(element), GridRowSpan = Grid.GetRowSpan(element), GridColumnSpan = Grid.GetColumnSpan(element), Font = element is Control control ? control.FontFamily.ToString() : null, FontSize = element is Control c ? c.FontSize : (double?)null };
         }).ToArray();
-        var headerMetrics = expanders.Select(e => new { e.Name, e.ActualHeight, Dpi = VisualTreeHelper.GetDpi(e).DpiScaleX, HeaderToggleDpi = VisualTreeHelper.GetDpi((FrameworkElement)e.Template.FindName("HeaderToggle", e)).DpiScaleX, HeaderToggleHeight = (e.Template.FindName("HeaderToggle", e) as FrameworkElement)?.ActualHeight, HeaderToggleDesiredHeight = (e.Template.FindName("HeaderToggle", e) as FrameworkElement)?.DesiredSize.Height }).ToArray();
+        var headerMetrics = expanders.Select(e =>
+        {
+            // Collapsed inactive controls correctly need no generated template.
+            var header = e.Template?.FindName("HeaderToggle", e) as FrameworkElement;
+            return new { e.Name, e.ActualHeight, Dpi = VisualTreeHelper.GetDpi(e).DpiScaleX,
+                HeaderToggleDpi = header is null ? (double?)null : VisualTreeHelper.GetDpi(header).DpiScaleX,
+                HeaderToggleHeight = header?.ActualHeight, HeaderToggleDesiredHeight = header?.DesiredSize.Height };
+        }).ToArray();
         var texts = VisualDescendants<TextBlock>(root).Where(t => !string.IsNullOrEmpty(t.Text)).Select(t => new { t.Text, Width = t.ActualWidth, Height = t.ActualHeight, DesiredWidth = t.DesiredSize.Width, DesiredHeight = t.DesiredSize.Height, Font = t.FontFamily.ToString(), t.FontSize, Trimming = t.TextTrimming.ToString(), Wrapping = t.TextWrapping.ToString() }).ToArray();
         var scrolls = LogicalDescendants<ScrollViewer>(window).Select(s => new { s.Name, s.ActualWidth, s.ActualHeight, s.ViewportWidth, s.ViewportHeight, s.ExtentWidth, s.ExtentHeight, s.ScrollableWidth, s.ScrollableHeight }).ToArray();
         double Bottom(string name)

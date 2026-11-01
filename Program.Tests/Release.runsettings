@@ -80,7 +80,7 @@
       FullyQualifiedName=Minecraft.Tests.DesignTokensTests.AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers|
       FullyQualifiedName=Minecraft.Tests.PlayButtonCaptionTests.ThePlaySurface_StaysGreenWhilePreparingAndMutesOnlyWhenDisabled|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.PreparationAndRunningGameLeaveCatalogueAndDetailsScrollable|
-      FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarStaysVisibleWhenItsContentDoesNotOverflow|
+      FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarIsAutomaticWhenItsContentDoesNotOverflow|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheNativeClient_MaximizesAndRestoresWithoutChangingColumnsOrSelection|

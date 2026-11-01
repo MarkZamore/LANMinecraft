@@ -415,22 +415,27 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.InRange(Math.Abs(canvas.ActualWidth - content.Right), 0, 1);
                 var scrollbar = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(viewer)
                     .Single(bar => bar.Name == "PART_VerticalScrollBar");
-                // The library keeps its gutter and scrollbar visible even when
-                // this viewport is tall enough to fit all of its content.
-                Assert.Equal(Visibility.Visible, scrollbar.Visibility);
-                var inside = scrollbar.TransformToAncestor(view).TransformBounds(new Rect(scrollbar.RenderSize));
-                Assert.True(inside.Right <= view.ActualWidth + 0.5, "Library scrollbar must fit inside its own view.");
+                // Auto keeps the reserved gutter, but only overflowing content
+                // needs a visible, movable scrollbar.
+                Assert.Equal(ScrollBarVisibility.Auto, viewer.VerticalScrollBarVisibility);
+                Assert.Equal(((GridLength)window.FindResource("Size.ScrollGutter")).Value, viewer.ActualWidth - presenter.ActualWidth, 3);
                 Assert.Same(viewer, ScrollBarBridge.GetTarget(scrollbar));
-                var thumb = VisualChildren<System.Windows.Controls.Primitives.Thumb>(scrollbar).Single();
                 if (viewer.ScrollableHeight > 0)
+                {
+                    Assert.Equal(Visibility.Visible, scrollbar.Visibility);
+                    var inside = scrollbar.TransformToAncestor(view).TransformBounds(new Rect(scrollbar.RenderSize));
+                    Assert.True(inside.Right <= view.ActualWidth + 0.5, "Library scrollbar must fit inside its own view.");
+                    var thumb = VisualChildren<System.Windows.Controls.Primitives.Thumb>(scrollbar).Single();
                     Assert.True(thumb.ActualWidth > 0 && thumb.ActualHeight > 0);
+                    var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
+                    Assert.True(bounds.Left >= canvas.ActualWidth);
+                    Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);
+                }
                 else
-                    // Native WPF has no movable thumb at zero range; its bar
-                    // and reserved gutter still retain their visible geometry.
+                {
+                    Assert.Equal(Visibility.Collapsed, scrollbar.Visibility);
                     Assert.Equal(0, scrollbar.Maximum);
-                var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
-                Assert.True(bounds.Left >= canvas.ActualWidth);
-                Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);
+                }
             }
         });
     }
