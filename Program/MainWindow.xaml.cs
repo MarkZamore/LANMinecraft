@@ -1357,12 +1357,16 @@ public partial class MainWindow : Window
 
             var runtimeProgress = new Progress<RuntimePreparationProgress>(ApplyRuntimeProgress);
             PackSyncResult syncResult;
+            LocalAiDownloadPlan localAiDownloads;
             try
             {
                 // Metadata refresh and a full sync share the pack directory.
                 // Finish any earlier selection request before the full sync writes.
                 await _launcherDataRefresh;
-                syncResult = await RequirePackSync().SyncAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
+                var prepared = await new PackPreparationDownloadService(RequirePaths(), RequirePackSync())
+                    .PrepareAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
+                syncResult = prepared.SyncResult;
+                localAiDownloads = prepared.LocalAi;
             }
             catch
             {
@@ -1391,7 +1395,7 @@ public partial class MainWindow : Window
             // The pack that just arrived may weigh something else than the one
             // that was here: the split, and a suggestion nobody has overruled,
             // are worked out again before the game is told its heap size.
-            RefreshPackMemory();
+            await RefreshPackMemoryAsync();
             // Before the game reads its options: a mapping written twice stops
             // NeoForge before its loading window, and the player cannot reach
             // the preset button to fix it because the preset counts as applied.
@@ -1407,7 +1411,7 @@ public partial class MainWindow : Window
             SetState("Starting client");
             try
             {
-                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, _lifetimeCts.Token);
+                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, localAiDownloads, _lifetimeCts.Token);
             }
             catch
             {
@@ -2813,9 +2817,11 @@ public partial class MainWindow : Window
     /// one. Vanilla on an old version and a pack of nine hundred jars are
     /// both packs here, and they are why the number is not shared between them.
     /// </summary>
-    private void RefreshPackMemory()
+    private void RefreshPackMemory() => _ = RefreshPackMemoryAsync();
+
+    private Task RefreshPackMemoryAsync()
     {
-        if (_settings is null || _settingsService is null) return;
+        if (_settings is null || _settingsService is null) return Task.CompletedTask;
 
         // Weighing a pack walks every jar in it - nine hundred of them on the
         // largest build here - and that is a second of disk on a cold cache. It
@@ -2829,7 +2835,7 @@ public partial class MainWindow : Window
         var service = _settingsService;
         var settings = _settings;
         var sync = _packSync;
-        _ = Task.Run(async () =>
+        return Task.Run(async () =>
         {
             var measured = service.MeasurePack(wanted);
             // A build that is offered but not downloaded has no folder to walk,

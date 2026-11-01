@@ -119,10 +119,13 @@ public sealed partial class PortablePackSyncService
     private const int LegacyRemoteManifestGeneration = 1;
     private const int FeatureManifestGeneration = 2;
     private static readonly HashSet<string> SupportedLauncherFeatures =
-        new(["local-ai-native-v1", "local-ai-recipe-v1", "curated-mod-list-v1", "launch-context-v1"], StringComparer.Ordinal);
+        new(["local-ai-native-v1", "local-ai-recipe-v1", "local-ai-blob-urls-v1", "curated-mod-list-v1", "launch-context-v1"], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
+    private const string DownloadPlanDirectoryPrefix = StagingDirectoryName + "-plan-";
+    private const string DownloadPlanOwnershipFile = ".pack-sync-plan-owner";
+    private const string DownloadPlanOwnership = "LANMinecraft.PackSync download plan v1\n";
     private const int MaximumParallelDownloads = 4;
     private const int ManifestFetchAttempts = 3;
     /// <summary>The pack's word to the launcher: preset, pack list, reset tokens.</summary>
@@ -345,24 +348,48 @@ public sealed partial class PortablePackSyncService
         var source = TryResolveSource(packRelativePath);
         if (source is null) return PackMemoryProfile.Unknown;
 
+        string? metadataStage = null;
         try
         {
             var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
             var files = (dto.Files ?? [])
                 .Where(file => !string.IsNullOrWhiteSpace(file.Path))
                 .Select(file => (file.Path!, file.SizeBytes));
-            return PackMemoryProfile.FromPublishedFiles(files, dto.MinecraftVersion, dto.ModCount);
+            var profile = PackMemoryProfile.FromPublishedFiles(files, dto.MinecraftVersion, dto.ModCount);
+            if (!profile.IsKnown || !(dto.Files ?? []).Any(file => file.Path == "launcher/local-ai.json")) return profile;
+
+            // Source weighing must also work before installation. Only the
+            // small declared launcher data is fetched, never a JAR or model.
+            var packDir = _paths.CombineUnderPacks(packRelativePath);
+            var manifest = ValidateRemoteManifest(dto, packDir);
+            metadataStage = Path.Combine(_paths.Launcher, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(metadataStage);
+            AtomicFile.WriteAllText(Path.Combine(metadataStage, DownloadPlanOwnershipFile), DownloadPlanOwnership);
+            var metadata = await PrepareLauncherMetadataSnapshotAsync(source, packDir, manifest, metadataStage,
+                token, launcherAssetsOnly: true).ConfigureAwait(false);
+            var requirements = LocalAiProvisioningService.ReadRequirements(metadata.Directory)
+                ?? throw new InvalidDataException("The published local AI descriptor is missing from its snapshot.");
+            if (!manifest.FilesByPath.TryGetValue(requirements.ModPath, out var mod) ||
+                !HashesEqual(requirements.ModSha256, mod.Sha256))
+                throw new InvalidDataException("The published local AI descriptor does not match its mod JAR.");
+            _ = LocalAiRecipeReader.Read(metadata.Directory, requirements);
+            return profile with { LocalAiReserveMb = requirements.ReserveMemoryMb };
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return PackMemoryProfile.Unknown;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or InvalidDataException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or InvalidDataException
+                                       or UnauthorizedAccessException or NotSupportedException)
         {
             // Silent by design: this is a number beside a field, and a pack that
             // cannot be weighed simply keeps the older, pack-blind answer.
             _logger.Warn($"Pack {packRelativePath} could not be weighed from its manifest ({ex.Message}).");
             return PackMemoryProfile.Unknown;
+        }
+        finally
+        {
+            if (metadataStage is not null) TryDeleteDownloadPlanDirectory(_paths.Launcher, metadataStage);
         }
     }
 
@@ -462,14 +489,28 @@ public sealed partial class PortablePackSyncService
         IProgress<RuntimePreparationProgress>? progress,
         CancellationToken token)
     {
+        using var plan = await PrepareDownloadPlanAsync(packRelativePath, progress, token).ConfigureAwait(false);
+        return await SyncAsync(plan, progress, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Selects the update once, measures its remaining payload, and obtains a
+    /// verified small launcher-data snapshot before the large downloads begin.
+    /// </summary>
+    public async Task<PackSyncDownloadPlan> PrepareDownloadPlanAsync(
+        string packRelativePath,
+        IProgress<RuntimePreparationProgress>? progress,
+        CancellationToken token)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
         var source = TryResolveSource(packRelativePath);
+        var packDir = _paths.CombineUnderPacks(packRelativePath);
         if (source is null)
         {
-            return new PackSyncResult(PackSyncOutcome.SkippedNoSource, null, 0, 0, null);
+            return LocalDownloadPlan(packRelativePath, packDir,
+                new PackSyncResult(PackSyncOutcome.SkippedNoSource, null, 0, 0, null));
         }
 
-        var packDir = _paths.CombineUnderPacks(packRelativePath);
         EnsureGameStopped(packRelativePath);
         SweepAbandonedEntries(packDir, StagingDirectoryName + "*");
         var hadManifest = PackManifestService.HasManifest(packDir);
@@ -495,24 +536,147 @@ public sealed partial class PortablePackSyncService
                     "Обновление сборки было прервано. Подключитесь к интернету и повторите «Играть».", ex));
             if (hadManifest)
             {
-                return new PackSyncResult(PackSyncOutcome.OfflineFallback, null, 0, 0, OfflineCheckWarning);
+                return LocalDownloadPlan(packRelativePath, packDir,
+                    new PackSyncResult(PackSyncOutcome.OfflineFallback, null, 0, 0, OfflineCheckWarning));
             }
             throw new InvalidOperationException(FirstInstallUnavailableMessage, ex);
         }
 
+        var stageRoot = Path.Combine(packDir, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
         try
         {
-            return await SyncCoreAsync(source, packDir, manifest, hadManifest, progress, token).ConfigureAwait(false);
+            Directory.CreateDirectory(stageRoot);
+            AtomicFile.WriteAllText(Path.Combine(stageRoot, DownloadPlanOwnershipFile), DownloadPlanOwnership);
+            PackSyncDiff diff;
+            try
+            {
+                diff = await Task.Run(() => ComputeDiff(packDir,
+                    Path.Combine(packDir, SyncStateFileName), manifest, token), token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new PackApplyFailedException(ex);
+            }
+            var metadata = await PrepareLauncherMetadataSnapshotAsync(source, packDir, manifest, stageRoot, token)
+                .ConfigureAwait(false);
+            var changed = diff.ChangedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var prefetched = metadata.PrefetchedAssetNames;
+            var pendingBytes = manifest.Assets.Where(asset => asset.Covers.Any(changed.Contains) && !prefetched.Contains(asset.Name))
+                .Aggregate(0L, (sum, asset) => checked(sum + asset.SizeBytes));
+            var state = new PreparedSyncState(source, manifest, diff, hadManifest, stageRoot, prefetched);
+            return new PackSyncDownloadPlan(this, state, packRelativePath, packDir, metadata.Directory, pendingBytes,
+                path => manifest.FilesByPath.TryGetValue(ValidateManifestPath(path, packDir), out var file) ? file.Sha256 : null,
+                cleanup: () => TryDeleteDownloadPlanDirectory(packDir, stageRoot));
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            TryDeleteDownloadPlanDirectory(packDir, stageRoot);
             throw;
         }
         catch (Exception ex) when (hadManifest && !IsUpdatePending(packDir) &&
                                    ex is HttpRequestException or IOException or InvalidDataException
                                        or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
+            TryDeleteDownloadPlanDirectory(packDir, stageRoot);
             _logger.Warn($"Pack sync for {packRelativePath} failed; playing the local version: {ex.Message}");
+            return LocalDownloadPlan(packRelativePath, packDir,
+                new PackSyncResult(PackSyncOutcome.OfflineFallback, null, 0, 0, OfflineSyncWarning));
+        }
+        catch
+        {
+            TryDeleteDownloadPlanDirectory(packDir, stageRoot);
+            throw;
+        }
+    }
+
+    private async Task<PreparedLauncherMetadata> PrepareLauncherMetadataSnapshotAsync(PackSyncSource source,
+        string packDir, ValidatedManifest manifest, string stageRoot, CancellationToken token,
+        bool launcherAssetsOnly = false)
+    {
+        var metadataDirectory = Path.Combine(stageRoot, "metadata");
+        var stageAssets = Path.Combine(stageRoot, "assets");
+        var stageExtract = Path.Combine(stageRoot, "extract");
+        Directory.CreateDirectory(metadataDirectory);
+        var metadata = manifest.Files.Where(file => file.Path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal)).ToList();
+        if (metadata.Sum(file => file.SizeBytes) > MaximumLauncherDataBytes)
+            throw new InvalidDataException("Pack launcher metadata exceeds its byte limit.");
+        var missing = metadata.Where(file => !HasFileWithHash(packDir, file)).ToList();
+        var metadataAssets = missing.Select(file => manifest.AssetByCoveredPath[file.Path])
+            .DistinctBy(asset => asset.Name).ToList();
+        if (metadataAssets.Sum(asset => asset.SizeBytes) > MaximumLauncherDataBytes ||
+            launcherAssetsOnly && metadataAssets.Any(asset => asset.Covers.Any(path => !path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal))))
+            throw new InvalidDataException("Pack launcher metadata assets exceed their byte or content limit.");
+        Directory.CreateDirectory(stageAssets);
+        Directory.CreateDirectory(stageExtract);
+        foreach (var asset in metadataAssets)
+        {
+            await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token)
+                .ConfigureAwait(false);
+            if (launcherAssetsOnly && asset.Kind == PackAssetKind.ZipRoot)
+            {
+                using var archive = ZipFile.OpenRead(Path.Combine(stageAssets, asset.Name));
+                var paths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var entry in archive.Entries.Where(entry => !entry.FullName.EndsWith('/')))
+                    if (!paths.Add(entry.FullName) || !asset.Covers.Contains(entry.FullName, StringComparer.Ordinal) ||
+                        !manifest.FilesByPath.TryGetValue(entry.FullName, out var file) || entry.Length != file.SizeBytes)
+                        throw new InvalidDataException("Source weighing requires an archive containing only its declared launcher metadata.");
+            }
+        }
+        ExtractAndVerifyStagedSources(manifest, metadataAssets,
+            missing.Select(file => file.Path).ToList(), stageAssets, stageExtract, token);
+        var missingPaths = missing.Select(file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in metadata)
+        {
+            token.ThrowIfCancellationRequested();
+            var sourcePath = missingPaths.Contains(file.Path)
+                ? ResolveStagedSource(manifest.AssetByCoveredPath[file.Path], stageAssets, stageExtract, file.Path)
+                : Path.Combine(packDir, file.Path.Replace('/', Path.DirectorySeparatorChar));
+            var snapshotPath = Path.Combine(metadataDirectory, file.Path.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(snapshotPath)!);
+            File.Copy(sourcePath, snapshotPath);
+            if (!HasFileWithHash(metadataDirectory, file))
+                throw new InvalidDataException("Pack launcher metadata changed while its snapshot was prepared.");
+        }
+        return new PreparedLauncherMetadata(metadataDirectory,
+            metadataAssets.Select(asset => asset.Name).ToHashSet(StringComparer.Ordinal));
+    }
+
+    private PackSyncDownloadPlan LocalDownloadPlan(string relativePath, string packDir, PackSyncResult result)
+    {
+        if (IsUpdatePending(packDir))
+            throw new PackApplyFailedException(new IOException("Обновление сборки было прервано. Повторите «Играть»."));
+        return new PackSyncDownloadPlan(this, null, relativePath, packDir, packDir, 0, path =>
+        {
+            var relative = ValidateManifestPath(path, packDir);
+            var file = Path.Combine(packDir, relative.Replace('/', Path.DirectorySeparatorChar));
+            return File.Exists(file) ? HashFile(file) : null;
+        }, result);
+    }
+
+    /// <summary>Consumes exactly the update selected by PrepareDownloadPlanAsync.</summary>
+    public async Task<PackSyncResult> SyncAsync(PackSyncDownloadPlan plan,
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        plan.ThrowIfDisposed();
+        if (!ReferenceEquals(plan.Owner, this)) throw new ArgumentException("Pack download plan belongs to another service.", nameof(plan));
+        if (plan.Consumed) throw new InvalidOperationException("Pack download plan has already been consumed.");
+        plan.Consumed = true;
+        token.ThrowIfCancellationRequested();
+        if (plan.ImmediateResult is { } immediate) return immediate;
+        var prepared = (PreparedSyncState)plan.State!;
+        EnsureGameStopped(plan.PackRelativePath);
+        try
+        {
+            return await SyncCoreAsync(prepared.Source, plan.PackDirectory, prepared.Manifest,
+                prepared.HadManifest, progress, token, prepared).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (prepared.HadManifest && !IsUpdatePending(plan.PackDirectory) &&
+                                   ex is HttpRequestException or IOException or InvalidDataException
+                                       or UnauthorizedAccessException or JsonException or NotSupportedException)
+        {
+            _logger.Warn($"Pack sync for {plan.PackRelativePath} failed; playing the local version: {ex.Message}");
             return new PackSyncResult(PackSyncOutcome.OfflineFallback, null, 0, 0, OfflineSyncWarning);
         }
     }
@@ -523,13 +687,16 @@ public sealed partial class PortablePackSyncService
         ValidatedManifest manifest,
         bool hadManifest,
         IProgress<RuntimePreparationProgress>? progress,
-        CancellationToken token)
+        CancellationToken token,
+        PreparedSyncState? prepared = null)
     {
         var statePath = Path.Combine(packDir, SyncStateFileName);
         PackSyncDiff diff;
         try
         {
-            diff = await Task.Run(() => ComputeDiff(packDir, statePath, manifest, token), token).ConfigureAwait(false);
+            var current = await Task.Run(() => ComputeDiff(packDir, statePath, manifest, token), token).ConfigureAwait(false);
+            if (prepared is not null) RequireUnchangedDownloadPlan(prepared.Diff, current);
+            diff = prepared?.Diff ?? current;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -556,16 +723,22 @@ public sealed partial class PortablePackSyncService
             .Where(asset => asset.Covers.Any(changedSet.Contains))
             .ToList();
         var totalPendingBytes = neededAssets.Sum(asset => asset.SizeBytes);
+        var downloadAssets = prepared is null ? neededAssets
+            : neededAssets.Where(asset => !prepared.PrefetchedAssetNames.Contains(asset.Name)).ToList();
+        var remainingBytes = downloadAssets.Sum(asset => asset.SizeBytes);
 
         Directory.CreateDirectory(packDir);
         var stageParent = Path.Combine(packDir, StagingDirectoryName);
         try
         {
-            var stageRoot = Path.Combine(stageParent, Guid.NewGuid().ToString("N"));
+            var stageRoot = prepared?.StageRoot ?? Path.Combine(stageParent, Guid.NewGuid().ToString("N"));
             var stageAssets = Path.Combine(stageRoot, "assets");
             var stageExtract = Path.Combine(stageRoot, "extract");
             if (neededAssets.Count > 0)
             {
+                if (prepared is not null)
+                    foreach (var asset in neededAssets.Where(asset => prepared.PrefetchedAssetNames.Contains(asset.Name)))
+                        VerifyStagedAsset(Path.Combine(stageAssets, asset.Name), asset);
                 var requiredBytes = checked(totalPendingBytes * 2);
                 if (!_freeSpaceProbe(packDir, requiredBytes))
                 {
@@ -575,7 +748,7 @@ public sealed partial class PortablePackSyncService
                 }
                 Directory.CreateDirectory(stageAssets);
                 Directory.CreateDirectory(stageExtract);
-                await DownloadAssetsAsync(source, neededAssets, stageAssets, totalPendingBytes, progress, token)
+                await DownloadAssetsAsync(source, downloadAssets, stageAssets, remainingBytes, progress, token)
                     .ConfigureAwait(false);
             }
 
@@ -590,6 +763,8 @@ public sealed partial class PortablePackSyncService
                     try
                     {
                         EnsureGameStopped(Path.GetRelativePath(_paths.Packs, packDir));
+                        if (prepared is not null)
+                            RequireUnchangedDownloadPlan(prepared.Diff, ComputeDiff(packDir, statePath, manifest, token));
                         AtomicFile.WriteAllText(
                             Path.Combine(packDir, ApplyPendingFileName),
                             JsonSerializer.Serialize(new { schemaVersion = 1, revision = manifest.Revision }, JsonOptions));
@@ -618,7 +793,7 @@ public sealed partial class PortablePackSyncService
         }
         finally
         {
-            TryDeleteDirectory(stageParent);
+            if (prepared is null) TryDeleteDirectory(stageParent);
         }
 
         var outcome = !hadManifest
@@ -647,6 +822,15 @@ public sealed partial class PortablePackSyncService
             diff.ChangedPaths.Count + diff.Extras.Count,
             bytesDownloaded,
             removedModsWarning);
+    }
+
+    private static void RequireUnchangedDownloadPlan(PackSyncDiff planned, PackSyncDiff current)
+    {
+        if (!string.Equals(planned.StateRevision, current.StateRevision, StringComparison.Ordinal) ||
+            !planned.ChangedPaths.SequenceEqual(current.ChangedPaths, StringComparer.OrdinalIgnoreCase) ||
+            !planned.Extras.SequenceEqual(current.Extras, StringComparer.OrdinalIgnoreCase) ||
+            !planned.RemovedMods.SequenceEqual(current.RemovedMods, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Файлы сборки изменились после подготовки загрузки. Повторите «Играть».");
     }
 
     private void EnsureGameStopped(string packRelativePath)
@@ -1679,6 +1863,39 @@ public sealed partial class PortablePackSyncService
         }
     }
 
+    private static void TryDeleteDownloadPlanDirectory(string packDir, string path)
+    {
+        try
+        {
+            var packRoot = Path.GetFullPath(packDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var relative = Path.GetRelativePath(packRoot, Path.GetFullPath(path)).Replace('\\', '/');
+            if (relative.Contains('/') || !relative.StartsWith(DownloadPlanDirectoryPrefix, StringComparison.Ordinal) ||
+                !Guid.TryParseExact(relative[DownloadPlanDirectoryPrefix.Length..], "N", out _)) return;
+            ValidateManifestPath(relative, packRoot);
+            if (!Directory.Exists(path)) return;
+            var marker = relative + "/" + DownloadPlanOwnershipFile;
+            ValidateManifestPath(marker, packRoot);
+            var ownerFile = Path.Combine(packRoot, marker.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(ownerFile) || new FileInfo(ownerFile).Length != System.Text.Encoding.UTF8.GetByteCount(DownloadPlanOwnership) ||
+                File.ReadAllText(ownerFile) != DownloadPlanOwnership) return;
+            // Do not descend into links introduced after staging was created.
+            var pending = new Stack<string>();
+            pending.Push(path);
+            while (pending.TryPop(out var directory))
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    var attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) return;
+                    if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+                }
+            ValidateManifestPath(relative, packRoot);
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+        }
+    }
+
     /// <summary>
     /// Removes staging directories a killed earlier run left behind; nothing
     /// else ever deletes them.
@@ -1690,6 +1907,11 @@ public sealed partial class PortablePackSyncService
             if (!Directory.Exists(directory)) return;
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory, pattern))
             {
+                if (Path.GetFileName(entry).StartsWith(DownloadPlanDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDeleteDownloadPlanDirectory(directory, entry);
+                    continue;
+                }
                 if (Directory.Exists(entry))
                 {
                     TryDeleteDirectory(entry);
@@ -1726,6 +1948,16 @@ public sealed partial class PortablePackSyncService
         List<string> ChangedPaths,
         List<string> Extras,
         List<string> RemovedMods);
+
+    private sealed record PreparedSyncState(
+        PackSyncSource Source,
+        ValidatedManifest Manifest,
+        PackSyncDiff Diff,
+        bool HadManifest,
+        string StageRoot,
+        IReadOnlySet<string> PrefetchedAssetNames);
+
+    private sealed record PreparedLauncherMetadata(string Directory, IReadOnlySet<string> PrefetchedAssetNames);
 
     private sealed record ValidatedFile(string Path, long SizeBytes, string Sha256);
 

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -39,7 +40,12 @@ internal sealed record LocalAiModelReference(string Reference, string Repository
 }
 
 internal sealed record LocalAiRecipe(LocalAiPin Pin, LocalAiBlob[] Blobs, LocalAiModelReference Model,
-    Uri Registry, string InstallDirectory);
+    Uri Registry, string InstallDirectory, IReadOnlyDictionary<string, Uri>? BlobUrls = null)
+{
+    internal Uri BlobUri(LocalAiBlob blob) => BlobUrls is null ? Model.BlobUri(Registry, blob.Sha256)
+        : BlobUrls.TryGetValue(blob.Sha256, out var uri) ? uri
+        : throw new InvalidDataException("The pinned local AI blob URL is missing.");
+}
 
 /// <summary>Reads immutable provider recipe data owned and pinned by a pack.</summary>
 internal static class LocalAiRecipeReader
@@ -78,7 +84,7 @@ internal static class LocalAiRecipeReader
             if (Integer(root, "schemaVersion") != 1 || Text(root, "provider", 32) != "ollama")
                 throw new InvalidDataException("Unsupported local AI recipe provider or version.");
             var runtime = Object(root.GetProperty("runtime"), "version", "archiveUrl", "sizeBytes", "sha256", "installDirectory");
-            var model = Object(root.GetProperty("model"), "reference", "registryUrl", "manifestSha256", "manifestBase64");
+            var model = Object(root.GetProperty("model"), "reference", "registryUrl", "manifestSha256", "manifestBase64", "blobUrls");
             var reference = LocalAiModelReference.Parse(Text(model, "reference", 256));
             if (reference.Reference != requirements.Model)
                 throw new InvalidDataException("The descriptor model and recipe model reference differ.");
@@ -93,10 +99,21 @@ internal static class LocalAiRecipeReader
                 Integer(runtime, "sizeBytes"), Hash(runtime, "sha256"), Hash(model, "manifestSha256"), raw);
             var validated = ValidatePin(pin);
             ValidateRelativePath(reference.ManifestPath(registry));
-            return new(validated.Pin, validated.Blobs, reference, registry, install);
+            return new(validated.Pin, validated.Blobs, reference, registry, install, ReadBlobUrls(model, validated.Blobs));
         }
         catch (Exception error) when (error is JsonException or FormatException or KeyNotFoundException or InvalidOperationException or OverflowException)
         { throw new InvalidDataException("Malformed pinned local AI recipe.", error); }
+    }
+
+    private static FrozenDictionary<string, Uri>? ReadBlobUrls(JsonElement model, LocalAiBlob[] blobs)
+    {
+        if (!model.TryGetProperty("blobUrls", out var field)) return null;
+        var data = Object(field, blobs.Select(blob => blob.Sha256).ToArray());
+        var urls = data.EnumerateObject().ToFrozenDictionary(item => item.Name,
+            item => Https(Text(data, item.Name, 2048), originOnly: false), StringComparer.Ordinal);
+        if (urls.Count != blobs.Length)
+            throw new InvalidDataException("Local AI blob URLs must cover every manifest config and layer SHA256.");
+        return urls;
     }
 
     internal static (LocalAiPin Pin, LocalAiBlob[] Blobs) ValidatePin(LocalAiPin pin)

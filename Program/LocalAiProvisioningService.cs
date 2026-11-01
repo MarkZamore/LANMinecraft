@@ -71,20 +71,77 @@ public sealed class LocalAiProvisioningService
         { throw new InvalidDataException("Malformed local AI descriptor.", error); }
     }
 
-    public async Task<LocalAiPreparedLaunch?> PrepareAsync(string packDirectory, string instanceDirectory, string javaHome,
-        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+    internal async Task<LocalAiDownloadPlan> PlanDownloadsAsync(string metadataDirectory,
+        Func<string, string?> expectedFileSha256, CancellationToken token)
     {
+        var requirements = ReadRequirements(metadataDirectory);
+        if (requirements is null) return new(null, null, []);
+        if (!string.Equals(expectedFileSha256(requirements.ModPath), requirements.ModSha256, StringComparison.Ordinal))
+            throw new InvalidDataException("The planned pack does not contain the pinned local AI mod JAR.");
+        var recipe = ReadRecipe(metadataDirectory, requirements);
+        var cache = LocalAiFiles.Under(_paths.Launcher, "LocalAI");
+        var candidates = new[] { new LocalAiDownloadArtifact("runtime:" + recipe.Pin.ArchiveSha256,
+            recipe.Pin.ArchiveUri, recipe.Pin.ArchiveSizeBytes, recipe.Pin.ArchiveSha256,
+            "downloads/" + recipe.Pin.ArchiveSha256 + ".zip", false) }
+            .Concat(recipe.Blobs.Select(blob => new LocalAiDownloadArtifact("model:" + blob.Sha256,
+                recipe.BlobUri(blob), blob.SizeBytes, blob.Sha256, "models/blobs/sha256-" + blob.Sha256, false)));
+        var artifacts = new List<LocalAiDownloadArtifact>();
+        foreach (var file in candidates)
+            artifacts.Add(file with { Cached = await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, file.RelativePath),
+                file.SizeBytes, file.Sha256, token).ConfigureAwait(false) });
+        return new(requirements, recipe, artifacts.AsReadOnly());
+    }
+
+    internal async Task AcquireDownloadsAsync(string packDirectory, LocalAiDownloadPlan plan,
+        Func<string, IProgress<RuntimePreparationProgress>?> progressForArtifact,
+        Action<string> completed, CancellationToken token)
+    {
+        ValidatePlan(packDirectory, plan);
+        if (plan.Requirements is null) return;
+        EnsureStopped(packDirectory);
+        await VerifyModAsync(packDirectory, plan.Requirements, token).ConfigureAwait(false);
+        var cache = LocalAiFiles.Under(_paths.Launcher, "LocalAI");
+        Directory.CreateDirectory(cache);
+        await using var preparation = await AcquireLockAsync(cache, token).ConfigureAwait(false);
+        var store = new LocalAiFiles(cache, _http);
+        foreach (var file in plan.Artifacts)
+        {
+            // A file excluded from the budget was verified while planning. A
+            // concurrent cache edit must not create an unbudgeted transfer.
+            if (file.Cached && !await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, file.RelativePath),
+                    file.SizeBytes, file.Sha256, token).ConfigureAwait(false))
+                throw new InvalidDataException("The local AI cache changed. Start preparation again.");
+            await store.GetAsync(file.Uri, file.SizeBytes, file.Sha256, file.RelativePath, "Сборка",
+                file.Cached ? null : progressForArtifact(file.Id), token, allowDownload: !file.Cached).ConfigureAwait(false);
+            if (!file.Cached) completed(file.Id);
+        }
+        ValidatePlan(packDirectory, plan);
+    }
+
+    private LocalAiRecipe ReadRecipe(string directory, LocalAiRequirements requirements)
+    {
+        if (_testPin is not { } injected) return LocalAiRecipeReader.Read(directory, requirements);
+        var validated = LocalAiRecipeReader.ValidatePin(injected);
+        return new(validated.Pin, validated.Blobs, LocalAiModelReference.Parse(requirements.Model),
+            new Uri("https://registry.ollama.ai/"), "Ollama");
+    }
+
+    private void ValidatePlan(string packDirectory, LocalAiDownloadPlan plan)
+    {
+        if (ReadRequirements(packDirectory) != plan.Requirements)
+            throw new InvalidDataException("The local AI descriptor changed after download planning. Start preparation again.");
+        // The descriptor pins the complete recipe bytes, including every URL.
+        if (plan.Requirements is { } requirements) _ = ReadRecipe(packDirectory, requirements);
+    }
+
+    public async Task<LocalAiPreparedLaunch?> PrepareAsync(string packDirectory, string instanceDirectory, string javaHome,
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token, LocalAiDownloadPlan? downloadPlan = null)
+    {
+        if (downloadPlan is not null) ValidatePlan(packDirectory, downloadPlan);
         var requirements = ReadRequirements(packDirectory);
         if (requirements is null) return null;
         _paths.EnsureUnderRoot(packDirectory); _paths.EnsureUnderRoot(instanceDirectory); _paths.EnsureUnderRoot(javaHome);
-        LocalAiRecipe recipe;
-        if (_testPin is { } injected)
-        {
-            var validated = LocalAiRecipeReader.ValidatePin(injected);
-            recipe = new(validated.Pin, validated.Blobs, LocalAiModelReference.Parse(requirements.Model),
-                new Uri("https://registry.ollama.ai/"), "Ollama");
-        }
-        else recipe = LocalAiRecipeReader.Read(packDirectory, requirements);
+        var recipe = downloadPlan?.Recipe ?? ReadRecipe(packDirectory, requirements);
         var pin = recipe.Pin; var blobs = recipe.Blobs;
         EnsureStopped(packDirectory);
         await VerifyModAsync(packDirectory, requirements, token).ConfigureAwait(false);
@@ -102,16 +159,19 @@ public sealed class LocalAiProvisioningService
         foreach (var blob in blobs)
             if (!await LocalAiFiles.MatchesAsync(LocalAiFiles.Under(cache, "models/blobs/sha256-" + blob.Sha256),
                     blob.SizeBytes, blob.Sha256, token).ConfigureAwait(false)) missingBytes = checked(missingBytes + blob.SizeBytes);
+        if (downloadPlan is not null && missingBytes != 0)
+            throw new InvalidDataException("The prepared local AI downloads changed. Start preparation again.");
         if (new DriveInfo(Path.GetPathRoot(cache)!).AvailableFreeSpace < missingBytes + 64L * 1024 * 1024)
             throw new IOException("Недостаточно места для локального ИИ и модели.");
         var store = new LocalAiFiles(cache, _http);
         var archive = await store.GetAsync(pin.ArchiveUri, pin.ArchiveSizeBytes, pin.ArchiveSha256,
-            "downloads/" + pin.ArchiveSha256 + ".zip", "Локальный ИИ: Ollama", progress, token).ConfigureAwait(false);
+            "downloads/" + pin.ArchiveSha256 + ".zip", "Сборка", progress, token, allowDownload: downloadPlan is null).ConfigureAwait(false);
         var executable = await LocalAiFiles.ExtractRuntimeAsync(archive, nativeRoot, progress, token).ConfigureAwait(false);
         var models = LocalAiFiles.Under(cache, "models");
         foreach (var blob in blobs)
-            await store.GetAsync(recipe.Model.BlobUri(recipe.Registry, blob.Sha256),
-                blob.SizeBytes, blob.Sha256, "models/blobs/sha256-" + blob.Sha256, "Локальный ИИ: модель", progress, token).ConfigureAwait(false);
+            await store.GetAsync(recipe.BlobUri(blob),
+                blob.SizeBytes, blob.Sha256, "models/blobs/sha256-" + blob.Sha256, "Сборка", progress, token,
+                allowDownload: downloadPlan is null).ConfigureAwait(false);
         var modelManifest = LocalAiFiles.Under(models, recipe.Model.ManifestPath(recipe.Registry));
         if (!await LocalAiFiles.MatchesAsync(modelManifest, pin.ModelManifest.Length, pin.ModelManifestSha256, token).ConfigureAwait(false))
             AtomicFile.WriteAllBytes(modelManifest, pin.ModelManifest);
@@ -122,7 +182,7 @@ public sealed class LocalAiProvisioningService
         using var port = new TcpListener(IPAddress.Loopback, 0);
         port.Start();
         var endpoint = new Uri("http://127.0.0.1:" + ((IPEndPoint)port.LocalEndpoint).Port);
-        progress?.Report(new(RuntimePreparationStage.Ready, "Локальный ИИ: файлы готовы", 1));
+        progress?.Report(new(RuntimePreparationStage.Verifying, "Подготовка сборки", 1));
         return new LocalAiPreparedLaunch(endpoint, models, executable);
     }
 
