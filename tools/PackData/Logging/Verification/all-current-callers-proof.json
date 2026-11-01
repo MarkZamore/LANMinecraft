@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS_CURRENT_PROFILES_BYTECODE_AND_FILTERS",
+  "profiles": [
+    {
+      "id": "all-the-mods-9",
+      "nativeProfile": "forge-47.4.0"
+    },
+    {
+      "id": "all-the-mods-9-modified",
+      "nativeProfile": "forge-47.4.0"
+    },
+    {
+      "id": "caves-and-dungeons",
+      "nativeProfile": "forge-47.3.7"
+    },
+    {
+      "id": "all-the-mods-10",
+      "nativeProfile": "neoforge-21.1.265"
+    },
+    {
+      "id": "terrafirma-rebirth",
+      "nativeProfile": "neoforge-21.1.248"
+    },
+    {
+      "id": "minecraft-26-2",
+      "nativeProfile": "neoforge-26.3.0.99"
+    }
+  ],
+  "nativeRows": [
+    {
+      "profile": "forge-47.3.7",
+      "minecraftVersion": "1.20.1",
+      "jarSha256": "c2dd372cdb4ff838478b0a3d73837db3ea0b7dbaac5266fc3ed31611a29af4b2",
+      "classSha256": "a0062fa486680625ccc7a614ce71e480ed698b521edfa6259f7b6c9018d0837b",
+      "className": "net.minecraft.network.Connection",
+      "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+      "logger": "net.minecraft.network.Connection",
+      "debugThrowableLabels": [
+        "Skipping packet due to errors",
+        "Timeout",
+        "Failed to sent packet",
+        "Double fault"
+      ],
+      "debugThrowableCalls": 4,
+      "log4jVersion": "2.19.0"
+    },
+    {
+      "profile": "forge-47.4.0",
+      "minecraftVersion": "1.20.1",
+      "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+      "classSha256": "88431b8e1807c6a99b63dfcf4a741e19ef89c5b3462937554a880b1453203eff",
+      "className": "net.minecraft.network.Connection",
+      "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+      "logger": "net.minecraft.network.Connection",
+      "debugThrowableLabels": [
+        "Skipping packet due to errors",
+        "Timeout",
+        "Failed to sent packet",
+        "Double fault"
+      ],
+      "debugThrowableCalls": 4,
+      "log4jVersion": "2.19.0"
+    },
+    {
+      "profile": "neoforge-21.1.265",
+      "jarSha256": "374997701b28d3c9374d5dd5fa8bdd96e4143a6786ccba660246b4451a0be23d",
+      "classSha256": "a01831a60461ab3b356c4706eb6e606026e272f7db1226a8681192c43ef64405",
+      "className": "net.minecraft.network.Connection",
+      "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+      "logger": "net.minecraft.network.Connection",
+      "debugThrowableLabels": [
+        "Skipping packet due to errors",
+        "Timeout",
+        "Failed to sent packet",
+        "Double fault"
+      ],
+      "errorThrowableLabel": "Exception caught in connection"
+    },
+    {
+      "profile": "neoforge-21.1.248",
+      "jarSha256": "01ba27020f208050884661ff393be3c392e02853d91825f9d5f1bb694282e83b",
+      "classSha256": "a01831a60461ab3b356c4706eb6e606026e272f7db1226a8681192c43ef64405",
+      "className": "net.minecraft.network.Connection",
+      "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+      "logger": "net.minecraft.network.Connection",
+      "debugThrowableLabels": [
+        "Skipping packet due to errors",
+        "Timeout",
+        "Failed to sent packet",
+        "Double fault"
+      ],
+      "errorThrowableLabel": "Exception caught in connection"
+    },
+    {
+      "profile": "neoforge-26.3.0.99",
+      "jarSha256": "e5190c0484d5ddcc01b8db75ebc37bc52e718147a1aa8bcef83b69e62f2f7838",
+      "classSha256": "c24c6277c33dc79c500d3351e8477e6175b3b95ef5b18d1aa868218f34e24e89",
+      "className": "net.minecraft.network.Connection",
+      "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+      "logger": "net.minecraft.network.Connection",
+      "debugThrowableLabels": [
+        "Skipping packet due to errors",
+        "Timeout",
+        "Failed to sent packet",
+        "Double fault"
+      ],
+      "errorThrowableLabel": "Exception caught in connection"
+    }
+  ],
+  "logger": "net.minecraft.network.Connection",
+  "labels": [
+    "Failed to sent packet",
+    "Double fault",
+    "Skipping packet due to errors",
+    "Timeout"
+  ],
+  "candidateConfigSha256": "9e7b9918b6ede54f7393ed3d307e51a2edb032b98c12f069f5df976bcf940b89",
+  "testedActualLog4jVersions": [
+    "2.19.0",
+    "2.22.1",
+    "2.26.0"
+  ],
+  "filterAssertions": [
+    "All four Throwable-bearing DEBUG labels retain full stack",
+    "INFO/WARN/ERROR retained",
+    "Packet marker DEBUG rejected",
+    "Other DEBUG rejected"
+  ],
+  "inGameValidation": false,
+  "gameplayOrTransportChanged": false,
+  "unknownVersionBoundary": "The native caller/logger/message proof covers these five exact runtime JARs. New game/loader versions should rerun caller inventory; no claim for absent legacy NetworkManager binaries.",
+  "storage": "No new debug.log or packet log is enabled. The existing rolling latest.log receives exceptional stacks only; healthy connections add no matching DEBUG events."
+}

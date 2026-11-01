@@ -1,0 +1,29 @@
+[
+  {
+    "Log4jVersion": "2.19.0",
+    "ThrowableHeaders": 4,
+    "InfoPreserved": true,
+    "WarnPreserved": true,
+    "ErrorPreserved": true,
+    "PacketDebugRejected": true,
+    "OtherDebugRejected": true
+  },
+  {
+    "Log4jVersion": "2.22.1",
+    "ThrowableHeaders": 4,
+    "InfoPreserved": true,
+    "WarnPreserved": true,
+    "ErrorPreserved": true,
+    "PacketDebugRejected": true,
+    "OtherDebugRejected": true
+  },
+  {
+    "Log4jVersion": "2.26.0",
+    "ThrowableHeaders": 4,
+    "InfoPreserved": true,
+    "WarnPreserved": true,
+    "ErrorPreserved": true,
+    "PacketDebugRejected": true,
+    "OtherDebugRejected": true
+  }
+]

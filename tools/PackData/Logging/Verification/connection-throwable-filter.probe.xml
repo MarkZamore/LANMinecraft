@@ -1,0 +1,10 @@
+<Configuration status="WARN">
+ <Appenders><File name="File" fileName="probe-filter.log"><PatternLayout pattern="%level %logger %msg%n%throwable"/></File></Appenders>
+ <Loggers>
+  <Logger level="DEBUG" name="net.minecraft.network.Connection"><Filters>
+   <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="NEUTRAL"/>
+   <RegexFilter regex="^(Failed to sent packet|Double fault|Skipping packet due to errors|Timeout)$" onMatch="NEUTRAL" onMismatch="DENY"/>
+  </Filters></Logger>
+  <Root level="INFO"><AppenderRef ref="File"/></Root>
+ </Loggers>
+</Configuration>

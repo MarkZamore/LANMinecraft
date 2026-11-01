@@ -70,6 +70,13 @@
         -->
         <Logger level="INFO" name="me.myogoo.myotus"/>
         <Logger level="INFO" name="net.minecraft.server.MinecraftServer"/>
+        <!-- Preserve only Connection's caught throwable diagnostics, without its packet DEBUG stream. -->
+        <Logger level="DEBUG" name="net.minecraft.network.Connection">
+            <Filters>
+                <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="NEUTRAL"/>
+                <RegexFilter regex="^(Failed to sent packet|Double fault|Skipping packet due to errors|Timeout)$" onMatch="NEUTRAL" onMismatch="DENY"/>
+            </Filters>
+        </Logger>
         <Root level="INFO">
             <AppenderRef ref="SysOut" level="INFO"/>
             <AppenderRef ref="File"/>
