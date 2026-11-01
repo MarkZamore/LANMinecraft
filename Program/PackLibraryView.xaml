@@ -97,7 +97,7 @@
                     FontSize="{DynamicResource Font.SizeDisplay}" FontWeight="{DynamicResource Font.WeightEmphasis}"/>
             </Grid>
         </Grid>
-        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Visible" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
                 <ItemsControl x:Name="CatalogCards">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardWidth}" FixedColumnWidth="{DynamicResource Size.LibraryCardWidth}" UniformItemHeight="True" Gap="{DynamicResource Space.4}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
@@ -117,7 +117,7 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
-        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Visible" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="DetailContent">
                 <local:RoundedClipBorder Style="{StaticResource LibrarySectionStyle}" Padding="{DynamicResource Pad.None}" Height="{DynamicResource Size.LibraryHero}">
                     <Grid>

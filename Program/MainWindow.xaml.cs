@@ -127,11 +127,6 @@ public partial class MainWindow : Window
         LibraryView.ReturnRequested += () => ShowLibrary(false);
         LibraryView.MembershipRequested += ChangeLibraryMembership;
         LibraryView.ModPageRequested += OpenModPage;
-        LibraryView.ScrollSnapshot += snapshot =>
-        {
-            try { _logger?.Info(snapshot); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        };
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
         _uiTimer.Tick += (_, _) =>
         {
@@ -3257,7 +3252,10 @@ public partial class MainWindow : Window
             // A temporary local value would compete with that live state during layout.
             if (ReferenceEquals(element, LibraryView) || ReferenceEquals(element, BodyScrollBar)) continue;
             _launcherVisibility[element] = element.Visibility;
-            element.SetCurrentValue(VisibilityProperty, Visibility.Hidden);
+            // The inactive page must not occupy the grid's Auto rows. Hidden
+            // would also bring collapsed service content (the retained log)
+            // into layout, enlarging the root and clipping the library's bar.
+            element.SetCurrentValue(VisibilityProperty, Visibility.Collapsed);
         }
     }
 

@@ -51,10 +51,19 @@ public sealed class LibraryAvailabilityTests
                 Set("_libraryVisible", true);
                 Set("_minecraftPreparing", preparing);
                 Set("_minecraftRunning", running);
+                var deliberatelyHidden = new Grid { Visibility = Visibility.Hidden };
+                root.Children.Add(deliberatelyHidden);
                 var refresh = typeof(MainWindow).GetMethod("RefreshUi", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var append = typeof(MainWindow).GetMethod("AppendLog", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                // Real startup/download/game logging fills an intentionally
+                // collapsed service grid. Hidden would bring that text back
+                // into the root Auto row's measure while opening the library.
+                for (var line = 0; line < 80; line++) append.Invoke(owner, ["A retained diagnostic line " + line]);
                 void Layout() => WindowCanvasTests.LayoutWindow(controls, new Size(804, 521));
                 void Refresh() { refresh.Invoke(owner, null); Layout(); }
                 Refresh();
+                AssertFiniteRoot(root);
+                Assert.Equal(Visibility.Collapsed, ((FrameworkElement)((TextBox)controls.FindName("LogTextBox")).Parent).Visibility);
                 var play = (Button)controls.FindName("PlayButton");
                 Assert.Equal(!running, play.IsEnabled);
                 Assert.Equal(!preparing, play.IsHitTestVisible);
@@ -80,6 +89,19 @@ public sealed class LibraryAvailabilityTests
                 offset = details.VerticalOffset;
                 Refresh();
                 Assert.Equal(offset, details.VerticalOffset, 3);
+                // New diagnostics must not grow the library or move its thumb
+                // out of the finite native client after another UI refresh.
+                append.Invoke(owner, ["Another diagnostic while the library is open"]);
+                Refresh();
+                AssertFiniteRoot(root);
+                AssertScrollable(details, root, Layout);
+                typeof(MainWindow).GetMethod("ShowLibrary", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(owner, [false]);
+                Layout();
+                Assert.Equal(Visibility.Collapsed, library.Visibility);
+                Assert.Equal(Visibility.Collapsed, ((FrameworkElement)((TextBox)controls.FindName("LogTextBox")).Parent).Visibility);
+                Assert.Equal(Visibility.Hidden, deliberatelyHidden.Visibility);
+                Assert.Equal(Visibility.Visible, ((Grid)controls.FindName("PlayArea")).Visibility);
                 return true;
             }
             finally { controls.Close(); }
@@ -89,7 +111,7 @@ public sealed class LibraryAvailabilityTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void LibraryScrollbarStaysVisibleWhenItsContentDoesNotOverflow(bool details)
+    public void LibraryScrollbarIsAutomaticWhenItsContentDoesNotOverflow(bool details)
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
@@ -118,27 +140,11 @@ public sealed class LibraryAvailabilityTests
                 WindowCanvasTests.LayoutWindow(controls, new Size(804, 1001));
                 var viewer = (ScrollViewer)library.FindName(details ? "DetailScroll" : "CatalogScroll");
                 Assert.Equal(0, viewer.ScrollableHeight);
-                Assert.Equal(Visibility.Visible, viewer.ComputedVerticalScrollBarVisibility);
+                Assert.Equal(ScrollBarVisibility.Auto, viewer.VerticalScrollBarVisibility);
+                Assert.Equal(Visibility.Collapsed, viewer.ComputedVerticalScrollBarVisibility);
                 var bar = Assert.IsType<ScrollBar>(viewer.Template.FindName("PART_VerticalScrollBar", viewer));
-                Assert.True(bar.IsVisible);
-                Assert.Equal(Visibility.Visible, bar.Visibility);
-                Assert.True(Assert.IsType<Track>(bar.Template.FindName("PART_Track", bar)).ActualHeight > 0);
-                // Native Track removes its thumb when Maximum is zero. Visible
-                // alone therefore did not keep the library's scrollbar visible.
-                // Verify the control paints a persistent affordance even then.
-                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(bar.ActualWidth),
-                    (int)Math.Ceiling(bar.ActualHeight), 96, 96, PixelFormats.Pbgra32);
-                var drawing = new DrawingVisual();
-                using (var context = drawing.RenderOpen())
-                    context.DrawRectangle(new VisualBrush(bar), null,
-                        new Rect(new Size(bar.ActualWidth, bar.ActualHeight)));
-                bitmap.Render(drawing);
-                var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
-                bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
-                var paintedRows = Enumerable.Range(0, bitmap.PixelHeight).Count(y =>
-                    Enumerable.Range(0, bitmap.PixelWidth).Any(x => pixels[(y * bitmap.PixelWidth + x) * 4 + 3] > 0));
-                Assert.True(paintedRows > bitmap.PixelHeight / 2,
-                    "The persistent scrollbar is Visible but paints no track when there is no overflow.");
+                Assert.False(bar.IsVisible);
+                Assert.Equal(Visibility.Collapsed, bar.Visibility);
                 return true;
             }
             finally { controls.Close(); }
@@ -148,6 +154,7 @@ public sealed class LibraryAvailabilityTests
     private static void AssertScrollable(ScrollViewer viewer, Grid root, Action layout)
     {
         Assert.True(viewer.IsEnabled && viewer.IsHitTestVisible);
+        Assert.Equal(ScrollBarVisibility.Auto, viewer.VerticalScrollBarVisibility);
         Assert.True(viewer.ScrollableHeight > 100);
         Assert.Equal(Visibility.Visible, viewer.ComputedVerticalScrollBarVisibility);
         var scrollbar = Assert.IsType<ScrollBar>(viewer.Template.FindName("PART_VerticalScrollBar", viewer));
@@ -155,6 +162,11 @@ public sealed class LibraryAvailabilityTests
         Assert.True(scrollbar.IsVisible && thumb.IsVisible);
         Assert.True(scrollbar.IsEnabled && thumb.IsEnabled && thumb.IsHitTestVisible);
         var point = thumb.TranslatePoint(new Point(thumb.ActualWidth / 2, thumb.ActualHeight / 2), root);
+        if (System.Windows.Controls.Primitives.LayoutInformation.GetLayoutClip(root) is { } clip)
+            Assert.True(clip.FillContains(point), "The real root layout clip hides the library thumb.");
+        var bounds = scrollbar.TransformToAncestor(root).TransformBounds(new Rect(scrollbar.RenderSize));
+        Assert.InRange(bounds.Right, 0, root.ActualWidth + root.Margin.Right + 0.5);
+        Assert.InRange(bounds.Bottom, 0, root.ActualHeight + 0.5);
         var hit = Assert.IsAssignableFrom<DependencyObject>(root.InputHitTest(point));
         Assert.True(IsDescendantOf(hit, thumb), "The thumb is covered by another surface.");
         var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
@@ -168,6 +180,14 @@ public sealed class LibraryAvailabilityTests
         ScrollBar.PageDownCommand.Execute(null, scrollbar);
         layout();
         Assert.True(viewer.VerticalOffset > before);
+    }
+
+    private static void AssertFiniteRoot(Grid root)
+    {
+        // A shown HWND may re-arrange after the manual layout pass. Compare
+        // with its actual parent allocation, not a stale requested test size.
+        var slot = LayoutInformation.GetLayoutSlot(root);
+        Assert.InRange(root.ActualHeight, 0, slot.Height - root.Margin.Top - root.Margin.Bottom + 0.5);
     }
 
     private static bool IsDescendantOf(DependencyObject item, DependencyObject ancestor)
