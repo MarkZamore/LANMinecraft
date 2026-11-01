@@ -252,6 +252,19 @@ public final class PortableLanAutoPublishHooks {
                 return false;
             }
 
+            // Optional managed discovery metadata is separate from publication
+            // success. It observes this exact live world asynchronously.
+            if (Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled")) {
+                try {
+                    Class.forName("minecraft.portable.identity.PortableSteamDiscoveryHooks", true,
+                        PortableLanAutoPublishHooks.class.getClassLoader())
+                        .getMethod("published", Object.class, Object.class, int.class)
+                        .invoke(null, minecraft, server, port);
+                } catch (ReflectiveOperationException failure) {
+                    System.out.println("[PortableIdentity] Steam world description unavailable: " + failure);
+                }
+            }
+
             try {
                 closeScreenSoon(minecraftType, screenType);
                 sayItInChat(minecraft, publishCommandType, componentType, port);

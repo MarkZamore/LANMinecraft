@@ -127,6 +127,11 @@ public partial class MainWindow : Window
         LibraryView.ReturnRequested += () => ShowLibrary(false);
         LibraryView.MembershipRequested += ChangeLibraryMembership;
         LibraryView.ModPageRequested += OpenModPage;
+        LibraryView.ScrollSnapshot += snapshot =>
+        {
+            try { _logger?.Info(snapshot); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        };
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
         _uiTimer.Tick += (_, _) =>
         {

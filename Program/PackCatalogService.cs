@@ -132,6 +132,7 @@ public sealed class PackCatalogService
     private readonly Logger _logger;
     private readonly HttpClient _http;
     private readonly string _cache;
+    private readonly string _metadataRefresh = Guid.NewGuid().ToString("N");
     private readonly Dictionary<string, string> _manifests = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<CatalogSource> _sources;
     private readonly Dictionary<string, CatalogSource> _effectiveSources = new(StringComparer.OrdinalIgnoreCase);
@@ -252,7 +253,7 @@ public sealed class PackCatalogService
         {
             try
             {
-                var indexBytes = await ReadBoundedAsync(IndexUri, 256 * 1024, ct).ConfigureAwait(false);
+                var indexBytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, ct).ConfigureAwait(false);
                 var index = Encoding.UTF8.GetString(indexBytes);
                 var entries = ParseIndex(index);
                 lock (_gate)
@@ -296,7 +297,7 @@ public sealed class PackCatalogService
 
     private async Task RefreshEntryAsync(CatalogSource entry, bool presentation, CancellationToken token)
     {
-        var raw = Encoding.UTF8.GetString(await ReadBoundedAsync(AssetUri(entry.Source, "pack-manifest.json"), MaximumManifestBytes, token).ConfigureAwait(false));
+        var raw = Encoding.UTF8.GetString(await ReadBoundedAsync(MutableMetadataUri(AssetUri(entry.Source, "pack-manifest.json")), MaximumManifestBytes, token).ConfigureAwait(false));
         PortablePackSyncService.ValidateSnapshot(raw, _paths.CombineUnderPacks(entry.RelativePath));
         using var doc = JsonDocument.Parse(raw);
         byte[]? bundle = null;
@@ -330,6 +331,12 @@ public sealed class PackCatalogService
         }
         try { AtomicFile.WriteAllTextIfChanged(CachePath(entry.Source), JsonSerializer.Serialize(value, JsonOptions)); }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache could not be saved: " + ex.Message); }
+        var revisionForLog = doc.RootElement.TryGetProperty("revision", out var declaredRevision) && declaredRevision.ValueKind == JsonValueKind.String
+            ? declaredRevision.GetString() : null;
+        if (revisionForLog is { Length: > 160 }) revisionForLog = revisionForLog[..160] + "...";
+        _logger.Info($"Library {entry.RelativePath}: verified startup manifest revision " +
+            JsonSerializer.Serialize(revisionForLog) +
+            ", SHA256 " + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(raw))) + ".");
     }
 
     private void LoadCachedEntry(CatalogSource entry, bool presentation = true)
@@ -373,6 +380,17 @@ public sealed class PackCatalogService
     private string CachePath(PackSyncSource source) => Path.Combine(_cache, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Key(source)))) + ".json");
     private static string Key(PackSyncSource source) => source.Owner + "/" + source.Repo + "/" + source.Tag;
     public static Uri AssetUri(PackSyncSource source, string name) => new("https://github.com/" + source.Owner + "/" + source.Repo + "/releases/download/" + Uri.EscapeDataString(source.Tag) + "/" + Uri.EscapeDataString(name));
+
+    internal Uri MutableMetadataUri(Uri uri)
+    {
+        // A release tag and the source index change in place. A stale successful
+        // redirect can survive cache-control headers and would then be frozen
+        // for this whole session. Hash-addressed bundles keep their stable URLs.
+        var builder = new UriBuilder(uri);
+        var query = builder.Query.TrimStart('?');
+        builder.Query = (query.Length == 0 ? "" : query + "&") + "catalogRefresh=" + _metadataRefresh;
+        return builder.Uri;
+    }
 
     private async Task<byte[]> ReadBoundedAsync(Uri uri, int maximum, CancellationToken token)
     {

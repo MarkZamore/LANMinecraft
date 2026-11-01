@@ -69,6 +69,10 @@
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterTransportCacheTests.SupportingClassSourceChange_InvalidatesEvenWithUnchangedSizeAndTimestamp|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterIntermediaryTests.AFabricRuntime_IsReadThroughMojangsOwnMappings|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamDiscoveryTests.Forge1201Discovery_UsesBothRuntimeNamesAndTheExactJoinDescriptor|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamDiscoveryBehaviorTests.NativeDiscovery_UsesLauncherWorldMetadataAndScopesUdpFiltering|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamLanEntryTests.NativeSteamWorldHeaders_KeepNativeRowsAndRejectIncompleteShapes|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamDiscoveryTests.ModernExtractContentAndLegacyNarration_AreMappedByNativeNames|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterSteamDiscoveryTests.ActualNativeUdpPacketDescriptor_UsesInetAddressWithoutGuessingStringShape|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterLanReturnTests.ForgeCancellableAuthorForm_PublishesAfterInitializationOnEveryReturn|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterAsmPackagingTests.TheBootstrapPath_GetsTheHooksAlone_AndNeverAsm|
       FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterTests.Native_title_producer_keeps_only_pack_name_across_simulated_lifecycle_without_changing_connections|
@@ -290,6 +294,11 @@
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.ActualCmlLoggingDefaultAndPackChoiceReachTheJvmWithCorrectPrecedence|
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.PropertiesAreGenericAndAgentsClasspathsAndApplicationTokensKeepTheirOrder|
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.MissingOrAmbiguousNativeBoundaryFailsWithoutChangingTheProcess|
-      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.EmptyPackListLeavesArgumentListAndNativeDuplicatePropertiesUntouched</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.EmptyPackListLeavesArgumentListAndNativeDuplicatePropertiesUntouched|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.ANewStartupBypassesAnOldSuccessfulRollingResponseAndSyncUsesTheVerifiedNewSnapshot|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FailedFreshMetadataOrBundleKeepsTheLastVerifiedOfflineSnapshot|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FreshSuccessfulEmptyIndexRemovesOldOffersAndRemainsAuthoritativeOffline|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.MetadataFreshnessPreservesAnExistingQueryAndFragment|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.LegacyGameOnlyManifestWithoutRevisionStillFreezesAndLogsSafely</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

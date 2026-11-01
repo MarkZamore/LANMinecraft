@@ -36,6 +36,7 @@ public final class AgentContentBoundaryProbe {
         Set<String> expected = Set.of("PortableWindowTitleTransformer", "PortableIdentityTransformer",
             "PortableProfileNameTransformer", "PortableXaeroWaypointTransformer", "PortableFtbTeleportTransformer",
             "PortableSolarFluxSyncTransformer", "PortableLanAutoPublishTransformer", "PortableSteamDiscoveryTransformer",
+            "PortableSteamLanEntryTransformer",
             "PortablePerPlayerChunksTransformer", "PortableGuestMovementTransformer");
         if (!names.equals(expected) || registered.size() != expected.size() || bootstrap[0] != 1)
             throw new AssertionError("Identity/LAN transformer composition changed or content patch remains: " + names);

@@ -115,7 +115,7 @@ public sealed class CatalogSourceMarkerTests : IDisposable
         {
             var uri = request.RequestUri!;
             if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
-            if (uri == PackCatalogService.IndexUri)
+            if (uri.GetLeftPart(UriPartial.Path) == PackCatalogService.IndexUri.GetLeftPart(UriPartial.Path))
                 return Reply(HttpStatusCode.OK, JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schemaVersion = 1, packs = new[] { new CatalogSource(PackId, Folder, Source) }

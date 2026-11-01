@@ -123,6 +123,22 @@ public sealed class LibraryAvailabilityTests
                 Assert.True(bar.IsVisible);
                 Assert.Equal(Visibility.Visible, bar.Visibility);
                 Assert.True(Assert.IsType<Track>(bar.Template.FindName("PART_Track", bar)).ActualHeight > 0);
+                // Native Track removes its thumb when Maximum is zero. Visible
+                // alone therefore did not keep the library's scrollbar visible.
+                // Verify the control paints a persistent affordance even then.
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(bar.ActualWidth),
+                    (int)Math.Ceiling(bar.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+                var drawing = new DrawingVisual();
+                using (var context = drawing.RenderOpen())
+                    context.DrawRectangle(new VisualBrush(bar), null,
+                        new Rect(new Size(bar.ActualWidth, bar.ActualHeight)));
+                bitmap.Render(drawing);
+                var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+                bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
+                var paintedRows = Enumerable.Range(0, bitmap.PixelHeight).Count(y =>
+                    Enumerable.Range(0, bitmap.PixelWidth).Any(x => pixels[(y * bitmap.PixelWidth + x) * 4 + 3] > 0));
+                Assert.True(paintedRows > bitmap.PixelHeight / 2,
+                    "The persistent scrollbar is Visible but paints no track when there is no overflow.");
                 return true;
             }
             finally { controls.Close(); }
