@@ -20,7 +20,7 @@ public sealed class IdentityAdapterContentBoundaryTests
             var fixture = RepositoryFile("Program.Tests", "Fixtures", "AgentContentBoundaryProbe.java");
             await Run("javac", "--release", "17", "-cp", adapter, "-d", root, fixture);
             var text = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + adapter, "AgentContentBoundaryProbe");
-            Assert.Contains("Agent content boundary passed: registrations=10, unchangedMenuChecks=20.", text, StringComparison.Ordinal);
+            Assert.Contains("Agent content boundary passed: registrations=11, unchangedMenuChecks=22.", text, StringComparison.Ordinal);
         }
         finally { TempTree.Delete(root); }
     }

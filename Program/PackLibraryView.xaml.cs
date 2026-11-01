@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Threading;
 
 namespace Minecraft;
 
@@ -9,8 +10,11 @@ public partial class PackLibraryView : UserControl
     public event Action? ReturnRequested;
     public event Action<CatalogPack>? MembershipRequested;
     public event Action<Uri>? ModPageRequested;
+    public event Action<string>? ScrollSnapshot;
     private CatalogPack? _selected;
     private double _catalogOffset;
+    private int _snapshotReasons;
+    private bool _snapshotQueued;
     public Func<string, bool>? IsAdded { get; set; }
     public bool CanChangeMembership { get; set; } = true;
     public PackLibraryView()
@@ -18,6 +22,9 @@ public partial class PackLibraryView : UserControl
         InitializeComponent();
         SmoothScrollingController.Attach(CatalogScroll);
         SmoothScrollingController.Attach(DetailScroll);
+        IsVisibleChanged += (_, _) => QueueScrollSnapshot(8);
+        Loaded += (_, _) => QueueScrollSnapshot(16);
+        DetailScroll.Loaded += (_, _) => QueueScrollSnapshot(32);
     }
     public void SetCatalog(IEnumerable<CatalogPack> packs)
     {
@@ -29,6 +36,7 @@ public partial class PackLibraryView : UserControl
             if (_selected is null) ShowCatalog();
         }
         RefreshMembership();
+        QueueScrollSnapshot(1);
     }
     public void RefreshMembership()
     {
@@ -44,6 +52,7 @@ public partial class PackLibraryView : UserControl
         LibraryTopBar.Visibility = Visibility.Visible;
         CatalogScroll.Visibility = Visibility.Visible;
         CatalogScroll.ScrollToVerticalOffset(_catalogOffset);
+        QueueScrollSnapshot(2);
     }
     public void ShowDetails(CatalogPack pack)
     {
@@ -55,6 +64,23 @@ public partial class PackLibraryView : UserControl
         DetailScroll.Visibility = Visibility.Visible;
         DetailScroll.ScrollToTop();
         RefreshMembership();
+        QueueScrollSnapshot(4);
+    }
+    private void QueueScrollSnapshot(int reason)
+    {
+        if (ScrollSnapshot is null) return;
+        _snapshotReasons |= reason;
+        if (_snapshotQueued) return;
+        _snapshotQueued = true;
+        // Coalesce navigation/visibility events, then observe after layout.
+        // No LayoutUpdated/render-frame subscriptions or forced measure pass.
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            _snapshotQueued = false;
+            var reasons = _snapshotReasons;
+            _snapshotReasons = 0;
+            ScrollSnapshot?.Invoke(LibraryScrollDiagnostics.Capture(this, CatalogScroll, DetailScroll, reasons));
+        }));
     }
     private void ReturnLauncher_Click(object sender, RoutedEventArgs e) => ReturnRequested?.Invoke();
     private void ReturnCatalog_Click(object sender, RoutedEventArgs e) => ShowCatalog();

@@ -14,10 +14,32 @@ public final class PortableSteamDiscoveryTransformer implements ClassFileTransfo
     @Override
     public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefined,
                             ProtectionDomain domain, byte[] original) {
-        if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") ||
-            !matches("steamDiscoveryScreenClasses", name)) return null;
+        if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled")) return null;
+        boolean listTarget = matches("steamDiscoveryLanListClasses", name);
+        if (!listTarget && !matches("steamDiscoveryScreenClasses", name)) return null;
         ClassNode node = new ClassNode(Opcodes.ASM9);
         new ClassReader(original).accept(node, 0);
+        if (listTarget) {
+            int filtered = 0;
+            for (MethodNode method : node.methods) {
+                if (!matches("steamDiscoveryLanAddMethods", method.name) ||
+                    !matches("steamDiscoveryLanAddDescriptors", method.desc)) continue;
+                InsnList hook = new InsnList();
+                LabelNode ordinary = new LabelNode();
+                hook.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                hook.add(call("nativeDiscoveryManaged", "(Ljava/lang/Object;)Z"));
+                hook.add(new JumpInsnNode(Opcodes.IFEQ, ordinary));
+                hook.add(new InsnNode(Opcodes.RETURN));
+                hook.add(ordinary);
+                hook.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+                method.instructions.insert(hook);
+                filtered++;
+            }
+            if (filtered != 1) throw new IllegalStateException("Unsupported native automatic LAN add method.");
+            ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+            node.accept(writer);
+            return writer.toByteArray();
+        }
         int initialized = 0, removed = 0, joined = 0;
         for (MethodNode method : node.methods) {
             if (matches("steamDiscoveryInitMethods", method.name) && method.desc.equals("()V")) {

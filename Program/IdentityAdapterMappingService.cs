@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -217,6 +217,7 @@ internal sealed class IdentityAdapterMappingService
         {
             wanted.Add(discoveryScreen.RuntimeName);
             wanted.Add(discoveryScreen.ObfName);
+            AddSteamDiscoveryTargets(mappings, wanted, perPlayerProperties);
         }
         AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
         AddGuestMovementTargets(mappings, wanted, guestMovement);
@@ -461,7 +462,13 @@ internal sealed class IdentityAdapterMappingService
         var data = mappings?.FindClass("net/minecraft/client/multiplayer/ServerData");
         var lan = mappings?.FindClass("net/minecraft/client/server/LanServer");
         var list = mappings?.FindClass("net/minecraft/client/server/LanServerDetection$LanServerList");
-        if (screen is null || data is null || lan is null || list is null) return null;
+        var entry = mappings?.FindClass("net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry");
+        var minecraft = mappings?.FindClass("net/minecraft/client/Minecraft");
+        var user = mappings?.FindClass("net/minecraft/client/User");
+        var worldData = mappings?.FindClass(WorldData);
+        var component = mappings?.FindClass("net/minecraft/network/chat/Component");
+        if (screen is null || data is null || lan is null || list is null || entry is null ||
+            minecraft is null || user is null || worldData is null || component is null) return null;
         var init = screen.FindMethod("init", descriptor => descriptor == "()V");
         var removed = screen.FindMethod("removed", descriptor => descriptor == "()V");
         var join = screen.FindMethod("join", descriptor => descriptor == $"(L{data.ObfName};)V");
@@ -470,8 +477,24 @@ internal sealed class IdentityAdapterMappingService
         var dirty = list.FindField("isDirty");
         var address = lan.FindMethod("getAddress", descriptor => descriptor == "()Ljava/lang/String;");
         var ip = data.FindField("ip");
+        var addServer = list.FindMethod("addServer", value => value is
+            "(Ljava/lang/String;Ljava/net/InetAddress;)V" or "(Ljava/lang/String;Ljava/lang/String;)V");
+        var entryData = entry.FindField("serverData");
+        var header = entry.FindField("LAN_SERVER_HEADER");
+        var render = entry.FindMethod("render", value => value.EndsWith(")V", StringComparison.Ordinal))
+            ?? entry.FindMethod("extractContent", value => value.EndsWith(")V", StringComparison.Ordinal));
+        var narration = entry.FindMethod("getServerNarration", value => value.StartsWith("()", StringComparison.Ordinal))
+            ?? entry.FindMethod("getNarration", value => value.StartsWith("()", StringComparison.Ordinal));
+        var getUser = minecraft.FindMethod("getUser", value => value == $"()L{user.ObfName};");
+        var userName = user.FindMethod("getName", value => value == "()Ljava/lang/String;")
+            ?? user.FindMethod("name", value => value == "()Ljava/lang/String;");
+        var levelName = worldData.FindMethod("getLevelName", value => value == "()Ljava/lang/String;");
+        var literal = component.FindMethod("literal", value => value.StartsWith("(Ljava/lang/String;)L", StringComparison.Ordinal));
+        var literalComponent = mappings?.FindClass("net/minecraft/network/chat/TextComponent");
         if (init is null || removed is null || join is null || lanList is null || servers is null ||
-            dirty is null || address is null || ip is null) return null;
+            dirty is null || address is null || ip is null || addServer is null || entryData is null ||
+            header is null || render is null || getUser is null || userName is null || levelName is null ||
+            (literal is null && literalComponent is null)) return null;
         properties["steamDiscoveryEnabled"] = "true";
         properties["steamDiscoveryScreenClasses"] = JoinAliases(screen);
         properties["steamDiscoveryInitMethods"] = JoinAliases(init);
@@ -481,16 +504,45 @@ internal sealed class IdentityAdapterMappingService
         properties["steamDiscoveryLanListFields"] = JoinAliases(lanList);
         properties["steamDiscoveryLanServersFields"] = JoinAliases(servers);
         properties["steamDiscoveryLanDirtyFields"] = JoinAliases(dirty);
+        properties["steamDiscoveryLanAddMethods"] = JoinAliases(addServer);
+        properties["steamDiscoveryLanAddDescriptors"] = addServer.ObfDescriptor;
         properties["steamDiscoveryLanServerClasses"] = JoinDottedAliases(lan);
         properties["steamDiscoveryLanListClasses"] = JoinAliases(list);
         properties["steamDiscoveryServerDataClasses"] = JoinAliases(data);
         properties["steamDiscoveryLanAddressMethods"] = JoinAliases(address);
         properties["steamDiscoveryServerAddressFields"] = JoinAliases(ip);
+        properties["steamDiscoveryLanEntryClasses"] = JoinAliases(entry);
+        properties["steamDiscoveryLanEntryServerFields"] = JoinAliases(entryData);
+        properties["steamDiscoveryLanEntryHeaderFields"] = JoinAliases(header);
+        properties["steamDiscoveryLanEntryRenderMethods"] = JoinAliases(render);
+        properties["steamDiscoveryLanEntryNarrationMethods"] = narration is null ? "" : JoinAliases(narration);
+        properties["steamDiscoveryGetUserMethods"] = JoinAliases(getUser);
+        properties["steamDiscoveryUserClasses"] = JoinAliases(user);
+        properties["steamDiscoveryUserNameMethods"] = JoinAliases(userName);
+        properties["steamDiscoveryWorldDataClasses"] = JoinAliases(worldData);
+        properties["steamDiscoveryLevelNameMethods"] = JoinAliases(levelName);
+        properties["steamDiscoveryComponentClasses"] = JoinAliases(component);
+        properties["steamDiscoveryComponentLiteralMethods"] = literal is null ? "" : JoinAliases(literal);
+        if (literal is null) properties["steamDiscoveryLiteralComponentClasses"] = JoinDottedAliases(literalComponent!);
         properties["steamDiscoveryMinecraftVersion"] = descriptor.MinecraftVersion;
         // Reflection below is profiled against these pinned author's bytes.
         // Updating the transport requires reviewing its private worker/join API.
         properties["steamDiscoveryTransportVersion"] = transport.Version;
         return screen;
+    }
+
+    private static void AddSteamDiscoveryTargets(
+        RuntimeNames? mappings, HashSet<string> targets, Dictionary<string, string> properties)
+    {
+        if (properties.GetValueOrDefault("steamDiscoveryEnabled") != "true") return;
+        foreach (var name in new[] { "net/minecraft/client/server/LanServerDetection$LanServerList",
+            "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry" })
+        {
+            var target = mappings?.FindClass(name);
+            if (target is null) continue;
+            targets.Add(target.RuntimeName);
+            targets.Add(target.ObfName);
+        }
     }
 
     private static MappedClass? AddLanPublishProperties(
@@ -1283,6 +1335,7 @@ internal sealed class IdentityAdapterMappingService
         {
             requiredTargets.Add(discoveryScreen.RuntimeName);
             requiredTargets.Add(discoveryScreen.ObfName);
+            AddSteamDiscoveryTargets(mappings, requiredTargets, properties);
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         AddGuestMovementTargets(mappings, requiredTargets, guestMovement);
@@ -1804,6 +1857,9 @@ internal sealed class IdentityAdapterMappingService
             "net/minecraft/client/multiplayer/ServerData",
             "net/minecraft/client/server/LanServer",
             "net/minecraft/client/server/LanServerDetection$LanServerList",
+            "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry",
+            "net/minecraft/client/User",
+            "net/minecraft/network/chat/TextComponent",
             LoginListener,
             GameListener,
             CommonListener,

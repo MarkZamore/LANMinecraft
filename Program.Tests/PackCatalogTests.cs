@@ -657,7 +657,7 @@ public sealed class PackCatalogTests : IDisposable
             if (request.RequestUri.AbsolutePath.EndsWith("catalog.json", StringComparison.Ordinal))
                 return Json(new { schemaVersion = 1, packs = new[] { new CatalogSource("new-pack", InvalidIndex ? "../escape" : Folder, Source) } });
             if (!url.Contains("/New-Pack/", StringComparison.Ordinal)) return Reply(HttpStatusCode.NotFound, []);
-            if (url.EndsWith("pack-manifest.json", StringComparison.Ordinal))
+            if (request.RequestUri.AbsolutePath.EndsWith("pack-manifest.json", StringComparison.Ordinal))
             {
                 var hash = Convert.ToHexStringLower(SHA256.HashData(_bundle));
                 var payloadHash = Convert.ToHexStringLower(SHA256.HashData(Payload));

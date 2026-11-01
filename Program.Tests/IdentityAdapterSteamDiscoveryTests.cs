@@ -9,21 +9,35 @@ public sealed class IdentityAdapterSteamDiscoveryTests : IDisposable
 
     // Actual Forge 1.20.1 classes/member shapes, with the obfuscated names
     // deliberately different so both namespaces must be carried into Java.
-    private const string Mappings = """
+    private static readonly string Mappings = """
         tsrg2 obf mojmap
         exn net/minecraft/client/gui/screens/multiplayer/JoinMultiplayerScreen
-        	b ()V init
-        	ax_ ()V removed
-        	a (Lffd;)V join
-        	v lanServerList
+        \tb ()V init
+        \tax_ ()V removed
+        \ta (Lffd;)V join
+        \tv lanServerList
         ffd net/minecraft/client/multiplayer/ServerData
-        	b ip
+        \tb ip
         fyq net/minecraft/client/server/LanServer
-        	b ()Ljava/lang/String; getAddress
+        \tb ()Ljava/lang/String; getAddress
         fyr$b net/minecraft/client/server/LanServerDetection$LanServerList
-        	a servers
-        	b isDirty
-        """;
+        \ta servers
+        \tb isDirty
+        \tc (Ljava/lang/String;Ljava/lang/String;)V addServer
+        lanentry net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry
+        \ta serverData
+        \tb LAN_SERVER_HEADER
+        \tc (Ljava/lang/Object;IIIIIIIZF)V render
+        \td ()Lcmp; getServerNarration
+        mc net/minecraft/client/Minecraft
+        \tu ()Lusr; getUser
+        usr net/minecraft/client/User
+        \tn ()Ljava/lang/String; getName
+        wd net/minecraft/world/level/storage/WorldData
+        \tn ()Ljava/lang/String; getLevelName
+        cmp net/minecraft/network/chat/Component
+        \ta (Ljava/lang/String;)Lcmp; literal
+        """.Replace("\\t", "\t", StringComparison.Ordinal);
 
     [Fact]
     public void Forge1201Discovery_UsesBothRuntimeNamesAndTheExactJoinDescriptor()
@@ -37,12 +51,19 @@ public sealed class IdentityAdapterSteamDiscoveryTests : IDisposable
         Assert.Equal("net.minecraft.client.server.LanServer,fyq", properties["steamDiscoveryLanServerClasses"]);
         Assert.Equal("1.20.1", properties["steamDiscoveryMinecraftVersion"]);
         Assert.Equal("0.3.4", properties["steamDiscoveryTransportVersion"]);
+        Assert.Equal("addServer,c", properties["steamDiscoveryLanAddMethods"]);
+        Assert.Equal("getName,n", properties["steamDiscoveryUserNameMethods"]);
+        Assert.Equal("getLevelName,n", properties["steamDiscoveryLevelNameMethods"]);
+        Assert.Equal("render,c", properties["steamDiscoveryLanEntryRenderMethods"]);
     }
 
     [Theory]
     [InlineData("\tv lanServerList")]
     [InlineData("\tb isDirty")]
     [InlineData("\ta (Lffd;)V join")]
+    [InlineData("\tc (Ljava/lang/String;Ljava/lang/String;)V addServer")]
+    [InlineData("\tb LAN_SERVER_HEADER")]
+    [InlineData("\tn ()Ljava/lang/String; getLevelName")]
     public void MissingScreenMember_DisablesDiscoveryWithoutDisablingOtherHooks(string missing)
     {
         var properties = Build(Mappings.Replace(missing, "", StringComparison.Ordinal), out var target);
@@ -59,6 +80,25 @@ public sealed class IdentityAdapterSteamDiscoveryTests : IDisposable
         var properties = Build(Mappings, out var target, loader, minecraft);
         Assert.NotNull(target);
         Assert.Equal(version, properties["steamDiscoveryTransportVersion"]);
+    }
+
+    [Fact]
+    public void ModernExtractContentAndLegacyNarration_AreMappedByNativeNames()
+    {
+        var properties = Build(Mappings.Replace(" render", " extractContent", StringComparison.Ordinal)
+            .Replace(" getServerNarration", " getNarration", StringComparison.Ordinal), out var target);
+        Assert.NotNull(target);
+        Assert.Equal("extractContent,c", properties["steamDiscoveryLanEntryRenderMethods"]);
+        Assert.Equal("getNarration,d", properties["steamDiscoveryLanEntryNarrationMethods"]);
+    }
+
+    [Fact]
+    public void ActualNativeUdpPacketDescriptor_UsesInetAddressWithoutGuessingStringShape()
+    {
+        var properties = Build(Mappings.Replace("(Ljava/lang/String;Ljava/lang/String;)V addServer",
+            "(Ljava/lang/String;Ljava/net/InetAddress;)V addServer", StringComparison.Ordinal), out var target);
+        Assert.NotNull(target);
+        Assert.Equal("(Ljava/lang/String;Ljava/net/InetAddress;)V", properties["steamDiscoveryLanAddDescriptors"]);
     }
 
     private Dictionary<string, string> Build(string mappings, out object? target,

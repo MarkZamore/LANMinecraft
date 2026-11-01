@@ -9,12 +9,19 @@ import java.util.concurrent.*;
 public final class PortableSteamDiscoveryHooks {
     private static final String PREFIX = "portable-steam-";
     private static final Map<Object, Poll> POLLS = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Object, Poll> MANAGED_LISTS = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Object, World> DISPLAY_ENTRIES = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final Map<Object, Boolean> PUBLICATIONS = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final String PLAYER_KEY = "lanminecraft_player";
+    private static final String WORLD_KEY = "lanminecraft_world";
+    private static final String DISPLAY_KEY = "lanminecraft_display";
 
     private PortableSteamDiscoveryHooks() { }
 
     public static void begin(Object screen) {
         synchronized (POLLS) {
-            if (POLLS.containsKey(screen)) return; // resize re-enters init
+            Poll existing = POLLS.get(screen);
+            if (existing != null) { existing.apply(existing.worlds); return; } // resize may replace its LAN list
             try {
                 Poll poll = new Poll(screen);
                 POLLS.put(screen, poll);
@@ -33,7 +40,125 @@ public final class PortableSteamDiscoveryHooks {
         if (poll != null) {
             poll.active = false;
             poll.thread.interrupt();
+            synchronized (MANAGED_LISTS) { MANAGED_LISTS.values().removeIf(value -> value == poll); }
         }
+    }
+
+    /** Only the automatic LAN collection of a verified managed Steam screen. */
+    public static boolean nativeDiscoveryManaged(Object list) {
+        Poll poll = MANAGED_LISTS.get(list);
+        return poll != null && poll.active && poll.screen.get() != null;
+    }
+
+    /** Preserve native labels everywhere except the precise synthetic entry we created. */
+    public static Object worldTitle(Object original, Object lanServer) {
+        World world = DISPLAY_ENTRIES.get(lanServer);
+        if (world == null) return original;
+        try {
+            ClassLoader loader = lanServer.getClass().getClassLoader();
+            Class<?> component = null;
+            for (String type : aliases("steamDiscoveryComponentClasses")) {
+                try { component = Class.forName(type.replace('/', '.'), true, loader); break; }
+                catch (ClassNotFoundException absentAlias) { }
+            }
+            if (component == null) throw new ClassNotFoundException("Native component");
+            for (String name : aliases("steamDiscoveryComponentLiteralMethods")) {
+                try { return component.getDeclaredMethod(name, String.class).invoke(null, world.world); }
+                catch (NoSuchMethodException absentAlias) { }
+            }
+            for (String type : aliases("steamDiscoveryLiteralComponentClasses")) {
+                if (type.isBlank()) continue;
+                try { return Class.forName(type.replace('/', '.'), true, loader).getDeclaredConstructor(String.class).newInstance(world.world); }
+                catch (ClassNotFoundException absentAlias) { }
+            }
+            throw new NoSuchMethodException("Native literal component");
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("Steam world title could not be built", failure);
+        }
+    }
+
+    /** Only the display call site changes; joining still receives the real synthetic address. */
+    public static String displayAddress(String original, Object lanServer) {
+        return DISPLAY_ENTRIES.containsKey(lanServer) ? "Steam" : original;
+    }
+
+    /** Capture the actual live world, never a startup folder or parsed MOTD. No UI/Steam wait. */
+    public static void published(Object minecraft, Object server, int port) {
+        if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") ||
+            PUBLICATIONS.putIfAbsent(server, Boolean.TRUE) != null) return;
+        Thread worker = new Thread(() -> publishDescription(minecraft, server, port), "portable-steam-world-description");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private static void publishDescription(Object minecraft, Object server, int port) {
+        try {
+            ClassLoader loader = minecraft.getClass().getClassLoader();
+            Object runtime = invokeStatic(Class.forName("link.e4steam.steam.SteamRuntime", true, loader), "get");
+            requireTransport(runtime);
+            CompletableFuture<String[]> capture = new CompletableFuture<>();
+            ((Executor) minecraft).execute(() -> {
+                try {
+                    if (invoke(minecraft, aliases("getSingleplayerServerMethods")) != server) { capture.complete(null); return; }
+                    Object user = invoke(minecraft, aliases("steamDiscoveryGetUserMethods"));
+                    String player = cleanName((String) invoke(user, aliases("steamDiscoveryUserNameMethods")));
+                    ((Executor) server).execute(() -> {
+                        try {
+                            Object data = invoke(server, aliases("getWorldDataMethods"));
+                            capture.complete(new String[] { player, cleanName((String) invoke(data, aliases("steamDiscoveryLevelNameMethods"))) });
+                        } catch (Throwable failure) { capture.completeExceptionally(failure); }
+                    });
+                } catch (Throwable failure) { capture.completeExceptionally(failure); }
+            });
+            String[] description = capture.get(8, TimeUnit.SECONDS);
+            if (description == null) return;
+            invoke(runtime, "awaitReady");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
+            while (System.nanoTime() < deadline) {
+                // Bind to one real e4steam hosting generation, then recheck the
+                // client before writing. A replacement world on the same port
+                // must not inherit the previous world's metadata.
+                Object owner = steamTask(runtime, () -> {
+                    Object host = field(runtime, "hostRegistration");
+                    return host != null && ((Integer) invoke(host, "localPort")) == port ? invoke(host, "owner") : null;
+                }).get(8, TimeUnit.SECONDS);
+                CompletableFuture<Boolean> current = new CompletableFuture<>();
+                ((Executor) minecraft).execute(() -> {
+                    try { current.complete(invoke(minecraft, aliases("getSingleplayerServerMethods")) == server); }
+                    catch (Throwable failure) { current.completeExceptionally(failure); }
+                });
+                if (!current.get(8, TimeUnit.SECONDS)) return;
+                if (owner != null && Boolean.TRUE.equals(steamTask(runtime, () -> {
+                    Object host = field(runtime, "hostRegistration");
+                    Object social = field(runtime, "lobbyManager");
+                    if (host == null || invoke(host, "owner") != owner || social == null || field(social, "hostLobbyOwner") != owner) return false;
+                    long lobbyId = (Long) field(social, "hostLobbyId");
+                    if (lobbyId == 0) return false;
+                    Object lobby = invokeStatic(Class.forName("com.codedisaster.steamworks.SteamID", true, loader), "createFromNativeHandle", lobbyId);
+                    Object matchmaking = field(social, "matchmaking");
+                    return Boolean.TRUE.equals(invoke(matchmaking, "setLobbyData", lobby, PLAYER_KEY, description[0])) &&
+                        Boolean.TRUE.equals(invoke(matchmaking, "setLobbyData", lobby, WORLD_KEY, description[1])) &&
+                        Boolean.TRUE.equals(invoke(matchmaking, "setLobbyData", lobby, DISPLAY_KEY, "1"));
+                }).get(8, TimeUnit.SECONDS))) return;
+                Thread.sleep(500);
+            }
+            throw new TimeoutException("Steam host lobby description was not ready");
+        } catch (Throwable failure) { report("could not publish the live world description", failure); }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static CompletableFuture<Object> steamTask(Object runtime, Callable<Object> action) throws ReflectiveOperationException {
+        return (CompletableFuture<Object>) invoke(runtime, "submitSteamTask", action);
+    }
+
+    private static void requireTransport(Object runtime) throws java.io.IOException {
+        Properties version = new Properties();
+        try (java.io.InputStream input = runtime.getClass().getResourceAsStream("/e4steam-version.properties")) {
+            if (input == null) throw new IllegalStateException("Missing pinned Steam transport version.");
+            version.load(input);
+        }
+        if (!version.getProperty("version", "").equals(System.getProperty("minecraft.portable.identity.steamDiscoveryTransportVersion", "")))
+            throw new IllegalStateException("Unsupported Steam transport discovery interface.");
     }
 
     public static boolean join(Object screen, Object data) {
@@ -66,7 +191,7 @@ public final class PortableSteamDiscoveryHooks {
         }
     }
 
-    private record World(long lobby, long friend, String name) {
+    private record World(long lobby, long friend, String player, String world) {
         String address() { return PREFIX + Long.toUnsignedString(lobby) + ".invalid"; }
     }
 
@@ -83,14 +208,7 @@ public final class PortableSteamDiscoveryHooks {
             this.screen = new WeakReference<>(screen);
             loader = screen.getClass().getClassLoader();
             runtime = invokeStatic(load("link.e4steam.steam.SteamRuntime"), "get");
-            Properties version = new Properties();
-            try (java.io.InputStream input = runtime.getClass().getResourceAsStream("/e4steam-version.properties")) {
-                if (input == null) throw new IllegalStateException("Missing pinned Steam transport version.");
-                version.load(input);
-            }
-            if (!version.getProperty("version", "").equals(
-                System.getProperty("minecraft.portable.identity.steamDiscoveryTransportVersion", "")))
-                throw new IllegalStateException("Unsupported Steam transport discovery interface.");
+            requireTransport(runtime);
             Object minecraft = invokeStatic(loadAliases("minecraftClasses"), aliases("minecraftGetInstanceMethods"));
             client = (Executor) minecraft;
             thread = new Thread(this, "portable-steam-world-discovery");
@@ -168,8 +286,11 @@ public final class PortableSteamDiscoveryHooks {
                 Object owner = invoke(matchmaking, "getLobbyOwner", lobby);
                 long friendId = nativeId(friend);
                 if (owner == null || nativeId(owner) != friendId) continue;
-                String name = (String) invoke(friends, "getFriendPersonaName", friend);
-                World world = new World(lobbyId, friendId, cleanName(name));
+                if (!"1".equals(invoke(matchmaking, "getLobbyData", lobby, DISPLAY_KEY))) continue;
+                String player = (String) invoke(matchmaking, "getLobbyData", lobby, PLAYER_KEY);
+                String worldName = (String) invoke(matchmaking, "getLobbyData", lobby, WORLD_KEY);
+                if (player == null || player.isBlank() || worldName == null || worldName.isBlank()) continue;
+                World world = new World(lobbyId, friendId, cleanName(player), cleanName(worldName));
                 found.put(world.address(), world);
             }
             return Collections.unmodifiableMap(found);
@@ -182,16 +303,22 @@ public final class PortableSteamDiscoveryHooks {
             try {
                 Object list = field(current, aliases("steamDiscoveryLanListFields"));
                 if (list == null) return;
+                synchronized (MANAGED_LISTS) {
+                    MANAGED_LISTS.values().removeIf(value -> value == this);
+                    MANAGED_LISTS.put(list, this);
+                }
                 Class<?> entryType = loadAliases("steamDiscoveryLanServerClasses");
                 Constructor<?> entry = entryType.getDeclaredConstructor(String.class, String.class);
                 synchronized (list) {
                     List<Object> servers = (List<Object>) field(list, aliases("steamDiscoveryLanServersFields"));
-                    for (Iterator<Object> iterator = servers.iterator(); iterator.hasNext();) {
-                        Object server = iterator.next();
-                        String address = (String) invoke(server, aliases("steamDiscoveryLanAddressMethods"));
-                        if (address.startsWith(PREFIX)) iterator.remove();
+                    // This is only the transient auto-discovery collection;
+                    // saved/manual servers live in the independent ServerList.
+                    servers.clear();
+                    for (World world : found.values()) {
+                        Object value = entry.newInstance(world.player, world.address());
+                        DISPLAY_ENTRIES.put(value, world);
+                        servers.add(value);
                     }
-                    for (World world : found.values()) servers.add(entry.newInstance("Steam · " + world.name, world.address()));
                     setField(list, true, aliases("steamDiscoveryLanDirtyFields"));
                 }
             } catch (Throwable failure) {
@@ -210,8 +337,9 @@ public final class PortableSteamDiscoveryHooks {
 
     static String cleanName(String name) {
         if (name == null) return "Minecraft";
-        String clean = name.replaceAll("[\\p{Cntrl}§]", "").trim();
-        return clean.isEmpty() ? "Minecraft" : clean.substring(0, Math.min(64, clean.length()));
+        String clean = name.replaceAll("[\\p{Cc}\\p{Cf}§]", "").trim();
+        return clean.isEmpty() ? "Minecraft" : clean.substring(0,
+            clean.offsetByCodePoints(0, Math.min(64, clean.codePointCount(0, clean.length()))));
     }
 
     private static long nativeId(Object value) throws ReflectiveOperationException {

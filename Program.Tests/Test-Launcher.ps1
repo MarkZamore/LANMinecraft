@@ -49,8 +49,8 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
         @($results | Where-Object outcome -ne 'Passed').Count -ne 0) {
         throw 'Every selected release case must pass; failures and skipped cases reject the release.'
     }
-    # The reviewed profile now has 503 cases: keep all previous coverage plus
-    # split-native-JAR and persistent-library checks. Leave a small theory
+    # The reviewed profile now has 513 cases: keep all previous coverage plus
+    # Steam-only discovery and mutable-metadata freshness. Leave a small theory
     # margin; a lost filter must still reject the full suite (over 1100 cases).
     if ($results.Count -gt 520) { throw 'The release profile exceeded its 520-case budget; review its selectors.' }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)

@@ -64,6 +64,10 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableLanAutoPublishTransformer();
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
                 transformer = new PortableSteamDiscoveryTransformer();
+            } else if (isConfigured("steamDiscoveryLanListClasses") && isAlias("steamDiscoveryLanListClasses", className)) {
+                transformer = new PortableSteamDiscoveryTransformer();
+            } else if (isConfigured("steamDiscoveryLanEntryClasses") && isAlias("steamDiscoveryLanEntryClasses", className)) {
+                transformer = new PortableSteamLanEntryTransformer();
             } else if (isAlias("movementListenerClasses", className)) {
                 transformer = new PortableGuestMovementTransformer();
             } else if (isAlias("chunkMapClasses", className) ||
@@ -103,6 +107,10 @@ public final class PortableIdentityPreflight {
                 verifyLanSharePublishTargets(archive, className, transformed);
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
                 verifySteamDiscoveryTargets(archive, className, transformed);
+            } else if (isConfigured("steamDiscoveryLanListClasses") && isAlias("steamDiscoveryLanListClasses", className)) {
+                verifySteamDiscoveryList(archive, className, transformed);
+            } else if (isConfigured("steamDiscoveryLanEntryClasses") && isAlias("steamDiscoveryLanEntryClasses", className)) {
+                verifySteamDiscoveryEntry(transformed);
             } else if (isAlias("movementListenerClasses", className)) {
                 verifyGuestMovementTargets(className, original, transformed);
             } else if (isAlias("chunkMapClasses", className) ||
@@ -282,6 +290,7 @@ public final class PortableIdentityPreflight {
         ClassNode list = readClass(archive, alias("steamDiscoveryLanListClasses", index));
         requireField(list, "steamDiscoveryLanServersFields");
         requireField(list, "steamDiscoveryLanDirtyFields");
+        requireMethod(list, "steamDiscoveryLanAddMethods", 2);
         ClassNode data = readClass(archive, alias("steamDiscoveryServerDataClasses", index));
         requireField(data, "steamDiscoveryServerAddressFields");
         ClassNode lan = readClass(archive, alias("steamDiscoveryLanServerClasses", index).replace('.', '/'));
@@ -289,6 +298,19 @@ public final class PortableIdentityPreflight {
         if (lan.methods.stream().noneMatch(method -> method.name.equals("<init>") &&
             method.desc.equals("(Ljava/lang/String;Ljava/lang/String;)V")))
             throw new IllegalStateException("Unsupported LAN server entry constructor.");
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", index).replace('.', '/'));
+        requireMethod(minecraft, "steamDiscoveryGetUserMethods", 0);
+        ClassNode user = readClass(archive, alias("steamDiscoveryUserClasses", index));
+        requireMethod(user, "steamDiscoveryUserNameMethods", 0);
+        ClassNode world = readClass(archive, alias("steamDiscoveryWorldDataClasses", index));
+        requireMethod(world, "steamDiscoveryLevelNameMethods", 0);
+        if (isConfigured("steamDiscoveryComponentLiteralMethods")) {
+            ClassNode component = readClass(archive, alias("steamDiscoveryComponentClasses", index));
+            requireMethod(component, "steamDiscoveryComponentLiteralMethods", 1);
+        } else {
+            ClassNode literal = readClass(archive, alias("steamDiscoveryLiteralComponentClasses", index).replace('.', '/'));
+            requireConstructor(literal, "(Ljava/lang/String;)V");
+        }
         ClassNode patched = new ClassNode();
         new ClassReader(transformed).accept(patched, 0);
         for (String name : new String[] { "begin", "end", "join" }) {
@@ -300,6 +322,32 @@ public final class PortableIdentityPreflight {
             if (calls < 1 || (!name.equals("begin") && calls != 1))
                 throw new IllegalStateException("Unsupported Steam discovery hook count for " + name + ".");
         }
+    }
+
+    private static void verifySteamDiscoveryList(ZipFile archive, String name, byte[] transformed) throws Exception {
+        ClassNode original = readClass(archive, name);
+        requireMethod(original, "steamDiscoveryLanAddMethods", 2);
+        ClassNode patched = new ClassNode(); new ClassReader(transformed).accept(patched, 0);
+        long calls = patched.methods.stream().flatMap(method -> Arrays.stream(method.instructions.toArray()))
+            .filter(instruction -> instruction instanceof MethodInsnNode call &&
+                call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") &&
+                call.name.equals("nativeDiscoveryManaged") && call.desc.equals("(Ljava/lang/Object;)Z")).count();
+        if (calls != 1) throw new IllegalStateException("Automatic native LAN discovery guard count differs.");
+    }
+
+    private static void verifySteamDiscoveryEntry(byte[] transformed) {
+        ClassNode patched = new ClassNode(); new ClassReader(transformed).accept(patched, 0);
+        long calls = patched.methods.stream().flatMap(method -> Arrays.stream(method.instructions.toArray()))
+            .filter(instruction -> instruction instanceof MethodInsnNode call &&
+                call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") &&
+                call.name.equals("worldTitle") && call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")).count();
+        int expected = System.getProperty("minecraft.portable.identity.steamDiscoveryLanEntryNarrationMethods", "").isBlank() ? 1 : 2;
+        if (calls != expected) throw new IllegalStateException("Native Steam world header count differs.");
+        long addresses = patched.methods.stream().flatMap(method -> Arrays.stream(method.instructions.toArray()))
+            .filter(instruction -> instruction instanceof MethodInsnNode call &&
+                call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") &&
+                call.name.equals("displayAddress") && call.desc.equals("(Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/String;")).count();
+        if (addresses < 1 || addresses > 2) throw new IllegalStateException("Native Steam display address count differs.");
     }
 
     private static void verifyLanSharePublishTargets(
