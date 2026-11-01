@@ -939,6 +939,247 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         Assert.Contains(progress.Reports, report => report.Fraction == 1d);
     }
 
+    [Fact]
+    public async Task DownloadPlan_ColdInstall_VerifiesMetadataBeforePayload_AndConsumesFrozenRelease()
+    {
+        var mod = new PackFile("mods/provider.jar", Encoding.UTF8.GetBytes("provider-one"));
+        var descriptor = new PackFile("launcher/local-ai.json", Encoding.UTF8.GetBytes("{\"recipeFile\":\"launcher/recipe.json\"}"));
+        var recipe = new PackFile("launcher/recipe.json", Encoding.UTF8.GetBytes("{\"pinned\":true}"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var metadataAsset = ZipRootAsset("launcher", descriptor, recipe);
+        var payloadAssets = new[] { JarAsset(mod), JarAsset(packManifest) };
+        var release = BuildRelease("frozen-one", [mod, descriptor, recipe, packManifest],
+            [metadataAsset, .. payloadAssets]);
+        var handler = CreateReleaseHandler(release);
+        using var client = new HttpClient(handler);
+        var service = CreateService(client);
+        var progress = new SynchronousProgress();
+        var plan = await service.PrepareDownloadPlanAsync(DefaultPack, progress, CancellationToken.None);
+        var snapshot = plan.MetadataDirectory;
+        try
+        {
+            Assert.Equal(payloadAssets.Sum(asset => (long)asset.Content.Length), plan.PendingBytes);
+            Assert.Equal(mod.Sha, plan.ExpectedFileSha256(mod.Path));
+            Assert.Null(plan.ExpectedFileSha256("mods/absent.jar"));
+            AssertFileContent(snapshot, descriptor);
+            AssertFileContent(snapshot, recipe);
+            Assert.False(File.Exists(LivePath(PackDir(DefaultPack), descriptor.Path)));
+            Assert.False(PackManifestService.HasManifest(PackDir(DefaultPack)));
+            Assert.All(progress.Reports, report => Assert.Null(report.Fraction));
+            Assert.DoesNotContain(handler.RequestUris, uri => LastPathSegment(uri) == JarAsset(mod).Name);
+
+            // A floating release tag changes after planning. Sync must use the
+            // already selected manifest and bootstrap asset, with no refetch.
+            release[PortablePackSyncService.PackManifestAssetName] = Encoding.UTF8.GetBytes("invalid new release");
+            var result = await service.SyncAsync(plan, progress, CancellationToken.None);
+            Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
+            Assert.Equal("frozen-one", result.Revision);
+            AssertFileContent(PackDir(DefaultPack), mod);
+            AssertFileContent(PackDir(DefaultPack), descriptor);
+            AssertFileContent(snapshot, descriptor);
+            Assert.Single(handler.RequestUris, uri => LastPathSegment(uri) == metadataAsset.Name);
+            Assert.Single(handler.RequestUris, uri => LastPathSegment(uri) == PortablePackSyncService.PackManifestAssetName);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.SyncAsync(plan, null, CancellationToken.None));
+        }
+        finally { plan.Dispose(); }
+        Assert.False(Directory.Exists(snapshot));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(PackDir(DefaultPack), ".pack-sync-stage*"));
+    }
+
+    [Fact]
+    public async Task DownloadPlan_DisposeBeforeSync_DoesNotApplyAnyMetadata()
+    {
+        var descriptor = new PackFile("launcher/local-ai.json", Encoding.UTF8.GetBytes("{}"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("one", [descriptor, packManifest], [JarAsset(descriptor), JarAsset(packManifest)]);
+        using var client = new HttpClient(CreateReleaseHandler(release));
+        var service = CreateService(client);
+        var plan = await service.PrepareDownloadPlanAsync(DefaultPack, null, CancellationToken.None);
+        var snapshot = plan.MetadataDirectory;
+        AssertFileContent(snapshot, descriptor);
+        plan.Dispose();
+        Assert.False(Directory.Exists(snapshot));
+        Assert.False(File.Exists(LivePath(PackDir(DefaultPack), descriptor.Path)));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.SyncAsync(plan, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DownloadPlan_OfflineFallback_UsesInstalledMetadataAndActualModHash()
+    {
+        var mod = new PackFile("mods/provider.jar", Encoding.UTF8.GetBytes("installed provider"));
+        var descriptor = new PackFile("launcher/local-ai.json", Encoding.UTF8.GetBytes("{\"installed\":true}"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("installed", [mod, descriptor, packManifest],
+            [JarAsset(mod), JarAsset(descriptor), JarAsset(packManifest)]), DefaultPack);
+        using var client = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var service = CreateService(client);
+        using var plan = await service.PrepareDownloadPlanAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(PackDir(DefaultPack), plan.MetadataDirectory);
+        Assert.Equal(0, plan.PendingBytes);
+        Assert.Equal(mod.Sha, plan.ExpectedFileSha256(mod.Path));
+        AssertFileContent(plan.MetadataDirectory, descriptor);
+        var result = await service.SyncAsync(plan, null, CancellationToken.None);
+        Assert.Equal(PackSyncOutcome.OfflineFallback, result.Outcome);
+        Assert.False(PortablePackSyncService.IsUpdatePending(PackDir(DefaultPack)));
+    }
+
+    [Fact]
+    public async Task DownloadPlan_ChangedPreviouslyCurrentFile_RejectsBeforePayloadOrApply()
+    {
+        var mod = new PackFile("mods/provider.jar", Encoding.UTF8.GetBytes("installed provider"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("installed", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]);
+        await InstallAsync(release, DefaultPack);
+        var handler = CreateReleaseHandler(release);
+        using var client = new HttpClient(handler);
+        var service = CreateService(client);
+        using var plan = await service.PrepareDownloadPlanAsync(DefaultPack, null, CancellationToken.None);
+        var replacement = Encoding.UTF8.GetBytes("changed by another writer");
+        File.WriteAllBytes(LivePath(PackDir(DefaultPack), mod.Path), replacement);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SyncAsync(plan, null, CancellationToken.None));
+
+        Assert.Equal(replacement, File.ReadAllBytes(LivePath(PackDir(DefaultPack), mod.Path)));
+        Assert.False(PortablePackSyncService.IsUpdatePending(PackDir(DefaultPack)));
+        Assert.Single(handler.RequestUris);
+    }
+
+    [Fact]
+    public async Task DownloadPlan_CleanupRejectsUnownedStagesAndDirectoryLinks()
+    {
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("one", [packManifest], [JarAsset(packManifest)]);
+        using var client = new HttpClient(CreateReleaseHandler(release));
+        var service = CreateService(client);
+        var unowned = await service.PrepareDownloadPlanAsync(DefaultPack, null, CancellationToken.None);
+        var unownedRoot = Path.GetDirectoryName(unowned.MetadataDirectory)!;
+        File.Delete(Path.Combine(unownedRoot, ".pack-sync-plan-owner"));
+        unowned.Dispose();
+        Assert.True(Directory.Exists(unownedRoot));
+
+        var linked = await service.PrepareDownloadPlanAsync(DefaultPack, null, CancellationToken.None);
+        Assert.True(Directory.Exists(unownedRoot)); // Startup sweep also requires ownership.
+        var linkedRoot = Path.GetDirectoryName(linked.MetadataDirectory)!;
+        var external = Path.Combine(_root, "outside-plan");
+        Directory.CreateDirectory(external);
+        var keptFile = Path.Combine(external, "keep.txt");
+        File.WriteAllText(keptFile, "keep");
+        var junction = Path.Combine(linkedRoot, "external-link");
+        SavesFolderService.CreateJunction(junction, external);
+        try
+        {
+            linked.Dispose();
+            Assert.True(Directory.Exists(linkedRoot));
+            Assert.Equal("keep", File.ReadAllText(keptFile));
+        }
+        finally
+        {
+            linked.Dispose();
+            Directory.Delete(junction);
+        }
+    }
+
+    [Fact]
+    public async Task SourceWeight_PublishedAiReservesMemoryBeforeInstall_WithoutPayloadDownloads()
+    {
+        var mod = new PackFile("mods/assistant.jar", Encoding.UTF8.GetBytes("JAR is not needed for source weighing"));
+        var metadata = SourceWeightAiMetadata(mod);
+        var metadataAsset = ZipRootAsset("launcher", metadata);
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("published", [mod, .. metadata, packManifest],
+            [JarAsset(mod), metadataAsset, JarAsset(packManifest)]);
+        var handler = new RecordingHandler(request =>
+        {
+            var name = LastPathSegment(request.RequestUri!);
+            Assert.True(name == PortablePackSyncService.PackManifestAssetName || name == metadataAsset.Name,
+                "Source weighing must not fetch a JAR, runtime or model.");
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(release[name]) };
+        });
+        using var client = new HttpClient(handler);
+
+        var profile = await CreateService(client).WeighFromSourceAsync(DefaultPack, CancellationToken.None);
+
+        Assert.True(profile.IsKnown);
+        Assert.Equal(3072, profile.LocalAiReserveMb);
+        Assert.Equal(1, profile.JarCount);
+        Assert.Equal(2, handler.RequestUris.Count);
+        Assert.False(Directory.Exists(PackDir(DefaultPack)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "Minecraft", "Launcher"), ".pack-sync-stage*"));
+    }
+
+    [Fact]
+    public async Task SourceWeight_OrdinaryPackLeavesAiReserveZero_WithoutExtraRequests()
+    {
+        var mod = new PackFile("mods/ordinary.jar", Encoding.UTF8.GetBytes("ordinary"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var release = BuildRelease("published", [mod, packManifest], [JarAsset(mod), JarAsset(packManifest)]);
+        var handler = CreateReleaseHandler(release);
+        using var client = new HttpClient(handler);
+
+        var profile = await CreateService(client).WeighFromSourceAsync(DefaultPack, CancellationToken.None);
+
+        Assert.True(profile.IsKnown);
+        Assert.Equal(0, profile.LocalAiReserveMb);
+        Assert.Single(handler.RequestUris);
+        Assert.False(Directory.Exists(PackDir(DefaultPack)));
+    }
+
+    [Theory]
+    [InlineData("recipe")]
+    [InlineData("descriptor")]
+    [InlineData("binding")]
+    [InlineData("mixed-asset")]
+    [InlineData("archive-extra")]
+    public async Task SourceWeight_InvalidAiMetadataReturnsUnknownWithoutInstallingOrFetchingPayload(string invalid)
+    {
+        var mod = new PackFile("mods/assistant.jar", Encoding.UTF8.GetBytes("not downloaded"));
+        var metadata = SourceWeightAiMetadata(mod, invalid);
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        var asset = invalid is "mixed-asset" or "archive-extra" ? ZipRootAsset("mixed", [mod, .. metadata]) : ZipRootAsset("launcher", metadata);
+        if (invalid == "archive-extra") asset = asset with { Covers = metadata.Select(file => file.Path).ToArray() };
+        PackAsset[] assets = invalid == "mixed-asset" ? [asset, JarAsset(packManifest)]
+            : [JarAsset(mod), asset, JarAsset(packManifest)];
+        var release = BuildRelease("published", [mod, .. metadata, packManifest], assets);
+        var handler = new RecordingHandler(request =>
+        {
+            var name = LastPathSegment(request.RequestUri!);
+            Assert.True(name == PortablePackSyncService.PackManifestAssetName ||
+                invalid != "mixed-asset" && name == asset.Name, "Source weighing fetched a non-metadata asset.");
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(release[name]) };
+        });
+        using var client = new HttpClient(handler);
+
+        var profile = await CreateService(client).WeighFromSourceAsync(DefaultPack, CancellationToken.None);
+
+        Assert.False(profile.IsKnown);
+        Assert.False(Directory.Exists(PackDir(DefaultPack)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "Minecraft", "Launcher"), ".pack-sync-stage*"));
+    }
+
+    private static PackFile[] SourceWeightAiMetadata(PackFile mod, string? invalid = null)
+    {
+        var modelManifest = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schemaVersion = 2,
+            config = new { digest = "sha256:" + Hash([1]), size = 1 },
+            layers = new[] { new { digest = "sha256:" + Hash([2, 3]), size = 2 } }
+        });
+        var recipe = new PackFile("launcher/provider-recipe.json", invalid == "recipe" ? "{}"u8.ToArray() : JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schemaVersion = 1, provider = "ollama",
+            runtime = new { version = "1.2.3", archiveUrl = "https://downloads.fixture.test/runtime.zip", sizeBytes = 100, sha256 = mod.Sha, installDirectory = "Assistant/runtime" },
+            model = new { reference = "team/mini:reviewed", registryUrl = "https://registry.fixture.test/", manifestSha256 = Hash(modelManifest), manifestBase64 = Convert.ToBase64String(modelManifest) }
+        }));
+        var descriptor = new PackFile("launcher/local-ai.json", JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schemaVersion = 1, provider = "ollama", model = "team/mini:reviewed", modId = "assistant_fixture",
+            modPath = mod.Path, modSha256 = invalid == "binding" ? new string('0', 64) : mod.Sha,
+            reserveMemoryMb = invalid == "descriptor" ? 0 : 3072,
+            recipeFile = recipe.Path, recipeSha256 = recipe.Sha
+        }));
+        return [descriptor, recipe];
+    }
+
     private sealed class SynchronousProgress : IProgress<RuntimePreparationProgress>
     {
         public List<RuntimePreparationProgress> Reports { get; } = [];

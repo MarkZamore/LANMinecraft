@@ -354,9 +354,15 @@ public sealed class MinecraftProcessService
         NoticeOverlay = new GameNoticeOverlayService(paths, logger);
     }
 
-    public async Task StartClientAsync(
+    public Task StartClientAsync(
         AppSettings settings,
         IProgress<RuntimePreparationProgress>? runtimeProgress = null,
+        CancellationToken token = default) => StartClientAsync(settings, runtimeProgress, null, token);
+
+    public async Task StartClientAsync(
+        AppSettings settings,
+        IProgress<RuntimePreparationProgress>? runtimeProgress,
+        LocalAiDownloadPlan? localAiDownloads,
         CancellationToken token = default)
     {
         if (IsClientRunning)
@@ -371,7 +377,7 @@ public sealed class MinecraftProcessService
         NotifyClientPreparingChanged(true);
         try
         {
-            await StartClientCoreAsync(settings, runtimeProgress, token).ConfigureAwait(false);
+            await StartClientCoreAsync(settings, runtimeProgress, localAiDownloads, token).ConfigureAwait(false);
         }
         finally
         {
@@ -384,6 +390,7 @@ public sealed class MinecraftProcessService
     private async Task StartClientCoreAsync(
         AppSettings settings,
         IProgress<RuntimePreparationProgress>? runtimeProgress,
+        LocalAiDownloadPlan? localAiDownloads,
         CancellationToken token)
     {
         if (IsClientRunning)
@@ -462,7 +469,7 @@ public sealed class MinecraftProcessService
         Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Roaming"));
         Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Local"));
         var localAi = await new LocalAiProvisioningService(_paths)
-            .PrepareAsync(packDir, gameDir, javaHome, runtimeProgress, token).ConfigureAwait(false);
+            .PrepareAsync(packDir, gameDir, javaHome, runtimeProgress, token, localAiDownloads).ConfigureAwait(false);
         var session = MSession.CreateOfflineSession(identityContext.IdentityName);
         session.UUID = identityContext.MinecraftUuid;
         session.AccessToken = identityContext.SessionAccessToken;

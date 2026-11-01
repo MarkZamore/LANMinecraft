@@ -299,6 +299,13 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FailedFreshMetadataOrBundleKeepsTheLastVerifiedOfflineSnapshot|
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FreshSuccessfulEmptyIndexRemovesOldOffersAndRemainsAuthoritativeOffline|
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.MetadataFreshnessPreservesAnExistingQueryAndFragment|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.LegacyGameOnlyManifestWithoutRevisionStillFreezesAndLogsSafely</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.LegacyGameOnlyManifestWithoutRevisionStillFreezesAndLogsSafely|
+      FullyQualifiedName=Minecraft.Tests.PackPreparationDownloadTests.FirstPayloadAlreadyHasTheWholePackAndAiBudgetAndCachedPreparationNeedsNoPayload|
+      FullyQualifiedName=Minecraft.Tests.PackPreparationDownloadTests.ResumedAndRetriedAiDownloadsStayInsideTheReservedBudget|
+      FullyQualifiedName=Minecraft.Tests.PackPreparationDownloadTests.FailedRemotePayloadFallsBackToInstalledRecipeInsteadOfDownloadingItsStagedReplacement|
+      FullyQualifiedName=Minecraft.Tests.PackPreparationDownloadTests.PreparedPlanCannotStartAnUnbudgetedLateDownloadOrAcceptAChangedRecipe|
+      FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.DownloadPlan_ChangedPreviouslyCurrentFile_RejectsBeforePayloadOrApply|
+      FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.SourceWeight_PublishedAiReservesMemoryBeforeInstall_WithoutPayloadDownloads|
+      FullyQualifiedName=Minecraft.Tests.LocalAiMemorySizingTests.AutomaticRecommendation_ReservesAiOnceAcrossMachineSizesWithoutChangingManualHeap</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

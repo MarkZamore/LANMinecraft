@@ -86,6 +86,95 @@ public sealed class LocalAiRecipeTests : IDisposable
         }
     }
 
+    private static JsonObject BlobUrls(LocalAiRecipe recipe) => new(recipe.Blobs.Select(blob =>
+        new KeyValuePair<string, JsonNode?>(blob.Sha256, JsonValue.Create("https://blobs.fixture.test/immutable/" + blob.Sha256 + "?download=1"))));
+
+    [Fact]
+    public void ExplicitBlobUrlsChangeOnlyDownloadLocationsAndLegacyRecipesKeepRegistryFallback()
+    {
+        var fixture = Setup(); var legacy = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements);
+        Assert.Null(legacy.BlobUrls);
+        foreach (var blob in legacy.Blobs)
+            Assert.Equal("https://models.fixture.test/v2/team/mini/blobs/sha256:" + blob.Sha256, legacy.BlobUri(blob).AbsoluteUri);
+        var urls = BlobUrls(legacy); fixture.Recipe["model"]!["blobUrls"] = urls; fixture.SaveRecipe();
+        var pinned = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements);
+        Assert.Equal(legacy.Model, pinned.Model); Assert.Equal(legacy.Registry, pinned.Registry);
+        Assert.Equal("manifests/models.fixture.test/team/mini/reviewed", pinned.Model.ManifestPath(pinned.Registry));
+        Assert.Equal(legacy.Pin.ModelManifest, pinned.Pin.ModelManifest); Assert.Equal(legacy.InstallDirectory, pinned.InstallDirectory);
+        Assert.Equal(legacy.Blobs.Length, pinned.BlobUrls!.Count);
+        foreach (var blob in pinned.Blobs) Assert.Equal(urls[blob.Sha256]!.GetValue<string>(), pinned.BlobUri(blob).AbsoluteUri);
+        Assert.Throws<InvalidDataException>(() => pinned.BlobUri(new LocalAiBlob(new string('0', 64), 1)));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("array")]
+    [InlineData("empty")]
+    [InlineData("missing-config")]
+    [InlineData("missing-layer")]
+    [InlineData("extra")]
+    [InlineData("upper-sha")]
+    [InlineData("invalid-sha")]
+    public void ExplicitBlobUrlsMustCoverExactlyEveryLowercaseManifestDigest(string variant)
+    {
+        var fixture = Setup(); var recipe = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements); var urls = BlobUrls(recipe);
+        switch (variant)
+        {
+            case "null": fixture.Recipe["model"]!["blobUrls"] = null; break;
+            case "array": fixture.Recipe["model"]!["blobUrls"] = new JsonArray(); break;
+            case "empty": fixture.Recipe["model"]!["blobUrls"] = new JsonObject(); break;
+            default:
+                if (variant == "missing-config") urls.Remove(recipe.Blobs[0].Sha256);
+                if (variant == "missing-layer") urls.Remove(recipe.Blobs[1].Sha256);
+                if (variant == "extra") urls[new string('0', 64)] = "https://blobs.fixture.test/extra";
+                if (variant is "upper-sha" or "invalid-sha")
+                {
+                    var hash = recipe.Blobs[0].Sha256; urls.Remove(hash);
+                    urls[variant == "upper-sha" ? hash.ToUpperInvariant() : "sha256:" + hash] = "https://blobs.fixture.test/replacement";
+                }
+                fixture.Recipe["model"]!["blobUrls"] = urls; break;
+        }
+        fixture.SaveRecipe();
+        Assert.Throws<InvalidDataException>(() => LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("123")]
+    [InlineData("\"\"")]
+    [InlineData("\"http://blobs.fixture.test/blob\"")]
+    [InlineData("\"https://fixture-user@blobs.fixture.test/blob\"")]
+    [InlineData("\"https://blobs.fixture.test/blob#fragment\"")]
+    [InlineData("\"https://localhost/blob\"")]
+    [InlineData("\"https://192.0.2.1/blob\"")]
+    public void ExplicitBlobUrlsUseTheSameArtifactUrlValidationAsRuntimeArchives(string value)
+    {
+        var fixture = Setup(); var recipe = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements); var urls = BlobUrls(recipe);
+        urls[recipe.Blobs[0].Sha256] = JsonNode.Parse(value); fixture.Recipe["model"]!["blobUrls"] = urls; fixture.SaveRecipe();
+        Assert.Throws<InvalidDataException>(() => LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements));
+    }
+
+    [Fact]
+    public void DuplicateBlobDigestUrlsCannotHideBehindTheRecipeHash()
+    {
+        var fixture = Setup(); var recipe = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements);
+        fixture.Recipe["model"]!["blobUrls"] = BlobUrls(recipe);
+        var json = fixture.Recipe.ToJsonString().Replace("\"blobUrls\":{", "\"blobUrls\":{\"" + recipe.Blobs[0].Sha256 + "\":\"https://blobs.fixture.test/duplicate\",", StringComparison.Ordinal);
+        var bytes = Encoding.UTF8.GetBytes(json); Write(fixture.Pack, RecipeFile, bytes);
+        fixture.Descriptor["recipeSha256"] = Sha(bytes); fixture.SaveDescriptor();
+        Assert.Throws<InvalidDataException>(() => LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements));
+    }
+
+    [Fact]
+    public void ExplicitBlobUrlsRemainCoveredByTheDescriptorRecipeHash()
+    {
+        var fixture = Setup(); var recipe = LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements);
+        fixture.Recipe["model"]!["blobUrls"] = BlobUrls(recipe); fixture.SaveRecipe();
+        fixture.Recipe["model"]!["blobUrls"]![recipe.Blobs[0].Sha256] = "https://blobs.fixture.test/changed";
+        Write(fixture.Pack, RecipeFile, fixture.RecipeBytes);
+        Assert.Throws<InvalidDataException>(() => LocalAiRecipeReader.Read(fixture.Pack, fixture.Requirements));
+    }
+
     [Fact]
     public async Task Utf8BomMetadataKeepsLegacyParsingAndHashesEveryRecipeByte()
     {

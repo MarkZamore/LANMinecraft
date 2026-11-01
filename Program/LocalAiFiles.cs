@@ -36,12 +36,13 @@ internal sealed class LocalAiFiles(string root, HttpClient http)
     }
 
     internal async Task<string> GetAsync(Uri uri, long size, string sha, string relative, string label,
-        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token, bool allowDownload = true)
     {
         var target = Under(root, relative);
         if (uri.Scheme != "https" || size <= 0 || !IsHash(sha)) throw new InvalidDataException("Invalid AI artifact pin.");
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         if (await MatchesAsync(target, size, sha, token).ConfigureAwait(false)) return target;
+        if (!allowDownload) throw new InvalidDataException("The prepared local AI cache changed. Start preparation again.");
         var partial = Under(root, relative + ".part");
         for (var attempt = 0; ; attempt++)
         {
@@ -67,6 +68,7 @@ internal sealed class LocalAiFiles(string root, HttpClient http)
                         throw new InvalidDataException("AI download returned an inconsistent range.");
                     if (response.Content.Headers.ContentLength is { } bytes && bytes != size - offset)
                         throw new InvalidDataException("AI download length differs from its pin.");
+                    progress?.Report(new(RuntimePreparationStage.Downloading, label, (double)offset / size, offset, size));
                     await using var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
                     await using var output = new FileStream(partial, offset > 0 ? FileMode.Append : FileMode.Create,
                         FileAccess.Write, FileShare.None, 131072, true);
@@ -89,6 +91,7 @@ internal sealed class LocalAiFiles(string root, HttpClient http)
                 if (!await MatchesAsync(partial, size, sha, token).ConfigureAwait(false))
                 {
                     if (File.Exists(partial)) File.Delete(partial);
+                    progress?.Report(new(RuntimePreparationStage.Downloading, label, 0, 0, size));
                     throw new InvalidDataException("AI download failed its size or SHA256 verification.");
                 }
                 File.Move(partial, target, true);
@@ -161,7 +164,7 @@ internal sealed class LocalAiFiles(string root, HttpClient http)
                 await using var input = entry.Open();
                 await using var output = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072, true);
                 await input.CopyToAsync(output, token).ConfigureAwait(false);
-                progress?.Report(new(RuntimePreparationStage.Verifying, "Локальный ИИ: файлы Ollama", (double)(index + 1) / entries.Length));
+                progress?.Report(new(RuntimePreparationStage.Verifying, "Подготовка сборки", (double)(index + 1) / entries.Length));
             }
             if (!await Valid(stage).ConfigureAwait(false)) throw new InvalidDataException("Extracted AI runtime verification failed.");
             if (Directory.Exists(installed)) DeleteCheckedTree(nativeRoot, installed);
