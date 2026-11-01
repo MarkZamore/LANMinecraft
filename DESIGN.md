@@ -45,7 +45,7 @@ WindowsThemeService читает Windows UISettings AccentLight2 и AccentLight3
 | `Color.ScrollThumb`, `Brush.ScrollThumb` | #8BFFFFFF |
 | `Color.ScrollThumbHover`, `Brush.ScrollThumbHover` | #C5FFFFFF |
 
-`Brush.WindowBackdrop` — DrawingBrush с исходным изображением и слоем BackdropShade, растягиваемый UniformToFill. `Brush.ProgressGlow` — градиент ProgressTrack → ProgressFill → ProgressTrack для неопределённого прогресса. Заливка прогресса приглушена, чтобы над ней читался светлый текст.
+`Brush.WindowBackdrop` — DrawingBrush с исходным изображением и слоем BackdropShade, растягиваемый UniformToFill. `Brush.ProgressGlow` — градиент ProgressTrack → ProgressFill → ProgressTrack для неопределённого прогресса. Заливка прогресса приглушена, чтобы над ней читался светлый текст. Внутри «Играть» оба режима прогресса используют однотонную чуть более тёмную зелёную `Brush.PrimaryPressed`: движущийся блок без градиента и многоцветности. Другие шкалы сохраняют прежнее оформление. В каталоге библиотеки и внутри карточки вертикальная полоса прокрутки остаётся видимой независимо от переполнения, подготовки или запущенной игры; фиксированный резерв под неё сохраняется. Блокировка изменения состава не выключает чтение и прокрутку.
 
 ## Шрифт
 

@@ -4,6 +4,8 @@ import java.io.InputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import org.objectweb.asm.ClassReader;
@@ -17,16 +19,31 @@ import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
 public final class PortableIdentityPreflight {
+    private static final Map<String, Path> classSources = new HashMap<>();
     private PortableIdentityPreflight() {
     }
 
     public static void main(String[] arguments) throws Exception {
-        if (arguments.length != 2) {
-            throw new IllegalArgumentException("Usage: <runtime-jar> <internal-class-name>");
+        if (arguments.length < 2) {
+            throw new IllegalArgumentException("Usage: <runtime-jar> <internal-class-name> [<support-class>=<jar> ...]");
         }
 
         Path jarPath = Path.of(arguments[0]).toAbsolutePath().normalize();
         String className = arguments[1].replace('.', '/');
+        classSources.clear();
+        for (int index = 2; index < arguments.length; index++) {
+            int separator = arguments[index].indexOf('=');
+            if (separator <= 0 || separator == arguments[index].length() - 1)
+                throw new IllegalArgumentException("Invalid native preflight class source.");
+            String name = arguments[index].substring(0, separator);
+            if (!name.matches("[A-Za-z0-9_$]+(?:/[A-Za-z0-9_$]+)*"))
+                throw new IllegalArgumentException("Invalid native preflight class name.");
+            Path source = Path.of(arguments[index].substring(separator + 1)).toAbsolutePath().normalize();
+            if (classSources.putIfAbsent(name, source) != null)
+                throw new IllegalArgumentException("Duplicate native preflight class source: " + name);
+        }
+        if (classSources.containsKey(className) && !classSources.get(className).equals(jarPath))
+            throw new IllegalArgumentException("Native preflight target source differs from its target JAR.");
         try (ZipFile archive = new ZipFile(jarPath.toFile())) {
             byte[] original = readClassBytes(archive, className);
 
@@ -755,6 +772,16 @@ public final class PortableIdentityPreflight {
     }
 
     private static byte[] readClassBytes(ZipFile archive, String className) throws Exception {
+        Path source = classSources.get(className);
+        if (source != null && !source.equals(Path.of(archive.getName()).toAbsolutePath().normalize())) {
+            try (ZipFile dependency = new ZipFile(source.toFile())) {
+                return readExactClassBytes(dependency, className);
+            }
+        }
+        return readExactClassBytes(archive, className);
+    }
+
+    private static byte[] readExactClassBytes(ZipFile archive, String className) throws Exception {
         ZipEntry entry = archive.getEntry(className + ".class");
         if (entry == null) {
             throw new IllegalStateException("Required identity class is missing: " + className);

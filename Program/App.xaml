@@ -494,6 +494,7 @@
              button is the track; the fill takes the button's rounder corners. -->
         <Style x:Key="PlayProgressBarStyle" TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.PrimaryPressed}"/>
             <Setter Property="BorderThickness" Value="{StaticResource Border.None}"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -506,7 +507,7 @@
                                         HorizontalAlignment="Left"/>
                                 <Border x:Name="PART_GlowRect"
                                         Width="{StaticResource Size.ProgressGlow}"
-                                        Background="{DynamicResource Brush.ProgressGlow}"
+                                        Background="{TemplateBinding Foreground}"
                                         CornerRadius="{StaticResource Radius.Primary}"
                                         HorizontalAlignment="Left"
                                         Visibility="Collapsed"/>

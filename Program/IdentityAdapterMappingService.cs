@@ -276,7 +276,8 @@ internal sealed class IdentityAdapterMappingService
         // was actually derived from, so authlib is what it watches - unless
         // there were mappings after all and only the UUID hooks did not fit,
         // in which case the file they came from is what changes.
-        return new IdentityAdapterConfiguration(mappingPath ?? sessionService.JarPath, properties, targets);
+        return WithPreflightSources(runtime, gameDirectory,
+            new IdentityAdapterConfiguration(mappingPath ?? sessionService.JarPath, properties, targets));
     }
 
     /// <summary>The part that is the same however the rest turns out.</summary>
@@ -1312,7 +1313,25 @@ internal sealed class IdentityAdapterMappingService
             throw Unsupported(runtime.Descriptor, $"required runtime classes are absent: {missing}");
         }
 
-        return new IdentityAdapterConfiguration(mappingPath, properties, targets);
+        return WithPreflightSources(runtime, gameDirectory,
+            new IdentityAdapterConfiguration(mappingPath, properties, targets));
+    }
+
+    private IdentityAdapterConfiguration WithPreflightSources(
+        PreparedRuntime runtime, string gameDirectory, IdentityAdapterConfiguration configuration)
+    {
+        // Forge's patched client contains only changed classes. A native class
+        // reached by a hook may remain in its sibling SRG JAR, so checking that
+        // class in the transform target's archive alone gives a false refusal.
+        // Resolve declared class aliases with the same version/profile-scoped
+        // provider order used for targets; never search the verifier's JVM or
+        // an arbitrary other Minecraft from the shared store.
+        var classes = configuration.Properties
+            .Where(pair => pair.Key.EndsWith("Classes", StringComparison.Ordinal))
+            .SelectMany(pair => pair.Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            .Select(name => name.Replace('.', '/'))
+            .ToHashSet(StringComparer.Ordinal);
+        return configuration with { PreflightSources = FindRuntimeTargets(runtime, gameDirectory, classes) };
     }
 
     /// <summary>
@@ -2415,6 +2434,9 @@ internal sealed class IdentityAdapterMappingService
 internal sealed record IdentityAdapterConfiguration(
     string MappingPath,
     IReadOnlyDictionary<string, string> Properties,
-    IReadOnlyList<IdentityAdapterTarget> Targets);
+    IReadOnlyList<IdentityAdapterTarget> Targets)
+{
+    public IReadOnlyList<IdentityAdapterTarget> PreflightSources { get; init; } = [];
+}
 
 internal sealed record IdentityAdapterTarget(string JarPath, string ClassName);

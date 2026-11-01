@@ -39,6 +39,30 @@ public sealed class IdentityAdapterTransportCacheTests : IDisposable
         Assert.False(IsReusable(fixture));
     }
 
+    [Fact]
+    public void SupportingClassSourceChange_InvalidatesEvenWithUnchangedSizeAndTimestamp()
+    {
+        using var fixture = CreateFixture();
+        var sourcePath = Path.Combine(_root, "Minecraft", "Launcher", "support.jar");
+        File.WriteAllText(sourcePath, "native support before");
+        var type = ServiceType.GetNestedType("IdentityAdapterTargetState", BindingFlags.NonPublic)!;
+        var source = Activator.CreateInstance(type, nonPublic: true)!;
+        Set(source, "JarPath", sourcePath);
+        Set(source, "ClassName", "net/minecraft/client/server/LanServer");
+        Set(source, "SizeBytes", new FileInfo(sourcePath).Length);
+        Set(source, "LastWriteUtcTicks", File.GetLastWriteTimeUtc(sourcePath).Ticks);
+        Set(source, "Sha256", Hash(sourcePath));
+        var sources = (IList)fixture.State.GetType().GetProperty("PreflightSources")!.GetValue(fixture.State)!;
+        sources.Add(source);
+        RehashState(fixture.State);
+        Assert.True(IsReusable(fixture));
+        var timestamp = File.GetLastWriteTimeUtc(sourcePath);
+        File.WriteAllText(sourcePath, "native support after!");
+        File.SetLastWriteTimeUtc(sourcePath, timestamp);
+        Assert.Equal(new FileInfo(sourcePath).Length, (long)source.GetType().GetProperty("SizeBytes")!.GetValue(source)!);
+        Assert.False(IsReusable(fixture));
+    }
+
     [Theory]
     [InlineData("version")]
     [InlineData("cacheId")]

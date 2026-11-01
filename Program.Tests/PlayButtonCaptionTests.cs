@@ -14,7 +14,7 @@ public sealed class PlayButtonCaptionTests
     private const double FastDownload = 123.45 * 1024 * 1024;
 
     [Fact]
-    public void ThePlaySurface_StaysReferenceBlueWhilePreparingAndMutesOnlyWhenDisabled()
+    public void ThePlaySurface_StaysGreenWhilePreparingAndMutesOnlyWhenDisabled()
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
@@ -23,13 +23,14 @@ public sealed class PlayButtonCaptionTests
             var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
             var progress = Assert.IsType<ProgressBar>(window.FindName("PlayProgressBar"));
             var size = new Size(804, 521);
-            // A different Windows accent must not recolour the explicitly blue action.
+            // A different Windows accent must not recolour the explicitly green action.
             window.Resources["Brush.Accent"] = new SolidColorBrush(Colors.Magenta);
             button.IsEnabled = true;
             WindowCanvasTests.LayoutWindow(window, size);
             var surface = Assert.IsType<Border>(button.Template.FindName("Surface", button));
-            var blue = Color.FromRgb(0x60, 0xCD, 0xFF);
-            Assert.Equal(blue, Assert.IsType<SolidColorBrush>(surface.Background).Color);
+            var green = Assert.IsType<SolidColorBrush>(window.FindResource("Brush.Primary")).Color;
+            Assert.True(green.G > green.R && green.G > green.B);
+            Assert.Equal(green, Assert.IsType<SolidColorBrush>(surface.Background).Color);
             Assert.Equal(Colors.Black, Assert.IsType<SolidColorBrush>(text.Foreground).Color);
 
             button.IsHitTestVisible = false;
@@ -38,9 +39,18 @@ public sealed class PlayButtonCaptionTests
             text.Text = "Проверка сборки";
             WindowCanvasTests.LayoutWindow(window, size);
             Assert.True(button.IsEnabled);
-            Assert.Equal(blue, Assert.IsType<SolidColorBrush>(surface.Background).Color);
+            Assert.Equal(green, Assert.IsType<SolidColorBrush>(surface.Background).Color);
             Assert.Equal(Colors.Black, Assert.IsType<SolidColorBrush>(text.Foreground).Color);
             Assert.Equal(0, Assert.IsType<SolidColorBrush>(progress.Background).Color.A);
+            var fill = Assert.IsType<Border>(progress.Template.FindName("PART_Indicator", progress));
+            var fillColor = Assert.IsType<SolidColorBrush>(fill.Background).Color;
+            Assert.True(fillColor.G > fillColor.R && fillColor.G > fillColor.B);
+            Assert.True(fillColor.R < green.R && fillColor.G < green.G && fillColor.B < green.B);
+            progress.IsIndeterminate = true;
+            WindowCanvasTests.LayoutWindow(window, size);
+            var moving = Assert.IsType<Border>(progress.Template.FindName("PART_GlowRect", progress));
+            Assert.Equal(Visibility.Visible, moving.Visibility);
+            Assert.Equal(fillColor, Assert.IsType<SolidColorBrush>(moving.Background).Color);
 
             button.IsHitTestVisible = true;
             button.IsEnabled = false;

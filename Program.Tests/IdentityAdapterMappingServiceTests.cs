@@ -164,6 +164,28 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
             properties["verifyDescriptors"]);
     }
 
+    [Fact]
+    public void PreflightSupport_ResolvesSiblingSrgWithoutTurningItIntoATransformTarget()
+    {
+        var (service, runtime, game) = CreateForgeFixture(GoldenMappings, DefaultJarClasses);
+        const string supportClass = "net/minecraft/server/level/ServerChunkCache";
+        string AddSupport(string version)
+        {
+            var path = Path.Combine(runtime.LibrariesRoot, "net", "minecraft", "client", version,
+                "client-" + version + "-srg.jar");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+            archive.CreateEntry(supportClass + ".class");
+            return path;
+        }
+        var wrongVersion = AddSupport("1.20.1");
+        var sibling = AddSupport("1.21.1");
+        var configuration = service.Build(runtime, game);
+        Assert.Contains(configuration.PreflightSources, item => item.ClassName == supportClass && item.JarPath == sibling);
+        Assert.DoesNotContain(configuration.PreflightSources, item => item.JarPath == wrongVersion);
+        Assert.DoesNotContain(configuration.Targets, item => item.ClassName == supportClass);
+    }
+
     /// <summary>
     /// Without Mojang's file the numbers stand for nothing, and the build falls
     /// back to what needs no mappings at all rather than to a wrong guess.
