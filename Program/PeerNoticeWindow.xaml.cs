@@ -1,4 +1,5 @@
 using System.Windows;
+using System.ComponentModel;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -15,6 +16,9 @@ public partial class PeerNoticeWindow : Window
     private HwndSource? _source;
     private Size? _available;
     private bool _closing;
+    private bool _nativeClosing;
+    private bool _closed;
+    private int _fadeGeneration;
 
     internal PeerNoticeWindow(Window themeSource, PeerNotice notice)
     {
@@ -76,32 +80,60 @@ public partial class PeerNoticeWindow : Window
 
     internal void CloseNow()
     {
+        if (_nativeClosing || _closed) return;
         _closing = true;
         _timer.Stop();
-        BeginAnimation(OpacityProperty, null);
+        CancelFade();
         Close();
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        _nativeClosing = true;
+        _closing = true;
+        _timer.Stop();
+        CancelFade();
+        base.OnClosing(e);
+        if (e.Cancel) _nativeClosing = _closing = false;
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        _closed = true;
         _timer.Stop();
         _source?.RemoveHook(WindowMessage);
         _source = null;
         base.OnClosed(e);
     }
 
+    private void CancelFade()
+    {
+        // Removing a clock does not retract Completed events already queued by
+        // WPF. Invalidate their callbacks before cancellation can pump rendering.
+        _fadeGeneration++;
+        BeginAnimation(OpacityProperty, null);
+    }
+
     private void Fade(double to, string duration, Action? then)
     {
+        if (_nativeClosing || _closed) return;
+        var generation = ++_fadeGeneration;
+        void Complete()
+        {
+            if (generation != _fadeGeneration || _nativeClosing || _closed) return;
+            _fadeGeneration++;
+            then?.Invoke();
+        }
         var length = TryFindResource(duration) as Duration?;
         if (length is null || !SystemParameters.ClientAreaAnimation)
         {
             BeginAnimation(OpacityProperty, null);
             Opacity = to;
-            then?.Invoke();
+            Complete();
             return;
         }
         var animation = new DoubleAnimation(to, length.Value);
-        if (then is not null) animation.Completed += (_, _) => then();
+        if (then is not null) animation.Completed += (_, _) => Complete();
         BeginAnimation(OpacityProperty, animation);
     }
 
