@@ -85,6 +85,8 @@ public sealed class RenderingStartupTests : IDisposable
         Assert.Equal("SoftwareOnly", result.RootElement.GetProperty("processRenderMode").GetString());
         Assert.Equal(0, result.RootElement.GetProperty("windowsBeforeInitializeComponent").GetInt32());
         Assert.Equal(0, result.RootElement.GetProperty("windowsAfterInitializeComponent").GetInt32());
+        Assert.Equal(5, result.RootElement.GetProperty("preparedDialogWindows").GetInt32());
+        Assert.Equal(0, result.RootElement.GetProperty("windowsAfterDialogCleanup").GetInt32());
     }
 
     private static string FindRepository()

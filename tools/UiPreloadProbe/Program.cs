@@ -26,7 +26,19 @@ internal static class Probe
         var resourceSource = File.ReadAllText(Path.Combine(repository, "Program/App.xaml"));
         var resourceBody = Regex.Match(resourceSource, @"<Application\.Resources>(.*)</Application\.Resources>", RegexOptions.Singleline).Groups[1].Value;
         app.Resources = (ResourceDictionary)XamlReader.Parse("<ResourceDictionary xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\" xmlns:sys=\"clr-namespace:System;assembly=System.Runtime\" xmlns:bridge=\"clr-namespace:Minecraft;assembly=LANMinecraft\">" + resourceBody + "</ResourceDictionary>");
-        if (args.Contains("--first-frame"))
+        if (args.Contains("--dialogs-close"))
+        {
+            var cache = typeof(MainWindow).Assembly.GetType("Minecraft.DialogPreloadCache", true)!;
+            foreach (var name in new[] { "PreparePreset", "Prepare" })
+                foreach (var step in (IEnumerable<Action>)cache.GetMethod(name)!.Invoke(null, null)!) step();
+            var before = app.Windows.Count;
+            cache.GetMethod("Clear")!.Invoke(null, null);
+            var after = app.Windows.Count;
+            output.Add(new { preparedWindows = before, remainingWindows = after });
+            if (before != 5 || after != 0) throw new InvalidOperationException("Prepared dialogs outlived their cache.");
+            app.Shutdown();
+        }
+        else if (args.Contains("--first-frame"))
         {
             var clock = Stopwatch.StartNew();
             var window = new MainWindow { ShowInTaskbar = false, ShowActivated = false };

@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly CancellationTokenSource _catalogLifetimeCts = new();
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
     private readonly TransferRateTracker _runtimeRate = new();
@@ -309,7 +310,7 @@ public partial class MainWindow : Window
             await StartNetworkingAsync();
             _startupComplete = true;
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -346,7 +347,7 @@ public partial class MainWindow : Window
         _preload?.Dispose();
         LibraryView.Dispose();
         DialogPreloadCache.Clear();
-        _lifetimeCts.Cancel();
+        _catalogLifetimeCts.Cancel();
         _windowPlacement.Save(this);
 
         // Always leave the original Closing event before issuing the final Close().
@@ -389,6 +390,7 @@ public partial class MainWindow : Window
             _packRuntimes?.Dispose();
             _identityAdapter?.Dispose();
             _packHash?.Dispose();
+            _catalogLifetimeCts.Dispose();
             _lifetimeCts.Dispose();
         }
         finally
@@ -3232,7 +3234,7 @@ public partial class MainWindow : Window
 
     private async Task InitializeCatalogCoreAsync()
     {
-        var token = _lifetimeCts.Token;
+        var token = _catalogLifetimeCts.Token;
         var paths = _paths!;
         var logger = _logger!;
         var catalog = await Task.Run(() =>
