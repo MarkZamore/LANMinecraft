@@ -306,6 +306,10 @@
       FullyQualifiedName=Minecraft.Tests.PackPreparationDownloadTests.PreparedPlanCannotStartAnUnbudgetedLateDownloadOrAcceptAChangedRecipe|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.DownloadPlan_ChangedPreviouslyCurrentFile_RejectsBeforePayloadOrApply|
       FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.SourceWeight_PublishedAiReservesMemoryBeforeInstall_WithoutPayloadDownloads|
-      FullyQualifiedName=Minecraft.Tests.LocalAiMemorySizingTests.AutomaticRecommendation_ReservesAiOnceAcrossMachineSizesWithoutChangingManualHeap</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.LocalAiMemorySizingTests.AutomaticRecommendation_ReservesAiOnceAcrossMachineSizesWithoutChangingManualHeap|
+      FullyQualifiedName=Minecraft.Tests.DropDownPreloadPlacementTests.FirstOpen_UsesTheControlsScreenBoundsBeforeAndAfterHiddenPreparation|
+      FullyQualifiedName=Minecraft.Tests.UiPreparationLayoutTests.PreparingHiddenAttachedContentPreservesItsParentsLayoutSlot|
+      FullyQualifiedName=Minecraft.Tests.PreparedImagePreloadTests.HiddenWorkerCompletion_KeepsLayoutValidAndPublishesPreparedBitmapWhenShown|
+      FullyQualifiedName=Minecraft.Tests.PeerNoticeFadeTests.CancelledFadeCompletionCannotReenterNativeClose</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
