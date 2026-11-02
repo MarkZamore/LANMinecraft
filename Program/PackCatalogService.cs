@@ -121,7 +121,7 @@ public sealed class CatalogPack
 }
 
 /// <summary>One startup-only discovery pass, followed by an immutable session manifest registry.</summary>
-public sealed class PackCatalogService
+public sealed partial class PackCatalogService
 {
     public static readonly Uri IndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/catalog.json");
     private const int MaximumBundleBytes = 8 * 1024 * 1024;
@@ -144,18 +144,21 @@ public sealed class PackCatalogService
     private Task? _refresh;
     private readonly object _gate = new();
 
-    public PackCatalogService(AppPaths paths, Logger logger, HttpClient? httpClient = null, CancellationToken startupToken = default)
+    public PackCatalogService(AppPaths paths, Logger logger, HttpClient? httpClient = null, CancellationToken startupToken = default,
+        bool stagedStartup = false)
     {
         _paths = paths;
         _logger = logger;
         _http = httpClient ?? PortableHttpClient.Shared;
         _cache = Path.Combine(paths.Launcher, "Library");
+        IsStaged = stagedStartup;
         _sources = SeedSources().ToList();
         foreach (var entry in _sources)
         {
             startupToken.ThrowIfCancellationRequested();
             _effectiveSources[entry.RelativePath] = entry;
             _knownCatalogPaths.Add(entry.RelativePath);
+            if (IsStaged) continue;
             using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.Id + ".zip");
             if (stream is null) continue;
             using var bytes = new MemoryStream();
@@ -167,6 +170,8 @@ public sealed class PackCatalogService
             var indexPath = Path.Combine(_cache, "catalog.json");
             if (File.Exists(indexPath))
             {
+                if (IsStaged && new FileInfo(indexPath).Length > 2 * 1024 * 1024)
+                    throw new InvalidDataException("Oversized library index cache.");
                 var json = File.ReadAllText(indexPath);
                 var entries = ParseIndex(json);
                 _effectiveSources.Clear();
@@ -175,6 +180,10 @@ public sealed class PackCatalogService
             }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library index cache: " + ex.Message); }
+        // The staged launch selector needs only the small authoritative index.
+        // Manifest validation, source-marker discovery and presentation decoding
+        // belong to the requested pack or the later library pass.
+        if (IsStaged) return;
         // A custom pack's explicit source marker keeps its precedence, and is checked at startup too.
         if (Directory.Exists(paths.Packs))
         {
@@ -215,7 +224,8 @@ public sealed class PackCatalogService
     }
     public IReadOnlyList<CatalogPack> Packs { get { lock (_gate) return _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray(); } }
     public IReadOnlyList<CatalogSource> Sources { get { lock (_gate) return _sources.ToArray(); } }
-    public PackSyncSource? SourceFor(string relativePath) { lock (_gate) return _effectiveSources.GetValueOrDefault(relativePath)?.Source; }
+    public PackSyncSource? SourceFor(string relativePath)
+    { lock (_gate) return RuntimeSource(relativePath)?.Source; }
     public bool IsKnownCatalogPath(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath); }
     public bool IsWithdrawn(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath) &&
         !_sources.Any(entry => entry.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)); }
@@ -223,7 +233,8 @@ public sealed class PackCatalogService
     {
         lock (_gate)
         {
-            if (!_effectiveSources.TryGetValue(relativePath, out var effective)) return marker;
+            var effective = RuntimeSource(relativePath);
+            if (effective is null) return marker;
             return _sourceHistory.Any(old => old.Id == effective.Id &&
                 old.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase) && old.Source == marker)
                     ? effective.Source : marker;
@@ -235,6 +246,9 @@ public sealed class PackCatalogService
     {
         lock (_gate)
         {
+            if (IsStaged)
+                return _launchManifests.TryGetValue(Key(source), out var frozen) ? frozen :
+                    throw new IOException("Версию выбранной сборки ещё не удалось проверить при запуске.");
             if (!IsReady) throw new IOException("Проверка сборок при запуске ещё не завершена.");
             return _manifests.TryGetValue(Key(source), out var json) ? json :
                 throw new IOException("Версию сборки не удалось проверить при запуске. Перезапустите лаунчер с доступом к интернету.");
@@ -243,6 +257,7 @@ public sealed class PackCatalogService
 
     public Task RefreshOnceAsync(CancellationToken token = default)
     {
+        if (IsStaged) return PrepareLibraryAsync(token);
         lock (_gate) return _refresh ??= RefreshCoreAsync(token);
     }
 
@@ -288,7 +303,7 @@ public sealed class PackCatalogService
         }
         finally
         {
-            lock (_gate) IsReady = true;
+            lock (_gate) { IsReady = true; IsIndexReady = true; }
             try
             {
                 AtomicFile.WriteAllTextIfChanged(Path.Combine(_cache, "catalog.json"),

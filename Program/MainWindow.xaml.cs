@@ -40,6 +40,13 @@ public partial class MainWindow : Window
     private PortablePackSyncService? _packSync;
     private PackCatalogService? _catalog;
     private Task? _catalogStartup;
+    private Task? _libraryStartup;
+    private bool _secondaryPreparationStarted;
+    private Task _selectedLaunchPreparation = Task.CompletedTask;
+    private string? _selectedLaunchPath;
+    private string? _selectedLaunchError;
+    private int _selectedLaunchGeneration;
+    private readonly Dictionary<string, Task> _launcherDataByPack = new(StringComparer.OrdinalIgnoreCase);
     private UiPreloadQueue? _preload;
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task _launcherDataRefresh = Task.CompletedTask;
@@ -117,6 +124,7 @@ public partial class MainWindow : Window
     {
         Icon = LauncherWindowIcon.Image;
         InitializeComponent();
+        ToolTipService.SetShowOnDisabled(PlayButton, true);
         SmoothScrollingController.Attach(BodyScroll);
         SmoothScrollingController.Attach(ChangelogScroll);
         SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
@@ -373,7 +381,7 @@ public partial class MainWindow : Window
         _lifetimeCts.Cancel();
         try
         {
-            try { await _launcherDataRefresh.WaitAsync(TimeSpan.FromSeconds(1)); }
+            try { await Task.WhenAll(_launcherDataByPack.Values.ToArray()).WaitAsync(TimeSpan.FromSeconds(1)); }
             catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
@@ -495,7 +503,7 @@ public partial class MainWindow : Window
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
-                Name = _catalog?.Find(Path.GetFileName(path))?.Name ??
+                Name = _catalog?.GetDisplayName(Path.GetFileName(path)) ??
                        PackDisplayName.For(Path.GetFileName(path), Path.GetFileName(path)),
                 RelativePath = Path.GetRelativePath(_paths.Packs, path),
                 FullPath = path
@@ -520,7 +528,7 @@ public partial class MainWindow : Window
             {
                 // A star, not a word: the list is narrow and the name is what a
                 // player reads. Pressing Play on a starred build downloads it.
-                Name = (_catalog?.Find(known.RelativePath)?.Name ??
+                Name = (_catalog?.GetDisplayName(known.RelativePath) ??
                         PackDisplayName.For(known.RelativePath, known.RelativePath)) + "*",
                 RelativePath = known.RelativePath,
                 FullPath = _paths.CombineUnderPacks(known.RelativePath),
@@ -594,6 +602,7 @@ public partial class MainWindow : Window
             _ = RefreshLauncherDataAsync();
             _ = RefreshPackHashAndNetworkingAsync();
         }
+        _ = PrepareSelectedLaunchAsync();
     }
 
     private void RefreshWorlds()
@@ -1337,7 +1346,7 @@ public partial class MainWindow : Window
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftPreparing || _minecraftRunning || _catalog?.IsReady != true) return;
+        if (_minecraftPreparing || _minecraftRunning || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1368,7 +1377,7 @@ public partial class MainWindow : Window
             {
                 // Metadata refresh and a full sync share the pack directory.
                 // Finish any earlier selection request before the full sync writes.
-                await _launcherDataRefresh;
+                await _launcherDataByPack.GetValueOrDefault(build.RelativePath, Task.CompletedTask);
                 var prepared = await new PackPreparationDownloadService(RequirePaths(), RequirePackSync())
                     .PrepareAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
                 syncResult = prepared.SyncResult;
@@ -1498,8 +1507,9 @@ public partial class MainWindow : Window
         if (_catalogStartup is null || _packSync is null || _settings is null || _shutdownStarted)
             return Task.CompletedTask;
         var pack = _settings.ClientRelativePath;
-        var previous = _launcherDataRefresh;
+        var previous = _launcherDataByPack.GetValueOrDefault(pack, Task.CompletedTask);
         _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
+        _launcherDataByPack[pack] = _launcherDataRefresh;
         return _launcherDataRefresh;
     }
 
@@ -1510,14 +1520,17 @@ public partial class MainWindow : Window
             await previous;
             if (_catalogStartup is not null) await _catalogStartup;
             if (_shutdownStarted || _minecraftPreparing || _packSync is null) return;
-            if (await _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token) && !_shutdownStarted)
+            if (_catalog is { } catalog) await catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token);
+            if (_shutdownStarted || _minecraftPreparing) return;
+            if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token), _lifetimeCts.Token) && !_shutdownStarted)
             {
                 RefreshControlsPresetStatus();
                 RefreshUi();
             }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or
+                                   System.Text.Json.JsonException or NotSupportedException)
         {
             _logger?.Warn("The pack's launcher data could not be refreshed: " + ex.Message);
         }
@@ -2376,6 +2389,10 @@ public partial class MainWindow : Window
         RefreshPackMemory();
         InitializeRuntimeProgressUi();
         RefreshControlsPresetStatus();
+        var launch = PrepareSelectedLaunchAsync();
+        RefreshUi();
+        await launch;
+        if (_shutdownStarted || !string.Equals(_settings.ClientRelativePath, build.RelativePath, StringComparison.OrdinalIgnoreCase)) return;
         await RefreshLauncherDataAsync();
         if (_shutdownStarted) return;
         await RefreshPackHashAsync();
@@ -3118,16 +3135,17 @@ public partial class MainWindow : Window
             PlayButtonText.Text = "Играть";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
-            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName && _catalog?.IsReady == true;
+            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName &&
+                _minecraft is not null && _transfer is not null && SelectedBuildIsReady;
             if (!PlayButton.IsEnabled && (_steamClient?.Status.IsReady != true || !IsIdentityBound))
                 PlayButtonText.Text = "Включите Steam";
-            else if (_catalog?.IsReady != true)
-                PlayButtonText.Text = "Проверка сборок";
+            else if (hasBuild && !SelectedBuildIsReady)
+                PlayButtonText.Text = _selectedLaunchError is null ? "Проверка сборки" : "Сборка недоступна";
         }
         // The name is the one thing the launcher will not invent, so it is also
         // the one thing it has to ask for. Without this the button is simply
         // dead and nothing on the window says why.
-        PlayButton.ToolTip = hasName ? null : "Сначала задайте ник";
+        PlayButton.ToolTip = !hasName ? "Сначала задайте ник" : hasBuild ? _selectedLaunchError : null;
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;
@@ -3218,7 +3236,55 @@ public partial class MainWindow : Window
     }
 
     private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive &&
-        _launcherDataRefresh.IsCompleted && _catalog?.IsReady == true;
+        _catalog?.IsReady == true && (_launcherDataByPack?.Values.All(task => task.IsCompleted) ?? _launcherDataRefresh.IsCompleted);
+
+    private bool SelectedBuildIsReady => _catalog is { } catalog &&
+        BuildComboBox.SelectedItem is ClientBuildViewModel build && catalog.IsLaunchReady(build.RelativePath);
+
+    private Task PrepareSelectedLaunchAsync()
+    {
+        if (_shutdownStarted || _catalog is not { IsStaged: true } catalog)
+            return Task.CompletedTask;
+        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
+        {
+            if (_selectedLaunchPath is not null) _selectedLaunchGeneration++;
+            _selectedLaunchPath = null;
+            _selectedLaunchError = null;
+            return _selectedLaunchPreparation = Task.CompletedTask;
+        }
+        var path = build.RelativePath;
+        if (string.Equals(_selectedLaunchPath, path, StringComparison.OrdinalIgnoreCase) &&
+            (!_selectedLaunchPreparation.IsCompleted || catalog.IsLaunchReady(path) || _selectedLaunchError is not null))
+            return _selectedLaunchPreparation;
+        _selectedLaunchPath = path;
+        _selectedLaunchError = null;
+        var generation = ++_selectedLaunchGeneration;
+        RefreshUi();
+        return _selectedLaunchPreparation = PrepareSelectedLaunchCoreAsync(catalog, path, generation);
+    }
+
+    private async Task PrepareSelectedLaunchCoreAsync(PackCatalogService catalog, string path, int generation)
+    {
+        var token = _catalogLifetimeCts.Token;
+        try
+        {
+            await Task.Run(() => catalog.EnsureLaunchReadyAsync(path, token), token);
+        }
+        catch (OperationCanceledException) when (_shutdownStarted) { return; }
+        catch (Exception ex)
+        {
+            if (_shutdownStarted) return;
+            _logger?.Warn("Selected pack check: " + ex.Message);
+            if (generation == _selectedLaunchGeneration)
+                _selectedLaunchError = "Не удалось проверить сборку. " + ex.Message;
+        }
+        if (_shutdownStarted || generation != _selectedLaunchGeneration || BuildComboBox.SelectedItem is not ClientBuildViewModel selected ||
+            !string.Equals(selected.RelativePath, path, StringComparison.OrdinalIgnoreCase)) return;
+        RefreshUi();
+        if (catalog.IsLaunchReady(path))
+            _logger?.Info($"Выбранная сборка готова к запуску: {StartupTrace.Elapsed} мс от запуска процесса.");
+        StartSecondaryPreparation();
+    }
 
     private async Task InitializeCatalogAsync()
     {
@@ -3241,31 +3307,64 @@ public partial class MainWindow : Window
         var catalog = await Task.Run(() =>
         {
             new PackRenameMigration(paths, logger).Apply(_settings!, PackCatalogService.SeedSources(), _settingsService!.Save);
-            return new PackCatalogService(paths, logger, startupToken: token);
+            return new PackCatalogService(paths, logger, startupToken: token, stagedStartup: true);
         }, token);
         if (_shutdownStarted) return;
-        // The checked local snapshot can fill the launch selector immediately.
-        // Warm that menu first; hidden pages wait for the mandatory online pass.
+        // Only the small index is loaded here. Manifests, ZIPs and images are
+        // not dependencies of publishing the launch selector.
         _catalog = catalog;
         _packSync!.Catalog = catalog;
         RefreshBuilds();
         RefreshControlsPresetStatus();
         RefreshUi();
         _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
-        if (_libraryVisible) RefreshLibraryCatalog();
+        _logger?.Info($"Список сборок готов: {StartupTrace.Elapsed} мс от запуска процесса.");
+        _ = PrepareSelectedLaunchAsync();
+        if (_libraryVisible) { StartLibraryPreparation(); RefreshLibraryCatalog(); }
         StartupTrace.Mark("каталог из кеша");
-        await Task.Run(() => catalog.RefreshOnceAsync(token), token);
+        await Task.Run(() => catalog.InitializeIndexAsync(token), token);
         if (_shutdownStarted) return;
-        // Play follows the completed integrity pass, without waiting for UI
-        // preparation. Refresh its selector before queuing the remaining views.
+        // Authoritative membership can remove the previous choice. Validate
+        // its replacement without waiting for the first choice or any cards.
         RefreshBuilds();
         RefreshControlsPresetStatus();
-        RefreshPackMemory();
-        RefreshWorlds();
         RefreshUi();
         _preload?.Forget("build-menu");
         _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
+        _ = PrepareSelectedLaunchAsync();
+        if (BuildComboBox.SelectedItem is null) StartSecondaryPreparation();
+        StartupTrace.Mark("индекс проверен");
+    }
+
+    private void StartLibraryPreparation()
+    {
+        if (_shutdownStarted || _libraryStartup is not null || _catalog is not { } catalog) return;
+        _libraryStartup = PrepareLibraryCoreAsync(catalog);
+    }
+
+    private async Task PrepareLibraryCoreAsync(PackCatalogService catalog)
+    {
+        var token = _catalogLifetimeCts.Token;
+        try { await Task.Run(() => catalog.PrepareLibraryAsync(token), token); }
+        catch (OperationCanceledException) when (_shutdownStarted) { return; }
+        catch (Exception ex)
+        {
+            if (_shutdownStarted) return;
+            _logger?.Warn("Library background preparation: " + ex.Message);
+        }
+        if (_shutdownStarted) return;
+        RefreshBuilds();
         RefreshLibraryCatalog();
+        RefreshPackMemory();
+        RefreshUi();
+        StartupTrace.Mark("библиотека готова");
+    }
+
+    private void StartSecondaryPreparation()
+    {
+        if (_shutdownStarted || _secondaryPreparationStarted) return;
+        _secondaryPreparationStarted = true;
+        StartLibraryPreparation();
         _preload?.Enqueue("news", 40, PrepareNews());
         _preload?.Enqueue("transfer", 50, UiPreparation.Prepare(WorldTransferPanel));
         _preload?.Enqueue("world-menu", 50, WorldComboBox.Prepare());
@@ -3274,7 +3373,6 @@ public partial class MainWindow : Window
         _preload?.Enqueue("report-menu", 60, DiagnosticLogTargetComboBox.Prepare());
         _preload?.Enqueue("preset-dialog", 30, DialogPreloadCache.PreparePreset());
         _preload?.Enqueue("dialogs", 70, DialogPreloadCache.Prepare());
-        StartupTrace.Mark("каталог проверен");
     }
 
     private IEnumerable<Action> PrepareNews()
@@ -3287,8 +3385,7 @@ public partial class MainWindow : Window
     {
         if (_catalog is not null && _settings is not null && (_catalog.IsReady || _libraryVisible))
         {
-            // A foreground request may show the checked local snapshot. The
-            // automatic library queue stays behind launch-catalog readiness.
+            // A foreground request can overtake the automatic data queue.
             LibraryView.Preloader = _preload;
             LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings));
             if (_libraryVisible) _preload?.Promote("library-overview");
@@ -3303,6 +3400,7 @@ public partial class MainWindow : Window
         _libraryVisible = visible;
         if (visible)
         {
+            StartLibraryPreparation();
             _preload?.Promote("library-overview");
             RefreshLibraryCatalog();
             LibraryView.ShowCatalog();

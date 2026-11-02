@@ -251,6 +251,8 @@ public sealed partial class PortablePackSyncService
         ArgumentException.ThrowIfNullOrWhiteSpace(packRelativePath);
         var catalog = Catalog;
         if (catalog?.IsWithdrawn(packRelativePath) == true) return null;
+        if (catalog?.IsStaged == true && catalog.IsLaunchReady(packRelativePath))
+            return catalog.SourceFor(packRelativePath);
         var markerPath = Path.Combine(_paths.CombineUnderPacks(packRelativePath), SourceMarkerFileName);
         if (File.Exists(markerPath))
         {
