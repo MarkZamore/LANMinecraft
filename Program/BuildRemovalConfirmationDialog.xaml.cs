@@ -38,9 +38,12 @@ public partial class BuildRemovalConfirmationDialog : Window
     public BuildRemovalAnswer Answer { get; private set; } = BuildRemovalAnswer.Keep;
 
     /// <summary>Asks, and answers Keep for a dialog closed any other way.</summary>
+    internal static BuildRemovalConfirmationDialog Prepared() => new("");
+
     public static BuildRemovalAnswer Ask(Window? owner, string buildName)
     {
-        var dialog = new BuildRemovalConfirmationDialog(buildName);
+        var dialog = DialogPreloadCache.Take(() => new BuildRemovalConfirmationDialog(buildName));
+        dialog.QuestionText.Text = $"Что сделать со сборкой {buildName}?";
         if (owner is not null && owner.IsLoaded) dialog.Owner = owner;
         dialog.ShowDialog();
         return dialog.Answer;

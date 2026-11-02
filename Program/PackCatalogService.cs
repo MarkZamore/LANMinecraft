@@ -76,6 +76,7 @@ public sealed class CatalogPack
     public required CatalogSource Entry { get; init; }
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
+    public string ContentIdentity { get; init; } = "";
     public string Name => PackDisplayName.For(Entry.RelativePath, Content.Name);
     // Published metadata contains the actual loaded mod IDs, including embedded
     // dependencies. The library flag only controls the presentation category.
@@ -143,7 +144,7 @@ public sealed class PackCatalogService
     private Task? _refresh;
     private readonly object _gate = new();
 
-    public PackCatalogService(AppPaths paths, Logger logger, HttpClient? httpClient = null)
+    public PackCatalogService(AppPaths paths, Logger logger, HttpClient? httpClient = null, CancellationToken startupToken = default)
     {
         _paths = paths;
         _logger = logger;
@@ -152,6 +153,7 @@ public sealed class PackCatalogService
         _sources = SeedSources().ToList();
         foreach (var entry in _sources)
         {
+            startupToken.ThrowIfCancellationRequested();
             _effectiveSources[entry.RelativePath] = entry;
             _knownCatalogPaths.Add(entry.RelativePath);
             using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.Id + ".zip");
@@ -196,11 +198,12 @@ public sealed class PackCatalogService
         }
         foreach (var entry in _sources.ToArray())
         {
+            startupToken.ThrowIfCancellationRequested();
             var effective = _effectiveSources[entry.RelativePath];
-            if (effective.Source != entry.Source) LoadCachedEntry(effective);
-            LoadCachedEntry(entry);
+            if (effective.Source != entry.Source) LoadCachedEntry(effective, token: startupToken);
+            LoadCachedEntry(entry, token: startupToken);
         }
-        foreach (var entry in _markerSources) LoadCachedEntry(entry, presentation: false);
+        foreach (var entry in _markerSources) { startupToken.ThrowIfCancellationRequested(); LoadCachedEntry(entry, presentation: false, token: startupToken); }
     }
 
     public bool IsReady { get; private set; }
@@ -265,7 +268,7 @@ public sealed class PackCatalogService
                 // pack cannot update. Its last verified source stays effective
                 // until that pack's new manifest and bundle validate.
                 candidates = entries;
-                foreach (var entry in candidates) LoadCachedEntry(entry);
+                foreach (var entry in candidates) LoadCachedEntry(entry, token: token);
             }
             catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library discovery: " + ex.Message); }
             using var parallel = new SemaphoreSlim(4);
@@ -298,7 +301,7 @@ public sealed class PackCatalogService
     private async Task RefreshEntryAsync(CatalogSource entry, bool presentation, CancellationToken token)
     {
         var raw = Encoding.UTF8.GetString(await ReadBoundedAsync(MutableMetadataUri(AssetUri(entry.Source, "pack-manifest.json")), MaximumManifestBytes, token).ConfigureAwait(false));
-        PortablePackSyncService.ValidateSnapshot(raw, _paths.CombineUnderPacks(entry.RelativePath));
+        PortablePackSyncService.ValidateSnapshot(raw, _paths.CombineUnderPacks(entry.RelativePath), token);
         using var doc = JsonDocument.Parse(raw);
         byte[]? bundle = null;
         CatalogPack? pack = null;
@@ -339,13 +342,13 @@ public sealed class PackCatalogService
             ", SHA256 " + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(raw))) + ".");
     }
 
-    private void LoadCachedEntry(CatalogSource entry, bool presentation = true)
+    private void LoadCachedEntry(CatalogSource entry, bool presentation = true, CancellationToken token = default)
     {
         try
         {
             var cached = ReadCache(entry);
             if (cached is null) return;
-            PortablePackSyncService.ValidateSnapshot(cached.Manifest, _paths.CombineUnderPacks(entry.RelativePath));
+            PortablePackSyncService.ValidateSnapshot(cached.Manifest, _paths.CombineUnderPacks(entry.RelativePath), token);
             CatalogPack? pack = null;
             using var doc = JsonDocument.Parse(cached.Manifest);
             if (presentation && doc.RootElement.TryGetProperty("library", out var descriptor))
@@ -443,7 +446,7 @@ public sealed class PackCatalogService
         image.StreamSource = imageBytes;
         image.EndInit();
         image.Freeze();
-        var pack = new CatalogPack { Entry = entry, Content = content, Preview = image };
+        var pack = new CatalogPack { Entry = entry, Content = content, Preview = image, ContentIdentity = Convert.ToHexString(SHA256.HashData(bytes)) };
         pack.BuildTree();
         return pack;
     }

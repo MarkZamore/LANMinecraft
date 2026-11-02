@@ -41,9 +41,14 @@ public partial class NoticeDialog : Window
     /// Window_Loaded when the launcher itself failed to start, and a dialog owned
     /// by a window that has not finished opening centres on nothing.
     /// </remarks>
+    internal static NoticeDialog Prepared() => new("", "");
+
     public static void Show(Window? owner, string heading, string detail)
     {
-        var dialog = new NoticeDialog(heading, detail);
+        var dialog = DialogPreloadCache.Take(() => new NoticeDialog(heading, detail));
+        dialog.HeadingText.Text = heading;
+        dialog.DetailText.Text = detail;
+        dialog.DetailText.Visibility = string.IsNullOrWhiteSpace(detail) ? Visibility.Collapsed : Visibility.Visible;
         if (owner is not null && owner.IsLoaded)
         {
             dialog.Owner = owner;

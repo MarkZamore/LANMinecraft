@@ -29,9 +29,13 @@ public partial class WorldRemovalConfirmationDialog : Window
     }
 
     /// <summary>True when the player asked for the world to go.</summary>
+    internal static WorldRemovalConfirmationDialog Prepared() => new("");
+
     public static bool Ask(Window owner, string displayName)
     {
-        var dialog = new WorldRemovalConfirmationDialog(displayName) { Owner = owner };
+        var dialog = DialogPreloadCache.Take(() => new WorldRemovalConfirmationDialog(displayName));
+        dialog.Owner = owner;
+        dialog.QuestionText.Text = $"Вы точно хотите удалить мир «{displayName}»?";
         return dialog.ShowDialog() == true;
     }
 

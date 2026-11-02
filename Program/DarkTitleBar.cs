@@ -21,6 +21,7 @@ internal static class DarkTitleBar
     public static void Apply(Window window)
     {
         ArgumentNullException.ThrowIfNull(window);
+        window.Icon ??= LauncherWindowIcon.Image;
         var handle = new WindowInteropHelper(window).Handle;
         if (handle != IntPtr.Zero)
         {

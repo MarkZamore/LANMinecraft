@@ -13,6 +13,12 @@ public partial class WorldTransferConfirmationDialog : Window
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
+        Configure(offer);
+        Loaded += (_, _) => DialogScale.MatchOwner(this, TransferPanel);
+    }
+
+    private void Configure(WorldTransferOffer offer)
+    {
         var sender = string.IsNullOrWhiteSpace(offer.SenderPlayerName) ||
                      string.Equals(offer.SenderPlayerName, offer.SenderPersonaName, StringComparison.Ordinal)
             ? offer.SenderPersonaName
@@ -22,7 +28,6 @@ public partial class WorldTransferConfirmationDialog : Window
             (offer.ArchiveBytes > 0
                 ? $", примерно {offer.ArchiveBytes / (1024d * 1024d):F0} МиБ."
                 : ".");
-        Loaded += (_, _) => DialogScale.MatchOwner(this, TransferPanel);
     }
 
     public bool Accepted { get; private set; }
@@ -31,9 +36,12 @@ public partial class WorldTransferConfirmationDialog : Window
     /// Closes itself when the token trips, which is how the sender's idle
     /// timeout ends a dialog nobody answered.
     /// </summary>
+    internal static WorldTransferConfirmationDialog Prepared() => new(new WorldTransferOffer(default, "", "", "", 0));
+
     public static bool Show(Window? owner, WorldTransferOffer offer, CancellationToken token)
     {
-        var dialog = new WorldTransferConfirmationDialog(offer);
+        var dialog = DialogPreloadCache.Take(() => new WorldTransferConfirmationDialog(offer));
+        dialog.Configure(offer);
         if (owner is not null && owner.IsLoaded) dialog.Owner = owner;
         using var registration = token.Register(() =>
             dialog.Dispatcher.BeginInvoke(() =>

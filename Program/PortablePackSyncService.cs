@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -1533,14 +1533,14 @@ public sealed partial class PortablePackSyncService
         return new SyncStateDto();
     }
 
-    public static void ValidateSnapshot(string json, string packDir)
+    public static void ValidateSnapshot(string json, string packDir, CancellationToken token = default)
     {
         var dto = JsonSerializer.Deserialize<RemoteManifestDto>(json, JsonOptions)
             ?? throw new InvalidDataException("Empty pack manifest.");
-        ValidateRemoteManifest(dto, packDir);
+        ValidateRemoteManifest(dto, packDir, token);
     }
 
-    private static ValidatedManifest ValidateRemoteManifest(RemoteManifestDto manifest, string packDir)
+    private static ValidatedManifest ValidateRemoteManifest(RemoteManifestDto manifest, string packDir, CancellationToken token = default)
     {
         if (manifest.SchemaVersion is not (LegacyRemoteManifestGeneration or FeatureManifestGeneration))
         {
@@ -1585,6 +1585,7 @@ public sealed partial class PortablePackSyncService
         var filesByPath = new Dictionary<string, ValidatedFile>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in manifest.Files)
         {
+            token.ThrowIfCancellationRequested();
             if (file is null)
             {
                 throw new InvalidDataException("Pack sync manifest contains an empty file entry.");

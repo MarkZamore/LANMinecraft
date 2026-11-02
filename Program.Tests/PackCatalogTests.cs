@@ -594,7 +594,7 @@ public sealed class PackCatalogTests : IDisposable
             view.ShowDetails(pack);
             Assert.True(PackMembership.Remove(settings, pack.Entry.RelativePath));
             view.SetCatalog(service.PacksForDisplay(settings));
-            var detail = (ScrollViewer)view.FindName("DetailScroll");
+            var detail = (ContentControl)view.FindName("DetailHost");
             var cards = (ItemsControl)view.FindName("CatalogCards");
             Assert.Equal(Visibility.Collapsed, detail.Visibility);
             Assert.Empty(cards.Items);
