@@ -199,11 +199,9 @@ public partial class MainWindow : Window
             if (_shutdownStarted) return;
             _preload = new UiPreloadQueue(Dispatcher, ex => _logger?.Warn("UI preload: " + ex.Message));
             _preload.Completed += (key, ms) => _logger?.Info($"Предзагрузка {key}: {ms} мс с постановки в очередь.");
-            LibraryView.Preloader = _preload;
             _catalogStartup = InitializeCatalogAsync();
             _ = RefreshLauncherDataAsync();
 
-            _preload.Enqueue("news", 40, PrepareNews());
             ShowSidePanel(news: false);
             _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
@@ -2504,6 +2502,9 @@ public partial class MainWindow : Window
 
     private void SidePanelToggleButton_Click(object sender, RoutedEventArgs e)
     {
+        // A direct request can open news while the launch catalog is still
+        // being checked; automatic hidden preparation waits for the build list.
+        if (!_sidePanelShowsNews) _preload?.Enqueue("news", 40, PrepareNews());
         _preload?.Promote("news");
         ShowSidePanel(!_sidePanelShowsNews);
     }
@@ -3243,19 +3244,29 @@ public partial class MainWindow : Window
             return new PackCatalogService(paths, logger, startupToken: token);
         }, token);
         if (_shutdownStarted) return;
+        // The checked local snapshot can fill the launch selector immediately.
+        // Warm that menu first; hidden pages wait for the mandatory online pass.
         _catalog = catalog;
         _packSync!.Catalog = catalog;
         RefreshBuilds();
-        RefreshLibraryCatalog();
+        RefreshControlsPresetStatus();
+        RefreshUi();
+        _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
+        if (_libraryVisible) RefreshLibraryCatalog();
         StartupTrace.Mark("каталог из кеша");
         await Task.Run(() => catalog.RefreshOnceAsync(token), token);
         if (_shutdownStarted) return;
-        RefreshLibraryCatalog();
+        // Play follows the completed integrity pass, without waiting for UI
+        // preparation. Refresh its selector before queuing the remaining views.
         RefreshBuilds();
+        RefreshControlsPresetStatus();
         RefreshPackMemory();
         RefreshWorlds();
         RefreshUi();
+        _preload?.Forget("build-menu");
         _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
+        RefreshLibraryCatalog();
+        _preload?.Enqueue("news", 40, PrepareNews());
         _preload?.Enqueue("transfer", 50, UiPreparation.Prepare(WorldTransferPanel));
         _preload?.Enqueue("world-menu", 50, WorldComboBox.Prepare());
         _preload?.Enqueue("peer-menu", 50, OnlinePlayerComboBox.Prepare());
@@ -3274,8 +3285,14 @@ public partial class MainWindow : Window
 
     private void RefreshLibraryCatalog()
     {
-        if (_catalog is not null && _settings is not null)
+        if (_catalog is not null && _settings is not null && (_catalog.IsReady || _libraryVisible))
+        {
+            // A foreground request may show the checked local snapshot. The
+            // automatic library queue stays behind launch-catalog readiness.
+            LibraryView.Preloader = _preload;
             LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings));
+            if (_libraryVisible) _preload?.Promote("library-overview");
+        }
     }
 
     private void LibraryButton_Click(object sender, RoutedEventArgs e) => ShowLibrary(true);

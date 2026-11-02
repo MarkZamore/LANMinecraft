@@ -320,7 +320,7 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.Equal(240, card.ActualWidth, 3);
                 Assert.Equal(cards[0].ActualHeight, card.ActualHeight, 3);
             });
-            Assert.Equal(0, cards[0].TransformToAncestor(panel).TransformBounds(new Rect(cards[0].RenderSize)).Left, 3);
+            AssertCenteredGrid();
             var cardBorder = VisualChildren<RoundedClipBorder>(cards[0]).Single();
             var radius = (CornerRadius)window.FindResource("Radius.Control");
             Assert.Equal(radius, cardBorder.CornerRadius);
@@ -350,7 +350,7 @@ public sealed class PackCatalogTests : IDisposable
             var sizes = panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize).ToArray();
             WindowCanvasTests.LayoutWindow(window, new Size(width + 400, height));
             Assert.Equal(sizes, panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize));
-            Assert.Equal(0, cards[0].TransformToAncestor(panel).TransformBounds(new Rect(cards[0].RenderSize)).Left, 3);
+            AssertCenteredGrid();
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             if (list.ScrollableHeight > 0) AssertScrollInput(list);
             var catalogOffset = list.VerticalOffset;
@@ -389,6 +389,18 @@ public sealed class PackCatalogTests : IDisposable
             Assert.True(root.IsExpanded);
             Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
             return true;
+
+            void AssertCenteredGrid()
+            {
+                var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
+                var left = bounds.Min(rect => rect.Left);
+                var right = panel.ActualWidth - bounds.Max(rect => rect.Right);
+                Assert.InRange(Math.Abs(left - right), 0, 1);
+                // The incomplete final row keeps the same columns as the first.
+                var firstTop = bounds.Min(rect => rect.Top);
+                if (bounds.Any(rect => rect.Top > firstTop))
+                    Assert.Equal(left, bounds.First(rect => rect.Top > firstTop).Left, 3);
+            }
 
             void AssertScrollInput(ScrollViewer viewer)
             {
@@ -430,6 +442,8 @@ public sealed class PackCatalogTests : IDisposable
                     var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
                     Assert.True(bounds.Left >= canvas.ActualWidth);
                     Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);
+                    Assert.InRange(Math.Abs(bounds.Left + bounds.Width / 2 -
+                        (canvas.ActualWidth + canvas.Margin.Right / 2)), 0, 1);
                 }
                 else
                 {

@@ -310,6 +310,9 @@
       FullyQualifiedName=Minecraft.Tests.DropDownPreloadPlacementTests.FirstOpen_UsesTheControlsScreenBoundsBeforeAndAfterHiddenPreparation|
       FullyQualifiedName=Minecraft.Tests.UiPreparationLayoutTests.PreparingHiddenAttachedContentPreservesItsParentsLayoutSlot|
       FullyQualifiedName=Minecraft.Tests.PreparedImagePreloadTests.HiddenWorkerCompletion_KeepsLayoutValidAndPublishesPreparedBitmapWhenShown|
-      FullyQualifiedName=Minecraft.Tests.PeerNoticeFadeTests.CancelledFadeCompletionCannotReenterNativeClose</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PeerNoticeFadeTests.CancelledFadeCompletionCannotReenterNativeClose|
+      FullyQualifiedName=Minecraft.Tests.LibraryPreviewScrollTests.SixPreparedPreviewsAllowTheLastCatalogRowToScrollIntoView|
+      FullyQualifiedName=Minecraft.Tests.StartupPreparationPriorityTests.CachedLaunchListWarmsFirstAndVerifiedPlayStatePrecedesAutomaticHiddenPreparation|
+      FullyQualifiedName=Minecraft.Tests.StartupPreparationPriorityTests.ExplicitNewsRequestCanBypassTheAutomaticPreparationBarrier</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

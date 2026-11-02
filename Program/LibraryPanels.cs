@@ -39,6 +39,10 @@ public sealed class LibraryColumnsPanel : Panel
         var columns = Math.Min(Math.Max(1, InternalChildren.Count), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
         var cell = double.IsFinite(FixedColumnWidth) ? Math.Min(width, FixedColumnWidth) :
             Math.Max(0, (width - Gap * (columns - 1)) / columns);
+        // Keep fixed-size cards and their shared columns, while distributing
+        // the unused width equally at both sides of the complete grid.
+        var left = double.IsFinite(FixedColumnWidth)
+            ? Math.Max(0, (width - columns * cell - Gap * (columns - 1)) / 2) : 0;
         var heights = new double[columns];
         var rowGap = double.IsFinite(RowGap) ? RowGap : Gap;
         _rectangles.Clear();
@@ -56,7 +60,7 @@ public sealed class LibraryColumnsPanel : Panel
                 if (column == 0 && index != 0) top = heights.Max();
                 else if (column != 0) top = _rectangles[index - column].Top;
             }
-            _rectangles.Add(new Rect(column * (cell + Gap), top, cell, height));
+            _rectangles.Add(new Rect(left + column * (cell + Gap), top, cell, height));
             heights[column] = top + height + rowGap;
             index++;
         }
