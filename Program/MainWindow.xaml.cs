@@ -207,6 +207,11 @@ public partial class MainWindow : Window
             if (_shutdownStarted) return;
             _preload = new UiPreloadQueue(Dispatcher, ex => _logger?.Warn("UI preload: " + ex.Message));
             _preload.Completed += (key, ms) => _logger?.Info($"Предзагрузка {key}: {ms} мс с постановки в очередь.");
+            // The small component index runs beside pack discovery, preserving the
+            // early selector. Freeze it before transport consumers and cache cleanup.
+            var componentStartupToken = _lifetimeCts.Token;
+            var steamComponentsStartup = Task.Run(() => new SteamComponentCatalogService(_paths, _logger)
+                .LoadAsync(componentStartupToken), componentStartupToken);
             _catalogStartup = InitializeCatalogAsync();
             _ = RefreshLauncherDataAsync();
 
@@ -217,6 +222,9 @@ public partial class MainWindow : Window
             _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
             _optionsDefaults = new OptionsDefaultsService(_logger);
             _minimapReset = new MinimapResetService(_logger);
+            var steamComponents = await steamComponentsStartup;
+            if (_shutdownStarted) return;
+            SteamTransportCatalog.Activate(steamComponents);
             _steamClient = new SteamClientService(
                 new SteamworksApiFacade(),
                 new SteamNativeLibraryService(_paths, _logger),

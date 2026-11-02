@@ -35,7 +35,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         _paths = paths;
         _logger = logger;
-        _mappings = new IdentityAdapterMappingService(paths);
+        _mappings = new IdentityAdapterMappingService(paths, transportSelection);
         _transportSelection = transportSelection;
     }
 

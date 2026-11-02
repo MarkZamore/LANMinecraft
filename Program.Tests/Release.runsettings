@@ -323,6 +323,15 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.InstalledOfflinePackWithoutRemoteCacheKeepsLocalFallbackButPendingUpdatesStayBlocked|
       FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.CorruptOwnPresentationKeepsTheFrozenCheckedGamePlanAndPreviousCardSeparate|
       FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.LaterMarkerEditsDoNotRetargetAnAlreadyFrozenPack|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.ExpiredIndexBudgetUsesCheckedCacheWithoutStartingAnotherManifestRequest</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.ExpiredIndexBudgetUsesCheckedCacheWithoutStartingAnotherManifestRequest|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.EmbeddedV2_PreservesAllReviewedBranchesAndPublisherDelivery|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.MissingReviewedCapability_IsRejected|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.AmbiguousOrReducedMinecraftLoaderCoverage_IsRejected|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.UnpinnedOrEscapingArtifact_IsRejected|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.ValidNetworkProfile_SelectsNewPinnedBytesAndWritesCheckedCache|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.InvalidNetwork_PreservesPreviouslyCheckedCacheByteForByte|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_UsesEmbeddedV2WithoutCreatingUnverifiedCache|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.CorruptCache_IsNotTrustedWhenOffline|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.RepeatedAndConcurrentLoads_ShareOneRequestAndFrozenSnapshot</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

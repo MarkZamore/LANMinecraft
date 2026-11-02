@@ -64,6 +64,7 @@
                       LogicalName="Minecraft.WindowIconAssets.jar" />
     <!-- The version history the window shows; hand-written, one entry per
          commit, checked by the release workflow. See ChangelogService. -->
+    <EmbeddedResource Include="Resources\steam-components.json" LogicalName="Minecraft.Steam.components.json" />
     <EmbeddedResource Include="Changelog.md"
                       LogicalName="Minecraft.Changelog.md" />
     <!-- Steamworks SDK 1.60 native, the build Steamworks.NET 2024.8.0 targets.

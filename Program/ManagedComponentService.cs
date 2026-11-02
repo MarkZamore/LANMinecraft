@@ -158,8 +158,12 @@ public sealed class ManagedComponentService
     internal string E4steamCachePath =>
         GetCachePath(_pinnedOverride ?? DescriptorFor(SteamTransportCatalog.Builds[0]));
 
-    internal IReadOnlyList<ManagedComponentDescriptor> SupersededSteamBuilds { get; init; } =
-        SteamTransportCatalog.SupersededBuilds;
+    private IReadOnlyList<ManagedComponentDescriptor>? _supersededSteamBuilds;
+    internal IReadOnlyList<ManagedComponentDescriptor> SupersededSteamBuilds
+    {
+        get => _supersededSteamBuilds ?? SteamTransportCatalog.SupersededBuilds;
+        init => _supersededSteamBuilds = value;
+    }
 
     /// <summary>
     /// Converges one launch-critical JAR in the instance: keep a verified copy,

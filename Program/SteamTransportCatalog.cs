@@ -27,7 +27,9 @@ public sealed record SteamTransportBuild(
     IReadOnlyList<int> MinimumMinecraftVersion,
     IReadOnlyList<int> ExclusiveMaximumMinecraftVersion,
     string? AuthorFileName = null,
-    string? DeliveryTag = null)
+    string? DeliveryTag = null,
+    bool NativeLanUiSuppressed = false,
+    Uri? VerifiedDownloadUri = null)
 {
     /// <summary>The original author artifact, kept as provenance rather than a delivery fallback.</summary>
     public Uri UpstreamDownloadUri { get; } = new(
@@ -37,7 +39,7 @@ public sealed record SteamTransportBuild(
     /// <summary>The single shared delivery source in the launcher's own repository.</summary>
     public IReadOnlyList<Uri> DownloadUris { get; } = Array.AsReadOnly<Uri>(
     [
-        new Uri(
+        VerifiedDownloadUri ?? new Uri(
             $"https://github.com/MarkZamore/e4steam/releases/download/{DeliveryTag ?? "v" + Version}/{FileName}",
             UriKind.Absolute)
     ]);
@@ -52,7 +54,7 @@ public static class SteamTransportCatalog
 {
     // Only exact previously shipped bytes may be replaced; unknown JARs remain conflicts.
     // A legacy row still active below is ignored when its filename is the selected build.
-    internal static IReadOnlyList<ManagedComponentDescriptor> SupersededBuilds { get; } =
+    internal static IReadOnlyList<ManagedComponentDescriptor> HistoricalAuthorBuilds { get; } =
     [
         new(ManagedComponentService.E4steamComponentId, 30_001, "e4steam-forge-mc1.7.x-v0.3.0.jar",
             [new Uri("https://github.com/Kamilhik/e4steam/releases/download/v0.3.0/e4steam-forge-mc1.7.x-v0.3.0.jar")],
@@ -196,7 +198,7 @@ public static class SteamTransportCatalog
     /// in that release, so thirteen older branches keep their latest 0.3.2 files.
     /// Every range is taken from the actual JAR metadata, not its filename.
     /// </summary>
-    public static IReadOnlyList<SteamTransportBuild> Builds { get; } =
+    internal static IReadOnlyList<SteamTransportBuild> LegacyV1Builds { get; } =
         Array.AsReadOnly<SteamTransportBuild>(
         [
             new(
@@ -384,6 +386,13 @@ public static class SteamTransportCatalog
                 "native-lan-ui-v1")
         ]);
 
+    private static SteamComponentCatalogSnapshot _current = SteamComponentCatalog.Parse(SteamComponentCatalog.EmbeddedJson());
+
+    internal static SteamComponentCatalogSnapshot Current => Volatile.Read(ref _current);
+    internal static void Activate(SteamComponentCatalogSnapshot snapshot) => Interlocked.Exchange(ref _current, snapshot);
+    public static IReadOnlyList<SteamTransportBuild> Builds => Current.Builds;
+    internal static IReadOnlyList<ManagedComponentDescriptor> SupersededBuilds => Current.SupersededBuilds;
+
     /// <summary>
     /// The build for this pack, or null when no published build serves it.
     /// </summary>
@@ -418,7 +427,7 @@ public static class SteamTransportCatalog
     }
 
     /// <summary>Every cache folder a current build uses, for sweeping the rest.</summary>
-    public static IReadOnlyCollection<string> CacheFileIds { get; } =
+    public static IReadOnlyCollection<string> CacheFileIds =>
         Builds.Select(build => build.CacheFileId.ToString(CultureInfo.InvariantCulture)).ToArray();
 
     internal static bool TryParseVersion(string? value, out int[] parts)

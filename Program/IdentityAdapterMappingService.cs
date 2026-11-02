@@ -95,10 +95,14 @@ internal sealed class IdentityAdapterMappingService
     // needs no mappings and works on every loader.
     private const string GameProfile = "com/mojang/authlib/GameProfile";
     private readonly AppPaths _paths;
+    private readonly Func<PackRuntimeDescriptor, SteamTransportBuild?> _transportSelection;
 
-    public IdentityAdapterMappingService(AppPaths paths)
+    public IdentityAdapterMappingService(AppPaths paths) : this(paths, SteamTransportCatalog.Find) { }
+
+    internal IdentityAdapterMappingService(AppPaths paths, Func<PackRuntimeDescriptor, SteamTransportBuild?> transportSelection)
     {
         _paths = paths;
+        _transportSelection = transportSelection;
     }
 
     /// <summary>
@@ -328,9 +332,9 @@ internal sealed class IdentityAdapterMappingService
             WorldOptionsScreen => "link.e4steam.mixin.WorldOptionsScreenMixin",
             _ => null
         };
-        var transport = SteamTransportCatalog.Find(runtime.Descriptor);
+        var transport = _transportSelection(runtime.Descriptor);
         if (origin is null || transport is not { Version: "0.3.4" } ||
-            transport.DeliveryTag == "native-lan-ui-v1") return;
+            transport.NativeLanUiSuppressed) return;
         _paths.EnsureUnderRoot(Path.GetFullPath(gameDirectory));
         var path = Path.Combine(gameDirectory, "mods", transport.FileName);
         if (!IsPinnedTransportJar(path, transport)) return;
@@ -448,13 +452,13 @@ internal sealed class IdentityAdapterMappingService
     /// hook that half works.
     /// </summary>
     /// <returns>The screen to patch, or null where the hook cannot be had.</returns>
-    private static MappedClass? AddSteamDiscoveryProperties(
+    private MappedClass? AddSteamDiscoveryProperties(
         RuntimeNames? mappings, Dictionary<string, string> properties, PackRuntimeDescriptor descriptor)
     {
         const string multiplayer = "net/minecraft/client/gui/screens/multiplayer/JoinMultiplayerScreen";
         properties["steamDiscoveryEnabled"] = "false";
         properties["steamDiscoveryScreenClasses"] = multiplayer;
-        var transport = SteamTransportCatalog.Find(descriptor);
+        var transport = _transportSelection(descriptor);
         // Private worker, fields, join signature and metadata were reviewed
         // against the actual author JARs for these two releases only.
         if (transport is null || transport.Version is not ("0.3.2" or "0.3.4")) return null;
