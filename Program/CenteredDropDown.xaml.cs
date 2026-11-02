@@ -90,6 +90,12 @@ public partial class CenteredDropDown : UserControl
         control.RaiseEvent(new SelectionChangedEventArgs(SelectionChangedEvent, removed, added));
     }
 
+    internal IEnumerable<Action> Prepare()
+    {
+        foreach (var action in UiPreparation.Prepare(ItemsList)) yield return action;
+        yield return () => ItemsList.Measure(new Size(Math.Max(1, ActualWidth), double.PositiveInfinity));
+    }
+
     private void DropDownButton_Checked(object sender, RoutedEventArgs e)
     {
         DropDownPopup.IsOpen = true;

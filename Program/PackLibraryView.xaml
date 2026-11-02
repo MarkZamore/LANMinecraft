@@ -117,48 +117,6 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
-        <ScrollViewer x:Name="DetailScroll" Grid.RowSpan="2" Style="{DynamicResource FluentScrollViewer}" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="DetailContent">
-                <local:RoundedClipBorder Style="{StaticResource LibrarySectionStyle}" Padding="{DynamicResource Pad.None}" Height="{DynamicResource Size.LibraryHero}">
-                    <Grid>
-                        <Image Source="{Binding Preview}" Stretch="UniformToFill"/>
-                        <Border Background="{DynamicResource Brush.LibraryHeroOverlay}"/>
-                        <Grid Margin="{DynamicResource Pad.Panel}">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <Button Content="← Назад" Click="ReturnCatalog_Click" HorizontalAlignment="Left"/>
-                            <Grid Grid.Row="2">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Bottom" Margin="{DynamicResource Gap.Right3}">
-                                    <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextWrapping="Wrap"/>
-                                    <TextBlock Text="{Binding VersionLabel}" TextWrapping="Wrap" Margin="{DynamicResource Gap.Above2}" Foreground="{DynamicResource Brush.TextMuted}"/>
-                                </StackPanel>
-                                <Button x:Name="MembershipButton" Grid.Column="1" Click="Membership_Click" Content="Добавить" Width="{DynamicResource Size.ButtonMax}" MinHeight="{DynamicResource Size.Primary}" Padding="{DynamicResource Pad.Wide}" VerticalAlignment="Bottom"/>
-                            </Grid>
-                        </Grid>
-                    </Grid>
-                </local:RoundedClipBorder>
-                <Border Style="{StaticResource LibrarySectionStyle}">
-                    <StackPanel><TextBlock Text="О сборке" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
-                        <TextBlock Text="{Binding Description}" TextWrapping="Wrap" LineHeight="{DynamicResource Font.LineHeightBody}"/>
-                    </StackPanel>
-                </Border>
-                <Border Style="{StaticResource LibrarySectionStyle}">
-                    <StackPanel>
-                        <TextBlock x:Name="ModsHeading" Text="{Binding ModsTitle}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
-                        <ItemsControl ItemsSource="{Binding Mods}" ItemTemplate="{StaticResource LibraryModGroupTemplate}">
-                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardMin}" Gap="{DynamicResource Space.4}" RowGap="{DynamicResource Space.1}" BalanceHeight="True"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                        </ItemsControl>
-                        <StackPanel x:Name="LibrariesSection">
-                            <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding HasLibraries}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></StackPanel.Style>
-                            <TextBlock Text="Вспомогательные библиотеки" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Above4}"/>
-                            <ItemsControl ItemsSource="{Binding Libraries}" Margin="{DynamicResource Gap.Above2}">
-                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardMin}" Gap="{DynamicResource Space.4}" RowGap="{DynamicResource Space.1}" BalanceHeight="True"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate><DataTemplate><TextBlock TextWrapping="Wrap" ToolTip="{Binding Version}"><Hyperlink Style="{StaticResource LibraryModLinkStyle}" Foreground="{DynamicResource Brush.TextMuted}" NavigateUri="{Binding WebsiteUri}" ToolTip="{Binding WebsiteUri}" Click="ModLink_Click"><Run Text="{Binding Name, Mode=OneWay}"/></Hyperlink></TextBlock></DataTemplate></ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
+        <ContentControl x:Name="DetailHost" Grid.RowSpan="2" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
     </Grid>
 </UserControl>

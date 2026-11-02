@@ -39,6 +39,8 @@ public partial class MainWindow : Window
     private PortablePackSyncService? _packSync;
     private PackCatalogService? _catalog;
     private Task? _catalogStartup;
+    private UiPreloadQueue? _preload;
+    private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task _launcherDataRefresh = Task.CompletedTask;
     private bool _libraryVisible;
     private readonly Dictionary<UIElement, Visibility> _launcherVisibility = [];
@@ -112,13 +114,16 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        Icon = LauncherWindowIcon.Image;
         InitializeComponent();
         SmoothScrollingController.Attach(BodyScroll);
         SmoothScrollingController.Attach(ChangelogScroll);
         SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         BodyScroll.SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
+        WorldTransferExpander.Expanded += (_, _) => { _preload?.Promote("transfer"); _preload?.Promote("world-menu"); _preload?.Promote("peer-menu"); };
+        ReportExpander.Expanded += (_, _) => { _preload?.Promote("report"); _preload?.Promote("report-menu"); };
         DarkTitleBar.Apply(this);
-        ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); _framePainted = true; ReportStartupTrace(); };
+        ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); _framePainted = true; _firstFrame.TrySetResult(); ReportStartupTrace(); };
         _windowPlacement = new WindowPlacementService(new AppPaths(AppPaths.ResolveApplicationRoot()));
         _windowPlacement.Apply(this);
         BuildComboBox.ItemsSource = _builds;
@@ -165,24 +170,15 @@ public partial class MainWindow : Window
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
             _settingsService = new SettingsService(_paths, _logger);
             _settings = _settingsService.Load();
-            // Run outside SettingsService.Load's recovery fallback: a rename
-            // collision must stop startup without resetting personal settings.
-            new PackRenameMigration(_paths, _logger).Apply(_settings, PackCatalogService.SeedSources(), _settingsService.Save);
             StartupTrace.Mark("настройки");
-            // The four the first frame cannot do without: the builds list and
-            // the pack hash it asks for, the worlds list, and the preset the
-            // button reports on. All four are field assignments that cost
-            // nothing; the other eleven wait until the window is up.
+            // The first frame contains only the saved settings and shell.
+            // Catalog, disk discovery and hidden views start after ContentRendered.
             _packHash = new PackHashService(_paths);
-            _catalog = new PackCatalogService(_paths, _logger);
-            _packSync = new PortablePackSyncService(_paths, _logger) { Catalog = _catalog };
-            RefreshLibraryCatalog();
+            _packSync = new PortablePackSyncService(_paths, _logger);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
-            RefreshBuilds();
             RefreshControlsPresetStatus();
-            RefreshWorlds();
             RefreshMemoryText(saveIfChanged: false);
             RefreshUi();
             SetState("Ready");
@@ -195,14 +191,18 @@ public partial class MainWindow : Window
             // built behind it. Task.Yield would not do: its continuation
             // comes back at Normal, which outranks Render, and nothing would
             // change.
+            await _firstFrame.Task;
             await Dispatcher.Yield(DispatcherPriority.Background);
             // The window can be closed in that gap, and closing disposes the
             // token this method goes on to use.
             if (_shutdownStarted) return;
+            _preload = new UiPreloadQueue(Dispatcher, ex => _logger?.Warn("UI preload: " + ex.Message));
+            _preload.Completed += (key, ms) => _logger?.Info($"Предзагрузка {key}: {ms} мс с постановки в очередь.");
+            LibraryView.Preloader = _preload;
             _catalogStartup = InitializeCatalogAsync();
             _ = RefreshLauncherDataAsync();
 
-            LoadChangelog();
+            _preload.Enqueue("news", 40, PrepareNews());
             ShowSidePanel(news: false);
             _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
@@ -342,6 +342,11 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_shutdownStarted) return;
         _shutdownStarted = true;
+        _firstFrame.TrySetCanceled();
+        _preload?.Dispose();
+        LibraryView.Dispose();
+        DialogPreloadCache.Clear();
+        _lifetimeCts.Cancel();
         _windowPlacement.Save(this);
 
         // Always leave the original Closing event before issuing the final Close().
@@ -369,7 +374,8 @@ public partial class MainWindow : Window
         _lifetimeCts.Cancel();
         try
         {
-            await _launcherDataRefresh;
+            try { await _launcherDataRefresh.WaitAsync(TimeSpan.FromSeconds(1)); }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
@@ -476,7 +482,7 @@ public partial class MainWindow : Window
 
     private void RefreshBuilds()
     {
-        if (_paths is null || _settings is null || _settingsService is null) return;
+        if (_paths is null || _settings is null || _settingsService is null || _catalog is null) return;
 
         Directory.CreateDirectory(_paths.Packs);
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
@@ -2496,6 +2502,7 @@ public partial class MainWindow : Window
 
     private void SidePanelToggleButton_Click(object sender, RoutedEventArgs e)
     {
+        _preload?.Promote("news");
         ShowSidePanel(!_sidePanelShowsNews);
     }
 
@@ -3212,13 +3219,55 @@ public partial class MainWindow : Window
 
     private async Task InitializeCatalogAsync()
     {
-        if (_catalog is null) return;
-        await _catalog.RefreshOnceAsync(_lifetimeCts.Token);
+        try { await InitializeCatalogCoreAsync(); }
+        catch (OperationCanceledException) when (_shutdownStarted) { }
+        catch (Exception ex)
+        {
+            if (_shutdownStarted) return;
+            _logger?.Warn("Catalog startup failed: " + ex);
+            NoticeDialog.Show(this, "Лаунчер не смог проверить сборки", ex.Message);
+            Close();
+        }
+    }
+
+    private async Task InitializeCatalogCoreAsync()
+    {
+        var token = _lifetimeCts.Token;
+        var paths = _paths!;
+        var logger = _logger!;
+        var catalog = await Task.Run(() =>
+        {
+            new PackRenameMigration(paths, logger).Apply(_settings!, PackCatalogService.SeedSources(), _settingsService!.Save);
+            return new PackCatalogService(paths, logger, startupToken: token);
+        }, token);
+        if (_shutdownStarted) return;
+        _catalog = catalog;
+        _packSync!.Catalog = catalog;
+        RefreshBuilds();
+        RefreshLibraryCatalog();
+        StartupTrace.Mark("каталог из кеша");
+        await Task.Run(() => catalog.RefreshOnceAsync(token), token);
         if (_shutdownStarted) return;
         RefreshLibraryCatalog();
         RefreshBuilds();
         RefreshPackMemory();
+        RefreshWorlds();
         RefreshUi();
+        _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
+        _preload?.Enqueue("transfer", 50, UiPreparation.Prepare(WorldTransferPanel));
+        _preload?.Enqueue("world-menu", 50, WorldComboBox.Prepare());
+        _preload?.Enqueue("peer-menu", 50, OnlinePlayerComboBox.Prepare());
+        _preload?.Enqueue("report", 60, UiPreparation.Prepare(ReportPanel));
+        _preload?.Enqueue("report-menu", 60, DiagnosticLogTargetComboBox.Prepare());
+        _preload?.Enqueue("preset-dialog", 30, DialogPreloadCache.PreparePreset());
+        _preload?.Enqueue("dialogs", 70, DialogPreloadCache.Prepare());
+        StartupTrace.Mark("каталог проверен");
+    }
+
+    private IEnumerable<Action> PrepareNews()
+    {
+        yield return LoadChangelog;
+        foreach (var action in UiPreparation.Prepare(ChangelogList)) yield return action;
     }
 
     private void RefreshLibraryCatalog()
@@ -3235,6 +3284,7 @@ public partial class MainWindow : Window
         _libraryVisible = visible;
         if (visible)
         {
+            _preload?.Promote("library-overview");
             RefreshLibraryCatalog();
             LibraryView.ShowCatalog();
             LibraryView.Visibility = Visibility.Visible;

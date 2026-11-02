@@ -172,3 +172,7 @@ PackLauncherFeaturesTests проверяет schema 2 с requiredLauncherFeature
 Неизвестная обязательная функция требует обновить лаунчер до загрузки файлов;
 отказ не маскируется офлайн-кешем. Старые schema 1 без features сохраняются.
 Критический сценарий также включён в Release.
+
+## Предзагрузка и первый кадр
+
+`UiPreloadTests` проверяет повышение приоритета, отсутствие повторов, отмену очереди и сохранение страниц. `PackCatalogTests`, `WindowCanvasTests`, `LibraryTreeMotionTests`, `DialogLayoutTests` и `RenderingStartupTests` проверяют библиотеку, навигацию, геометрию и сохранение SoftwareOnly. Дополнительный стенд: `tools/UiPreloadProbe/README.md`. Результаты стенда сохранять только внутри artifacts. Нагрузка процесса/ОС и время CLR не входят в измерение конструктора окна. Самостоятельное моделирование RenderTargetBitmap не является проверкой реальных интервалов кадров.

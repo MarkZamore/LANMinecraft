@@ -18,9 +18,11 @@ public partial class ControlsPresetConfirmationDialog : Window
     public bool Replace { get; private set; }
 
     /// <summary>Asks, and answers no for a dialog closed any other way.</summary>
+    internal static ControlsPresetConfirmationDialog Prepared() => new();
+
     public static bool Ask(Window? owner)
     {
-        var dialog = new ControlsPresetConfirmationDialog();
+        var dialog = DialogPreloadCache.Take(() => new ControlsPresetConfirmationDialog());
         if (owner is not null && owner.IsLoaded) dialog.Owner = owner;
         dialog.ShowDialog();
         return dialog.Replace;

@@ -69,7 +69,7 @@ public sealed class LibraryColumnsPanel : Panel
     }
 }
 
-public sealed class LibraryPreviewImage : Image
+public sealed class LibraryPreviewImage : PreparedImage
 {
     protected override Size MeasureOverride(Size constraint)
     {

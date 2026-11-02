@@ -15,6 +15,7 @@ public partial class App : Application
         // window creates a render target. This belongs only to this process;
         // the separately launched Java client keeps its own graphics settings.
         System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+        LauncherWindowIcon.Initialize();
     }
 
     protected override void OnStartup(StartupEventArgs e)
