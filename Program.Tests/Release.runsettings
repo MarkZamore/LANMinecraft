@@ -313,6 +313,16 @@
       FullyQualifiedName=Minecraft.Tests.PeerNoticeFadeTests.CancelledFadeCompletionCannotReenterNativeClose|
       FullyQualifiedName=Minecraft.Tests.LibraryPreviewScrollTests.SixPreparedPreviewsAllowTheLastCatalogRowToScrollIntoView|
       FullyQualifiedName=Minecraft.Tests.StartupPreparationPriorityTests.CachedLaunchListWarmsFirstAndVerifiedPlayStatePrecedesAutomaticHiddenPreparation|
-      FullyQualifiedName=Minecraft.Tests.StartupPreparationPriorityTests.ExplicitNewsRequestCanBypassTheAutomaticPreparationBarrier</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.StartupPreparationPriorityTests.ExplicitNewsRequestCanBypassTheAutomaticPreparationBarrier|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.SelectedSyncDoesNotWaitForOwnOrUnrelatedLibraryDownloads|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.ConcurrentSelectionAndPresentationReuseTheSameFrozenManifest|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.AuthoritativeRemovalBlocksCachedSelectionBeforeBackgroundPreparationAndSurvivesOfflineRestart|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.OfflineSelectionRequiresAValidCheckedGameManifest|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.VerifiedRepositoryChangeCannotRetargetAnAlreadyFrozenLaunchUntilNextSession|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.OfflineCustomAliasesCanReuseTheSameCheckedSourceWithoutPresentationCache|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.InstalledOfflinePackWithoutRemoteCacheKeepsLocalFallbackButPendingUpdatesStayBlocked|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.CorruptOwnPresentationKeepsTheFrozenCheckedGamePlanAndPreviousCardSeparate|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.LaterMarkerEditsDoNotRetargetAnAlreadyFrozenPack|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.ExpiredIndexBudgetUsesCheckedCacheWithoutStartingAnotherManifestRequest</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

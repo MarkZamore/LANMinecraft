@@ -13,32 +13,55 @@ public sealed class StartupPreparationPriorityTests
         Assert.DoesNotContain("Enqueue(\"news\"", loaded, StringComparison.Ordinal);
 
         var catalog = Method(source, "private async Task InitializeCatalogCoreAsync()");
+        Assert.Contains("stagedStartup: true", catalog, StringComparison.Ordinal);
         var published = catalog.IndexOf("_catalog = catalog;", StringComparison.Ordinal);
         var builds = catalog.IndexOf("RefreshBuilds();", StringComparison.Ordinal);
         var play = catalog.IndexOf("RefreshUi();", StringComparison.Ordinal);
         var menu = catalog.IndexOf("Enqueue(\"build-menu\"", StringComparison.Ordinal);
-        var verified = catalog.IndexOf("await Task.Run(() => catalog.RefreshOnceAsync(token), token);", StringComparison.Ordinal);
+        var verified = catalog.IndexOf("await Task.Run(() => catalog.InitializeIndexAsync(token), token);", StringComparison.Ordinal);
         Assert.True(published >= 0 && builds > published && play > builds && menu > play && verified > menu,
-            "The checked local launch list and its menu must arrive before the slower online pass.");
+            "The lightweight local launch list and its menu must arrive before the online index request.");
+        Assert.DoesNotContain("RefreshOnceAsync", catalog, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrepareLibraryAsync", catalog, StringComparison.Ordinal);
+        Assert.Contains("PrepareSelectedLaunchAsync();", catalog[..verified], StringComparison.Ordinal);
 
         var completedPass = catalog[verified..];
         var refreshedBuilds = completedPass.IndexOf("RefreshBuilds();", StringComparison.Ordinal);
         var readyPlay = completedPass.IndexOf("RefreshUi();", StringComparison.Ordinal);
         var refreshedMenu = completedPass.IndexOf("Enqueue(\"build-menu\"", StringComparison.Ordinal);
-        var cards = completedPass.IndexOf("RefreshLibraryCatalog();", StringComparison.Ordinal);
-        var news = completedPass.IndexOf("Enqueue(\"news\"", StringComparison.Ordinal);
         Assert.True(refreshedBuilds >= 0 && readyPlay > refreshedBuilds && refreshedMenu > readyPlay &&
-                    cards > refreshedMenu && news > cards,
-            "Refresh authoritative builds and Play before automatic preparation of hidden views.");
-        var library = Method(source, "private void RefreshLibraryCatalog()");
-        Assert.Contains("(_catalog.IsReady || _libraryVisible)", library, StringComparison.Ordinal);
-        Assert.True(library.IndexOf("(_catalog.IsReady || _libraryVisible)", StringComparison.Ordinal) <
-                    library.IndexOf("LibraryView.Preloader =", StringComparison.Ordinal));
+                    completedPass.IndexOf("PrepareSelectedLaunchAsync();", StringComparison.Ordinal) > refreshedMenu,
+            "Refresh authoritative membership and select its launch task without awaiting library bundles.");
+        var preparation = Method(source, "private async Task PrepareSelectedLaunchCoreAsync(");
+        Assert.Contains("catalog.EnsureLaunchReadyAsync(path, token)", preparation, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrepareLibraryAsync", preparation, StringComparison.Ordinal);
+        Assert.DoesNotContain("_libraryStartup", preparation, StringComparison.Ordinal);
+        var library = Method(source, "private async Task PrepareLibraryCoreAsync(");
+        Assert.Contains("catalog.PrepareLibraryAsync(token)", library, StringComparison.Ordinal);
+        Assert.Contains("RefreshLibraryCatalog();", library, StringComparison.Ordinal);
+
+        var data = Method(source, "private async Task RefreshLauncherDataCoreAsync(");
+        Assert.Contains("await _catalogStartup;", data, StringComparison.Ordinal);
+        Assert.Contains("catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token)", data, StringComparison.Ordinal);
+        Assert.Contains("Task.Run(() => _packSync.RefreshLauncherDataAsync", data, StringComparison.Ordinal);
+        Assert.DoesNotContain("_libraryStartup", data, StringComparison.Ordinal);
+        Assert.DoesNotContain("RefreshOnceAsync", data, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrepareLibraryAsync", data, StringComparison.Ordinal);
+        var dataQueue = Method(source, "private Task RefreshLauncherDataAsync()");
+        Assert.Contains("_launcherDataByPack.GetValueOrDefault(pack", dataQueue, StringComparison.Ordinal);
 
         // Play keeps its integrity gate and must not await UI warming.
         var click = Method(source, "private async void PlayButton_Click(");
-        Assert.Contains("_catalog?.IsReady != true", click, StringComparison.Ordinal);
+        Assert.Contains("!SelectedBuildIsReady", click, StringComparison.Ordinal);
+        Assert.DoesNotContain("_catalog?.IsReady", click, StringComparison.Ordinal);
+        Assert.DoesNotContain("_libraryStartup", click, StringComparison.Ordinal);
         Assert.DoesNotContain("_preload", click, StringComparison.Ordinal);
+        Assert.DoesNotContain("await _launcherDataRefresh;", click, StringComparison.Ordinal);
+        Assert.Contains("_launcherDataByPack.GetValueOrDefault(build.RelativePath", click, StringComparison.Ordinal);
+        var readiness = source[source.IndexOf("private bool SelectedBuildIsReady", StringComparison.Ordinal)..];
+        readiness = readiness[..(readiness.IndexOf(';') + 1)];
+        Assert.Contains("catalog.IsLaunchReady(build.RelativePath)", readiness, StringComparison.Ordinal);
+        Assert.DoesNotContain("catalog.IsReady", readiness, StringComparison.Ordinal);
     }
 
     [Fact]
