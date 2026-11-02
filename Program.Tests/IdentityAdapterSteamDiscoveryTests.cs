@@ -111,8 +111,8 @@ public sealed class IdentityAdapterSteamDiscoveryTests : IDisposable
         var names = type.GetMethod("Read", Hidden)!.Invoke(null, [path, null]);
         var properties = new Dictionary<string, string>(StringComparer.Ordinal);
         var descriptor = new PackRuntimeDescriptor(1, minecraft, new PackLoaderDescriptor(loader, "fixture"), "client.jar", "fixture");
-        target = typeof(IdentityAdapterMappingService).GetMethod("AddSteamDiscoveryProperties", Hidden)!
-            .Invoke(null, [names, properties, descriptor]);
+        target = typeof(IdentityAdapterMappingService).GetMethod("AddSteamDiscoveryProperties", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(new IdentityAdapterMappingService(new AppPaths(_root)), [names, properties, descriptor]);
         return properties;
     }
 

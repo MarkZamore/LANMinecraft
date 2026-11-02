@@ -1,2 +1,5 @@
 # Preserve the exact native-tested logging payload used by published packs.
 tools/PackData/Logging/log4j2.xml -text
+
+# Keep the embedded checked Steam index byte-identical to the publisher profile.
+Program/Resources/steam-components.json -text

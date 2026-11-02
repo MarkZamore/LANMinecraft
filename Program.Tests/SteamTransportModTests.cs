@@ -38,18 +38,18 @@ public sealed class SteamTransportModTests
 
         (string File, long Size, string Sha, int[] Minimum, int[] Maximum)[] latest =
         [
-            ("e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.1.jar", 3804498,
-                "259e0e17faa4748ed0c3b8adb58d7c7fcfe747c8ed03aa2fbbb5028192627cb9", [1, 17, 1], [1, 18, 2]),
-            ("e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar", 3801104,
-                "68ba6bdce76868e2cb43359a13416dfa1b011c628c13b6c4266b653c765b5c40", [1, 18, 2], [1, 20, 3]),
-            ("e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar", 3799786,
-                "d09f4f274e133bd43861f0577a20d83d84d9bea88bb95351f6f5af11f0b1e617", [1, 20, 2], [26, 4]),
-            ("e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.1.jar", 3800183,
-                "34b5cd1e81ec5a1e3ea1238078840c81c6cb3e6dd4ec035389125f34ff693e23", [1, 17], [1, 19]),
-            ("e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar", 3796976,
-                "8a8dfb209bb0d1d15acad996f88a4d6ec7548a8a282c6ea8307a2b62fc4df800", [1, 19], [26, 1]),
-            ("e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar", 3797595,
-                "d55953ff626dab390c0c29076a11d32b764ea543f3979c81f3bfce9889caa909", [26, 1], [26, 4])
+            ("e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar", 3805024,
+                "1344aa71d9fe824dd9b01210f58f28569631f4c5747d6f040d82f65c7010a8d7", [1, 17, 1], [1, 18, 2]),
+            ("e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar", 3801632,
+                "3f397fc193f14d3c543b5ef9b4613bc149a21ca8e14bd93c39de3d1bc6f9553c", [1, 18, 2], [1, 20, 3]),
+            ("e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar", 3800314,
+                "2cfedc07ee3c84b9b980351ea094d5f898c858f37ff46dada24c621061761d2e", [1, 20, 2], [26, 4]),
+            ("e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar", 3800700,
+                "7dde29204bc3f50649bbf3b50163e96677a62467507d1218f9e58caa7785d006", [1, 17], [1, 19]),
+            ("e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar", 3797496,
+                "67d43d3047cf7d349b38d1addf024ef69de44d79d2b19f5f0092b024a565f1bd", [1, 19], [26, 1]),
+            ("e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar", 3798124,
+                "248fe6c4bf8f4decd0eea2c0883f15559eedd7491e6a9b5859b3bd1cafdcb26d", [26, 1], [26, 4])
         ];
         foreach (var expected in latest)
         {
@@ -63,9 +63,10 @@ public sealed class SteamTransportModTests
 
         Assert.All(SteamTransportCatalog.Builds.Where(build => build.Version == SteamTransportCatalog.Version), build =>
         {
-            Assert.Equal("native-lan-ui-v1", build.DeliveryTag);
+            Assert.Equal("native-lan-ui-v2", build.DeliveryTag);
             Assert.NotNull(build.AuthorFileName);
-            Assert.Contains("-lanmc-native-ui.1.jar", build.FileName, StringComparison.Ordinal);
+            Assert.True(build.NativeLanUiSuppressed);
+            Assert.Contains("-lanmc-native-ui.2.jar", build.FileName, StringComparison.Ordinal);
             var original = Assert.Single(SteamTransportCatalog.SupersededBuilds, old => old.FileName == build.AuthorFileName);
             Assert.NotEqual(original.Sha256, build.Sha256);
             Assert.NotEqual(original.FileId, build.CacheFileId);
@@ -79,10 +80,10 @@ public sealed class SteamTransportModTests
             Assert.Equal(1, build.MinimumMinecraftVersion[0]);
             Assert.InRange(build.MinimumMinecraftVersion[1], 7, 16);
         });
-        Assert.Equal(44, SteamTransportCatalog.SupersededBuilds.Count);
+        Assert.Equal(50, SteamTransportCatalog.SupersededBuilds.Count);
         Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.0.jar", StringComparison.Ordinal)));
         Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.2.jar", StringComparison.Ordinal)));
-        Assert.Equal(44, SteamTransportCatalog.SupersededBuilds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(50, SteamTransportCatalog.SupersededBuilds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         foreach (var build in SteamTransportCatalog.Builds.Where(build => build.Version == "0.3.2"))
         {
             var previous = Assert.Single(SteamTransportCatalog.SupersededBuilds, old => old.FileName == build.FileName);
@@ -106,29 +107,29 @@ public sealed class SteamTransportModTests
     /// </summary>
     [Theory]
     // NeoForge, as before.
-    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.NeoForge, "26.3", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.21.1", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "1.20.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.2", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.NeoForge, "26.3", "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar")]
     [InlineData(PackLoaderKind.NeoForge, "26.4", null)]
     [InlineData(PackLoaderKind.NeoForge, "1.20.1", null)]
     // Forge, which used to be refused outright. Both versions still carry
     // packs people play.
-    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.1", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.19.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar")]
     // The file is called forge-mc1.18.2-1.20.2 and declares up to 1.20.3.
-    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.20.2", "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Forge, "1.18.1", "e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar")]
     [InlineData(PackLoaderKind.Forge, "1.17", null)]
     [InlineData(PackLoaderKind.Forge, "1.21.1", null)]
     // Fabric and Quilt share the one build its author tested them both with.
-    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Fabric, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
-    [InlineData(PackLoaderKind.Quilt, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.1.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.20.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Quilt, "1.21.1", "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Fabric, "1.18.2", "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.2", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Fabric, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar")]
+    [InlineData(PackLoaderKind.Quilt, "26.3", "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar")]
     [InlineData(PackLoaderKind.Fabric, "26.4", null)]
     [InlineData(PackLoaderKind.Quilt, "26.4", null)]
     [InlineData(PackLoaderKind.Fabric, "1.16.5", "e4steam-fabric-mc1.16.x-v0.3.2.jar")]
