@@ -58,7 +58,8 @@ internal static class Program
             {
                 var view = (PackLibraryView)window.FindName("LibraryView");
                 var catalog = new PackCatalogService(new AppPaths(Path.Combine(output, "catalog-cache")), new Logger(Path.Combine(output, "catalog.log")));
-                view.SetCatalog(catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
+                view.SetCatalog(args.Contains("--six-packs") ? SixPackFixture(catalog.Packs) :
+                    catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
                 view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
                 HideLauncherPageWithRetainedLog(window);
                 view.Visibility = Visibility.Visible;
@@ -148,6 +149,27 @@ internal static class Program
         var dirtyRectangleSwitchPresent = AppContext.TryGetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", out var dirtyRectanglesDisabled);
         var manifest = new { CapturedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), AssemblyConfiguration = assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration, AssemblyVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion, NativeControls = true, StartupHandlersRemoved = true, ProcessRenderMode = RenderOptions.ProcessRenderMode.ToString(), DirtyRectangleSwitchPresent = dirtyRectangleSwitchPresent, DirtyRectanglesDisabled = dirtyRectanglesDisabled, Notes = "Content-only native WPF render; window background included. No Steam/network startup. DPI set on native visual roots before measure. SoftwareOnly is set before WPF objects, matching the final launcher. Dirty-rectangle switch is supplied through the helper runtime configuration as in production. Native resize repaint, frame, Snap and live NameMarquee are not tested by this offscreen renderer.", Hashes = hashes };
         File.WriteAllText(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
+    }
+
+    private static IReadOnlyList<CatalogPack> SixPackFixture(IReadOnlyList<CatalogPack> source)
+    {
+        // Visual QA only: exercise a complete second row without depending on
+        // the user's cache or network. No fixture enters the launcher catalog.
+        var result = source.Take(6).ToList();
+        if (result.Count == 0) throw new InvalidOperationException("The visual fixture needs an embedded pack.");
+        while (result.Count < 6)
+        {
+            var sample = source[result.Count % source.Count];
+            var extra = new CatalogPack
+            {
+                Entry = sample.Entry with { Id = "measure-" + result.Count, RelativePath = "MeasureLayout QA " + result.Count },
+                Content = sample.Content,
+                Preview = sample.Preview
+            };
+            extra.BuildTree();
+            result.Add(extra);
+        }
+        return result;
     }
 
     private static void HideLauncherPageWithRetainedLog(Window window)

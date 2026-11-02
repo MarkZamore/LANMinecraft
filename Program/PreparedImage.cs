@@ -9,8 +9,8 @@ namespace Minecraft;
 public class PreparedImage : Image
 {
     private BitmapSource? original;
-    private bool applying;
     private BitmapSource? prepared;
+    private ImageSource? drawnSource;
     public PreparedImage()
     {
         Loaded += (_, _) => PrepareImage();
@@ -21,7 +21,7 @@ public class PreparedImage : Image
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if (e.Property == SourceProperty && !applying) { original = e.NewValue as BitmapSource; prepared = null; PrepareImage(); }
+        if (e.Property == SourceProperty) { original = e.NewValue as BitmapSource; prepared = null; PrepareImage(); }
     }
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     { base.OnRenderSizeChanged(sizeInfo); PrepareImage(); }
@@ -66,14 +66,16 @@ public class PreparedImage : Image
     private void SetPreparedImage(BitmapSource result)
     {
         prepared = result;
-        // An async Source change invalidates Image's measure. Under a collapsed
-        // owner (or a detached cached page), WPF cannot finish that layout and
-        // later Popup/ScrollViewer LayoutUpdated callbacks can be starved.
-        // Keep the decoded bitmap ready without invalidating that visual tree.
-        if (!IsLoaded || !IsVisible || ReferenceEquals(Source, prepared)) return;
-        applying = true;
-        try { SetCurrentValue(SourceProperty, prepared); }
-        finally { applying = false; }
+        // Rounded raster dimensions can have a slightly different aspect ratio.
+        // Keep the bound source authoritative for WPF's measure/arrange; swapping
+        // it can alternate RenderSize and starve scrolling's LayoutUpdated work.
+        if (IsLoaded && IsVisible && !ReferenceEquals(drawnSource, prepared)) InvalidateVisual();
+    }
+    protected override void OnRender(DrawingContext drawingContext)
+    {
+        ImageSource? image = prepared ?? Source;
+        drawnSource = image;
+        if (image is not null) drawingContext.DrawImage(image, new Rect(new Point(), RenderSize));
     }
     private static BitmapSource Resize(BitmapSource source, int width, int height)
     {

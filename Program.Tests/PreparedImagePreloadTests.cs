@@ -73,11 +73,12 @@ public sealed class PreparedImagePreloadTests
                 if (!attachedToCollapsedOwner) owner.Child = image;
                 owner.Visibility = Visibility.Visible;
                 PumpUntil(() => image.IsLoaded && image.IsVisible && image.IsMeasureValid && image.IsArrangeValid &&
-                    image.Source is BitmapSource bitmap && !ReferenceEquals(bitmap, original) &&
+                    DrawnBitmap(image) is BitmapSource bitmap && !ReferenceEquals(bitmap, original) &&
                     bitmap.PixelWidth == ExpectedPixels(image, original).Width &&
                     bitmap.PixelHeight == ExpectedPixels(image, original).Height,
-                    "The visible preview did not publish its bitmap at the current viewport and DPI.");
-                var prepared = Assert.IsAssignableFrom<BitmapSource>(image.Source);
+                    "The visible preview did not draw its bitmap at the current viewport and DPI.");
+                Assert.Same(original, image.Source);
+                var prepared = Assert.IsAssignableFrom<BitmapSource>(DrawnBitmap(image));
                 Assert.True(prepared.IsFrozen);
                 Assert.InRange(prepared.PixelWidth, 1, original.PixelWidth - 1);
                 Assert.InRange(prepared.PixelHeight, 1, original.PixelHeight - 1);
@@ -129,6 +130,9 @@ public sealed class PreparedImagePreloadTests
         var cached = typeof(PreparedImage).GetField("prepared", BindingFlags.Instance | BindingFlags.NonPublic);
         return cached is not null ? cached.GetValue(image) is BitmapSource : !ReferenceEquals(image.Source, original);
     }
+
+    private static BitmapSource? DrawnBitmap(PreparedImage image) => VisualTreeHelper.GetDrawing(image)?
+        .Children.OfType<ImageDrawing>().Select(drawing => drawing.ImageSource).OfType<BitmapSource>().SingleOrDefault();
 
     private static (int Width, int Height) ExpectedPixels(PreparedImage image, BitmapSource original)
     {
