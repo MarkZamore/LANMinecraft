@@ -16,7 +16,7 @@ internal static class DialogPreloadCache
     }
     private static void Store(Window window)
     {
-        if (ready.ContainsKey(window.GetType())) return;
+        if (ready.ContainsKey(window.GetType())) { window.Close(); return; }
         UiPreparation.Measure((FrameworkElement)window.Content, 500, new DpiScale(1, 1));
         ready[window.GetType()] = window;
     }
@@ -27,5 +27,13 @@ internal static class DialogPreloadCache
             new Action(() => { if (active && !ready.ContainsKey(typeof(T))) Store(create()); }));
         return result;
     }
-    public static void Clear() { active = false; ready.Clear(); }
+    public static void Clear()
+    {
+        active = false;
+        var unused = ready.Values.ToArray();
+        ready.Clear();
+        // Constructed windows belong to Application.Windows even before Show.
+        // Close them so OnLastWindowClose can terminate the launcher normally.
+        foreach (var window in unused) window.Close();
+    }
 }

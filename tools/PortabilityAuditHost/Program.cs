@@ -17,6 +17,8 @@ if (args is ["--rendering-probe"])
     var modeAfterInitializeComponent = System.Windows.Interop.RenderMode.Default;
     var windowsBeforeInitializeComponent = -1;
     var windowsAfterInitializeComponent = -1;
+    var preparedDialogWindows = -1;
+    var windowsAfterDialogCleanup = -1;
     Exception? applicationFailure = null;
     var applicationThread = new Thread(() =>
     {
@@ -30,6 +32,12 @@ if (args is ["--rendering-probe"])
             application.InitializeComponent();
             modeAfterInitializeComponent = RenderOptions.ProcessRenderMode;
             windowsAfterInitializeComponent = application.Windows.Count;
+            var dialogCache = typeof(Minecraft.App).Assembly.GetType("Minecraft.DialogPreloadCache", throwOnError: true)!;
+            foreach (var name in new[] { "PreparePreset", "Prepare" })
+                foreach (var step in (IEnumerable<Action>)dialogCache.GetMethod(name)!.Invoke(null, null)!) step();
+            preparedDialogWindows = application.Windows.Count;
+            dialogCache.GetMethod("Clear")!.Invoke(null, null);
+            windowsAfterDialogCleanup = application.Windows.Count;
             application.Shutdown();
         }
         catch (Exception error) { applicationFailure = error; }
@@ -47,14 +55,15 @@ if (args is ["--rendering-probe"])
         processRenderModeBeforeApp = processRenderModeBeforeApp.ToString(),
         modeBeforeInitializeComponent = modeBeforeInitializeComponent.ToString(),
         modeAfterInitializeComponent = modeAfterInitializeComponent.ToString(),
-        windowsBeforeInitializeComponent, windowsAfterInitializeComponent,
+        windowsBeforeInitializeComponent, windowsAfterInitializeComponent, preparedDialogWindows, windowsAfterDialogCleanup,
         processRenderMode = processRenderMode.ToString()
     }));
     return switchDefined && switchEnabled && wpfCachedDisableDirtyRectangles &&
         modeBeforeInitializeComponent == System.Windows.Interop.RenderMode.SoftwareOnly &&
         modeAfterInitializeComponent == System.Windows.Interop.RenderMode.SoftwareOnly &&
         processRenderMode == System.Windows.Interop.RenderMode.SoftwareOnly &&
-        windowsBeforeInitializeComponent == 0 && windowsAfterInitializeComponent == 0 ? 0 : 1;
+        windowsBeforeInitializeComponent == 0 && windowsAfterInitializeComponent == 0 &&
+        preparedDialogWindows == 5 && windowsAfterDialogCleanup == 0 ? 0 : 1;
 }
 
 // A short-lived caller for the production updater. It is never included in the
