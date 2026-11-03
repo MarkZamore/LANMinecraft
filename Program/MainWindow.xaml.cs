@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private PackCatalogService? _catalog;
     private Task? _catalogStartup;
     private Task? _libraryStartup;
+    private int _libraryCatalogRefreshPending;
     private bool _secondaryPreparationStarted;
     private Task _selectedLaunchPreparation = Task.CompletedTask;
     private string? _selectedLaunchPath;
@@ -358,6 +359,7 @@ public partial class MainWindow : Window
         if (_shutdownStarted) return;
         _shutdownStarted = true;
         _firstFrame.TrySetCanceled();
+        if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
         _preload?.Dispose();
         LibraryView.Dispose();
         DialogPreloadCache.Clear();
@@ -3321,6 +3323,7 @@ public partial class MainWindow : Window
         // Only the small index is loaded here. Manifests, ZIPs and images are
         // not dependencies of publishing the launch selector.
         _catalog = catalog;
+        catalog.PresentationChanged += OnLibraryPresentationChanged;
         _packSync!.Catalog = catalog;
         RefreshBuilds();
         RefreshControlsPresetStatus();
@@ -3398,6 +3401,19 @@ public partial class MainWindow : Window
             LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings));
             if (_libraryVisible) _preload?.Promote("library-overview");
         }
+    }
+
+    private void OnLibraryPresentationChanged()
+    {
+        // Several background entries may complete together. Refresh once at
+        // Background priority so input and rendering keep their turn first.
+        if (Interlocked.Exchange(ref _libraryCatalogRefreshPending, 1) != 0) return;
+        _ = LibraryView.Dispatcher.InvokeAsync(() =>
+        {
+            Interlocked.Exchange(ref _libraryCatalogRefreshPending, 0);
+            if (_shutdownStarted) return;
+            RefreshLibraryCatalog();
+        }, DispatcherPriority.Background);
     }
 
     private void LibraryButton_Click(object sender, RoutedEventArgs e) => ShowLibrary(true);

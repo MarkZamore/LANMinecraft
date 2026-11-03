@@ -14,6 +14,11 @@ public sealed class StartupPreparationPriorityTests
 
         var catalog = Method(source, "private async Task InitializeCatalogCoreAsync()");
         Assert.Contains("stagedStartup: true", catalog, StringComparison.Ordinal);
+        Assert.Contains("catalog.PresentationChanged += OnLibraryPresentationChanged;", catalog, StringComparison.Ordinal);
+        var closing = Method(source, "private async void Window_Closing(");
+        Assert.Contains("catalog.PresentationChanged -= OnLibraryPresentationChanged;", closing, StringComparison.Ordinal);
+        Assert.True(closing.IndexOf("catalog.PresentationChanged -= OnLibraryPresentationChanged;", StringComparison.Ordinal) <
+                    closing.IndexOf("LibraryView.Dispose();", StringComparison.Ordinal));
         var published = catalog.IndexOf("_catalog = catalog;", StringComparison.Ordinal);
         var builds = catalog.IndexOf("RefreshBuilds();", StringComparison.Ordinal);
         var play = catalog.IndexOf("RefreshUi();", StringComparison.Ordinal);

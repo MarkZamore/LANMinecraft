@@ -17,6 +17,8 @@ public sealed partial class PackCatalogService
 
     public bool IsStaged { get; }
     public bool IsIndexReady { get; private set; }
+    /// <summary>Published on the worker thread when a presentation snapshot changes.</summary>
+    public event Action? PresentationChanged;
 
     public string GetDisplayName(string relativePath)
     {
@@ -58,6 +60,7 @@ public sealed partial class PackCatalogService
         token.ThrowIfCancellationRequested();
         lock (_gate) IsIndexReady = true;
         SaveStagedIndex();
+        PresentationChanged?.Invoke();
     }
 
     /// <summary>
@@ -294,9 +297,13 @@ public sealed partial class PackCatalogService
         token.ThrowIfCancellationRequested();
         CatalogSource effective;
         lock (_gate) effective = _effectiveSources.GetValueOrDefault(entry.RelativePath) ?? entry;
+        var previous = Find(entry.RelativePath);
         LoadStagedSeed(entry);
+        PublishPresentationChange(entry.RelativePath, previous);
+        previous = Find(entry.RelativePath);
         LoadCachedEntry(effective, token: token);
         if (effective.Source != entry.Source) LoadCachedEntry(entry, token: token);
+        PublishPresentationChange(entry.RelativePath, previous);
 
         // Launch tasks bypass the background semaphore. If this source is also
         // selected, both consumers share its one rolling metadata response.
@@ -326,6 +333,7 @@ public sealed partial class PackCatalogService
             pack = DecodeBundle(entry, bundle, revision);
         }
         token.ThrowIfCancellationRequested();
+        previous = Find(entry.RelativePath);
         lock (_gate)
         {
             _manifests[Key(entry.Source)] = raw;
@@ -335,9 +343,17 @@ public sealed partial class PackCatalogService
                 if (pack is not null) _packs[entry.RelativePath] = pack;
             }
         }
+        PublishPresentationChange(entry.RelativePath, previous);
         try { AtomicFile.WriteAllTextIfChanged(CachePath(entry.Source), JsonSerializer.Serialize(new CachedEntry { Entry = entry, Manifest = raw, Bundle = bundle }, JsonOptions)); }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache could not be saved: " + ex.Message); }
         SaveStagedIndex();
+    }
+
+    private void PublishPresentationChange(string relativePath, CatalogPack? previous)
+    {
+        // Never call subscribers under the model lock. The open library can
+        // consume this snapshot while unrelated entries are still downloading.
+        if (!ReferenceEquals(previous, Find(relativePath))) PresentationChanged?.Invoke();
     }
 
     private void LoadStagedSeed(CatalogSource entry)
