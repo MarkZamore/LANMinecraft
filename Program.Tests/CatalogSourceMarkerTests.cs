@@ -88,7 +88,11 @@ public sealed class CatalogSourceMarkerTests : IDisposable
         await offline.RefreshOnceAsync();
         Assert.Equal(NewSource, offline.SourceFor(Folder));
         Assert.Equal(ForkSource, Sync(offline, host).TryResolveSource(Folder));
-        Assert.Equal(PackSyncOutcome.UpToDate, (await Sync(offline, host).SyncAsync(Folder, null, default)).Outcome);
+        var local = await Sync(offline, host).SyncAsync(Folder, null, default);
+        Assert.Equal(PackSyncOutcome.OfflineFallback, local.Outcome);
+        Assert.NotNull(local.Warning);
+        Assert.Equal(ForkSource, ReadMarker());
+        Assert.Equal(ForkSource.Repo, File.ReadAllText(Path.Combine(_paths.Packs, Folder, "mods", "payload.jar")));
     }
 
     private PortablePackSyncService Sync(PackCatalogService catalog, Host host) => new(_paths, Logger, host.Client) { Catalog = catalog };

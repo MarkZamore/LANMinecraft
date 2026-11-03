@@ -91,7 +91,7 @@ public sealed class PackCatalogTests : IDisposable
     }
 
     [Fact]
-    public async Task NewPackIsDiscoveredOnceAndPlayUsesTheStartupVersionWithoutManifestRequests()
+    public async Task NewPackIsDiscoveredOnceAndPlayChecksTheCurrentManifest()
     {
         CatalogMod[] initialMods = [
             new() { Id = "example", Name = "Example" },
@@ -120,11 +120,11 @@ public sealed class PackCatalogTests : IDisposable
         await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
         var result = await sync.SyncAsync(CatalogHost.Folder, null, default);
         Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
-        Assert.Equal(before + 1, host.Requests.Count);
+        Assert.Equal(before + 3, host.Requests.Count);
         Assert.EndsWith("/payload.jar", host.Requests.Last(), StringComparison.Ordinal);
         Assert.Equal(CatalogHost.Payload, File.ReadAllBytes(Path.Combine(_paths.Packs, CatalogHost.Folder, "mods", "payload.jar")));
         await service.RefreshOnceAsync();
-        Assert.Equal(before + 1, host.Requests.Count);
+        Assert.Equal(before + 3, host.Requests.Count);
 
         // The next startup receives the changed published mod list. It must
         // replace the count from the disk cache, including dependencies.
@@ -218,7 +218,7 @@ public sealed class PackCatalogTests : IDisposable
     }
 
     [Fact]
-    public async Task MissingFrozenPayloadRequestsRestartAndNeverOverwritesAnInstalledFile()
+    public async Task MissingSelectedPayloadRequestsAnotherPlayAndNeverOverwritesAnInstalledFile()
     {
         using var host = new CatalogHost();
         var service = new PackCatalogService(_paths, _logger, host.Client);
@@ -231,7 +231,7 @@ public sealed class PackCatalogTests : IDisposable
         host.MissingPayload = true;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         var error = await Assert.ThrowsAsync<PackSessionExpiredException>(() => sync.SyncAsync(CatalogHost.Folder, null, default));
-        Assert.Contains("Перезапустите", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Повторите «Играть»", error.Message, StringComparison.Ordinal);
         Assert.Equal("keep me", File.ReadAllText(original));
     }
 

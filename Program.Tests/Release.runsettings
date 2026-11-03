@@ -119,10 +119,10 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MigrationKeepsInstalledAndSelectedButAnEmptyListStaysEmpty|
       FullyQualifiedName=Minecraft.Tests.TerraFirmaPackMigrationTests.InstalledPackKeepsWorldsPersonalFilesAndSettingsAndCanRunAgain|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.AddDoesNotDownloadAndRemovalSurvivesSettingsReload|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.NewPackIsDiscoveredOnceAndPlayUsesTheStartupVersionWithoutManifestRequests|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.NewPackIsDiscoveredOnceAndPlayChecksTheCurrentManifest|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.OfflineAndCorruptRemoteBundleKeepTheLastVerifiedCatalogAndManifest|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.CorruptDiskCacheCanBeRepairedByAValidStartupDownload|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MissingFrozenPayloadRequestsRestartAndNeverOverwritesAnInstalledFile|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MissingSelectedPayloadRequestsAnotherPlayAndNeverOverwritesAnInstalledFile|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.MalformedIndexCannotEscapePortableRootAndOfflineSeedIsAlwaysAvailable|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.LibraryFitsRealControlsAndTreeExpansionSurvivesNavigation|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.RemovingFromTheList_KeepsInstalledFilesWorldsJavaAndSettingsAcrossRestart|
@@ -332,6 +332,12 @@
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.InvalidNetwork_PreservesPreviouslyCheckedCacheByteForByte|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_UsesEmbeddedV2WithoutCreatingUnverifiedCache|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.CorruptCache_IsNotTrustedWhenOffline|
-      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.RepeatedAndConcurrentLoads_ShareOneRequestAndFrozenSnapshot</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.RepeatedAndConcurrentLoads_ShareOneRequestAndFrozenSnapshot|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.PlayFindsR2WithoutRestartAndRetiresTheManagedR1Jar|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.OneFreshPlanPinsMeasureMetadataAndApplyEvenWhenR3Appears|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.FailedOnlineCheckUsesTheCoherentInstalledPackWithoutReplayingStartup|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.CancellationDuringTheFreshRequestNeverFallsBackOrMutatesInstalledFiles|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.UnsupportedFreshRequiredFeatureRefusesTheInstalledStartupVersion|
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.ChunkedOversizeManifestKeepsTheInstalledVersionWithoutDownloadingPayloads</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

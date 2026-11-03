@@ -57,7 +57,7 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
             Assert.Equal(host.Payload(selected, "one"), File.ReadAllBytes(Path.Combine(paths.Packs, selected.RelativePath, "mods", "payload.jar")));
             Assert.All(gates, gate => Assert.False(gate.Released.Task.IsCompleted));
             Assert.False(library.IsCompleted);
-            Assert.Equal(1, host.ManifestRequests(selected));
+            Assert.Equal(2, host.ManifestRequests(selected));
         }
         finally
         {
@@ -103,8 +103,8 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
         Assert.True(request.NoCache && request.NoStore);
         var sync = new PortablePackSyncService(paths, logger, host.Client) { Catalog = catalog };
         await sync.SyncAsync(selected.RelativePath, null, default).WaitAsync(Deadline);
-        Assert.Equal(host.Payload(selected, "one"), File.ReadAllBytes(Path.Combine(paths.Packs, selected.RelativePath, "mods", "payload.jar")));
-        Assert.Equal(1, host.ManifestRequests(selected));
+        Assert.Equal(host.Payload(selected, "two"), File.ReadAllBytes(Path.Combine(paths.Packs, selected.RelativePath, "mods", "payload.jar")));
+        Assert.Equal(2, host.ManifestRequests(selected));
     }
 
     [Theory]

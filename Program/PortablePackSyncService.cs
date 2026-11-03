@@ -48,6 +48,7 @@ public sealed partial class PortablePackSyncService
     public const string SyncStateFileName = ".portable-pack-sync.json";
     public const string ApplyPendingFileName = ".portable-pack-apply.json";
     public const string PackManifestAssetName = "pack-manifest.json";
+    private const int MaximumManifestBytes = 8 * 1024 * 1024;
     public const string DefaultPackRelativePath = "All The Mods 10";
     public const string LegacyTerraFirmaRelativePath = "TerraFirma Rebirth";
     public const string TerraFirmaRelativePath = "TerraFirma Rebirth 2";
@@ -524,7 +525,11 @@ public sealed partial class PortablePackSyncService
         try
         {
             var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
-            manifest = ValidateRemoteManifest(dto, packDir);
+            manifest = ValidateRemoteManifest(dto, packDir, token);
+            var revisionForLog = manifest.Revision is { Length: > 160 }
+                ? manifest.Revision[..160] + "..." : manifest.Revision;
+            _logger.Info($"Pack {packRelativePath}: verified launch manifest revision " +
+                         JsonSerializer.Serialize(revisionForLog) + ".");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -869,9 +874,10 @@ public sealed partial class PortablePackSyncService
 
     private async Task<RemoteManifestDto> FetchManifestAsync(PackSyncSource source, CancellationToken token)
     {
-        if (Catalog is { } catalog)
-            return JsonSerializer.Deserialize<RemoteManifestDto>(catalog.SessionManifest(source), JsonOptions)
-                ?? throw new InvalidDataException("Empty session manifest.");
+        // The catalogue fixes membership/source selection for this session, not
+        // the version to play. Each preparation reads current mutable metadata;
+        // PrepareDownloadPlanAsync then pins that one manifest through apply and
+        // the local-AI plan, even if the release changes during the download.
         Exception? lastError = null;
         for (var attempt = 1; attempt <= ManifestFetchAttempts; attempt++)
         {
@@ -892,9 +898,22 @@ public sealed partial class PortablePackSyncService
                     HttpCompletionOption.ResponseHeadersRead,
                     timeoutCts.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
+                if (response.Content.Headers.ContentLength is > MaximumManifestBytes)
+                    throw new InvalidDataException("Pack sync manifest exceeds its byte limit.");
                 await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token).ConfigureAwait(false);
+                using var bounded = new MemoryStream();
+                var chunk = new byte[64 * 1024];
+                while (true)
+                {
+                    var read = await stream.ReadAsync(chunk, timeoutCts.Token).ConfigureAwait(false);
+                    if (read == 0) break;
+                    if (bounded.Length > MaximumManifestBytes - read)
+                        throw new InvalidDataException("Pack sync manifest exceeds its byte limit.");
+                    bounded.Write(chunk, 0, read);
+                }
+                bounded.Position = 0;
                 return await JsonSerializer
-                        .DeserializeAsync<RemoteManifestDto>(stream, JsonOptions, timeoutCts.Token)
+                        .DeserializeAsync<RemoteManifestDto>(bounded, JsonOptions, timeoutCts.Token)
                         .ConfigureAwait(false)
                     ?? throw new InvalidDataException("Pack sync manifest is empty.");
             }
@@ -1753,7 +1772,7 @@ public sealed partial class PortablePackSyncService
             Uri.EscapeDataString(assetName);
         if (preventCaching)
         {
-            uri += $"?cache={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            uri += $"?cache={Guid.NewGuid():N}";
         }
         return new Uri(uri, UriKind.Absolute);
     }
