@@ -72,6 +72,7 @@ public sealed class HeapTuningArgumentTests
         Assert.Equal(
             [
                 "-XX:+UseG1GC",
+                "-XX:MaxHeapFreeRatio=100",
                 "-XX:+ParallelRefProcEnabled",
                 "-XX:MaxGCPauseMillis=50",
                 "-XX:+UnlockExperimentalVMOptions",
@@ -86,6 +87,7 @@ public sealed class HeapTuningArgumentTests
         Assert.Equal(
             [
                 "-XX:+UseG1GC",
+                "-XX:MaxHeapFreeRatio=100",
                 "-XX:+ParallelRefProcEnabled",
                 "-XX:MaxGCPauseMillis=150",
                 "-XX:+UnlockExperimentalVMOptions",

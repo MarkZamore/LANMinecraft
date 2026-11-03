@@ -361,6 +361,9 @@
       FullyQualifiedName=Minecraft.Tests.HeapTuningArgumentTests.AHeapStartsWhereItsMachineCanAffordItTo|
       FullyQualifiedName=Minecraft.Tests.MeasuredMemoryTests.LegacyLargeHeapMeasurementsSurviveNewInitialHeapPolicyAndStoreRecall|
       FullyQualifiedName=Minecraft.Tests.MeasuredMemoryTests.GrowingHeapRecordsCannotUnderstateNativeReserveOrEvictLegacyMeasurements|
-      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.ActualEarlyProcessFailureAndLaterDiagnosticContainOnlyCurrentOutput</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.ActualEarlyProcessFailureAndLaterDiagnosticContainOnlyCurrentOutput|
+      FullyQualifiedName=Minecraft.Tests.HeapRetentionTests.FinalCmlArgumentsRetainHeapAfterPackOptionsWithoutChangingHeapBoundsOrFiles|
+      FullyQualifiedName=Minecraft.Tests.HeapRetentionTests.RetentionPreservesClasspathOperandsAndModularEntrypointAndApplicationSuffix|
+      FullyQualifiedName=Minecraft.Tests.HeapRetentionTests.RealG1GrowsAndCollectsWhileRetentionPreventsCommittedHeapShrink</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
