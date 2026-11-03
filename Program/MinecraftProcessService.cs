@@ -254,27 +254,8 @@ public sealed class MinecraftProcessService
             .ToArray());
     }
 
-    /// <summary>
-    /// What the heap starts at, which is not always what it may reach.
-    /// </summary>
-    /// <remarks>
-    /// A large heap starts at its maximum on purpose: one that starts small
-    /// grows toward Xmx in live resize steps, and a 16 GB heap was measured
-    /// doing that from 2 GB to 9.4 GB across one session, each step a stutter.
-    /// The memory was already promised to the game.
-    ///
-    /// A small heap must not. On a machine with eight gigabytes, committing
-    /// three and a half of them in the first instant - before a single chunk is
-    /// drawn - is what takes the machine down, and the promise that made it
-    /// harmless on a large machine is the opposite of harmless here: there was
-    /// nothing spare to promise. It starts at a gigabyte and grows into what it
-    /// is allowed, paying the resize stutters, because a stutter is a thing you
-    /// play through and paging is not.
-    /// </remarks>
-    internal static int InitialHeapMbFor(int maximumRamMb) =>
-        maximumRamMb <= SmallHeapCeilingMb
-            ? Math.Min(1024, maximumRamMb)
-            : maximumRamMb;
+    /// <summary>Start at at most 1 GiB, preserving smaller heaps and the selected Xmx.</summary>
+    internal static int InitialHeapMbFor(int maximumRamMb) => Math.Min(1024, maximumRamMb);
 
     private readonly PackJvmArgumentsService _packJvmArguments;
     private readonly AppPaths _paths;
@@ -607,8 +588,7 @@ public sealed class MinecraftProcessService
             JavaPath = runtime.JavaPath,
             Session = session,
             MaximumRamMb = maximumRamMb,
-            // Equal to the maximum on a machine with room, lower on one
-            // without; see InitialHeapMbFor.
+            // Initial commitment is independent of the selected maximum.
             MinimumRamMb = InitialHeapMbFor(maximumRamMb),
             GameLauncherName = "LANMinecraft",
             GameLauncherVersion = "1",
@@ -660,6 +640,7 @@ public sealed class MinecraftProcessService
         minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
         minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
 
+        SessionGameLog sessionLog;
         var started = false;
         try
         {
@@ -669,6 +650,17 @@ public sealed class MinecraftProcessService
                 {
                     [PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint
                 });
+            sessionLog = new SessionGameLog(gameDir);
+            var memory = LaunchMemoryCheck.Read();
+            if (memory is { } snapshot)
+            {
+                _logger.Info(LaunchMemoryCheck.Describe(snapshot));
+                var rejection = LaunchMemoryCheck.Rejection(snapshot, maximumRamMb);
+                if (rejection is not null) throw new InvalidOperationException(rejection);
+                var growthWarning = LaunchMemoryCheck.GrowthWarning(snapshot, maximumRamMb, reserveGb);
+                if (growthWarning is not null) _logger.Warn(growthWarning);
+            }
+            else _logger.Warn("Windows did not provide a system commit snapshot; memory availability is unknown.");
             if (!minecraftProcess.Start())
             {
                 throw new InvalidOperationException("Minecraft process could not be started.");
@@ -680,9 +672,14 @@ public sealed class MinecraftProcessService
             noticeOverlay.BindProcess(minecraftProcess);
             started = true;
         }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1455 || ex.NativeErrorCode == 8 || ex.NativeErrorCode == 14)
+        {
+            throw new InvalidOperationException(LaunchMemoryCheck.FailureDetails(
+                Environment.NewLine + "Native memory allocation failed: error=" + ex.NativeErrorCode, ""), ex);
+        }
         finally
         {
-            if (!started) minecraftProcess.Dispose();
+            if (!started) { startupOutput.Close(); minecraftProcess.Dispose(); }
         }
 
         var processId = minecraftProcess.Id;
@@ -698,7 +695,7 @@ public sealed class MinecraftProcessService
         // the completion source instead of the Process.
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MonitorClientExitAsync(
-            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir,
+            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, sessionLog, gameDir,
             heapGb, video, installedGb);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
@@ -707,8 +704,7 @@ public sealed class MinecraftProcessService
         {
             throw new InvalidOperationException(
                 $"Minecraft exited during startup with code {exitCode.Task.Result}." +
-                startupOutput.Describe() +
-                ReadLatestLogTail(gameDir));
+                DescribeProcessFailure(startupOutput, sessionLog));
         }
 
         _logger.Info($"Minecraft client started with profile {runtime.ProfileId}.");
@@ -719,6 +715,7 @@ public sealed class MinecraftProcessService
         string packRelativePath,
         TaskCompletionSource<int> exitCode,
         StartupOutputBuffer startupOutput,
+        SessionGameLog sessionLog,
         string gameDir,
         int heapGb = 0,
         VideoMemoryProfile video = default,
@@ -765,7 +762,7 @@ public sealed class MinecraftProcessService
                 // moment it happens.
                 // A process the launcher ended after the game had finished is not
                 // a crash, and what it said on its way out is not a crash report.
-                if (!endedByLauncher) ReportUnexpectedExit(process, startupOutput, gameDir, heapGb);
+                if (!endedByLauncher) ReportUnexpectedExit(process, startupOutput, sessionLog, heapGb);
                 // The pipes are done; what they carried is on disk for a report.
                 startupOutput.Close();
                 // Published before any cleanup so the launch method never has
@@ -868,17 +865,16 @@ public sealed class MinecraftProcessService
     }
 
     private void ReportUnexpectedExit(
-        Process process, StartupOutputBuffer startupOutput, string gameDir, int heapGb)
+        Process process, StartupOutputBuffer startupOutput, SessionGameLog sessionLog, int heapGb)
     {
         try
         {
             if (process.ExitCode == 0) return;
             var console = startupOutput.Describe();
-            var tail = ReadLatestLogTail(gameDir);
+            var tail = sessionLog.Describe();
             _logger.Warn(
                 $"Minecraft exited with code {process.ExitCode}." +
-                console +
-                tail);
+                DescribeProcessFailure(startupOutput, sessionLog));
             // Out of memory is the one ending a player can act on, and the one
             // the game itself would have answered with a dangerous offer, so it
             // is said in the window rather than left in the log.
@@ -995,10 +991,8 @@ public sealed class MinecraftProcessService
     /// it ran, and the guess gets to be checked.
     ///
     /// The subtraction reads differently at the two ends, and is worth having
-    /// at both. A large heap is started at its maximum, so it is committed from
-    /// the first instant and everything above it is room beside it. A small one
-    /// starts at a gigabyte and grows, so what is committed is the heap the
-    /// session actually needed plus that room - which is the more useful of the
+    /// at both. A heap starts at at most a gigabyte and grows, so what is committed
+    /// is the heap the session actually needed plus its native room - which is the more useful of the
     /// two readings, and the one this measurement was added to get.
     ///
     /// Two numbers, and the commit is the one that answers the question. The
@@ -1012,7 +1006,8 @@ public sealed class MinecraftProcessService
     /// </remarks>
     private void ReportMemoryHeld(long residentBytes, long committedBytes, int heapGb)
     {
-        var line = DescribeMemoryHeld(residentBytes, committedBytes, heapGb);
+        var line = DescribeMemoryHeld(residentBytes, committedBytes, heapGb,
+            heapGb > 0 ? InitialHeapMbFor(heapGb * 1024) : null);
         if (line.Length > 0) _logger.Info(line);
     }
 
@@ -1053,7 +1048,10 @@ public sealed class MinecraftProcessService
             ResidentMb: (int)(residentBytes / (1024 * 1024)),
             HeapMb: heapGb * 1024,
             Minutes: (int)played.TotalMinutes,
-            When: DateTimeOffset.Now);
+            When: DateTimeOffset.Now)
+        {
+            InitialHeapMb = InitialHeapMbFor(heapGb * 1024)
+        };
         if (!session.IsWorthKeeping)
         {
             if (session.CommittedMb > 0) _logger.Info($"Memory: not written down - {session.WhyNotKept}.");
@@ -1069,7 +1067,7 @@ public sealed class MinecraftProcessService
     }
 
     /// <summary>That measurement as a line of log, or nothing to say.</summary>
-    internal static string DescribeMemoryHeld(long residentBytes, long committedBytes, int heapGb)
+    internal static string DescribeMemoryHeld(long residentBytes, long committedBytes, int heapGb, int? initialHeapMb = null)
     {
         var residentMb = residentBytes / (1024 * 1024);
         var committedMb = committedBytes / (1024 * 1024);
@@ -1080,6 +1078,10 @@ public sealed class MinecraftProcessService
         if (heapGb <= 0) return $"Memory: the game asked for {askedMb} MB at its largest{resident}.";
 
         var heapMb = heapGb * 1024;
+        var initial = initialHeapMb ?? InitialHeapMbFor(heapMb);
+        if (initial < heapMb)
+            return $"Memory: the game asked for {askedMb} MB at its largest{resident}. " +
+                   $"Xms was {initial} MB and Xmx {heapMb} MB; growing heap and native memory cannot be separated from process counters.";
         return $"Memory: the game asked for {askedMb} MB at its largest - a heap of {heapMb} MB " +
                $"and about {Math.Max(0, askedMb - heapMb)} MB beside it{resident}.";
     }
@@ -1102,8 +1104,9 @@ public sealed class MinecraftProcessService
     /// own log, one statement earlier, in the same message.
     /// </remarks>
     internal static bool NamesOutOfMemory(string consoleOutput, string logTail) =>
-        consoleOutput.Contains(OutOfMemoryMarker, StringComparison.Ordinal) ||
-        logTail.Contains(OutOfMemoryMarker, StringComparison.Ordinal);
+        !LaunchMemoryCheck.NamesNativeAllocationFailure(consoleOutput, logTail) &&
+        (consoleOutput.Contains(OutOfMemoryMarker, StringComparison.Ordinal) ||
+         logTail.Contains(OutOfMemoryMarker, StringComparison.Ordinal));
 
     private static void TryPublishExitCode(Process process, TaskCompletionSource<int> exitCode)
     {
@@ -1120,7 +1123,10 @@ public sealed class MinecraftProcessService
     /// Keeps the tail of the game's own console output so a JVM that dies before
     /// log4j starts still explains itself. Bounded because the game runs for hours.
     /// </summary>
-    private sealed class StartupOutputBuffer
+    internal static string DescribeProcessFailure(StartupOutputBuffer output, SessionGameLog log) =>
+        LaunchMemoryCheck.FailureDetails(output.Describe(), log.Describe());
+
+    internal sealed class StartupOutputBuffer
     {
         private const int MaximumCharacters = 8 * 1024;
 
@@ -1141,6 +1147,7 @@ public sealed class MinecraftProcessService
 
         private readonly Lock _gate = new();
         private readonly StringBuilder _lines = new();
+        private string? _nativeFailure;
         private StreamWriter? _file;
         private long _written;
 
@@ -1224,6 +1231,8 @@ public sealed class MinecraftProcessService
             if (string.IsNullOrWhiteSpace(line)) return;
             lock (_gate)
             {
+                if (_nativeFailure is null && LaunchMemoryCheck.NamesNativeAllocationFailure(line, ""))
+                    _nativeFailure = line[..Math.Min(line.Length, 512)];
                 _lines.AppendLine(line);
                 if (_lines.Length > MaximumCharacters)
                 {
@@ -1249,7 +1258,8 @@ public sealed class MinecraftProcessService
             {
                 return _lines.Length == 0
                     ? ""
-                    : Environment.NewLine + _lines.ToString().TrimEnd();
+                    : Environment.NewLine + (_nativeFailure is null ? "" : _nativeFailure + Environment.NewLine) +
+                      _lines.ToString().TrimEnd();
             }
         }
     }
@@ -1307,6 +1317,7 @@ public sealed class MinecraftProcessService
             // launcher's setting, so 0 stands for "not known" and the ending is
             // still named, without a number that might be someone else's.
             _ = MonitorClientExitAsync(process, session.PackRelativePath, exitCode, new StartupOutputBuffer(),
+                new SessionGameLog(_paths.CombineUnderInstances(session.PackRelativePath)),
                 _paths.CombineUnderInstances(session.PackRelativePath), heapGb: 0);
         }
         if (adopted > 0) NotifyClientRunningChanged(true);
@@ -1493,7 +1504,7 @@ public sealed class MinecraftProcessService
             "-Xlog:gc:stdout:time,uptime"
             // G1 tuned for a big modded heap. Left alone it grew the committed
             // heap from 2 GB to 9.4 GB in one session in resize steps, each a
-            // pause a player feels as a stutter; Xms=Xmx below ends that. The
+            // pause a player may feel. Initial commitment now stays bounded. The
             // 16 GB heap also defaults to 8 MB regions, which makes every
             // block-palette or LOD array over 4 MB a "humongous" allocation
             // with its own slow path - 32 MB regions put them back on the
@@ -1605,21 +1616,5 @@ public sealed class MinecraftProcessService
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr handle);
-
-    private static string ReadLatestLogTail(string gameDir)
-    {
-        try
-        {
-            var path = Path.Combine(gameDir, "logs", "latest.log");
-            if (!File.Exists(path)) return "";
-            var lines = File.ReadLines(path).TakeLast(30);
-            var details = string.Join(Environment.NewLine, lines);
-            return details.Length == 0 ? "" : Environment.NewLine + details;
-        }
-        catch
-        {
-            return "";
-        }
-    }
 
 }
