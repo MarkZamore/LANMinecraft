@@ -115,6 +115,7 @@ public sealed class MinecraftProcessService
         // Named rather than assumed. G1 is the default on both runtimes this
         // launcher ships, and writing it down costs nothing and settles it.
         "-XX:+UseG1GC",
+        HeapRetentionArgument,
         // The one that was missing, and missing from the list where it matters
         // most. Reference processing is single-threaded without it, and a
         // modded heap is made of weak and soft references - it is in every
@@ -179,6 +180,7 @@ public sealed class MinecraftProcessService
     public static IReadOnlyList<string> SmallHeapTuningArguments { get; } =
     [
         "-XX:+UseG1GC",
+        HeapRetentionArgument,
         "-XX:+ParallelRefProcEnabled",
         "-XX:MaxGCPauseMillis=150",
         "-XX:+UnlockExperimentalVMOptions",
@@ -256,6 +258,11 @@ public sealed class MinecraftProcessService
 
     /// <summary>Start at at most 1 GiB, preserving smaller heaps and the selected Xmx.</summary>
     internal static int InitialHeapMbFor(int maximumRamMb) => Math.Min(1024, maximumRamMb);
+
+    // With G1 this makes the maximum desired capacity Xmx, preventing the
+    // shrink branch after Full GC and concurrent Remark. MinHeapFreeRatio
+    // stays at its normal value so demand-driven expansion is preserved.
+    internal const string HeapRetentionArgument = "-XX:MaxHeapFreeRatio=100";
 
     private readonly PackJvmArgumentsService _packJvmArguments;
     private readonly AppPaths _paths;
@@ -604,7 +611,8 @@ public sealed class MinecraftProcessService
         IReadOnlyList<string> finalArguments;
         try
         {
-            finalArguments = CompleteJvmArguments(minecraftProcess.StartInfo, profile, packDir, _packJvmArguments);
+            finalArguments = CompleteJvmArguments(minecraftProcess.StartInfo, profile, packDir, _packJvmArguments,
+                retainCommittedHeap: true);
         }
         catch
         {
@@ -1528,7 +1536,8 @@ public sealed class MinecraftProcessService
         ProcessStartInfo startInfo,
         IVersion version,
         string packDir,
-        PackJvmArgumentsService? packJvmArguments = null)
+        PackJvmArgumentsService? packJvmArguments = null,
+        bool retainCommittedHeap = false)
     {
         var original = ReadProcessArguments(startInfo);
         var mainClass = version.GetInheritedProperty(item => item.MainClass);
@@ -1538,7 +1547,7 @@ public sealed class MinecraftProcessService
         if (boundaries.Length != 1)
             throw new InvalidOperationException("The native main-class boundary is missing or ambiguous; pack JVM options were not applied.");
         var packArguments = (packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir);
-        if (packArguments.Count == 0) return original;
+        if (packArguments.Count == 0 && !retainCommittedHeap) return original;
         var insertion = boundaries[0];
         // A modular/JAR launch keeps its entrypoint switch beside its operand.
         if (insertion > 0 && original[insertion - 1] is "-m" or "--module" or "-jar") insertion--;
@@ -1574,6 +1583,25 @@ public sealed class MinecraftProcessService
         }
         for (var index = 0; index < packArguments.Count; index++)
             if (packPropertyKeys[index] is not { } key || lastPackProperty[key] == index) final.Add(packArguments[index]);
+        if (retainCommittedHeap)
+        {
+            // This user-requested heap policy belongs to the launch session.
+            // Apply it after pack options without rewriting their files or
+            // touching operands (classpath/module options) and game arguments.
+            var retained = new List<string>();
+            for (var index = 0; index < final.Count; index++)
+            {
+                var argument = final[index];
+                if (JvmOptionsWithValue.Contains(argument))
+                {
+                    retained.Add(argument);
+                    retained.Add(final[++index]);
+                }
+                else if (!argument.StartsWith("-XX:MaxHeapFreeRatio=", StringComparison.Ordinal)) retained.Add(argument);
+            }
+            retained.Add(HeapRetentionArgument);
+            final = retained;
+        }
         final.AddRange(original.Skip(insertion));
         startInfo.Arguments = "";
         startInfo.ArgumentList.Clear();
