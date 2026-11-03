@@ -79,7 +79,24 @@ class LibraryPublisherTests(unittest.TestCase):
             data = json.loads(archive.read("library.json"))
         self.assertNotIn("visibleModIds", data)
         self.assertNotIn("modsTitle", data)
+        self.assertNotIn("modGroups", data)
         self.assertEqual(4, len(data["mods"]))
+
+    def test_groups_are_validated_after_normal_addon_and_library_decoration(self):
+        self.write_inventory()
+        self.content.update(visibleModIds=["integration", "addon"], baseModIds=["base"], modGroups=[
+            {"title": "First", "modIds": ["integration"]}, {"title": "Second", "modIds": ["addon"]}], modCountScope="all")
+        self.write_content()
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            data = json.loads(archive.read("library.json"))
+        self.assertEqual(self.content["modGroups"], data["modGroups"])
+        self.assertEqual("all", data["modCountScope"])
+        self.assertEqual("base", next(mod for mod in data["mods"] if mod["id"] == "addon")["parentId"])
+        self.content["visibleModIds"].append("base")
+        self.content["baseModIds"] = []
+        self.write_content()
+        with self.assertRaisesRegex(ValueError, "non-root"):
+            build_library(self.pack, "r2")
 
     def test_actual_names_curated_addons_and_libraries_not_the_whole_dependency_graph(self):
         payload = build_library(self.pack, "revision-one")

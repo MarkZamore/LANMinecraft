@@ -91,6 +91,71 @@ public sealed class PackCatalogTests : IDisposable
     }
 
     [Fact]
+    public async Task FilteredDisplayCountsNeverReplaceThePublishedNativeMemoryCount()
+    {
+        CatalogMod[] mods = [
+            new() { Id = "base", Name = "Base" }, new() { Id = "dependency", Name = "Dependency" },
+            new() { Id = "helper", Name = "Helper", IsLibrary = true },
+            new() { Id = "helper2", Name = "Helper2", IsLibrary = true },
+            new() { Id = "root", Name = "Root", ParentId = "base" },
+            new() { Id = "child", Name = "Child", ParentId = "root" },
+            new() { Id = "grandchild", Name = "Grandchild", ParentId = "child" },
+            new() { Id = "hidden", Name = "Hidden" }, new() { Id = "hidden_child", Name = "Hidden child", ParentId = "hidden" }];
+        using var host = new CatalogHost(mods: mods, publishedModCount: 9, configure: content =>
+        {
+            content.BaseModIds = ["base"];
+            content.VisibleModIds = ["root", "child", "grandchild"];
+            content.ModGroups = [new() { Title = "A category", ModIds = ["root"] }];
+            content.ModCountScope = "all";
+        });
+        var catalog = new PackCatalogService(_paths, _logger, host.Client);
+        await catalog.RefreshOnceAsync();
+        var pack = catalog.Find(CatalogHost.Folder)!;
+        Assert.Equal(9, pack.ModCount);
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal("Minecraft 26.3 (7 модов)", pack.VersionLabel);
+        pack.Content.ModCountScope = "visible";
+        pack.BuildTree();
+        Assert.Equal(3, pack.DisplayModCount);
+        Assert.Equal("Minecraft 26.3 (3 мода)", pack.VersionLabel);
+        var root = Assert.Single(pack.Mods);
+        pack.Mods.Add(new CatalogModNode(new CatalogMod { Id = "grandchild", Name = "Repeated view entry" }));
+        Assert.Equal(3, pack.DisplayModCount);
+        pack.Mods.RemoveAt(1);
+        root.IsExpanded = true;
+        root.Children[0].IsExpanded = true;
+        Assert.Equal(3, pack.DisplayModCount);
+        root.IsExpanded = false;
+        Assert.Equal(3, pack.DisplayModCount);
+        var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = catalog };
+        var before = await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
+        Assert.Equal(9, before.ModCount);
+        Assert.Equal(1, before.JarCount);
+        pack.Content.ModCountScope = "all";
+        pack.BuildTree();
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal(9, pack.ModCount);
+        Assert.Single(pack.ModGroups);
+        Assert.Single(pack.Mods);
+        Assert.Single(pack.Mods[0].Children);
+        Assert.Equal("Minecraft 26.3 (7 модов)", pack.VersionLabel);
+        pack.Content.ModCountScope = "visible";
+        pack.Content.ModGroups = null;
+        pack.BuildTree();
+        Assert.Equal(3, pack.DisplayModCount);
+        pack.Content.VisibleModIds = null;
+        pack.BuildTree();
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal(2, pack.Libraries.Count);
+        var after = await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
+        Assert.Equal(before, after);
+        foreach (var ram in new[] { 8UL, 32UL, 64UL })
+            Assert.Equal(MemorySizingService.GetRecommendedMemoryGb(before, ram * 1024 * 1024 * 1024),
+                MemorySizingService.GetRecommendedMemoryGb(after, ram * 1024 * 1024 * 1024));
+        Assert.DoesNotContain(host.Requests, url => new Uri(url).AbsolutePath.EndsWith("/payload.jar", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task NewPackIsDiscoveredOnceAndPlayChecksTheCurrentManifest()
     {
         CatalogMod[] initialMods = [
@@ -113,7 +178,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
         var originalPack = service.Find(CatalogHost.Folder)!;
         Assert.Equal(3, originalPack.ModCount);
-        Assert.Equal("Minecraft 26.3 (3 мода)", originalPack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 (2 мода)", originalPack.VersionLabel);
         var before = host.Requests.Count;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource(CatalogHost.Folder));
@@ -137,7 +202,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
         await nextStartup.RefreshOnceAsync();
         Assert.Equal(5, nextStartup.Find(CatalogHost.Folder)!.ModCount);
-        Assert.Equal("Minecraft 26.3 (5 модов)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
+        Assert.Equal("Minecraft 26.3 (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
         Assert.Equal(3, originalPack.ModCount);
 
         // Discovery persists without an EXE update, but offline presentation
@@ -554,15 +619,20 @@ public sealed class PackCatalogTests : IDisposable
     [InlineData(22, "мода")]
     [InlineData(111, "модов")]
     [InlineData(200, "модов")]
-    public void VersionLabelCountsUniqueModIdsIncludingLibrariesAndUsesRussianPlural(int count, string word)
+    public void VersionLabelCountsDisplayedModIdsAndUsesRussianPlural(int count, string word)
     {
         var pack = new PackCatalogService(_paths, _logger).Packs[0];
         pack.Content.Mods = Enumerable.Range(0, count)
-            .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index, IsLibrary = index % 2 == 0 })
+            .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })
             .Concat(count > 0 ? [new CatalogMod { Id = "mod_0", Name = "Repeated ID" }] : Array.Empty<CatalogMod>())
             .Append(new CatalogMod { Id = "language_provider", Name = "Language provider", IsLibrary = true, IsLoadedMod = false })
             .ToList();
         Assert.Equal(count, pack.ModCount);
+        // Use the actual rendered roots; the full raw inventory can contain
+        // repeated IDs and helper/provider entries without inflating the UI.
+        pack.Mods.Clear();
+        pack.Mods.AddRange(Enumerable.Range(0, count).Select(index => new CatalogModNode(new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })));
+        Assert.Equal(count, pack.DisplayModCount);
         Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} ({count} {word})", pack.VersionLabel);
     }
 
@@ -643,10 +713,13 @@ public sealed class PackCatalogTests : IDisposable
         internal bool Offline, InvalidIndex, CorruptBundle, MissingPayload;
         private readonly byte[] _bundle;
         private readonly string _revision;
+        private readonly int? _publishedModCount;
         private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
-        internal CatalogHost(string? projectPage = null, CatalogMod[]? mods = null, string revision = Revision)
+        internal CatalogHost(string? projectPage = null, CatalogMod[]? mods = null, string revision = Revision,
+            Action<CatalogDescription>? configure = null, int? publishedModCount = null)
         {
             _revision = revision;
+            _publishedModCount = publishedModCount;
             Client = new HttpClient(this);
             using var original = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
             using var zip = new ZipArchive(original, ZipArchiveMode.Read);
@@ -658,6 +731,7 @@ public sealed class PackCatalogTests : IDisposable
             description.Name = Folder;
             description.RelativePath = Folder;
             description.Revision = _revision;
+            configure?.Invoke(description);
             using var output = new MemoryStream();
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, true))
             {
@@ -680,7 +754,7 @@ public sealed class PackCatalogTests : IDisposable
             {
                 var hash = Convert.ToHexStringLower(SHA256.HashData(_bundle));
                 var payloadHash = Convert.ToHexStringLower(SHA256.HashData(Payload));
-                return Json(new { schemaVersion = 1, revision = CorruptBundle ? "changed" : _revision, minecraftVersion = "26.3",
+                return Json(new { schemaVersion = 1, revision = CorruptBundle ? "changed" : _revision, minecraftVersion = "26.3", modCount = _publishedModCount,
                     files = new[] { new { path = "mods/payload.jar", sha256 = payloadHash, sizeBytes = Payload.Length } },
                     assets = new[] { new { name = "payload.jar", kind = "jar", sha256 = payloadHash, sizeBytes = Payload.Length, covers = new[] { "mods/payload.jar" } } },
                     library = new { name = "library-" + hash + ".zip", sha256 = hash, sizeBytes = _bundle.Length, revision = CorruptBundle ? "changed" : _revision } });

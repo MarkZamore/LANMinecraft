@@ -262,6 +262,12 @@
       FullyQualifiedName=Minecraft.Tests.PackRenameMigrationTests.CatalogSourceAliases_KeepValueEqualityAcrossJsonRoundTrip|
       FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.SelectedAdditionsKeepTheCompleteLoadedCountAndAnAddonOfAHiddenBaseRemainsVisible|
       FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.DetailViewBindsThePublishedHeadingAndHidesAnEmptyLibrarySection|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.FilteredDisplayCountsNeverReplaceThePublishedNativeMemoryCount|
+      FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.GroupedRootsKeepMetadataOrderChildrenAndTheCompleteInventory|
+      FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.AbsentGroupsKeepFlatCardsAndAnEmptySelectionKeepsNoSections|
+      FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.PublishedGroupsRejectDuplicatesHiddenLibrariesChildrenAndIncompleteCoverage|
+      FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.UnknownCountScopesAreRejectedAndAllContentRemainsIndependentOfGroups|
+      FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.NormalModTreesKeepLinksSeparateAndSizeChevronsToTextInGroupedAndFlatCards|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.CompletePreparationIsPortableRepairsRuntimeAndReusesDownloads|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiReserveChangesRecommendationAndAdvisoryWithoutChangingThePlayersHeap|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.AiDescriptorChangesAreReadDespiteUnchangedJarCacheLengthAndTimestamp|
