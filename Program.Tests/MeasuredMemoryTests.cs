@@ -23,6 +23,47 @@ public sealed class MeasuredMemoryTests : IDisposable
 
     public void Dispose() => TempTree.Delete(_root);
 
+    [Fact]
+    public void LegacyLargeHeapMeasurementsSurviveNewInitialHeapPolicyAndStoreRecall()
+    {
+        var paths = Paths();
+        var key = MeasuredMemoryStore.KeyFor("Some Build", new VideoMemoryProfile(16), 32);
+        // Literal old schema: no initialHeapMb field, exactly as published before 436.
+        var record = "{\"committedMb\":24576,\"residentMb\":16384,\"heapMb\":16384,\"minutes\":90,\"when\":\"2026-11-01T00:00:00Z\"}";
+        File.WriteAllText(Path.Combine(paths.Personal, "memory-measurements.json"),
+            "{" + System.Text.Json.JsonSerializer.Serialize(key) + ":[" + record + "]}");
+        var recalled = new MeasuredMemoryStore(paths).Recall("Some Build", new VideoMemoryProfile(16), 32);
+        Assert.True(recalled.IsKnown);
+        Assert.Equal(8192, recalled.AtMostMb);
+        Assert.Equal(1, recalled.Sessions);
+        Assert.True(TheLoggedSession.IsWorthKeeping); // 19 GiB historical record also survives.
+    }
+
+    [Fact]
+    public void GrowingHeapRecordsCannotUnderstateNativeReserveOrEvictLegacyMeasurements()
+    {
+        var paths = Paths();
+        var store = new MeasuredMemoryStore(paths);
+        var card = new VideoMemoryProfile(16);
+        var old = TheLoggedSession;
+        store.Remember("Some Build", card, 32, old);
+        var growing = old with { InitialHeapMb = 1024 };
+        Assert.False(growing.IsWorthKeeping);
+        Assert.Contains("starts small and grows", growing.WhyNotKept, StringComparison.Ordinal);
+        Assert.False(MeasuredMemoryProfile.From([growing]).IsKnown);
+        Assert.False(store.Remember("Some Build", card, 32, growing).IsKnown);
+        Assert.Equal(old.BesideHeapAtMostMb, new MeasuredMemoryStore(paths).Recall("Some Build", card, 32).AtMostMb);
+        var serialized = System.Text.Json.JsonSerializer.Serialize(growing);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<MemorySession>(serialized);
+        Assert.Equal(1024, restored.InitialHeapMb);
+        Assert.False(restored.IsWorthKeeping);
+        var fixedHeap = old with { InitialHeapMb = old.HeapMb };
+        Assert.True(fixedHeap.IsWorthKeeping);
+        var description = MinecraftProcessService.DescribeMemoryHeld(14687L * 1024 * 1024, 26989L * 1024 * 1024, 19, 1024);
+        Assert.Contains("cannot be separated", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("7533 MB beside", description, StringComparison.Ordinal);
+    }
+
     /// <summary>The measured pack: 1128 mods, 1.9 GB of jars, and the texture beside them.</summary>
     private static PackMemoryProfile BigModpack =>
         new(1128, 1959L * 1024 * 1024, 115L * 1024 * 1024, "1.21.1");

@@ -349,6 +349,18 @@
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.UnsupportedFreshRequiredFeatureRefusesTheInstalledStartupVersion|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.ChunkedOversizeManifestKeepsTheInstalledVersionWithoutDownloadingPayloads|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterChunkPacingTests.BackpressureUsesTheMappedGameConnection_OnlyWhenTheWholeChainExists|
-      FullyQualifiedName=Minecraft.Tests.IdentityAdapterChunkPacingTests.UnwritableNetworkPausesAndResumesHeldChunks_WithoutChangingNativeViewOrFallbacks</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterChunkPacingTests.UnwritableNetworkPausesAndResumesHeldChunks_WithoutChangingNativeViewOrFallbacks|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.ActualCmlCompositionPreservesMaximumAndBoundsInitialHeap|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.AdmissionUsesCurrentSystemCommitAndNativeHeadroom|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.ExactCommitBoundaryAndExhaustedSnapshotDoNotRoundOrUnderflow|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.RealWindowsSnapshotUsesBytesAndSeparatesPhysicalFromCommit|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.LowerInitialHeapAllowsOriginalBudgetButWarnsAboutUnreservedFutureGrowth|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.NativeFailureIsNeverClassifiedAsSpentJavaHeap|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.SessionTailHandlesPreviousFilesAppendTruncationAndRotation|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.SessionTailIsBoundedAndUnknownOrDeletedBoundariesFailClosed|
+      FullyQualifiedName=Minecraft.Tests.HeapTuningArgumentTests.AHeapStartsWhereItsMachineCanAffordItTo|
+      FullyQualifiedName=Minecraft.Tests.MeasuredMemoryTests.LegacyLargeHeapMeasurementsSurviveNewInitialHeapPolicyAndStoreRecall|
+      FullyQualifiedName=Minecraft.Tests.MeasuredMemoryTests.GrowingHeapRecordsCannotUnderstateNativeReserveOrEvictLegacyMeasurements|
+      FullyQualifiedName=Minecraft.Tests.LaunchMemorySessionTests.ActualEarlyProcessFailureAndLaterDiagnosticContainOnlyCurrentOutput</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
