@@ -81,6 +81,9 @@
       FullyQualifiedName=Minecraft.Tests.PlayButtonCaptionTests.ThePlaySurface_StaysGreenWhilePreparingAndMutesOnlyWhenDisabled|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.PreparationAndRunningGameLeaveCatalogueAndDetailsScrollable|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarIsAutomaticWhenItsContentDoesNotOverflow|
+      FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.EarlyOpenDisplaysEachReadyCardWithoutWaitingForAnUnrelatedDownloadOrReentry|
+      FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.FurtherCardsAndRepeatedNotificationsKeepTheOpenDetailPageAndItsState|
+      FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.QueuedPresentationRefreshDoesNotRepopulateDisposedControlsAfterShutdownStarts|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheExternalScrollbar_SpansPlayAndBodyAndScrollsOnlyTheBody|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheNativeClient_MaximizesAndRestoresWithoutChangingColumnsOrSelection|
