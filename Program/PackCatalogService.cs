@@ -60,10 +60,14 @@ public sealed class CatalogDescription
     public string ModsTitle { get; set; } = "Моды";
     public List<string>? VisibleModIds { get; set; }
     public List<string>? BaseModIds { get; set; }
+    public List<CatalogModGroup>? ModGroups { get; set; }
+    public string ModCountScope { get; set; } = "visible";
     public List<CatalogMod> Mods { get; set; } = [];
 }
 public sealed class CatalogModNode(CatalogMod mod, string? packId = null)
 {
+    public string Id => mod.Id;
+    public bool IsLibrary => mod.IsLibrary;
     public string Name => mod.Name;
     public string Version => mod.Version;
     public Uri? WebsiteUri => mod.WebsiteAvailable ? CatalogModPages.Resolve(mod.Id, mod.WebsiteUrl, packId) : null;
@@ -82,11 +86,30 @@ public sealed class CatalogPack
     // dependencies. The library flag only controls the presentation category.
     public int ModCount => Content.Mods.Where(mod => mod.IsLoadedMod)
         .Select(mod => mod.Id).Distinct(StringComparer.Ordinal).Count();
+    // Player-facing counts follow the actual main tree, including collapsed
+    // addons. Native inventory and memory estimates retain their full counts.
+    public int DisplayModCount
+    {
+        get
+        {
+            if (Content.ModCountScope == "all") return AllContentModIds.Count;
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            var visited = new HashSet<CatalogModNode>();
+            var pending = new Stack<CatalogModNode>(Mods);
+            while (pending.TryPop(out var node))
+            {
+                if (!visited.Add(node)) continue;
+                if (!node.IsLibrary) ids.Add(node.Id);
+                foreach (var child in node.Children) pending.Push(child);
+            }
+            return ids.Count;
+        }
+    }
     public string VersionLabel
     {
         get
         {
-            var count = ModCount;
+            var count = DisplayModCount;
             var word = count % 100 is >= 11 and <= 14 ? "модов" : (count % 10) switch
             {
                 1 => "мод",
@@ -101,12 +124,18 @@ public sealed class CatalogPack
     public string ModsTitle => Content.ModsTitle;
     public List<CatalogModNode> Mods { get; } = [];
     public List<CatalogModNode> Libraries { get; } = [];
+    public List<CatalogModSection> ModGroups { get; } = [];
+    public bool HasModGroups => ModGroups.Count != 0;
     public bool HasLibraries => Libraries.Count != 0;
+    internal IReadOnlySet<string> AllContentModIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
 
     public void BuildTree()
     {
+        CatalogModGrouping.Validate(Content);
         Mods.Clear();
         Libraries.Clear();
+        ModGroups.Clear();
+        AllContentModIds = Content.Mods.Where(mod => !mod.IsLibrary).Select(mod => mod.Id).ToHashSet(StringComparer.Ordinal);
         var visible = Content.VisibleModIds?.ToHashSet(StringComparer.Ordinal);
         var presented = Content.Mods.Where(mod => visible is null || visible.Contains(mod.Id)).ToList();
         var nodes = presented.ToDictionary(m => m.Id, m => new CatalogModNode(m, Content.Id), StringComparer.Ordinal);
@@ -116,6 +145,12 @@ public sealed class CatalogPack
             if (mod.IsLibrary) Libraries.Add(node);
             else if (mod.ParentId is { } parent && nodes.TryGetValue(parent, out var owner)) owner.Children.Add(node);
             else Mods.Add(node);
+        }
+        foreach (var group in Content.ModGroups ?? [])
+        {
+            var ids = group.ModIds.ToHashSet(StringComparer.Ordinal);
+            var roots = Mods.Where(node => ids.Contains(node.Id)).ToArray();
+            if (roots.Length != 0) ModGroups.Add(new(group.Title, roots));
         }
     }
 }
@@ -501,6 +536,7 @@ public sealed partial class PackCatalogService
                 parent = owner.ParentId;
             }
         }
+        CatalogModGrouping.Validate(doc);
     }
 
     private static List<CatalogSource> ParseIndex(string json, bool useEmbeddedAliases = true)

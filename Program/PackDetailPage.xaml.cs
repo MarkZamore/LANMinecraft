@@ -46,18 +46,27 @@ public partial class PackDetailPage : UserControl, IDisposable
     }
     public IEnumerable<Action> Prepare(double width, DpiScale dpi)
     {
-        foreach (var node in pack.Mods)
+        if (pack.HasModGroups)
         {
-            var tree = new TreeView { Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
-            ScrollViewer.SetHorizontalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
-            ScrollViewer.SetVerticalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
-            // The outer page owns scrolling. Avoid a nested ScrollViewer for every mod.
-            var template = new ControlTemplate(typeof(TreeView));
-            template.VisualTree = new FrameworkElementFactory(typeof(ItemsPresenter));
-            tree.Template = template;
-            foreach (var step in AddNode(node, tree.Items)) yield return step;
-            yield return () => ModsList.Items.Add(tree);
+            yield return () => ModsList.Visibility = Visibility.Collapsed;
+            foreach (var group in pack.ModGroups)
+            {
+                ItemsControl? list = null;
+                yield return () =>
+                {
+                    // Only headings use the existing auxiliary-section look.
+                    // Items below reuse the ordinary mod columns/tree verbatim.
+                    var heading = new TextBlock { Text = group.Title };
+                    heading.SetResourceReference(TextBlock.FontWeightProperty, "Font.WeightEmphasis");
+                    heading.SetResourceReference(MarginProperty, "Gap.Above4");
+                    list = new ItemsControl { ItemsPanel = ModsList.ItemsPanel };
+                    GroupedModsHost.Children.Add(heading);
+                    GroupedModsHost.Children.Add(list);
+                };
+                foreach (var step in PrepareMods(group.Mods, () => list!.Items)) yield return step;
+            }
         }
+        else foreach (var step in PrepareMods(pack.Mods, () => ModsList.Items)) yield return step;
         foreach (var node in pack.Libraries) yield return () => LibrariesList.Items.Add(node);
         yield return () => UiPreparation.Measure(this, width, dpi);
         foreach (var node in nodes)
@@ -73,6 +82,21 @@ public partial class PackDetailPage : UserControl, IDisposable
                     child.Arrange(new Rect(0, 0, available, child.DesiredSize.Height));
                 }
             };
+        }
+    }
+    private IEnumerable<Action> PrepareMods(IEnumerable<CatalogModNode> roots, Func<ItemCollection> target)
+    {
+        foreach (var node in roots)
+        {
+            var tree = new TreeView { Background = Brushes.Transparent, BorderThickness = new Thickness(0) };
+            ScrollViewer.SetHorizontalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
+            ScrollViewer.SetVerticalScrollBarVisibility(tree, ScrollBarVisibility.Disabled);
+            // The outer page owns scrolling. Avoid a nested ScrollViewer for every mod.
+            var template = new ControlTemplate(typeof(TreeView));
+            template.VisualTree = new FrameworkElementFactory(typeof(ItemsPresenter));
+            tree.Template = template;
+            foreach (var step in AddNode(node, tree.Items)) yield return step;
+            yield return () => target().Add(tree);
         }
     }
     private IEnumerable<Action> AddNode(CatalogModNode node, ItemCollection items)

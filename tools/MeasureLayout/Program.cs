@@ -58,6 +58,7 @@ internal static class Program
             {
                 var view = (PackLibraryView)window.FindName("LibraryView");
                 var catalog = new PackCatalogService(new AppPaths(Path.Combine(output, "catalog-cache")), new Logger(Path.Combine(output, "catalog.log")));
+                if (args.Contains("--grouped-mods")) GroupedModFixture(catalog.Find(PortablePackSyncService.DefaultPackRelativePath)!);
                 view.SetCatalog(args.Contains("--six-packs") ? SixPackFixture(catalog.Packs) :
                     catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
                 view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
@@ -149,6 +150,24 @@ internal static class Program
         var dirtyRectangleSwitchPresent = AppContext.TryGetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", out var dirtyRectanglesDisabled);
         var manifest = new { CapturedAtUtc = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), AssemblyConfiguration = assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration, AssemblyVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion, NativeControls = true, StartupHandlersRemoved = true, ProcessRenderMode = RenderOptions.ProcessRenderMode.ToString(), DirtyRectangleSwitchPresent = dirtyRectangleSwitchPresent, DirtyRectanglesDisabled = dirtyRectanglesDisabled, Notes = "Content-only native WPF render; window background included. No Steam/network startup. DPI set on native visual roots before measure. SoftwareOnly is set before WPF objects, matching the final launcher. Dirty-rectangle switch is supplied through the helper runtime configuration as in production. Native resize repaint, frame, Snap and live NameMarquee are not tested by this offscreen renderer.", Hashes = hashes };
         File.WriteAllText(Path.Combine(output, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
+    }
+
+    private static void GroupedModFixture(CatalogPack pack)
+    {
+        // Synthetic presentation data exercises the normal detail renderer;
+        // production categories and membership always come from pack metadata.
+        pack.Content.ModsTitle = "Добавленные моды (Остальные в All The Mods 9)";
+        pack.Content.VisibleModIds = null;
+        pack.Content.Mods = [
+            new() { Id = "visual", Name = "A long mod name that wraps to another line in a normal mod column" },
+            new() { Id = "child", Name = "An addon with a separate official project link", ParentId = "visual" },
+            new() { Id = "anime", Name = "An anime mod" },
+            new() { Id = "horror", Name = "A horror mod" },
+            new() { Id = "extra", Name = "An additional mod" }];
+        foreach (var mod in pack.Content.Mods) mod.WebsiteUrl = "https://example.org/projects/" + mod.Id;
+        pack.Content.ModGroups = new[] { ("Зрелищные", "visual"), ("Аниме", "anime"), ("Хоррор", "horror"), ("Дополнительные", "extra") }
+            .Select(row => new CatalogModGroup { Title = row.Item1, ModIds = [row.Item2] }).ToList();
+        pack.BuildTree();
     }
 
     private static IReadOnlyList<CatalogPack> SixPackFixture(IReadOnlyList<CatalogPack> source)

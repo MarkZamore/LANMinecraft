@@ -42,7 +42,8 @@ public sealed class CatalogPresentationTests
     {
         var pack = ModifiedPack();
         Assert.Equal(7, pack.ModCount);
-        Assert.Equal("Minecraft 1.20.1 (7 модов)", pack.VersionLabel);
+        Assert.Equal(3, pack.DisplayModCount);
+        Assert.Equal("Minecraft 1.20.1 (3 мода)", pack.VersionLabel);
         Assert.Equal("Дополнительные моды", pack.ModsTitle);
         Assert.Equal(new[] { "Addition", "Requested parent" }, pack.Mods.Select(mod => mod.Name));
         Assert.Equal("Requested child", Assert.Single(pack.Mods[1].Children).Name);
@@ -67,12 +68,14 @@ public sealed class CatalogPresentationTests
         Assert.Equal("Addition", Assert.Single(pack.Mods.Single(mod => mod.Name == "Base").Children).Name);
         Assert.Equal(3, pack.Libraries.Count);
         Assert.True(pack.HasLibraries);
+        Assert.Equal(5, pack.DisplayModCount);
 
         pack.Content.VisibleModIds = [];
         pack.BuildTree();
         Assert.Empty(pack.Mods);
         Assert.Empty(pack.Libraries);
         Assert.Equal(7, pack.ModCount);
+        Assert.Equal(0, pack.DisplayModCount);
     }
 
     [Fact]
