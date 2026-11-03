@@ -74,6 +74,27 @@ public final class PortablePerPlayerChunksHooks {
     private static final Member SOURCE_CHUNK_MAP = new Member("chunkMapFields", "chunkMap", "a");
     private static final Member ASKED_DISTANCE = new Member("clientViewDistanceMethods", "viewDistance", "c");
     private static final Member PLAYER_LATENCY = new Member("playerLatencyFields", "latency", "e");
+    // Separate from the login listener's connection field. These aliases are
+    // supplied only when the native player -> game listener -> connection ->
+    // channel chain exists; an unknown runtime retains the previous pacing.
+    private static final Member CHUNK_PLAYER_LISTENER = new Member("chunkPlayerListenerFields");
+    private static final Member CHUNK_LISTENER_CONNECTION = new Member("chunkListenerConnectionFields");
+    private static final Member CHUNK_CONNECTION_CHANNEL = new Member("chunkConnectionChannelFields");
+    private static final Member CHUNK_MEMORY_CONNECTION = new Member("chunkMemoryConnectionMethods");
+    private static final ClassValue<Method> CHANNEL_WRITABILITY = new ClassValue<Method>() {
+        @Override protected Method computeValue(Class<?> type) {
+            try {
+                Method method = type.getMethod("isWritable");
+                if (method.getReturnType() != boolean.class ||
+                    java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                    throw new IllegalStateException("Unsupported optional channel writability method");
+                }
+                return method;
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException("Optional channel writability is unavailable", exception);
+            }
+        }
+    };
 
     /**
      * The last player asked about, and what he wanted.
@@ -182,6 +203,10 @@ public final class PortablePerPlayerChunksHooks {
     /** Whether the launcher found the names the pacing needs. */
     private static final boolean PACING =
         "true".equals(System.getProperty("minecraft.portable.identity.chunkPacingEnabled"));
+    private static final boolean BACKPRESSURE =
+        "true".equals(System.getProperty("minecraft.portable.identity.chunkBackpressureEnabled"));
+    private static boolean announcedBackpressure;
+    private static boolean complainedAboutBackpressure;
 
     /**
      * The player whose client is in this very process. He is never paced: his
@@ -709,6 +734,14 @@ public final class PortablePerPlayerChunksHooks {
                 synchronized (pending) {
                     int budget = budgetFor(pending.player);
                     while (budget > 0 && !pending.queue.isEmpty()) {
+                        // RTT is still zero before the first keep-alive reply.
+                        // The actual connection can already be backed up, so
+                        // consult it before consuming any held state and again
+                        // between native handovers. Netty enqueues asynchronously;
+                        // this is a pause signal, not a hard byte/rate guarantee.
+                        if (!channelWritable(pending.player)) {
+                            break;
+                        }
                         Held held = pending.queue.pollFirst();
                         // The server has since told him to forget it. Handing
                         // it over now would leave a chunk on his client that
@@ -768,6 +801,35 @@ public final class PortablePerPlayerChunksHooks {
         } catch (Throwable exception) {
             // A number that cannot be read is not a reason to send nothing.
             return CHUNKS_PER_TICK;
+        }
+    }
+
+    /** Pause only a verified network channel that currently says it is full. */
+    private static boolean channelWritable(Object player) {
+        if (!BACKPRESSURE) return true;
+        try {
+            Object listener = CHUNK_PLAYER_LISTENER.field(player).get(player);
+            if (listener == null) return true;
+            Object connection = CHUNK_LISTENER_CONNECTION.field(listener).get(listener);
+            if (connection == null) return true;
+            if (Boolean.TRUE.equals(CHUNK_MEMORY_CONNECTION.method(connection).invoke(connection))) return true;
+            Object channel = CHUNK_CONNECTION_CHANNEL.field(connection).get(connection);
+            if (channel == null) return true;
+            boolean writable = Boolean.TRUE.equals(CHANNEL_WRITABILITY.get(channel.getClass()).invoke(channel));
+            if (!announcedBackpressure) {
+                announcedBackpressure = true;
+                System.out.println("[PortableIdentity] chunk delivery honors native channel backpressure.");
+            }
+            return writable;
+        } catch (Throwable unavailable) {
+            // Optional mapping/API failures preserve the pre-existing pacing;
+            // they must not leave a guest waiting forever for an unreadable wire.
+            if (!complainedAboutBackpressure) {
+                complainedAboutBackpressure = true;
+                System.out.println("[PortableIdentity] native channel backpressure is unavailable; existing chunk pacing remains active ("
+                    + unavailable.getClass().getSimpleName() + ").");
+            }
+            return true;
         }
     }
 

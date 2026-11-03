@@ -116,7 +116,7 @@ public final class PortableIdentityPreflight {
             } else if (isAlias("chunkMapClasses", className) ||
                 isAlias("serverPlayerClasses", className) ||
                 isAlias("trackedEntityClasses", className)) {
-                verifyPerPlayerChunkTargets(className, transformed);
+                verifyPerPlayerChunkTargets(archive, className, transformed);
             } else if (!isAlias("playerInfoClasses", className) &&
                 !(isConfigured("skinManagerClasses") && isAlias("skinManagerClasses", className)) &&
                 !isAlias("textureUrlCheckerClasses", className) &&
@@ -626,7 +626,7 @@ public final class PortableIdentityPreflight {
      * forever, and a shouldSend left standing beside admit would decide the
      * same question twice with the second answer thrown away.
      */
-    private static void verifyPerPlayerChunkTargets(String className, byte[] transformed) throws Exception {
+    private static void verifyPerPlayerChunkTargets(ZipFile archive, String className, byte[] transformed) throws Exception {
         ClassNode patched = new ClassNode();
         new ClassReader(transformed).accept(patched, 0);
         int hookCalls = 0;
@@ -664,12 +664,38 @@ public final class PortableIdentityPreflight {
 
         boolean pacing = "true".equals(System.getProperty("minecraft.portable.identity.chunkPacingEnabled"));
         if (isAlias("chunkMapClasses", className)) {
+            if (pacing && "true".equals(System.getProperty("minecraft.portable.identity.chunkBackpressureEnabled"))) {
+                verifyChunkBackpressureTargets(archive, aliasIndex("chunkMapClasses", className));
+            }
             requireHookCount(className, "admit", admit, pacing ? 1 : 0);
             requireHookCount(className, "shouldSend", shouldSend, pacing ? 0 : 1);
             requireHookCount(className, "deliverHeld", deliverHeld, pacing ? 1 : 0);
         } else if (isAlias("serverPlayerClasses", className)) {
             requireHookCount(className, "cancelHeld", cancelHeld, pacing ? 1 : 0);
         }
+    }
+
+    /** Check the actual native field chain; login aliases are deliberately unrelated. */
+    private static void verifyChunkBackpressureTargets(ZipFile archive, int index) throws Exception {
+        String playerName = alias("serverPlayerClasses", index);
+        String listenerName = alias("chunkBackpressureListenerClasses", index);
+        String connectionName = alias("chunkBackpressureConnectionClasses", index);
+        ClassNode player = readClass(archive, playerName);
+        ClassNode listener = readClass(archive, listenerName);
+        ClassNode connection = readClass(archive, connectionName);
+        requireInstanceFieldType(player, "chunkPlayerListenerFields", "L" + listenerName + ";");
+        requireInstanceFieldType(listener, "chunkListenerConnectionFields", "L" + connectionName + ";");
+        requireInstanceFieldType(connection, "chunkConnectionChannelFields", "Lio/netty/channel/Channel;");
+        boolean memoryFound = connection.methods.stream().anyMatch(method ->
+            isAlias("chunkMemoryConnectionMethods", method.name) && method.desc.equals("()Z") &&
+            (method.access & Opcodes.ACC_STATIC) == 0);
+        if (!memoryFound) throw new IllegalStateException("The native memory-connection predicate is missing.");
+    }
+
+    private static void requireInstanceFieldType(ClassNode owner, String names, String descriptor) {
+        boolean found = owner.fields.stream().anyMatch(field -> isAlias(names, field.name) &&
+            field.desc.equals(descriptor) && (field.access & Opcodes.ACC_STATIC) == 0);
+        if (!found) throw new IllegalStateException("The native backpressure field type is missing: " + owner.name + "." + names);
     }
 
     /**

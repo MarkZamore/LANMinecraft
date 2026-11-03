@@ -347,6 +347,8 @@
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.FailedOnlineCheckUsesTheCoherentInstalledPackWithoutReplayingStartup|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.CancellationDuringTheFreshRequestNeverFallsBackOrMutatesInstalledFiles|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.UnsupportedFreshRequiredFeatureRefusesTheInstalledStartupVersion|
-      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.ChunkedOversizeManifestKeepsTheInstalledVersionWithoutDownloadingPayloads</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.ChunkedOversizeManifestKeepsTheInstalledVersionWithoutDownloadingPayloads|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterChunkPacingTests.BackpressureUsesTheMappedGameConnection_OnlyWhenTheWholeChainExists|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterChunkPacingTests.UnwritableNetworkPausesAndResumesHeldChunks_WithoutChangingNativeViewOrFallbacks</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

@@ -49,10 +49,10 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
         @($results | Where-Object outcome -ne 'Passed').Count -ne 0) {
         throw 'Every selected release case must pass; failures and skipped cases reject the release.'
     }
-    # The reviewed profile now has 596 cases: keep all previous coverage plus
-    # incremental library publication, retained detail state and shutdown. The narrow
+    # The reviewed profile now has 598 cases: keep all previous coverage plus
+    # optional channel mappings and real chunk backpressure/resume behavior. The narrow
     # selectors must still reject the full suite (over 1100 cases).
-    if ($results.Count -gt 596) { throw 'The release profile exceeded its 596-case budget; review its selectors.' }
+    if ($results.Count -gt 598) { throw 'The release profile exceeded its 598-case budget; review its selectors.' }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)
     $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($definition in $trx.SelectNodes("//*[local-name()='UnitTest']")) {

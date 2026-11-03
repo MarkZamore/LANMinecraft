@@ -1024,6 +1024,7 @@ internal sealed class IdentityAdapterMappingService
         properties["untrackChunkMethods"] = "untrackChunk";
         properties["untrackChunkDescriptors"] = $"(L{ChunkPos};)V";
         properties["playerLatencyFields"] = "latency";
+        properties["chunkBackpressureEnabled"] = "false";
         if (!perPlayerChunks || mappings is null) return false;
 
         // The game's own, and nothing to do. Named by the class that does the
@@ -1063,6 +1064,26 @@ internal sealed class IdentityAdapterMappingService
         // listener - which is not a version this feature runs on anyway.
         var latency = serverPlayer.FindField("latency");
         if (latency is not null) properties["playerLatencyFields"] = JoinAliases(latency);
+        // This is the game listener, not the login listener whose connection
+        // is named by identity authentication. Unknown shapes retain the old
+        // pacing; the bytecode preflight also verifies the exact field types.
+        var gameListener = mappings.FindClass(GameListener);
+        var connection = mappings.FindClass(Connection);
+        var playerListener = serverPlayer.FindField("connection");
+        var listenerConnection = gameListener?.FindField("connection");
+        var channel = connection?.FindField("channel");
+        var memoryConnection = connection?.FindMethod("isMemoryConnection", descriptor => descriptor == "()Z");
+        if (gameListener is not null && connection is not null && playerListener is not null &&
+            listenerConnection is not null && channel is not null && memoryConnection is not null)
+        {
+            properties["chunkBackpressureEnabled"] = "true";
+            properties["chunkBackpressureListenerClasses"] = JoinAliases(gameListener);
+            properties["chunkBackpressureConnectionClasses"] = JoinAliases(connection);
+            properties["chunkPlayerListenerFields"] = JoinAliases(playerListener);
+            properties["chunkListenerConnectionFields"] = JoinAliases(listenerConnection);
+            properties["chunkConnectionChannelFields"] = JoinAliases(channel);
+            properties["chunkMemoryConnectionMethods"] = JoinAliases(memoryConnection);
+        }
         return true;
     }
 
