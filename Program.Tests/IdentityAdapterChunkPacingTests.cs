@@ -111,6 +111,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
 
         Assert.False(paced);
         Assert.Equal("false", properties["chunkPacingEnabled"]);
+        Assert.Equal("false", properties["chunkBackpressureEnabled"]);
     }
 
     /// <summary>
@@ -161,6 +162,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     [InlineData("untrackChunkDescriptors")]
     [InlineData("chunkPacingEnabled")]
     [InlineData("playerLatencyFields")]
+    [InlineData("chunkBackpressureEnabled")]
     public void EveryListIsNamed_EvenWithNothingToReadThemFrom(string property)
     {
         var properties = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -196,6 +198,51 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
             Assert.Contains($"NATIVE_DISTANCE_AND_PACING_PASSED mode={mode}", output, StringComparison.Ordinal);
             Assert.Contains("offered=4225", output, StringComparison.Ordinal);
             Assert.Contains("delivered=4225", output, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void BackpressureUsesTheMappedGameConnection_OnlyWhenTheWholeChainExists()
+    {
+        var mappings = PacesNothingMappings.Replace("\te latency", "\te latency\n\tc connection", StringComparison.Ordinal) +
+            "\naiy net/minecraft/server/network/ServerGamePacketListenerImpl\n\th connection" +
+            "\nsf net/minecraft/network/Connection\n\tm channel\n\td ()Z isMemoryConnection";
+        var (properties, paced) = Build(mappings);
+        Assert.True(paced);
+        Assert.Equal("true", properties["chunkBackpressureEnabled"]);
+        Assert.Equal("connection,c", properties["chunkPlayerListenerFields"]);
+        Assert.Equal("connection,h", properties["chunkListenerConnectionFields"]);
+        Assert.Equal("channel,m", properties["chunkConnectionChannelFields"]);
+        Assert.Equal("isMemoryConnection,d", properties["chunkMemoryConnectionMethods"]);
+        Assert.Equal("net/minecraft/server/network/ServerGamePacketListenerImpl,aiy", properties["chunkBackpressureListenerClasses"]);
+        Assert.Equal("net/minecraft/network/Connection,sf", properties["chunkBackpressureConnectionClasses"]);
+        Assert.False(properties.ContainsKey("connectionFields"), "Login authentication aliases leaked into game-channel pacing.");
+        foreach (var required in new[] { "\tc connection", "\th connection", "\tm channel", "\td ()Z isMemoryConnection" })
+        {
+            var (missing, stillPaced) = Build(mappings.Replace(required, string.Empty, StringComparison.Ordinal));
+            Assert.True(stillPaced);
+            Assert.Equal("false", missing["chunkBackpressureEnabled"]);
+            Assert.False(missing.ContainsKey("chunkPlayerListenerFields"));
+        }
+        Assert.Equal("false", Build(PacesNothingMappings).Properties["chunkBackpressureEnabled"]);
+        Assert.Equal("false", Build(mappings + "\narq net/minecraft/server/network/PlayerChunkSender").Properties["chunkBackpressureEnabled"]);
+    }
+
+    [Fact]
+    public async Task UnwritableNetworkPausesAndResumesHeldChunks_WithoutChangingNativeViewOrFallbacks()
+    {
+        var common = Path.GetDirectoryName(RepositoryFile(
+            "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
+        var classes = Path.Combine(_root, "backpressure-probe");
+        Directory.CreateDirectory(classes);
+        await RunJava("javac", "-J-Xmx128m", "--release", "17", "-d", classes,
+            Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
+            RepositoryFile("Program.Tests", "Fixtures", "ChunkBackpressureProbe.java"));
+        foreach (var mode in new[] { "normal", "local", "memory", "disabled", "missing-field", "missing-method", "null-channel", "throwing" })
+        {
+            var output = await RunJava("java", "-Xmx128m", "-Xverify:all", "-cp", classes, "ChunkBackpressureProbe", mode);
+            Assert.Contains($"CHUNK_BACKPRESSURE_PASSED mode={mode}", output, StringComparison.Ordinal);
+            Assert.Contains("nativeView=64", output, StringComparison.Ordinal);
         }
     }
 
