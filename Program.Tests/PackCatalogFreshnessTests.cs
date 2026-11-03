@@ -58,7 +58,7 @@ public sealed class PackCatalogFreshnessTests : IDisposable
         var before = host.Requests.Count;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = startup };
         await sync.SyncAsync(RollingHost.Folder, null, default);
-        Assert.Equal(before + 1, host.Requests.Count);
+        Assert.Equal(before + 2, host.Requests.Count);
         Assert.Empty(host.Requests.Last().Uri.Query);
         Assert.Equal(RollingHost.NewPayload, File.ReadAllBytes(Path.Combine(_paths.Packs, RollingHost.Folder, "mods/payload.jar")));
         Assert.Contains("verified startup manifest revision \"new-verified\"", File.ReadAllText(_paths.LogFile), StringComparison.Ordinal);
@@ -194,7 +194,8 @@ public sealed class PackCatalogFreshnessTests : IDisposable
             if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
             // Model an intermediary retaining an old successful mutable URL even
             // with no-cache headers. Immutable hash-addressed assets stay normal.
-            var fresh = uri.Query.Contains("catalogRefresh=", StringComparison.Ordinal);
+            var fresh = uri.Query.Contains("catalogRefresh=", StringComparison.Ordinal) ||
+                        uri.Query.Contains("cache=", StringComparison.Ordinal);
             if (uri.AbsolutePath.EndsWith("/catalog.json", StringComparison.Ordinal))
                 return Reply(HttpStatusCode.OK, JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 1, packs = PublishEmpty && fresh ? Array.Empty<CatalogSource>() : new[] { Entry } }, Options));
             var name = Uri.UnescapeDataString(uri.Segments[^1]);
