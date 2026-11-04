@@ -19,8 +19,7 @@ internal static class Probe
     static void Main(string[] args)
     {
         AppContext.SetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", !args.Contains("--incremental"));
-        RenderOptions.ProcessRenderMode = args.Contains("--hardware")
-            ? System.Windows.Interop.RenderMode.Default : System.Windows.Interop.RenderMode.SoftwareOnly;
+        RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var output = new List<object>();
         var repository = Path.GetFullPath(args[0]);
@@ -162,8 +161,7 @@ internal static class Probe
             {
                 window.Show();
                 anchorLeft ??= window.Left; anchorTop ??= window.Top;
-                ((HwndTarget)PresentationSource.FromVisual(window)!.CompositionTarget).RenderMode = args.Contains("--hardware")
-                    ? RenderMode.Default : RenderMode.SoftwareOnly;
+                ((HwndTarget)PresentationSource.FromVisual(window)!.CompositionTarget).RenderMode = RenderMode.SoftwareOnly;
                 if (args.Contains("--maximized") || args.Contains("--restore"))
                 {
                     window.WindowState = WindowState.Maximized;
