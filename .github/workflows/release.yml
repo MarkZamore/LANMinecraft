@@ -154,6 +154,14 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) { throw "Publishing failed." }
 
+      - name: Scan portable host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\Program\Bootstrap\Test-PortableHostAntivirus.ps1 `
+            -ExecutablePath (Join-Path $env:GITHUB_WORKSPACE 'artifacts\LANMinecraft.exe') `
+            -ArtifactsDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts\portable-host-antivirus')
+
       - name: Create delta and update manifest
         shell: pwsh
         env:

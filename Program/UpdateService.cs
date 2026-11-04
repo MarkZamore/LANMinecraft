@@ -48,6 +48,7 @@ public sealed partial class UpdateService
     private readonly string _currentCommitSha;
     private readonly string? _currentExecutablePath;
     private readonly TimeSpan _checkTimeout;
+    internal Func<ProcessStartInfo, Process?> StartPowerShellHelper { get; init; } = Process.Start;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -595,7 +596,15 @@ public sealed partial class UpdateService
 
         try
         {
-            _ = Process.Start(startInfo) ?? throw new InvalidOperationException("The update helper could not be started.");
+            // PowerShell reads this before evaluating the script; changing it
+            // inside apply-update.ps1 would leave the first cache outside the
+            // portable installation. Keep this shared cache out of Temp and
+            // update-transaction cleanup, including while a helper is using it.
+            var powerShellCache = Path.Combine(_paths.Launcher, "PowerShell");
+            _paths.EnsureUnderRoot(powerShellCache);
+            Directory.CreateDirectory(powerShellCache);
+            startInfo.Environment["PSModuleAnalysisCachePath"] = Path.Combine(powerShellCache, "ModuleAnalysisCache");
+            _ = StartPowerShellHelper(startInfo) ?? throw new InvalidOperationException("The update helper could not be started.");
             _logger.Info($"Update installation scheduled ({mode}).");
         }
         catch (Exception ex)

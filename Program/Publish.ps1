@@ -144,22 +144,31 @@ if ($ReleaseNumber -eq 0) {
 }
 Write-Host "Release number: $ReleaseNumber"
 Test-ChangelogHasEntry $ReleaseNumber
+$portableStage = Join-Path $projectRoot ('artifacts\portable-publish\' + $ReleaseNumber + '-' + [Guid]::NewGuid().ToString('N'))
+$managedPayload = Join-Path $portableStage 'payload'
+$nativeBuild = Join-Path $portableStage 'native'
 
 try {
     if (-not $NoRestore) {
-        & dotnet restore $projectFile -r win-x64 -p:Configuration=Release
+        & dotnet restore $projectFile -r win-x64 -p:Configuration=Release -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
         if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE." }
     }
 
-    & dotnet build $projectFile -c Release --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber"
+    & dotnet build $projectFile -c Release --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE." }
 
     # WPF's markup pass creates a temporary assembly. Publishing without a second
     # build guarantees that the final pass-two assembly is the one bundled.
-    & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$PublishDir"
+    # A private folder deployment has no pre-CLR bundle extraction. The small
+    # native outer host embeds these ordinary self-contained files and starts
+    # their DLL entry point in its own process, after preparing portable temp.
+    & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$managedPayload" -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
 
     $executable = Join-Path $PublishDir "LANMinecraft.exe"
+    & (Join-Path $programDir 'Bootstrap\Build-PortableHost.ps1') -PayloadDirectory $managedPayload `
+        -OutputExecutable $executable -ReleaseNumber $ReleaseNumber -SourceRevisionId $SourceRevisionId `
+        -ArtifactsDirectory $nativeBuild
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "LANMinecraft.exe was not published to $PublishDir."
     }

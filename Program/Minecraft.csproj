@@ -24,8 +24,11 @@
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Publish.ps1 embeds this ordinary folder deployment in the portable
+         native host. No .NET bundle may extract native files before managed
+         code gets a chance to select the launcher's own temporary directory. -->
+    <PublishSingleFile>false</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <!--
       Deliberately off. A single file that carries a compressed payload and
       unpacks it to run is, in shape, exactly a packer - and that is what a

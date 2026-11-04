@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LauncherQa;
 using Minecraft;
 
 // This runner copies only paths established by old launcher ownership records.
@@ -15,35 +16,57 @@ if (args.Length > 0 && args[0] == "history-proof")
 }
 if (args.Length < 2) throw new ArgumentException(
     "Usage: PackMigrationQa <workspace> <dist-directory> [new-artifacts-output] [--legacy] " +
-    "[--pack <relative-path>] [--source-repo <repository>]");
+    "--contract <pack-owned-qa-contract.json>");
 var workspace = Path.GetFullPath(args[0]);
 var dist = Path.GetFullPath(args[1]);
 var options = MigrationOptions.Parse(args.Skip(2).ToArray());
-var pack = options.Pack;
-var source = new PackSyncSource("MarkZamore", options.SourceRepository, "pack-latest");
+var contract = PackQaContract.Load(options.ContractPath);
+var pack = contract.PackRelativePath;
+var source = contract.Source ?? throw new ArgumentException(
+    "File-update migration QA needs an explicit update source in the contract; custom packs without one can use Forge runtime QA.");
 var legacy = options.Legacy;
 var output = Path.GetFullPath(options.Output ??
-    Path.Combine(workspace, "artifacts", pack == "All The Mods 9" ? "atm9-original" : "pack-migration", "qa-migration",
-        DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + (legacy ? "-legacy" : "-state")));
-var artifacts = Path.Combine(workspace, "artifacts") + Path.DirectorySeparatorChar;
+    Path.Combine(workspace, "artifacts", "agent-runs", "pack-migration", Guid.NewGuid().ToString("N")));
+var artifacts = Path.Combine(workspace, "artifacts", "agent-runs") + Path.DirectorySeparatorChar;
 if (!output.StartsWith(artifacts, StringComparison.OrdinalIgnoreCase) || Directory.Exists(output))
-    throw new ArgumentException("Use a new independent output directory inside workspace artifacts.");
+    throw new ArgumentException("Use a new independent output directory inside workspace artifacts/agent-runs.");
+_ = Safe(workspace, Path.GetRelativePath(workspace, output).Replace('\\', '/'));
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+var targetManifest = ReadJson(Path.Combine(dist, PortablePackSyncService.PackManifestAssetName));
+var expectedBytes = checked(targetManifest.GetProperty("files").EnumerateArray()
+    .Sum(file => file.GetProperty("sizeBytes").GetInt64()) * 4);
+var createdUtc = DateTimeOffset.UtcNow;
+var run = new Dictionary<string, object?>
+{
+    ["owner"] = "PackMigrationQa", ["purpose"] = "Independent pack migration and declared historical-helper verification",
+    ["createdUtc"] = createdUtc, ["expectedBytes"] = expectedBytes, ["deleteAfterUtc"] = createdUtc.AddHours(24),
+    ["requiredResults"] = new[] { "report.json", "source-snapshot.json", "history-proof-report.json", "target-manifest.json" },
+    ["qaContractSha256"] = contract.Sha256, ["status"] = "RUNNING"
+};
+Directory.CreateDirectory(output);
 var originals = new AppPaths(workspace);
 var paths = new AppPaths(Path.Combine(output, "installation"));
-paths.Ensure();
 var canonical = paths.CombineUnderPacks(pack);
 var game = paths.CombineUnderInstances(pack);
-Directory.CreateDirectory(canonical);
-Directory.CreateDirectory(game);
 var reportPath = Path.Combine(output, "report.json");
 var report = new Dictionary<string, object?> { ["status"] = "RUNNING", ["legacyWithoutState"] = legacy,
     ["personalWorldsCopied"] = false, ["originalInstallationModified"] = false,
-    ["packRelativePath"] = pack, ["source"] = source };
-void WriteReport() => File.WriteAllText(reportPath, JsonSerializer.Serialize(report, json));
+    ["packId"] = contract.PackId, ["packRelativePath"] = pack, ["source"] = source,
+    ["qaContractSha256"] = contract.Sha256,
+    ["qaRuntime"] = new { minecraftVersion = contract.MinecraftVersion,
+        loader = new { type = contract.LoaderType, version = contract.LoaderVersion } } };
+void WriteReport()
+{
+    run["status"] = Equals(report["status"], "PASS") ? "AWAITING_EXPLICIT_QA_COMPLETION" : report["status"];
+    File.WriteAllText(Path.Combine(output, "RUN.json"), JsonSerializer.Serialize(run, json));
+    File.WriteAllText(reportPath, JsonSerializer.Serialize(report, json));
+}
 WriteReport();
 try
 {
+    paths.Ensure();
+    Directory.CreateDirectory(canonical);
+    Directory.CreateDirectory(game);
     var snapshots = new List<Snapshot>();
     var originalPack = originals.CombineUnderPacks(pack);
     var originalGame = originals.CombineUnderInstances(pack);
@@ -87,7 +110,7 @@ try
     var sourceSentinelHashes = new[] { unknownMod, unknownScript }.ToDictionary(
         relative => relative, relative => Hash(Safe(canonical, relative)));
 
-    var manifest = ReadJson(Path.Combine(dist, PortablePackSyncService.PackManifestAssetName));
+    var manifest = targetManifest;
     File.WriteAllText(Path.Combine(output, "target-manifest.json"), manifest.GetRawText());
     var expected = manifest.GetProperty("files").EnumerateArray().Select(item => new ExpectedFile(
         item.GetProperty("path").GetString()!, item.GetProperty("sizeBytes").GetInt64(),
@@ -169,6 +192,11 @@ try
         .Select(path => Path.GetRelativePath(game, path).Replace('\\', '/')).ToArray();
     Check(expectedMods.Keys.Order().SequenceEqual(actualMods.Order()), "Active instance mods differ from the manifest.");
     foreach (var file in expectedMods.Values) Check(Matches(game, file), "Instance mod hash mismatch: " + file.Path);
+    var descriptor = PackManifestService.Load(canonical);
+    Check(descriptor.MinecraftVersion == contract.MinecraftVersion &&
+        descriptor.Loader.Type.ToString().Equals(contract.LoaderType, StringComparison.OrdinalIgnoreCase) &&
+        descriptor.Loader.Version == contract.LoaderVersion,
+        "Prepared pack platform does not match its declared QA contract.");
     Check(!File.Exists(Safe(game, unknownScript)), "An unknown canonical script became active in the instance.");
     Check(Directory.EnumerateFiles(paths.PackConflicts, "qa-unknown-user.jar*", SearchOption.AllDirectories)
         .Any(path => File.ReadAllText(path) == "unknown instance mod bytes"), "Unknown instance mod bytes were not preserved.");
@@ -271,8 +299,15 @@ static bool VerifyOriginals(IEnumerable<Snapshot> snapshots, string packRoot, st
 
 static async Task ProveHistoricalHelpers(string[] options)
 {
-    if (options.Length != 4) throw new ArgumentException(
-        "history-proof <migration-installation> <dist> <historical-manifest> <historical-payload-root>");
+    if (options.Length < 4) throw new ArgumentException(
+        "history-proof <migration-installation> <dist> <historical-manifest> <historical-payload-root> " +
+        "--contract <pack-owned-qa-contract.json>");
+    var parsed = MigrationOptions.Parse(options.Skip(4).ToArray());
+    if (parsed.Legacy || parsed.Output is not null)
+        throw new ArgumentException("history-proof accepts only its four paths and --contract.");
+    var contract = PackQaContract.Load(parsed.ContractPath);
+    var source = contract.Source ?? throw new ArgumentException(
+        "Historical update migration QA needs an explicit update source in the contract; custom packs without one can use Forge runtime QA.");
     var installation = Path.GetFullPath(options[0]);
     Check(installation.Contains(Path.DirectorySeparatorChar + "artifacts" + Path.DirectorySeparatorChar,
         StringComparison.OrdinalIgnoreCase), "Historical proof requires a disposable artifacts fixture.");
@@ -281,22 +316,37 @@ static async Task ProveHistoricalHelpers(string[] options)
     Check(migrationReport.GetProperty("status").GetString() == "PASS",
         "Historical proof requires a previously passed independent migration fixture.");
     var paths = new AppPaths(installation);
-    var packName = migrationReport.TryGetProperty("packRelativePath", out var packValue)
-        ? packValue.GetString()! : "All The Mods 9";
-    var source = migrationReport.TryGetProperty("source", out var sourceValue)
-        ? JsonSerializer.Deserialize<PackSyncSource>(sourceValue.GetRawText(),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web))!
-        : new PackSyncSource("MarkZamore", "All-The-Mods-9", "pack-latest");
+    Check(migrationReport.TryGetProperty("packRelativePath", out var packValue) &&
+        packValue.GetString() == contract.PackRelativePath &&
+        migrationReport.TryGetProperty("source", out var sourceValue) &&
+        JsonSerializer.Deserialize<PackSyncSource>(sourceValue.GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)) == source,
+        "Migration report must explicitly identify the contract's pack and source.");
+    if (migrationReport.TryGetProperty("packId", out var packId))
+        Check(packId.GetString() == contract.PackId, "Migration report belongs to another stable pack ID.");
+    if (migrationReport.TryGetProperty("qaContractSha256", out var previousContractHash))
+        Check(previousContractHash.GetString() == contract.Sha256, "Migration QA contract changed after the original run.");
+    var packName = contract.PackRelativePath;
     var canonical = paths.CombineUnderPacks(packName);
     var game = paths.CombineUnderInstances(packName);
     var historical = ReadJson(options[2]);
     var current = ReadJson(Path.Combine(options[1], PortablePackSyncService.PackManifestAssetName));
-    var names = new[] { "atm9-modified-alchemy-wire", "lanminecraft-memory-warnings", "lanmc-steam-flow" };
-    var helpers = historical.GetProperty("files").EnumerateArray().Where(file =>
-        names.Any(name => file.GetProperty("path").GetString()!.StartsWith("mods/" + name + "-", StringComparison.Ordinal)))
-        .Select(file => new ExpectedFile(file.GetProperty("path").GetString()!, file.GetProperty("sizeBytes").GetInt64(),
-            file.GetProperty("sha256").GetString()!)).ToArray();
-    Check(helpers.Length == 3, "Historical manifest did not identify exactly three requested helper JARs.");
+    Check(contract.RetiredHelpers.Count > 0, "The pack QA contract declares no historical helper cleanup scenario.");
+    var selected = new Dictionary<string, ExpectedFile>(StringComparer.OrdinalIgnoreCase);
+    foreach (var declaration in contract.RetiredHelpers)
+    {
+        var matches = historical.GetProperty("files").EnumerateArray().Where(file =>
+                file.GetProperty("path").GetString()!.StartsWith(declaration.FilePrefix, StringComparison.Ordinal))
+            .Select(file => new ExpectedFile(file.GetProperty("path").GetString()!, file.GetProperty("sizeBytes").GetInt64(),
+                file.GetProperty("sha256").GetString()!)).ToArray();
+        Check(matches.Length == declaration.ExpectedCount,
+            "Historical manifest does not match a pack-declared helper count: " + declaration.FilePrefix);
+        foreach (var match in matches)
+            Check(selected.TryAdd(match.Path, match), "Pack QA helper declarations overlap or repeat a historical path.");
+    }
+    var helpers = selected.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
+    var expectedRemovedCount = contract.RetiredHelpers.Sum(item => item.ExpectedCount);
+    Check(helpers.Length == expectedRemovedCount, "Historical helper declarations did not identify the complete expected set.");
     foreach (var helper in helpers)
     {
         Check(Matches(options[3], helper), "Archived helper does not match its published exact SHA and size.");
@@ -322,13 +372,14 @@ static async Task ProveHistoricalHelpers(string[] options)
             "A historical custom helper survived in the active canonical/instance composition.");
         Check(Matches(options[3], helper), "The archived source helper was modified by the QA run.");
     }
-    Check(changed.Outcome == PackSyncOutcome.Updated && changed.FilesChanged == 3 && changed.BytesDownloaded == 0,
-        "Historical cleanup did not remove exactly three managed files without payload downloads.");
+    Check(changed.Outcome == PackSyncOutcome.Updated && changed.FilesChanged == expectedRemovedCount && changed.BytesDownloaded == 0,
+        "Historical cleanup did not remove the pack-declared managed files without payload downloads.");
     var again = await sync.SyncAsync(packName, null, CancellationToken.None);
     Check(again.Outcome == PackSyncOutcome.UpToDate && again.BytesDownloaded == 0, "Historical cleanup is not idempotent.");
     var result = new
     {
-        status = "PASS", personalWorldsCopied = false, historicalRevision = historical.GetProperty("revision").GetString(),
+        status = "PASS", personalWorldsCopied = false, packId = contract.PackId, packRelativePath = packName, source,
+        qaContractSha256 = contract.Sha256, historicalRevision = historical.GetProperty("revision").GetString(),
         targetRevision = current.GetProperty("revision").GetString(), helpers,
         canonicalAndInstanceHelpersAbsent = true, sourceArchiveUnchanged = true,
         filesChanged = changed.FilesChanged, payloadBytesDownloaded = changed.BytesDownloaded, idempotence = "PASS"
@@ -340,39 +391,32 @@ static async Task ProveHistoricalHelpers(string[] options)
 sealed record Snapshot(string Kind, string Path, long SizeBytes, string Sha256);
 sealed record ExpectedFile(string Path, long SizeBytes, string Sha256);
 
-sealed record MigrationOptions(string Pack, string SourceRepository, bool Legacy, string? Output)
+sealed record MigrationOptions(string ContractPath, bool Legacy, string? Output)
 {
     public static MigrationOptions Parse(string[] arguments)
     {
-        var pack = "All The Mods 9";
-        var repository = "All-The-Mods-9";
-        var repositorySpecified = false;
+        string? contract = null;
         var legacy = false;
         string? output = null;
         for (var index = 0; index < arguments.Length; index++)
         {
             var argument = arguments[index];
             if (argument == "--legacy") { legacy = true; continue; }
-            if (argument is "--pack" or "--source-repo")
+            if (argument == "--contract")
             {
                 if (++index >= arguments.Length || string.IsNullOrWhiteSpace(arguments[index]) ||
                     arguments[index].StartsWith("--", StringComparison.Ordinal))
                     throw new ArgumentException("Missing value for " + argument);
-                if (argument == "--pack") pack = arguments[index];
-                else { repository = arguments[index]; repositorySpecified = true; }
+                if (contract is not null) throw new ArgumentException("--contract must occur exactly once.");
+                contract = arguments[index];
                 continue;
             }
             if (argument.StartsWith("--", StringComparison.Ordinal) || output is not null)
                 throw new ArgumentException("Unexpected migration QA argument: " + argument);
             output = argument;
         }
-        if (Path.IsPathRooted(pack) || pack.Split('/', '\\').Any(part => part is "" or "." or ".."))
-            throw new ArgumentException("--pack must be a relative pack path.");
-        if (!pack.Equals("All The Mods 9", StringComparison.OrdinalIgnoreCase) && !repositorySpecified)
-            throw new ArgumentException("A different --pack requires its own explicit --source-repo.");
-        if (repository.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('-' or '_' or '.')))
-            throw new ArgumentException("--source-repo must be a GitHub repository name.");
-        return new MigrationOptions(pack, repository, legacy, output);
+        if (contract is null) throw new ArgumentException("--contract must name this pack's reviewed QA contract.");
+        return new MigrationOptions(contract, legacy, output);
     }
 }
 

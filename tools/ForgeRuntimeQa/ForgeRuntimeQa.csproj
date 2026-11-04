@@ -10,6 +10,7 @@
     <LauncherProject Condition="'$(LauncherProject)' == ''">$(MSBuildThisFileDirectory)..\..\Program\Minecraft.csproj</LauncherProject>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../PackQaContract.cs" Link="PackQaContract.cs" />
     <ProjectReference Include="$(LauncherProject)" />
   </ItemGroup>
 </Project>
