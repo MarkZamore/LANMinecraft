@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>../../Program/app.manifest</ApplicationManifest>
+    <OutputPath>../../artifacts/window-repaint-probe/bin/$(Configuration)/</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Program/Minecraft.csproj" AdditionalProperties="SkipPortableIdentityAdapter=true" />
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles" Value="true" />
+  </ItemGroup>
+</Project>

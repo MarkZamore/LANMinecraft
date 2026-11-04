@@ -23,11 +23,9 @@ public sealed class FinalJvmArgumentsTests : IDisposable
     private static JsonVersion Version(string? main = MainClass) => new(JsonDocument.Parse(JsonSerializer.Serialize(new { id = "fixture", mainClass = main })), new JsonVersionParserOptions());
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(false, true)]
-    public async Task ActualCmlLoggingDefaultAndPackChoiceReachTheJvmWithCorrectPrecedence(bool packOverride, bool retainCommittedHeap)
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ActualCmlLoggingDefaultAndPackChoiceReachTheJvmWithCorrectPrecedence(bool packOverride)
     {
         Directory.CreateDirectory(_root);
         var java = Environment.GetEnvironmentVariable("JVM_PRECEDENCE_TEST_JAVA") ?? Tool("java"); var javac = Tool("javac");
@@ -60,15 +58,14 @@ public sealed class FinalJvmArgumentsTests : IDisposable
         Assert.Contains(expectedNative[Logging.Length..], nativeCommandLine, StringComparison.Ordinal);
         Assert.DoesNotContain(Logging + "config/log4j2.xml", nativeCommandLine, StringComparison.Ordinal);
 
-        var final = MinecraftProcessService.CompleteJvmArguments(process.StartInfo, version, pack, retainCommittedHeap: retainCommittedHeap);
+        var final = MinecraftProcessService.CompleteJvmArguments(process.StartInfo, version, pack);
         var boundary = final.ToList().IndexOf(MainClass);
         Assert.True(boundary > 0);
         Assert.Equal(packOverride ? Logging + "config/log4j2.xml" : expectedNative,
             Assert.Single(final.Take(boundary), value => value.StartsWith(Logging, StringComparison.Ordinal)));
         Assert.Equal(new[] { "application value с пробелами", "-Dlog4j.configurationFile=application-only" }, final.Skip(boundary + 1));
         Assert.Contains("-Xmx96m", final); Assert.Contains("-Xms32m", final);
-        if (retainCommittedHeap) Assert.Contains(MinecraftProcessService.HeapRetentionArgument, final.Take(boundary));
-        if (!packOverride && !retainCommittedHeap) { Assert.Equal(nativeCommandLine, process.StartInfo.Arguments); Assert.Empty(process.StartInfo.ArgumentList); }
+        if (!packOverride) { Assert.Equal(nativeCommandLine, process.StartInfo.Arguments); Assert.Empty(process.StartInfo.ArgumentList); }
         process.StartInfo.UseShellExecute = false; process.StartInfo.CreateNoWindow = true;
         process.StartInfo.RedirectStandardOutput = true; process.StartInfo.RedirectStandardError = true;
         process.StartInfo.StandardOutputEncoding = Encoding.UTF8;

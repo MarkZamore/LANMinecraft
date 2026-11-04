@@ -72,7 +72,6 @@ public sealed class HeapTuningArgumentTests
         Assert.Equal(
             [
                 "-XX:+UseG1GC",
-                "-XX:MaxHeapFreeRatio=100",
                 "-XX:+ParallelRefProcEnabled",
                 "-XX:MaxGCPauseMillis=50",
                 "-XX:+UnlockExperimentalVMOptions",
@@ -87,7 +86,6 @@ public sealed class HeapTuningArgumentTests
         Assert.Equal(
             [
                 "-XX:+UseG1GC",
-                "-XX:MaxHeapFreeRatio=100",
                 "-XX:+ParallelRefProcEnabled",
                 "-XX:MaxGCPauseMillis=150",
                 "-XX:+UnlockExperimentalVMOptions",
@@ -148,10 +146,16 @@ public sealed class HeapTuningArgumentTests
             WithoutTheYoungBand(MinecraftProcessService.HeapTuningArgumentsFor(heapMb)));
     }
 
-    /// <summary>Initial commitment is bounded even when the selected maximum is large.</summary>
+    /// <summary>
+    /// And where the heap starts. A large one starts at its maximum, because a
+    /// heap that grows does it in steps a player feels. A small one must not:
+    /// committing three and a half gigabytes of an eight gigabyte machine
+    /// before a chunk is drawn is what takes the machine down, and there was
+    /// nothing spare to promise in the first place.
+    /// </summary>
     [Theory]
-    [InlineData(16384, 1024)]
-    [InlineData(6144, 1024)]
+    [InlineData(16384, 16384)]
+    [InlineData(6144, 6144)]
     [InlineData(4096, 1024)]
     [InlineData(3584, 1024)]
     [InlineData(2048, 1024)]

@@ -19,7 +19,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         var pack = Pack("future-stable-id", "original-folder", "Future author title", "old-folder");
         Assert.True(names.Publish([pack]));
         Assert.Equal("Future author title", names.Resolve("original-folder", "Stale folder label"));
-        Assert.Equal("Future author title", names.Resolve("future-stable-id", "Stale ID label"));
+        Assert.Equal("Future author title", names.ResolveId("future-stable-id", "Stale ID label"));
         Assert.Equal("Future author title", names.Resolve("old-folder", "Old folder title"));
         Assert.False(names.Publish([pack]));
         Assert.Equal("original-folder", pack.Entry.RelativePath);
@@ -53,7 +53,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         Assert.True(names.Publish([pack]));
         Assert.Equal(renamed, pack.Name);
         Assert.Equal(renamed, names.Resolve(path, path));
-        Assert.Equal(renamed, names.Resolve(id, id));
+        Assert.Equal(renamed, names.ResolveId(id, id));
         Assert.Equal(renamed, peer.DisplayPackName);
         Assert.Contains(renamed, peer.StatusText, StringComparison.Ordinal);
         Assert.Equal("World (" + renamed + ")", world.DisplayName);
@@ -88,7 +88,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         Assert.True(names.Publish([pack]));
         Assert.Equal(renamed, pack.Name);
         Assert.Equal(renamed, names.Resolve(path, oldName));
-        Assert.Equal(renamed, names.Resolve("stable", oldName));
+        Assert.Equal(renamed, names.ResolveId("stable", oldName));
         Assert.True(SteamId64.TryFrom(76561198986239755, out var id));
         var peer = new PeerViewModel { SteamId = id, PackName = path, DisplayNames = names };
         var world = new WorldViewModel { Name = "World", Path = "world", BuildRelativePath = path,
@@ -125,7 +125,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         names.Publish([Pack("first", "one", "First title"), Pack("second", "two", "Second title")]);
         names.Publish([Pack("second", "two", "New second title")]);
         Assert.Equal("Local one", names.Resolve("one", "Local one"));
-        Assert.Equal("Local first", names.Resolve("first", "Local first"));
+        Assert.Equal("Local first", names.ResolveId("first", "Local first"));
         Assert.Equal("New second title", names.Resolve("two", "Local two"));
         Assert.True(names.Publish([]));
         Assert.Equal("Local two", names.Resolve("two", "Local two"));
@@ -140,7 +140,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         first.Publish([Pack("stable", "folder", "First installation")]);
         second.Publish([Pack("stable", "folder", "Second installation")]);
         Assert.Equal("First installation", PackDisplayNames.ResolveDirectory(Path.Combine(firstPaths.Packs, "folder"), "Local"));
-        Assert.Equal("Second installation", PackDisplayNames.ForInstallation(secondPaths, "stable", "Local"));
+        Assert.Equal("Second installation", PackDisplayNames.ForInstallation(secondPaths, "folder", "Local"));
         Assert.Equal("Local sibling", PackDisplayNames.ResolveDirectory(firstPaths.Packs + "-other\\folder", "Local sibling"));
         Assert.False(Directory.Exists(root));
     }
@@ -274,6 +274,38 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         Assert.Equal("First", names.Resolve("one", "Local"));
         Assert.Equal("Second", names.Resolve("two", "Local"));
         Assert.Equal("Local ambiguous", names.Resolve("ambiguous", "Local ambiguous"));
+        Assert.Equal("Local ambiguous", names.ResolveId("ambiguous", "Local ambiguous"));
+        names.Publish([Pack("two", "one", "First", "two"), Pack("second", "two", "Second")]);
+        Assert.Equal("Second", names.Resolve("two", "Local folder"));
+        Assert.Equal("First", names.ResolveId("two", "Local ID"));
+    }
+
+    [Fact]
+    public void ACustomFolderMatchingACatalogIdKeepsItsOwnTitleAndLabels()
+    {
+        const string local = "catalog-stable-id";
+        var paths = Paths();
+        using var names = new PackDisplayNames(paths);
+        names.Publish([Pack(local, "published-folder", "Published catalog title")]);
+        var localPack = Path.Combine(paths.Packs, local);
+        Directory.CreateDirectory(localPack);
+        Assert.Equal("Published catalog title", names.ResolveId(local, "Local ID fallback"));
+        Assert.Equal("Published catalog title", names.Resolve("published-folder", "Local path fallback"));
+        Assert.Equal(local, names.Resolve(local, local));
+        Assert.Equal(local, PackDisplayNames.ForInstallation(paths, local, local));
+        Assert.Equal(local, WindowTitleSettings.Load(localPack, Runtime(), Path.Combine(paths.Instances, local)).Text);
+        Assert.True(SteamId64.TryFrom(76561198986239755, out var steamId));
+        var peer = new PeerViewModel { SteamId = steamId, PackName = local, DisplayNames = names };
+        var world = new WorldViewModel { Name = "World", Path = "world", BuildRelativePath = local,
+            BuildName = local, DisplayNames = names };
+        Assert.Equal(local, peer.DisplayPackName);
+        Assert.Equal("World (" + local + ")", world.DisplayName);
+        Assert.Equal(local, SupportDiagnosticSnapshotBuilder.ResolvePackName(paths, local));
+        Assert.Equal(local, peer.PackIdentity);
+        Assert.Equal(local, world.BuildRelativePath);
+        names.Publish([Pack(local, "published-folder", "Renamed catalog title")]);
+        Assert.Equal("Renamed catalog title", names.ResolveId(local, "ID fallback"));
+        Assert.Equal(local, names.Resolve(local, local));
     }
 
     [Fact]
@@ -300,7 +332,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         foreach (var pack in catalog.Packs)
         {
             Assert.Equal(pack.Name, names.Resolve(pack.Entry.RelativePath, "Stale local label"));
-            Assert.Equal(pack.Name, names.Resolve(pack.Entry.Id, "Stale local label"));
+            Assert.Equal(pack.Name, names.ResolveId(pack.Entry.Id, "Stale local label"));
         }
     }
 
@@ -341,7 +373,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
             Assert.Equal(authorName, catalog.GetDisplayName(path));
             using var names = new PackDisplayNames(paths);
             names.Publish(catalog.Packs);
-            Assert.Equal(authorName, names.Resolve(id, "Stale ID"));
+            Assert.Equal(authorName, names.ResolveId(id, "Stale ID"));
             Assert.Equal(authorName, names.Resolve(path, "Stale path"));
             Assert.Equal(authorName, WindowTitleSettings.Load(Path.Combine(paths.Packs, path), Runtime(),
                 Path.Combine(paths.Instances, path)).Text);

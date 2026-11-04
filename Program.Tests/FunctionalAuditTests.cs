@@ -460,8 +460,10 @@ public sealed class FunctionalAuditTests
             try
             {
                 if (mode == "disconnect") return;
+                var manifest = PortableProtocol.Deserialize<BugReportManifest>(initialFrame, JsonOptions)
+                    ?? throw new InvalidDataException("The report fixture received an empty manifest.");
                 await PortableProtocol.WriteJsonAsync(stream,
-                    new BugReportAck { Ok = mode != "refusal", Stage = "Accepted", Message = "AUDIT_REFUSAL" }, JsonOptions, token);
+                    new BugReportAck { Ok = mode != "refusal", Stage = "Accepted", ReportId = manifest.ReportId, Message = "AUDIT_REFUSAL" }, JsonOptions, token);
                 if (mode == "cancel") cancellation.Cancel();
             }
             finally { Finished.TrySetResult(); }

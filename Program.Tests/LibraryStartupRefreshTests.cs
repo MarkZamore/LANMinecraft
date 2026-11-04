@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
@@ -18,7 +18,7 @@ namespace Minecraft.Tests;
 public sealed class LibraryStartupRefreshTests
 {
     [Fact]
-    public void EarlyOpenDisplaysEachReadyCardWithoutWaitingForAnUnrelatedDownloadOrReentry()
+    public void EarlyOpenPublishesTheCompleteOverviewTogetherAfterTheBatchIsReady()
     {
         OnUi(() =>
         {
@@ -26,26 +26,33 @@ public sealed class LibraryStartupRefreshTests
             Assert.Empty(fixture.Cards.Items);
             fixture.WaitForBundleRequests();
             fixture.Host.Release("First-Pack");
-            PumpUntil(() => fixture.VisibleCards().Any(card => card.DataContext is CatalogPack { Entry.Id: "first" }),
-                "A verified card did not appear in the already open library.");
+            PumpUntil(() => fixture.Catalog.Find("First pack") is not null,
+                "The first verified model did not finish behind the publication barrier.");
+            Assert.False(fixture.Library.IsOverviewReady);
+            Assert.Empty(fixture.VisibleCards());
+            Assert.Empty(fixture.Cards.Items);
             Assert.Equal(Visibility.Visible, fixture.Library.Visibility);
-            Assert.False(fixture.Catalog.IsReady);
+            Assert.False(fixture.Catalog.IsOverviewReady);
             Assert.False(fixture.LibraryPreparation.IsCompleted);
-            Assert.False(fixture.Host.IsReleased("Second-Pack"));
-            Assert.Equal("First pack", Assert.IsType<CatalogPack>(Assert.Single(fixture.Cards.Items.Cast<object>())).Name);
+            fixture.ReleaseRemaining();
+            PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3,
+                "The complete overview was not revealed in the already open library.");
+            Assert.Equal(3, fixture.Cards.Items.Count);
+            Assert.True(fixture.Catalog.IsOverviewReady);
+            Assert.True(fixture.Catalog.IsReady);
         });
     }
 
     [Fact]
-    public void FurtherCardsAndRepeatedNotificationsKeepTheOpenDetailPageAndItsState()
+    public void RepeatedAtomicSnapshotsKeepTheOpenDetailPageAndItsState()
     {
         OnUi(() =>
         {
             using var fixture = new LibraryFixture();
             fixture.WaitForBundleRequests();
-            fixture.Host.Release("First-Pack");
-            PumpUntil(() => fixture.Cards.Items.Count == 1, "The first presentation was not published.");
-            var first = Assert.IsType<CatalogPack>(fixture.Cards.Items[0]);
+            fixture.ReleaseRemaining();
+            PumpUntil(() => fixture.Library.IsOverviewReady, "The complete overview was not published.");
+            var first = fixture.Cards.Items.Cast<CatalogPack>().Single(pack => pack.Entry.Id == "first");
             fixture.Library.ShowDetails(first);
             PumpUntil(() => fixture.Queue.PendingKeys.Length == 0, "The foreground detail page was not prepared.");
             var host = Assert.IsType<ContentControl>(fixture.Library.FindName("DetailHost"));
@@ -57,12 +64,18 @@ public sealed class LibraryStartupRefreshTests
             var parent = first.Mods.Single(node => node.HasChildren);
             parent.IsExpanded = true;
 
-            // Repeat the real worker notification while its dispatcher update
-            // is pending, then add an unrelated card through the real service.
             Task.Run(() => { for (var i = 0; i < 32; i++) fixture.Notify(); }).GetAwaiter().GetResult();
             Assert.Equal(1, fixture.PendingRefresh);
-            fixture.Host.Release("Second-Pack");
-            PumpUntil(() => fixture.Cards.Items.Count == 2, "The second card was not published while details were open.");
+            Drain();
+            // A complete replacement made from the same verified content keeps
+            // the previous models/pages rather than rebuilding their controls.
+            var replacement = fixture.Catalog.Packs.Select(pack => new CatalogPack
+            {
+                Entry = pack.Entry, Content = pack.Content, Preview = pack.Preview, ContentIdentity = pack.ContentIdentity
+            }).ToArray();
+            foreach (var pack in replacement) pack.BuildTree();
+            fixture.Library.SetCatalog(replacement);
+            Assert.Equal(3, fixture.Cards.Items.Count);
             Assert.Same(page, host.Content);
             Assert.Same(scroll, fixture.Library.FindName("DetailScroll"));
             Assert.Same(first, fixture.Cards.Items.Cast<CatalogPack>().Single(pack => pack.Entry.Id == "first"));
@@ -78,8 +91,8 @@ public sealed class LibraryStartupRefreshTests
         {
             using var fixture = new LibraryFixture();
             fixture.WaitForBundleRequests();
-            fixture.Host.Release("First-Pack");
-            PumpUntil(() => fixture.Cards.Items.Count == 1, "The first presentation was not published.");
+            fixture.ReleaseRemaining();
+            PumpUntil(() => fixture.Library.IsOverviewReady, "The complete overview was not published.");
             Task.Run(fixture.Notify).GetAwaiter().GetResult();
             Assert.Equal(1, fixture.PendingRefresh);
             fixture.StopAndDisposeLibrary();
@@ -142,11 +155,18 @@ public sealed class LibraryStartupRefreshTests
             Set("_launcherVisibility", new Dictionary<UIElement, Visibility>());
             Notify = (Action)Method("OnLibraryPresentationChanged").CreateDelegate(typeof(Action), owner);
             Catalog.PresentationChanged += Notify;
+            // Run the production worker service directly so this fixture covers
+            // navigation/publication without entering unrelated startup UI.
+            Set("_libraryStartup", Task.Run(() => Catalog.PrepareLibraryAsync(lifetime.Token)));
             Method("ShowLibrary").Invoke(owner, [true]);
         }
 
         internal void WaitForBundleRequests() => PumpUntil(() => Host.AllRequested,
             "The independent bundle requests did not reach their gates.");
+        internal void ReleaseRemaining()
+        {
+            Host.Release("First-Pack"); Host.Release("Second-Pack"); Host.Release("Last-Pack");
+        }
         internal Button[] VisibleCards() => Descendants<Button>(Cards)
             .Where(button => button.IsVisible && button.ActualWidth > 0 && button.ActualHeight > 0).ToArray();
         internal void StopAndDisposeLibrary()
@@ -210,7 +230,7 @@ public sealed class LibraryStartupRefreshTests
                     JsonSerializer.Serialize(metadata, new CatalogDescription
                     {
                         SchemaVersion = 1, Id = id, RelativePath = name, Name = name, MinecraftVersion = "1.20.1", Revision = "one",
-                        Summary = "A ready card does not wait for another pack.",
+                        Summary = "An atomic overview reveals every ready card together.",
                         Description = string.Join(" ", Enumerable.Repeat("A long description preserves the detailed page scroll position.", 300)),
                         Mods = [new CatalogMod { Id = "parent", Name = "Parent mod", WebsiteUrl = "https://example.com/parent" },
                             new CatalogMod { Id = "addon", Name = "Addon", ParentId = "parent", WebsiteUrl = "https://example.com/addon" }]

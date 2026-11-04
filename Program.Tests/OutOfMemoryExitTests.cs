@@ -159,8 +159,9 @@ public sealed class OutOfMemoryExitTests
     /// model has been short of. It rests on a single pack - 874 jars, about
     /// eight gigabytes outside a twelve gigabyte heap - and every other pack
     /// is an extrapolation from it, including the arithmetic that decides
-    /// whether a machine is offered a pack at all. Growing heaps cannot be
-    /// subtracted from process commit as if the entire Xmx were already committed.
+    /// whether a machine is offered a pack at all. The subtraction is
+    /// honest because -Xms is set equal to -Xmx, so the heap is committed and
+    /// what stands above it is the room beside it.
     /// </summary>
     [Fact]
     public void EverySessionLeavesWhatItActuallyHeld()
@@ -179,8 +180,7 @@ public sealed class OutOfMemoryExitTests
             heapGb: 4);
         Assert.Contains("6144 MB", held, StringComparison.Ordinal);
         Assert.Contains("4096 MB", held, StringComparison.Ordinal);
-        Assert.Contains("cannot be separated", held, StringComparison.Ordinal);
-        Assert.DoesNotContain("2048 MB beside it", held, StringComparison.Ordinal);
+        Assert.Contains("2048 MB", held, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -188,7 +188,8 @@ public sealed class OutOfMemoryExitTests
     /// of memory pages the rest out, so the working set understates what the
     /// pack wanted - and understates it worst on the small machines this
     /// measurement exists for. Here the game asked for six gigabytes and only
-    /// three were resident; with a growing heap no native-only value is inferred.
+    /// three were resident: the room beside the heap is two gigabytes, not
+    /// none.
     /// </summary>
     [Fact]
     public void APagingMachine_DoesNotMakeThePackLookSmaller()
@@ -199,8 +200,7 @@ public sealed class OutOfMemoryExitTests
             heapGb: 4);
 
         Assert.Contains("asked for 6144 MB", paging, StringComparison.Ordinal);
-        Assert.Contains("cannot be separated", paging, StringComparison.Ordinal);
-        Assert.DoesNotContain("2048 MB beside it", paging, StringComparison.Ordinal);
+        Assert.Contains("2048 MB beside it", paging, StringComparison.Ordinal);
         // The gap between the two is itself the reading, so both are kept.
         Assert.Contains("3072 MB of it resident", paging, StringComparison.Ordinal);
     }

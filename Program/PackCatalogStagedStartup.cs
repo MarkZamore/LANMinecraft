@@ -14,9 +14,13 @@ public sealed partial class PackCatalogService
     private readonly Dictionary<string, Task<string>> _remoteManifestTasks = new(StringComparer.OrdinalIgnoreCase);
     private Task? _indexStartup;
     private Task? _libraryStartup;
+    private IReadOnlyList<CatalogPack> _overviewSnapshot = Array.Empty<CatalogPack>();
+    private bool _overviewReady;
 
     public bool IsStaged { get; }
     public bool IsIndexReady { get; private set; }
+    /// <summary>A complete cache batch or a completed fresh presentation pass has been published.</summary>
+    public bool IsOverviewReady { get { lock (_gate) return !IsStaged || _overviewReady; } }
     /// <summary>Published on the worker thread when a presentation snapshot changes.</summary>
     public event Action? PresentationChanged;
 
@@ -273,6 +277,20 @@ public sealed partial class PackCatalogService
         // Only advertised packs need presentation. Custom source markers are
         // read on selection, independently of unrelated library preparation.
         var candidates = Sources;
+        // Load every checked fallback before starting unrelated network work.
+        // A complete cached/embedded overview can be shown as one batch while
+        // the fresh manifests or bundles are still waiting on the network.
+        foreach (var entry in candidates)
+        {
+            token.ThrowIfCancellationRequested();
+            CatalogSource effective;
+            lock (_gate) effective = _effectiveSources.GetValueOrDefault(entry.RelativePath) ?? entry;
+            LoadStagedSeed(entry);
+            LoadCachedEntry(effective, token: token);
+            if (effective.Source != entry.Source) LoadCachedEntry(entry, token: token);
+        }
+        token.ThrowIfCancellationRequested();
+        if (PublishOverviewSnapshot(requireComplete: true)) PresentationChanged?.Invoke();
         using var parallel = new SemaphoreSlim(4);
         try
         {
@@ -287,24 +305,25 @@ public sealed partial class PackCatalogService
         }
         finally
         {
-            if (!token.IsCancellationRequested) lock (_gate) IsReady = true;
+            var changed = false;
+            if (!token.IsCancellationRequested)
+            {
+                lock (_gate)
+                {
+                    IsReady = true;
+                    // Only now may unavailable presentation be omitted: every
+                    // advertised candidate has completed its fresh attempt.
+                    changed = PublishOverviewSnapshot(requireComplete: false);
+                }
+            }
             SaveStagedIndex();
+            if (changed) PresentationChanged?.Invoke();
         }
     }
 
     private async Task PrepareLibraryEntryAsync(CatalogSource entry, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        CatalogSource effective;
-        lock (_gate) effective = _effectiveSources.GetValueOrDefault(entry.RelativePath) ?? entry;
-        var previous = Find(entry.RelativePath);
-        LoadStagedSeed(entry);
-        PublishPresentationChange(entry.RelativePath, previous);
-        previous = Find(entry.RelativePath);
-        LoadCachedEntry(effective, token: token);
-        if (effective.Source != entry.Source) LoadCachedEntry(entry, token: token);
-        PublishPresentationChange(entry.RelativePath, previous);
-
         // Launch tasks bypass the background semaphore. If this source is also
         // selected, both consumers share its one rolling metadata response.
         try { await EnsureLaunchReadyAsync(entry.RelativePath, token).ConfigureAwait(false); }
@@ -333,7 +352,7 @@ public sealed partial class PackCatalogService
             pack = DecodeBundle(entry, bundle, revision);
         }
         token.ThrowIfCancellationRequested();
-        previous = Find(entry.RelativePath);
+        var presentationChanged = false;
         lock (_gate)
         {
             _manifests[Key(entry.Source)] = raw;
@@ -341,19 +360,49 @@ public sealed partial class PackCatalogService
             {
                 PromoteEffectiveSource(entry);
                 if (pack is not null) _packs[entry.RelativePath] = pack;
+                // The first overview is a complete batch. After that barrier,
+                // each verified replacement can refresh the open library while
+                // unrelated requests are still waiting, retaining other models.
+                if (_overviewReady) presentationChanged = PublishOverviewSnapshot(requireComplete: false);
             }
         }
-        PublishPresentationChange(entry.RelativePath, previous);
         try { AtomicFile.WriteAllTextIfChanged(CachePath(entry.Source), JsonSerializer.Serialize(new CachedEntry { Entry = entry, Manifest = raw, Bundle = bundle }, JsonOptions)); }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache could not be saved: " + ex.Message); }
         SaveStagedIndex();
+        if (presentationChanged) PresentationChanged?.Invoke();
     }
 
-    private void PublishPresentationChange(string relativePath, CatalogPack? previous)
+    private bool PublishOverviewSnapshot(bool requireComplete)
     {
-        // Never call subscribers under the model lock. The open library can
-        // consume this snapshot while unrelated entries are still downloading.
-        if (!ReferenceEquals(previous, Find(relativePath))) PresentationChanged?.Invoke();
+        lock (_gate)
+        {
+            var next = _sources.Select(entry => _packs.GetValueOrDefault(entry.RelativePath))
+                .Where(pack => pack is not null && IsCurrentEntry(pack.Entry)).Cast<CatalogPack>()
+                .OrderBy(pack => pack.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(pack => pack.Entry.Id, StringComparer.Ordinal).ToArray();
+            if (requireComplete && next.Length != _sources.Count) return false;
+            // Preserve identity for unchanged verified bytes, including any
+            // cached detail expansion state owned by the published model.
+            for (var index = 0; index < next.Length; index++)
+            {
+                var candidate = next[index];
+                next[index] = _overviewSnapshot.FirstOrDefault(previous => previous.Entry == candidate.Entry &&
+                    candidate.ContentIdentity.Length > 0 && previous.ContentIdentity == candidate.ContentIdentity) ?? candidate;
+            }
+            var changed = !_overviewReady || !_overviewSnapshot.SequenceEqual(next);
+            _overviewSnapshot = Array.AsReadOnly(next);
+            _overviewReady = true;
+            return changed;
+        }
+    }
+
+    private void ReconcileOverviewMembership()
+    {
+        // Called under _gate when the authoritative index changes. Even an
+        // otherwise incomplete replacement must never keep withdrawn cards.
+        var retained = _overviewSnapshot.Where(pack => IsCurrentEntry(pack.Entry)).ToArray();
+        _overviewSnapshot = Array.AsReadOnly(retained);
+        _overviewReady = retained.Length == _sources.Count;
     }
 
     private void LoadStagedSeed(CatalogSource entry)

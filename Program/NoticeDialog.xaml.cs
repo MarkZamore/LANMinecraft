@@ -16,8 +16,9 @@ namespace Minecraft;
 ///
 /// So the heading says what failed in the player's terms and the detail carries
 /// the message underneath it, in the paragraph style the rest of the launcher
-/// uses for the small print. The detail is still the exception's own text: it is
-/// what a bug report needs, and hiding it would only move the guessing.
+    /// uses for the small print. Most failures show the exception's own text.
+    /// Native memory startup failures use a concise explanation while their
+    /// full diagnostics remain in the launcher's log for a bug report.
 /// </remarks>
 public partial class NoticeDialog : Window
 {

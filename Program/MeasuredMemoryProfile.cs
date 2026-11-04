@@ -25,14 +25,6 @@ public readonly record struct MemorySession(
     int Minutes,
     DateTimeOffset When)
 {
-    /// <summary>Actual launch Xms. Absent only in historical records written before release 436.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public int? InitialHeapMb { get; init; }
-
-    // Interpret old records using their historical policy, never today's launch policy.
-    [JsonIgnore]
-    internal int RecordedInitialHeapMb => InitialHeapMb ?? (HeapMb <= 4096 ? Math.Min(1024, HeapMb) : HeapMb);
-
     /// <summary>
     /// The shortest session worth believing. A large pack takes about a minute
     /// to reach the menu with its 882 jars, and a client that has not opened a
@@ -94,9 +86,12 @@ public readonly record struct MemorySession(
     /// was built for was 14687 MB resident - 54% - with most of the gap being a
     /// 19 GB heap it had not finished filling.
     ///
-    /// And it can have run with a heap that was still growing. Only a recorded
-    /// initial heap equal to Xmx makes subtraction a native-footprint reading.
-    /// Historical records retain the launch policy under which they were made.
+    /// And it can have run with a heap that was still growing. A heap above
+    /// <see cref="MinecraftProcessService.SmallHeapCeilingMb"/> is started at
+    /// its maximum, so every byte of it is inside the commit and the
+    /// subtraction means what it says; a small one starts at a gigabyte on
+    /// purpose, and subtracting its maximum would report a pack holding
+    /// nothing beside its heap and hand a small machine a heap it cannot keep.
     /// </remarks>
     [JsonIgnore]
     public bool IsWorthKeeping =>
@@ -104,7 +99,7 @@ public readonly record struct MemorySession(
         CommittedMb > 0 && ResidentMb > 0 && HeapMb > 0 &&
         BesideHeapAtMostMb > 0 &&
         ResidentMb * 2 >= CommittedMb &&
-        RecordedInitialHeapMb == HeapMb;
+        MinecraftProcessService.InitialHeapMbFor(HeapMb) == HeapMb;
 
     /// <summary>Why this session is not being kept, for the log, or "".</summary>
     [JsonIgnore]

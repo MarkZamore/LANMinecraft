@@ -39,10 +39,9 @@ public sealed class LibraryColumnsPanel : Panel
         var columns = Math.Min(Math.Max(1, InternalChildren.Count), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
         var cell = double.IsFinite(FixedColumnWidth) ? Math.Min(width, FixedColumnWidth) :
             Math.Max(0, (width - Gap * (columns - 1)) / columns);
-        // Keep fixed-size cards and their shared columns, while distributing
-        // the unused width equally at both sides of the complete grid.
-        var left = double.IsFinite(FixedColumnWidth)
-            ? Math.Max(0, (width - columns * cell - Gap * (columns - 1)) / 2) : 0;
+        // Fixed-size overview cards keep their first column at the left edge,
+        // independent of how many cards are present or how wide the window is.
+        const double left = 0;
         var heights = new double[columns];
         var rowGap = double.IsFinite(RowGap) ? RowGap : Gap;
         _rectangles.Clear();
@@ -85,8 +84,14 @@ public sealed class LibraryPreviewImage : PreparedImage
 }
 
 /// <summary>Keep the standard Border contour; clip only its content inside the frame.</summary>
-public sealed class RoundedClipBorder : Border
+public sealed class RoundedClipBorder : BackdropSurfaceBorder
 {
+    private UIElement? clippedChild;
+    private Size clippedSize;
+    private CornerRadius clippedRadius;
+    private Thickness clippedBorder;
+    private Thickness clippedPadding;
+    private Geometry? clippedGeometry;
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
@@ -111,10 +116,20 @@ public sealed class RoundedClipBorder : Border
         var padding = Padding;
         var radius = CornerRadius;
         var size = child.RenderSize;
+        if (ReferenceEquals(child, clippedChild) && size == clippedSize && radius == clippedRadius &&
+            inset == clippedBorder && padding == clippedPadding && ReferenceEquals(child.Clip, clippedGeometry)) return;
+        clippedChild = child; clippedSize = size; clippedRadius = radius; clippedBorder = inset; clippedPadding = padding;
         var tl = new Size(Math.Max(0, radius.TopLeft - inset.Left / 2 - padding.Left), Math.Max(0, radius.TopLeft - inset.Top / 2 - padding.Top));
         var tr = new Size(Math.Max(0, radius.TopRight - inset.Right / 2 - padding.Right), Math.Max(0, radius.TopRight - inset.Top / 2 - padding.Top));
         var br = new Size(Math.Max(0, radius.BottomRight - inset.Right / 2 - padding.Right), Math.Max(0, radius.BottomRight - inset.Bottom / 2 - padding.Bottom));
         var bl = new Size(Math.Max(0, radius.BottomLeft - inset.Left / 2 - padding.Left), Math.Max(0, radius.BottomLeft - inset.Bottom / 2 - padding.Bottom));
+        if (tl == tr && tr == br && br == bl)
+        {
+            var rectangle = new RectangleGeometry(new Rect(new Point(), size), tl.Width, tl.Height);
+            rectangle.Freeze();
+            child.Clip = clippedGeometry = rectangle;
+            return;
+        }
         var geometry = new StreamGeometry();
         using (var path = geometry.Open())
         {
@@ -129,6 +144,6 @@ public sealed class RoundedClipBorder : Border
             path.ArcTo(new Point(tl.Width, 0), tl, 0, false, SweepDirection.Clockwise, true, false);
         }
         geometry.Freeze();
-        child.Clip = geometry;
+        child.Clip = clippedGeometry = geometry;
     }
 }

@@ -89,6 +89,7 @@ public sealed class CatalogPresentationTests
             foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
                 if (child != library) child.Visibility = Visibility.Hidden;
             library.Visibility = Visibility.Visible;
+            library.SetCatalog([pack]);
             library.ShowDetails(pack);
             WindowCanvasTests.LayoutWindow(window, new Size(1000, 800));
             Assert.Equal("Дополнительные моды", ((TextBlock)library.FindName("ModsHeading")).Text);

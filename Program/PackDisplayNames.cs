@@ -15,7 +15,7 @@ public sealed class PackDisplayNames : IDisposable
     private static readonly Lazy<IReadOnlyDictionary<string, string>> FallbackCaseNames = new(ReadFallbackCaseNames);
     private readonly string packsRoot;
     private readonly object gate = new();
-    private IReadOnlyDictionary<string, string> names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private NameSnapshot names = NameSnapshot.Empty();
     private bool disposed;
 
     public PackDisplayNames(AppPaths paths)
@@ -43,40 +43,51 @@ public sealed class PackDisplayNames : IDisposable
                 throw new InvalidDataException("A verified display snapshot has conflicting pack paths.");
         }
 
-        // A stable ID or historical path is usable only if it unambiguously
-        // identifies one display value. A real current path always wins.
+        // Historical paths share the path namespace. Stable IDs have a separate
+        // namespace: an unrelated local folder may happen to have the same text.
+        // A real current path always wins over a historical path.
         var aliases = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var ids = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var pack in packs)
         {
             var path = NormalizeIdentity(pack.Entry.RelativePath);
             if (!next.TryGetValue(path, out var name)) continue;
-            foreach (var alias in new[] { pack.Entry.Id }.Concat(pack.Entry.LegacyRelativePaths ?? []))
+            var id = NormalizeIdentity(pack.Entry.Id);
+            if (id.Length > 0) AddAlias(ids, id, name);
+            foreach (var alias in pack.Entry.LegacyRelativePaths ?? [])
             {
                 var key = NormalizeIdentity(alias);
                 if (key.Length == 0 || next.ContainsKey(key)) continue;
-                if (!aliases.TryAdd(key, name) && !string.Equals(aliases[key], name, StringComparison.Ordinal)) aliases[key] = null;
+                AddAlias(aliases, key, name);
             }
         }
         foreach (var alias in aliases)
             if (alias.Value is { } name) next.Add(alias.Key, name);
+        var nextIds = ids.Where(pair => pair.Value is not null)
+            .ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.OrdinalIgnoreCase);
 
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             var current = Volatile.Read(ref names);
-            if (current.Count == next.Count && current.All(pair => next.TryGetValue(pair.Key, out var value) &&
-                    string.Equals(pair.Value, value, StringComparison.Ordinal))) return false;
-            Volatile.Write(ref names, next);
+            if (SameNames(current.Paths, next) && SameNames(current.Ids, nextIds)) return false;
+            Volatile.Write(ref names, new NameSnapshot(next, nextIds));
             return true;
         }
     }
 
+    /// <summary>Resolve an actual or historical folder path, never a stable catalog ID.</summary>
     public string Resolve(string identity, string fallback)
     {
         var key = NormalizeIdentity(identity);
         var snapshot = Volatile.Read(ref names);
-        return snapshot.TryGetValue(key, out var name) ? name : PackDisplayName.For(identity ?? "", fallback ?? "");
+        return snapshot.Paths.TryGetValue(key, out var name) ? name : PackDisplayName.For(identity ?? "", fallback ?? "");
     }
+
+    /// <summary>Resolve a caller's explicitly identified stable catalog ID.</summary>
+    public string ResolveId(string id, string fallback) =>
+        Volatile.Read(ref names).Ids.TryGetValue(NormalizeIdentity(id), out var name)
+            ? name : PackDisplayName.CorrectCase(fallback ?? "");
 
     /// <summary>Read the same installation resolver from a service that already has AppPaths.</summary>
     public static string ForInstallation(AppPaths paths, string identity, string fallback)
@@ -114,7 +125,7 @@ public sealed class PackDisplayNames : IDisposable
         {
             if (disposed) return;
             disposed = true;
-            Volatile.Write(ref names, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            Volatile.Write(ref names, NameSnapshot.Empty());
         }
         if (Installations.TryGetValue(packsRoot, out var registration) &&
             registration.TryGetTarget(out var current) && ReferenceEquals(current, this))
@@ -127,6 +138,21 @@ public sealed class PackDisplayNames : IDisposable
 
     private static string NormalizeDirectory(string path) =>
         Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private static void AddAlias(Dictionary<string, string?> aliases, string key, string name)
+    {
+        if (!aliases.TryAdd(key, name) && !string.Equals(aliases[key], name, StringComparison.Ordinal)) aliases[key] = null;
+    }
+
+    private static bool SameNames(IReadOnlyDictionary<string, string> first, IReadOnlyDictionary<string, string> second) =>
+        first.Count == second.Count && first.All(pair => second.TryGetValue(pair.Key, out var value) &&
+            string.Equals(pair.Value, value, StringComparison.Ordinal));
+
+    private sealed record NameSnapshot(IReadOnlyDictionary<string, string> Paths, IReadOnlyDictionary<string, string> Ids)
+    {
+        public static NameSnapshot Empty() => new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    }
 
     private static void RemoveRegistration(string root, WeakReference<PackDisplayNames> registration) =>
         ((ICollection<KeyValuePair<string, WeakReference<PackDisplayNames>>>)Installations)

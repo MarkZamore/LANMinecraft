@@ -24,7 +24,7 @@
             <Setter Property="VerticalContentAlignment" Value="Stretch"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-                <local:RoundedClipBorder x:Name="Card" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                <local:RoundedClipBorder x:Name="Card" IsBackdropSurface="True" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
                     BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{DynamicResource Radius.Control}">
                     <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
                 </local:RoundedClipBorder>
@@ -98,7 +98,7 @@
             </Grid>
         </Grid>
         <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel>
+            <StackPanel x:Name="CatalogOverviewHost">
                 <ItemsControl x:Name="CatalogCards">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardWidth}" FixedColumnWidth="{DynamicResource Size.LibraryCardWidth}" UniformItemHeight="True" Gap="{DynamicResource Space.4}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate><DataTemplate>
@@ -117,6 +117,8 @@
                 </ItemsControl>
             </StackPanel>
         </ScrollViewer>
+        <TextBlock x:Name="CatalogLoadingText" Grid.Row="1" Text="Подготавливаем библиотеку…"
+                   Style="{DynamicResource ParagraphTextStyle}" HorizontalAlignment="Left" VerticalAlignment="Top"/>
         <ContentControl x:Name="DetailHost" Grid.RowSpan="2" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
     </Grid>
 </UserControl>

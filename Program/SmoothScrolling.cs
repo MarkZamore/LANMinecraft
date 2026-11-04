@@ -109,7 +109,10 @@ public sealed class SmoothScrollingController : IDisposable
     internal void AdvanceFrame(double elapsedMilliseconds)
     {
         if (!IsAnimating || disposed || elapsedMilliseconds <= 0) return;
-        double elapsed = Math.Min(elapsedMilliseconds, 50);
+        // Both motion equations are closed-form and remain stable across a
+        // slow rendered frame. Advance by real time so a busy renderer does
+        // not stretch the scroll; cap only a long suspension of the process.
+        double elapsed = Math.Min(elapsedMilliseconds, 250);
         position += (TargetOffset - position) * (1 - Math.Exp(-elapsed / TimeConstantMilliseconds));
         bool scrollSettled = Math.Abs(TargetOffset - position) < 0.25;
         if (scrollSettled) position = TargetOffset;

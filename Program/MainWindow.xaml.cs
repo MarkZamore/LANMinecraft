@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private int _selectedLaunchGeneration;
     private readonly Dictionary<string, Task> _launcherDataByPack = new(StringComparer.OrdinalIgnoreCase);
     private UiPreloadQueue? _preload;
+    private PreparedWindowBackdrop? _preparedBackdrop;
     private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task _launcherDataRefresh = Task.CompletedTask;
     private bool _libraryVisible;
@@ -210,6 +211,7 @@ public partial class MainWindow : Window
             if (_shutdownStarted) return;
             _preload = new UiPreloadQueue(Dispatcher, ex => _logger?.Warn("UI preload: " + ex.Message));
             _preload.Completed += (key, ms) => _logger?.Info($"Предзагрузка {key}: {ms} мс с постановки в очередь.");
+            _preparedBackdrop = PreparedWindowBackdrop.Attach(this, _preload);
             // The small component index runs beside pack discovery, preserving the
             // early selector. Freeze it before transport consumers and cache cleanup.
             var componentStartupToken = _lifetimeCts.Token;
@@ -362,6 +364,7 @@ public partial class MainWindow : Window
         _shutdownStarted = true;
         _firstFrame.TrySetCanceled();
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
+        _preparedBackdrop?.Dispose();
         _preload?.Dispose();
         LibraryView.Dispose();
         _displayNames?.Dispose();
@@ -745,7 +748,10 @@ public partial class MainWindow : Window
             await _bugReports
                 .SendAsync(recipient.SteamId, message, progress: null, _lifetimeCts.Token)
                 .ConfigureAwait(true);
-            BugReportMessageTextBox.Clear();
+            if (_lifetimeCts.IsCancellationRequested) return;
+            if (BugReportMessageTextBox.Text == message) BugReportMessageTextBox.Clear();
+            NoticeDialog.Show(this, "Отчёт доставлен",
+                "Лаунчер получателя подтвердил получение и сохранение отчёта.");
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -753,6 +759,9 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _logger?.Warn($"Bug report could not be sent: {ex.Message}");
+            if (!_lifetimeCts.IsCancellationRequested)
+                NoticeDialog.Show(this, "Доставка отчёта не подтверждена",
+                    "Не удалось получить подтверждение от получателя. Проверьте соединение и попробуйте отправить отчёт ещё раз.");
         }
         finally
         {
@@ -1458,8 +1467,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            RequireLogger().Warn(ex.Message);
-            NoticeDialog.Show(this, "Игра не запустилась", ex.Message);
+            MinecraftLaunchFailure.Present(ex, RequireLogger().Warn,
+                (heading, detail) => NoticeDialog.Show(this, heading, detail));
         }
         finally
         {
@@ -3409,12 +3418,13 @@ public partial class MainWindow : Window
 
     private void RefreshLibraryCatalog()
     {
-        if (PublishPackDisplayNames()) RefreshBuilds();
-        if (_catalog is not null && _settings is not null && (_catalog.IsReady || _libraryVisible))
+        if (_catalog is not null && _settings is not null)
         {
-            // A foreground request can overtake the automatic data queue.
+            // The service publishes complete, authority-filtered overview batches.
+            // An early foreground request sees loading rather than partial cards.
+            if (PublishPackDisplayNames()) RefreshBuilds();
             LibraryView.Preloader = _preload;
-            LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings));
+            LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings), isLoading: !_catalog.IsOverviewReady);
             if (_libraryVisible) _preload?.Promote("library-overview");
         }
     }
@@ -3489,6 +3499,7 @@ public partial class MainWindow : Window
     {
         if (!CanChangeLibrary || _settings is null || _paths is null) return;
         var path = pack.Entry.RelativePath;
+        if (_catalog?.IsWithdrawn(path) == true) { RefreshLibraryCatalog(); return; }
         if (PackMembership.Contains(_settings, path))
         {
             RemoveBuild(path, pack.Name, MinecraftProcessService.HasPackData(_paths.CombineUnderPacks(path)));
