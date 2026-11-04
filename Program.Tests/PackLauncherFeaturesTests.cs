@@ -32,11 +32,15 @@ public sealed class PackLauncherFeaturesTests : IDisposable
         PortablePackSyncService.ValidateSnapshot(Manifest(1), pack);
         foreach (var features in new[] { """["local-ai-native-v1"]""", """["curated-mod-list-v1"]""", """["local-ai-native-v1","curated-mod-list-v1"]""",
                      """["launch-context-v1"]""", """["local-ai-native-v1","curated-mod-list-v1","launch-context-v1"]""",
-                     """["private-identity-asm-v1"]""" })
+                     """["private-identity-asm-v1"]""", """["registry-player-skins-v1"]""",
+                     """["private-identity-asm-v1","registry-player-skins-v1"]""" })
             PortablePackSyncService.ValidateSnapshot(Manifest(2, features), pack);
         var privateAsmOnLegacySchema = Assert.Throws<NotSupportedException>(() =>
             PortablePackSyncService.ValidateSnapshot(Manifest(1, """["private-identity-asm-v1"]"""), pack));
         Assert.Contains("формат манифеста 2", privateAsmOnLegacySchema.Message, StringComparison.Ordinal);
+        var registeredSkinsOnLegacySchema = Assert.Throws<NotSupportedException>(() =>
+            PortablePackSyncService.ValidateSnapshot(Manifest(1, """["registry-player-skins-v1"]"""), pack));
+        Assert.Contains("формат манифеста 2", registeredSkinsOnLegacySchema.Message, StringComparison.Ordinal);
 
         // A previously installed pack must not convert a capability failure
         // into offline fallback and silently continue with an unsupported pack.

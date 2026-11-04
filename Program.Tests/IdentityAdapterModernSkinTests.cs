@@ -28,6 +28,7 @@ public sealed class IdentityAdapterModernSkinTests
                 "NativeSkinLookupProbe", Path.Combine(root, "skins.properties"));
             Assert.Contains("Native skin lookup guard checks passed.", output, StringComparison.Ordinal);
             Assert.Contains("Texture domain static and instance guard checks passed.", output, StringComparison.Ordinal);
+            Assert.Contains("Independent PlayerInfo registry-only secure selector checks passed.", output, StringComparison.Ordinal);
         }
         finally
         {

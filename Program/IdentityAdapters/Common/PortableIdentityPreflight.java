@@ -95,6 +95,8 @@ public final class PortableIdentityPreflight {
                 // it reaches only a bootstrap hook, no game-specific members.
             } else if (isAlias("loginClasses", className)) {
                 verifyHookTargets(archive, className);
+            } else if (isAlias("playerInfoClasses", className)) {
+                verifyPlayerInfoSkinTargets(archive, className, original, transformed);
             } else if (isAlias("ftbTeleportClasses", className)) {
                 verifyFtbTeleportTargets(archive, className, transformed);
             } else if (isAlias("solarFluxPackClasses", className)) {
@@ -125,6 +127,58 @@ public final class PortableIdentityPreflight {
             }
         }
         System.out.println("Portable identity preflight passed: " + className + " in " + jarPath);
+    }
+
+    /** The independent skin family changes exactly the mapped lookup and selector. */
+    private static void verifyPlayerInfoSkinTargets(
+            ZipFile archive, String className, byte[] original, byte[] transformed) throws Exception {
+        ClassNode before = new ClassNode();
+        new ClassReader(original).accept(before, 0);
+        ClassNode after = new ClassNode();
+        new ClassReader(transformed).accept(after, 0);
+        if (!className.equals(before.name) || !className.equals(after.name) || before.methods.size() != after.methods.size())
+            throw new IllegalStateException("PlayerInfo skin transformer changed the class or method set.");
+        int changed = 0;
+        MethodNode selection = null;
+        for (int index = 0; index < before.methods.size(); index++) {
+            MethodNode old = before.methods.get(index);
+            MethodNode current = after.methods.get(index);
+            if (!old.name.equals(current.name) || !old.desc.equals(current.desc) || old.access != current.access)
+                throw new IllegalStateException("PlayerInfo skin transformer changed a native signature.");
+            if (Arrays.equals(methodBytes(old), methodBytes(current))) continue;
+            changed++;
+            if ((old.access & Opcodes.ACC_STATIC) == 0)
+                throw new IllegalStateException("PlayerInfo skin helper is not a native static factory.");
+            if (isAlias("skinLookupMethods", old.name) && isAlias("skinLookupDescriptors", old.desc)) {
+                AbstractInsnNode first = current.instructions.getFirst();
+                if (!(first instanceof org.objectweb.asm.tree.VarInsnNode load) || load.getOpcode() != Opcodes.ALOAD || load.var != 0 ||
+                        !(first.getNext() instanceof MethodInsnNode hook) || hook.getOpcode() != Opcodes.INVOKESTATIC ||
+                        !hook.owner.equals("minecraft/portable/identity/PortableSkinProfiles") || !hook.name.equals("apply") ||
+                        !hook.desc.equals("(Ljava/lang/Object;)V"))
+                    throw new IllegalStateException("PlayerInfo lookup lacks the exact registered-profile hook.");
+            } else if (isAlias("skinSelectionMethods", old.name) && isAlias("skinSelectionDescriptors", old.desc)) {
+                selection = old;
+                int hooks = 0;
+                for (AbstractInsnNode instruction : current.instructions)
+                    if (instruction instanceof MethodInsnNode hook && hook.getOpcode() == Opcodes.INVOKESTATIC &&
+                            hook.owner.equals("minecraft/portable/identity/PortableSkinProfiles") && hook.name.equals("selectSkin") &&
+                            hook.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;Z)Ljava/lang/Object;")) hooks++;
+                if (hooks != 1) throw new IllegalStateException("PlayerInfo selector lacks the exact registry guard.");
+            } else throw new IllegalStateException("PlayerInfo skin transformer changed an unrelated method: " + old.name);
+        }
+        if (changed != 2 || selection == null)
+            throw new IllegalStateException("PlayerInfo skin transformer must change one lookup and one selector.");
+        String result = selection.desc.substring(selection.desc.lastIndexOf(')') + 1);
+        if (!result.startsWith("L") || !result.endsWith(";"))
+            throw new IllegalStateException("PlayerInfo selector has no native PlayerSkin return type.");
+        ClassNode skin = readClass(archive, result.substring(1, result.length() - 1));
+        boolean secure = false, url = false;
+        for (MethodNode method : skin.methods) {
+            if ((method.access & Opcodes.ACC_STATIC) != 0) continue;
+            secure |= isAlias("skinSecureMethods", method.name) && method.desc.equals("()Z");
+            url |= isAlias("skinTextureUrlMethods", method.name) && method.desc.equals("()Ljava/lang/String;");
+        }
+        if (!secure || !url) throw new IllegalStateException("PlayerInfo skin guard has no exact native secure/textureUrl accessors.");
     }
 
     /** Prove that only one native String producer changed, never updateTitle or networking. */

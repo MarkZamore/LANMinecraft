@@ -131,6 +131,18 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         "com/mojang/authlib/GameProfile"
     ];
 
+    [Fact]
+    public void FullConfiguration_UsesTheSameIndependentPlayerInfoSkinFamily()
+    {
+        var (service, runtime, gameDirectory) = CreateFixture(GoldenMappings, DefaultJarClasses);
+        var configuration = service.Build(runtime, gameDirectory);
+        Assert.Equal("true", configuration.Properties["playerInfoSkinEnabled"]);
+        Assert.Equal("net/minecraft/client/multiplayer/PlayerInfo,fzq", configuration.Properties["playerInfoClasses"]);
+        Assert.Equal("net/minecraft/client/resources/PlayerSkin,grl", configuration.Properties["playerSkinClasses"]);
+        Assert.Equal("textureUrl,b", configuration.Properties["skinTextureUrlMethods"]);
+        Assert.Equal("secure,f", configuration.Properties["skinSecureMethods"]);
+    }
+
     /// <summary>
     /// A Forge runtime reads the same names out of two files instead of one:
     /// mcp_config's TSRG2, which numbers every member, and Mojang's own

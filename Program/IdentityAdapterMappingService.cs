@@ -200,8 +200,18 @@ internal sealed class IdentityAdapterMappingService
     /// deserves the same answer instead of costing the pack its skins too.
     /// </remarks>
     public IdentityAdapterConfiguration BuildSkins(
-        PreparedRuntime runtime, string gameDirectory, string whyNotEverything) =>
-        BuildSkinsOnly(runtime, gameDirectory, whyNotEverything);
+        PreparedRuntime runtime, string gameDirectory, string whyNotEverything)
+    {
+        RuntimeNames? names = null;
+        string? source = null;
+        try { (names, source) = ReadRuntimeMappings(runtime); }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or NotSupportedException)
+        {
+            // Authlib remains usable without mappings. A refusal of the login
+            // hook alone must not discard independently mapped skin/LAN hooks.
+        }
+        return BuildSkinsOnly(runtime, gameDirectory, whyNotEverything, names, source);
+    }
 
     /// <summary>
     /// The skin hooks, which need nothing from the runtime but its authlib.
@@ -221,6 +231,8 @@ internal sealed class IdentityAdapterMappingService
         AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, perPlayerProperties);
         var discoveryScreen = AddSteamDiscoveryProperties(mappings, perPlayerProperties, runtime.Descriptor);
+        var skinProperties = new Dictionary<string, string>(StringComparer.Ordinal);
+        var playerInfo = AddSkinProperties(skinProperties, mappings);
         var wanted = new HashSet<string>(StringComparer.Ordinal)
             { YggdrasilSessionService, MinecraftServicesSessionService,
                 TextureUrlChecker, MinecraftServicesDiscoveryService, GameProfile };
@@ -230,6 +242,11 @@ internal sealed class IdentityAdapterMappingService
             wanted.Add(lanScreen.ObfName);
         }
         AddModernSkinTarget(mappings, wanted);
+        if (playerInfo is not null)
+        {
+            wanted.Add(playerInfo.RuntimeName);
+            wanted.Add(playerInfo.ObfName);
+        }
         if (pauseScreen is not null)
         {
             wanted.Add(pauseScreen.RuntimeName);
@@ -275,7 +292,6 @@ internal sealed class IdentityAdapterMappingService
             // anyway, because identityHooksEnabled and the three Enabled flags
             // above are what decide whether anything is patched.
             ["loginClasses"] = LoginListener,
-            ["playerInfoClasses"] = PlayerInfo,
             ["ftbTeleportClasses"] = JoinAliases(
                 FtbWaypointRowPanel,
                 FtbWaypointMapIcon,
@@ -285,6 +301,7 @@ internal sealed class IdentityAdapterMappingService
         };
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
         foreach (var pair in perPlayerProperties) properties[pair.Key] = pair.Value;
+        foreach (var pair in skinProperties) properties[pair.Key] = pair.Value;
         // The screen has to be in a jar to be patched, and the preflight is
         // told to patch every target it is given. One that is not there means
         // the hook is off rather than half on.
@@ -293,8 +310,10 @@ internal sealed class IdentityAdapterMappingService
         {
             properties["lanPublishEnabled"] = "false";
         }
+        if (playerInfo is not null &&
+            targets.All(target => target.ClassName != playerInfo.RuntimeName && target.ClassName != playerInfo.ObfName))
+            properties["playerInfoSkinEnabled"] = "false";
         AddServeDistanceProperties(mappings, properties);
-        AddSkinProperties(properties, mappings);
         // There is no mapping file behind this configuration, and the cache
         // above still wants a file to notice changing. authlib is the file it
         // was actually derived from, so authlib is what it watches - unless
@@ -305,7 +324,7 @@ internal sealed class IdentityAdapterMappingService
     }
 
     /// <summary>The part that is the same however the rest turns out.</summary>
-    private static void AddSkinProperties(Dictionary<string, string> properties, RuntimeNames? mappings)
+    private static MappedClass? AddSkinProperties(Dictionary<string, string> properties, RuntimeNames? mappings)
     {
         properties["textureUrlCheckerClasses"] = JoinAliases(
             TextureUrlChecker, YggdrasilSessionService,
@@ -328,6 +347,35 @@ internal sealed class IdentityAdapterMappingService
             properties["skinManagerLookupMethods"] = JoinAliases(lookup);
             properties["skinManagerLookupDescriptors"] = lookup.ObfDescriptor;
         }
+        return AddPlayerInfoSkinProperties(properties, mappings);
+    }
+
+    private static MappedClass? AddPlayerInfoSkinProperties(
+        Dictionary<string, string> properties, RuntimeNames? mappings)
+    {
+        properties["playerInfoSkinEnabled"] = "false";
+        properties["playerInfoClasses"] = PlayerInfo;
+        var playerInfo = mappings?.FindClass(PlayerInfo);
+        var playerSkin = mappings?.FindClass(PlayerSkin);
+        if (playerInfo is null || playerSkin is null) return null;
+        const string lookupDescriptor = "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;";
+        static string SelectionDescriptor(string skin) =>
+            $"(Ljava/util/concurrent/CompletableFuture;L{skin};Z)L{skin};";
+        var lookup = playerInfo.FindMethod("createSkinLookup", descriptor => descriptor == lookupDescriptor);
+        var selection = playerInfo.FindMethod("lambda$createSkinLookup$2", descriptor => descriptor == SelectionDescriptor(playerSkin.ObfName));
+        var textureUrl = playerSkin.FindMethod("textureUrl", descriptor => descriptor == "()Ljava/lang/String;");
+        var secure = playerSkin.FindMethod("secure", descriptor => descriptor == "()Z");
+        if (lookup is null || selection is null || textureUrl is null || secure is null) return null;
+        properties["playerInfoSkinEnabled"] = "true";
+        properties["playerInfoClasses"] = JoinAliases(playerInfo);
+        properties["playerSkinClasses"] = JoinAliases(playerSkin);
+        properties["skinLookupMethods"] = JoinAliases(lookup);
+        properties["skinLookupDescriptors"] = lookupDescriptor;
+        properties["skinSelectionMethods"] = JoinAliases(selection);
+        properties["skinSelectionDescriptors"] = JoinAliases(SelectionDescriptor(playerSkin.RuntimeName), selection.ObfDescriptor);
+        properties["skinTextureUrlMethods"] = JoinAliases(textureUrl);
+        properties["skinSecureMethods"] = JoinAliases(secure);
+        return playerInfo;
     }
 
     private static void AddModernSkinTarget(RuntimeNames? mappings, HashSet<string> wanted)
@@ -1273,19 +1321,11 @@ internal sealed class IdentityAdapterMappingService
         var connection = mappings.RequireClass(Connection);
         var playerList = mappings.RequireClass(PlayerList);
         var component = mappings.RequireClass(Component);
-        var playerInfo = mappings.RequireClass(PlayerInfo);
-        var playerSkin = mappings.RequireClass(PlayerSkin);
         var clientPacketListener = mappings.RequireClass(ClientPacketListener);
         var screen = mappings.RequireClass(Screen);
 
         var hello = listener.RequireMethod("handleHello", descriptor => descriptor.Contains($"L{packet.ObfName};", StringComparison.Ordinal));
         var verify = listener.RequireMethod("verifyLoginAndFinishConnectionSetup", descriptor => descriptor.Contains("Lcom/mojang/authlib/GameProfile;", StringComparison.Ordinal));
-        var skinLookup = playerInfo.RequireMethod(
-            "createSkinLookup",
-            descriptor => descriptor.StartsWith("(Lcom/mojang/authlib/GameProfile;)", StringComparison.Ordinal));
-        var skinSelection = playerInfo.RequireMethod(
-            "lambda$createSkinLookup$2",
-            descriptor => descriptor.StartsWith("(Ljava/util/concurrent/CompletableFuture;", StringComparison.Ordinal));
         var sendUnsignedCommand = clientPacketListener.RequireMethod(
             "sendUnsignedCommand",
             descriptor => descriptor == "(Ljava/lang/String;)Z");
@@ -1317,17 +1357,6 @@ internal sealed class IdentityAdapterMappingService
             ["componentClasses"] = JoinDottedAliases(component),
             ["componentLiteralMethods"] = JoinAliases(component.RequireMethod("literal", descriptor => descriptor.StartsWith("(Ljava/lang/String;)", StringComparison.Ordinal))),
             ["disconnectMethods"] = JoinAliases(listener.RequireMethod("disconnect", descriptor => descriptor.EndsWith(")V", StringComparison.Ordinal))),
-            ["playerInfoClasses"] = JoinAliases(playerInfo),
-            ["skinLookupMethods"] = JoinAliases(skinLookup),
-            ["skinLookupDescriptors"] = JoinAliases(
-                "(Lcom/mojang/authlib/GameProfile;)Ljava/util/function/Supplier;",
-                skinLookup.ObfDescriptor),
-            ["skinSelectionMethods"] = JoinAliases(skinSelection),
-            ["skinSelectionDescriptors"] = JoinAliases(
-                "(Ljava/util/concurrent/CompletableFuture;Lnet/minecraft/client/resources/PlayerSkin;Z)Lnet/minecraft/client/resources/PlayerSkin;",
-                skinSelection.ObfDescriptor),
-            ["skinTextureUrlMethods"] = JoinAliases(playerSkin.RequireMethod("textureUrl", descriptor => descriptor == "()Ljava/lang/String;")),
-            ["skinSecureMethods"] = JoinAliases(playerSkin.RequireMethod("secure", descriptor => descriptor == "()Z")),
             // The agent reads one fixed property set, so the transformers the
             // launcher no longer drives keep their keys and stay switched off.
             ["xaeroWaypointEnabled"] = "false",
@@ -1365,13 +1394,14 @@ internal sealed class IdentityAdapterMappingService
         var discoveryScreen = AddSteamDiscoveryProperties(mappings, properties, runtime.Descriptor);
         AddServeDistanceProperties(mappings, properties);
 
-        AddSkinProperties(properties, mappings);
+        var playerInfo = AddSkinProperties(properties, mappings)
+            ?? throw Unsupported(runtime.Descriptor, "native player skin selection is not mapped");
 
         var requiredTargets = new HashSet<string>(StringComparer.Ordinal)
         {
             LoginListener,
             listener.ObfName,
-            PlayerInfo,
+            playerInfo.RuntimeName,
             playerInfo.ObfName,
             GameProfile
         };
