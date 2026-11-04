@@ -48,6 +48,8 @@ function Assert-Java8Classes($archive) {
 $archive = [IO.Compression.ZipFile]::OpenRead($JarPath)
 try {
     Assert-Java8Classes $archive
+    if ($archive.GetEntry('org/objectweb/asm/ClassReader.class')) { throw 'Public ASM leaked onto the system class path.' }
+    if (-not $archive.GetEntry('minecraft/portable/notice/internal/asm/ClassReader.class')) { throw 'Private notice ASM missing.' }
     if ($archive.GetEntry('minecraft/portable/notice/PortableNoticeHooks.class')) { throw 'Hooks leaked onto system class path.' }
     $hooks = $archive.GetEntry('portable-notice-hooks.jar')
     if (-not $hooks) { throw 'Nested hooks missing.' }
@@ -58,13 +60,17 @@ try {
     Assert-Java8Classes $archive
     foreach ($entry in $archive.Entries) {
         if ($entry.FullName -like 'org/objectweb/asm/*') { throw 'ASM leaked onto bootstrap class path.' }
+        if ($entry.FullName -like 'minecraft/portable/notice/internal/asm/*') { throw 'Private ASM leaked onto bootstrap class path.' }
         if ($entry.FullName -match '/PortableNotice(Agent|Transformer)(\$|\.)') { throw 'Agent leaked onto bootstrap class path.' }
     }
 } finally { $archive.Dispose() }
 if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { throw 'JAVA_HOME must point at a JDK for the bytecode audit.' }
 $javac = Join-Path $env:JAVA_HOME 'bin\javac.exe'
 $java = Join-Path $env:JAVA_HOME 'bin\java.exe'
-$classPath = $JarPath + [IO.Path]::PathSeparator + $hooksPath
+$libRoot = Join-Path $programRoot 'IdentityAdapters\Common\lib'
+$classPath = @($JarPath, $hooksPath,
+    (Join-Path $libRoot 'asm-9.8.jar'),
+    (Join-Path $libRoot 'asm-tree-9.8.jar')) -join [IO.Path]::PathSeparator
 & $javac "-J-Djava.io.tmpdir=$toolTemporary" "-J-Duser.home=$toolProfile" --release 8 -Xlint:-options -encoding UTF-8 -cp $classPath -d $scratch (Join-Path $sourceRoot 'tests\TransformerAudit.java')
 if ($LASTEXITCODE -ne 0) { throw 'Presentation audit did not compile.' }
 & $java "-Djava.io.tmpdir=$toolTemporary" "-Duser.home=$toolProfile" -cp ($scratch + [IO.Path]::PathSeparator + $classPath) minecraft.portable.notice.TransformerAudit

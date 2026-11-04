@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private PackHashService? _packHash;
     private PortablePackSyncService? _packSync;
     private PackCatalogService? _catalog;
+    private PackDisplayNames? _displayNames;
     private Task? _catalogStartup;
     private Task? _libraryStartup;
     private int _libraryCatalogRefreshPending;
@@ -166,6 +167,7 @@ public partial class MainWindow : Window
         {
             _paths = new AppPaths(AppPaths.ResolveApplicationRoot());
             _paths.Ensure();
+            _displayNames = new PackDisplayNames(_paths);
             LogCleanupService.RotateLauncherLog(_paths);
             _logger = new Logger(_paths.LogFile);
             // Subscribed here rather than after the first frame: the preset
@@ -362,6 +364,7 @@ public partial class MainWindow : Window
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
         _preload?.Dispose();
         LibraryView.Dispose();
+        _displayNames?.Dispose();
         DialogPreloadCache.Clear();
         _catalogLifetimeCts.Cancel();
         _windowPlacement.Save(this);
@@ -502,6 +505,7 @@ public partial class MainWindow : Window
     {
         if (_paths is null || _settings is null || _settingsService is null || _catalog is null) return;
 
+        PublishPackDisplayNames();
         Directory.CreateDirectory(_paths.Packs);
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
         var builds = Directory.EnumerateDirectories(_paths.Packs)
@@ -513,7 +517,7 @@ public partial class MainWindow : Window
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
-                Name = _catalog?.GetDisplayName(Path.GetFileName(path)) ??
+                Name = _displayNames?.Resolve(Path.GetFileName(path), Path.GetFileName(path)) ?? _catalog?.GetDisplayName(Path.GetFileName(path)) ??
                        PackDisplayName.For(Path.GetFileName(path), Path.GetFileName(path)),
                 RelativePath = Path.GetRelativePath(_paths.Packs, path),
                 FullPath = path
@@ -538,7 +542,7 @@ public partial class MainWindow : Window
             {
                 // A star, not a word: the list is narrow and the name is what a
                 // player reads. Pressing Play on a starred build downloads it.
-                Name = (_catalog?.GetDisplayName(known.RelativePath) ??
+                Name = (_displayNames?.Resolve(known.RelativePath, known.RelativePath) ?? _catalog?.GetDisplayName(known.RelativePath) ??
                         PackDisplayName.For(known.RelativePath, known.RelativePath)) + "*",
                 RelativePath = known.RelativePath,
                 FullPath = _paths.CombineUnderPacks(known.RelativePath),
@@ -864,7 +868,8 @@ public partial class MainWindow : Window
             Name = Path.GetFileName(path),
             Path = path,
             BuildName = buildName,
-            BuildRelativePath = metadata?.BuildRelativePath ?? ""
+            BuildRelativePath = metadata?.BuildRelativePath ?? "",
+            DisplayNames = _displayNames
         };
     }
 
@@ -973,7 +978,8 @@ public partial class MainWindow : Window
             identity.IdentityName,
             identity.MinecraftUuid,
             BuildVersionText(),
-            settings.ClientRelativePath,
+            _displayNames?.Resolve(settings.ClientRelativePath, settings.ClientRelativePath) ??
+                PackDisplayName.For(settings.ClientRelativePath, settings.ClientRelativePath),
             _localPackHash,
             _minecraftRunning);
     }
@@ -1154,7 +1160,7 @@ public partial class MainWindow : Window
             var peer = _peers.FirstOrDefault(candidate => candidate.SteamId == presence.SteamId);
             if (peer is null)
             {
-                peer = new PeerViewModel { SteamId = presence.SteamId };
+                peer = new PeerViewModel { SteamId = presence.SteamId, DisplayNames = _displayNames };
                 _peers.Add(peer);
             }
             peer.Apply(presence, _localPackHash);
@@ -3290,6 +3296,7 @@ public partial class MainWindow : Window
         }
         if (_shutdownStarted || generation != _selectedLaunchGeneration || BuildComboBox.SelectedItem is not ClientBuildViewModel selected ||
             !string.Equals(selected.RelativePath, path, StringComparison.OrdinalIgnoreCase)) return;
+        PublishPackDisplayNames();
         RefreshUi();
         if (catalog.IsLaunchReady(path))
             _logger?.Info($"Выбранная сборка готова к запуску: {StartupTrace.Elapsed} мс от запуска процесса.");
@@ -3392,8 +3399,17 @@ public partial class MainWindow : Window
         foreach (var action in UiPreparation.Prepare(ChangelogList)) yield return action;
     }
 
+    private bool PublishPackDisplayNames()
+    {
+        if (_catalog is null || _displayNames?.Publish(_catalog.Packs) != true) return false;
+        foreach (var peer in _peers) peer.RefreshPackDisplayName();
+        foreach (var world in _worlds) world.RefreshPackDisplayName();
+        return true;
+    }
+
     private void RefreshLibraryCatalog()
     {
+        if (PublishPackDisplayNames()) RefreshBuilds();
         if (_catalog is not null && _settings is not null && (_catalog.IsReady || _libraryVisible))
         {
             // A foreground request can overtake the automatic data queue.

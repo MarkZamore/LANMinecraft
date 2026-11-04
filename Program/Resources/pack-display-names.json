@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "packs": [
+    {
+      "id": "all-the-mods-10",
+      "relativePath": "All The Mods 10",
+      "name": "All The Mods 10",
+      "revision": "fec0829dcc5f147ede87349cbb1f129522df2c99",
+      "bundleSha256": "e67425c26d4a6520c6e19273207d45f2fb3869cdedcf2da03e6ee25d81010856"
+    },
+    {
+      "id": "all-the-mods-9",
+      "relativePath": "All The Mods 9",
+      "name": "All The Mods 9",
+      "revision": "fe91875776a04350ff0068f50dcdd0069e2fe8bd",
+      "bundleSha256": "7943a8b9ba3cab866474f8aa5062be6bc1868167dbe545e767bff1af0bbd81f9"
+    },
+    {
+      "id": "all-the-mods-9-modified",
+      "relativePath": "All the Mods 9 Modified",
+      "name": "All The Mods 9 Modified",
+      "revision": "f180e69d8e2fc01849c43e8ce2298ef27e2413cb",
+      "bundleSha256": "cab7465bd444667005ff3826299026d8afbab9d2a5494aad92748a86d257c96c"
+    },
+    {
+      "id": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
+      "name": "Caves and Dungeons",
+      "revision": "e3913bfb2d3c47b131956cdab7fbc9150201f49a",
+      "bundleSha256": "24944fd48cbdaad3b6dab0cc2cc3e2534fde081daf8b553ce364fd5f06eab4ee"
+    },
+    {
+      "id": "minecraft-26-2",
+      "relativePath": "Minecraft 26.3",
+      "name": "Minecraft 26.3",
+      "revision": "03d308ddaba04be6da9fbe3b0d104866982a3a84",
+      "bundleSha256": "35099480b15906a7a25f732b89a4b906c8eb3c8a4e5a27ef49221eb36a6a75f0"
+    },
+    {
+      "id": "terrafirma-rebirth",
+      "relativePath": "TerraFirma Rebirth",
+      "name": "TerraFirma Rebirth 2",
+      "revision": "df481196d3f035bfcc0b34737cbfef0dd2aa317e",
+      "bundleSha256": "8f30215be72943f9491ea6a374c0d0d8f6804277889b0e0cdf8684c8ada9b730"
+    }
+  ]
+}

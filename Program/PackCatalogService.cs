@@ -81,7 +81,7 @@ public sealed class CatalogPack
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
     public string ContentIdentity { get; init; } = "";
-    public string Name => PackDisplayName.For(Entry.RelativePath, Content.Name);
+    public string Name => Content.Name;
     // Published metadata contains the actual loaded mod IDs, including embedded
     // dependencies. The library flag only controls the presentation category.
     public int ModCount => Content.Mods.Where(mod => mod.IsLoadedMod)
@@ -482,7 +482,10 @@ public sealed partial class PackCatalogService
             content.RelativePath == PortablePackSyncService.LegacyTerraFirmaRelativePath)
         {
             content.RelativePath = entry.RelativePath;
-            content.Name = PackDisplayName.For(entry.RelativePath, content.Name);
+            // Migrate only the exact historical title. Verified author names,
+            // including case-only edits, never pass through offline fallbacks.
+            if (string.Equals(content.Name, PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.Ordinal))
+                content.Name = PortablePackSyncService.TerraFirmaRelativePath;
         }
         ValidateContent(entry, content, revision);
         using var preview = zip.GetEntry("preview.jpg")!.Open();

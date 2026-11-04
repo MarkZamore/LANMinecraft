@@ -32,7 +32,11 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Use a new output directory for each proof.' }
 $classes = Join-Path $OutputDirectory 'classes'
 [void][IO.Directory]::CreateDirectory($classes)
-$classpath = $classes + [IO.Path]::PathSeparator + $AdapterJar
+$common = Join-Path $projectRoot 'Program\IdentityAdapters\Common'
+$probeDependencies = @($AdapterJar,
+    (Join-Path $common 'lib\asm-9.8.jar'),
+    (Join-Path $common 'lib\asm-tree-9.8.jar')) -join [IO.Path]::PathSeparator
+$classpath = $classes + [IO.Path]::PathSeparator + $probeDependencies
 $fixture = Join-Path $projectRoot 'Program.Tests\Fixtures\WindowTitleTransformerProbe.java'
 
 function Invoke-JavaTool([string]$Executable, [string[]]$ToolArguments, [string]$LogName) {
@@ -47,7 +51,7 @@ function Invoke-JavaTool([string]$Executable, [string[]]$ToolArguments, [string]
     return $text
 }
 
-$compileArguments = @('--release', '17', '-cp', $AdapterJar, '-d', $classes, $fixture)
+$compileArguments = @('--release', '17', '-cp', $probeDependencies, '-d', $classes, $fixture)
 $null = Invoke-JavaTool $javac $compileArguments 'compile.log'
 $syntheticOutput = Invoke-JavaTool $java @('-Xverify:all', '-cp', $classpath, 'WindowTitleTransformerProbe') 'synthetic.log'
 if (-not $syntheticOutput.Contains('WINDOW_TITLE_SYNTHETIC_PASS')) { throw 'The simulated lifecycle proof did not report success.' }

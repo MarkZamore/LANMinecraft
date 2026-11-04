@@ -592,6 +592,43 @@ public sealed class IdentityAdapterMappingServiceTests : IDisposable
         Assert.False(properties.ContainsKey("setChunkViewDistanceMethods"));
     }
 
+    [Theory]
+    [InlineData("schedule", "(Ljava/lang/Runnable;)V", "schedule,i")]
+    [InlineData("tell", "(Ljava/lang/Runnable;)V", "tell,i")]
+    [InlineData("tell", "(Ljava/lang/Object;)V", null)]
+    public void LanScreenClose_UsesTheMappedQueuedEventLoopMethod(
+        string method, string descriptor, string? expectedAliases)
+    {
+        var mappings = GoldenMappings + "\nbph net/minecraft/util/thread/BlockableEventLoop\n" +
+                       $"\ti {descriptor} {method}\n";
+        var (service, runtime, gameDirectory) = CreateFixture(mappings, DefaultJarClasses);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("true", properties["lanPublishEnabled"]);
+        if (expectedAliases is null)
+        {
+            Assert.False(properties.ContainsKey("minecraftScheduleMethods"));
+        }
+        else
+        {
+            Assert.Equal(expectedAliases, properties["minecraftScheduleMethods"]);
+        }
+    }
+
+    [Fact]
+    public void LanScreenClose_PrefersAnExistingScheduleMethodOverTell()
+    {
+        var mappings = GoldenMappings + "\nbph net/minecraft/util/thread/BlockableEventLoop\n" +
+                       "\ti (Ljava/lang/Runnable;)V tell\n" +
+                       "\ts (Ljava/lang/Runnable;)V schedule\n";
+        var (service, runtime, gameDirectory) = CreateFixture(mappings, DefaultJarClasses);
+
+        var properties = service.Build(runtime, gameDirectory).Properties;
+
+        Assert.Equal("schedule,s", properties["minecraftScheduleMethods"]);
+    }
+
     /// <summary>
     /// The preflight refuses to run on a missing alias list, so every list it
     /// asks about is named even when the hooks behind it are switched off.

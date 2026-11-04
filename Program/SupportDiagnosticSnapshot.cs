@@ -145,9 +145,7 @@ public static partial class SupportDiagnosticSnapshotBuilder
             RuntimeInformation.OSDescription,
             RuntimeInformation.ProcessArchitecture.ToString(),
             javaVersion,
-            Path.GetFileName(packRelativePath.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar)) ?? string.Empty,
+            ResolvePackName(request.Paths, packRelativePath),
             request.PackHash ?? string.Empty,
             ReadMods(request.Paths, packRelativePath),
             ReadWorlds(request.Paths),
@@ -155,6 +153,10 @@ public static partial class SupportDiagnosticSnapshotBuilder
             runtimeState,
             commands[0]);
     }
+
+    internal static string ResolvePackName(AppPaths paths, string relativePath) =>
+        PackDisplayNames.ForInstallation(paths, relativePath, Path.GetFileName(relativePath.TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? string.Empty);
 
     /// <summary>
     /// Every world on this machine with the build it is recorded under. A world
@@ -176,9 +178,12 @@ public static partial class SupportDiagnosticSnapshotBuilder
                          .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
             {
                 var world = metadata.Read(path);
+                var recordedPath = world?.BuildRelativePath ?? "";
+                var recordedName = world?.BuildName ?? "";
                 worlds.Add(new SupportWorldSnapshot(
                     Path.GetFileName(path),
-                    string.IsNullOrWhiteSpace(world?.BuildName) ? unrecorded : world.BuildName,
+                    PackDisplayNames.ForInstallation(paths, string.IsNullOrWhiteSpace(recordedPath) ? recordedName : recordedPath,
+                        string.IsNullOrWhiteSpace(recordedName) ? unrecorded : recordedName),
                     string.IsNullOrWhiteSpace(world?.BuildRelativePath) ? unrecorded : world.BuildRelativePath,
                     world?.OwnerIdentityName ?? string.Empty,
                     world?.CurrentHolderIdentityName ?? string.Empty));

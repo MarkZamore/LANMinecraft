@@ -124,6 +124,48 @@ internal sealed class IdentityAdapterMappingService
     /// </remarks>
     public IdentityAdapterConfiguration Build(PreparedRuntime runtime, string gameDirectory)
     {
+        RuntimeNames mappings;
+        string mappingPath;
+        try
+        {
+            (mappings, mappingPath) = ReadRuntimeMappings(runtime);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
+        }
+
+        try
+        {
+            return BuildEverything(runtime, gameDirectory, mappingPath, mappings);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            // Each optional feature can still use the names even when another
+            // family of hooks does not fit this runtime's native bytecode.
+            return BuildSkinsOnly(runtime, gameDirectory, ex.Message, mappings, mappingPath);
+        }
+    }
+
+    // Optional native factories use the same version-scoped mapping composition
+    // as identity/LAN, without depending on those features being available.
+    internal static (string RuntimeClass, string SourceClass, string RuntimeMethod, string SourceMethod)?
+        FindMappedMethod(PreparedRuntime runtime, string officialClass, string officialMethod, string descriptor)
+    {
+        // A named runtime needs no mapping database; its factory is verified
+        // directly by the caller. Do not turn an absent mapping into a guess.
+        if (FindTsrg2Mappings(runtime) is null && FindIntermediaryMappings(runtime) is null &&
+            (runtime.Descriptor.Loader.Type != PackLoaderKind.NeoForge || FindMojangMappings(runtime) is null))
+            return null;
+        var (names, _) = ReadRuntimeMappings(runtime);
+        var owner = names.FindClass(officialClass);
+        var method = owner?.FindMethod(officialMethod, value => value == descriptor);
+        return owner is null || method is null ? null
+            : (owner.RuntimeName, owner.ObfName, method.RuntimeName, method.ObfName);
+    }
+
+    private static (RuntimeNames Names, string Source) ReadRuntimeMappings(PreparedRuntime runtime)
+    {
         var mojangMappingPath = FindMojangMappings(runtime);
         var mappingPath = FindTsrg2Mappings(runtime);
         var intermediaryPath = mappingPath is null ? FindIntermediaryMappings(runtime) : null;
@@ -136,10 +178,7 @@ internal sealed class IdentityAdapterMappingService
         var officialOnly = mappingPath is null && intermediaryPath is null &&
             runtime.Descriptor.Loader.Type == PackLoaderKind.NeoForge &&
             mojangMappingPath is not null;
-        RuntimeNames mappings;
-        try
-        {
-            mappings = mappingPath is not null ? RuntimeNames.Read(mappingPath, mojangMappingPath)
+        var mappings = mappingPath is not null ? RuntimeNames.Read(mappingPath, mojangMappingPath)
                 : intermediaryPath is not null
                     ? RuntimeNames.ReadIntermediary(intermediaryPath, mojangMappingPath, runtime.ClientJarPath)
                     : officialOnly ? RuntimeNames.ReadOfficialOnly(mojangMappingPath!)
@@ -147,27 +186,7 @@ internal sealed class IdentityAdapterMappingService
                     // mapping download. Read its actual members, rather than
                     // borrowing another installed version's mapping file.
                     : RuntimeNames.ReadNamedJar(runtime.ClientJarPath);
-        }
-        catch (InvalidDataException ex)
-        {
-            return BuildSkinsOnly(runtime, gameDirectory, ex.Message);
-        }
-        mappingPath ??= intermediaryPath ?? mojangMappingPath ?? runtime.ClientJarPath;
-
-        try
-        {
-            return BuildEverything(runtime, gameDirectory, mappingPath, mappings);
-        }
-        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
-        {
-            // A Minecraft the UUID hooks do not fit is still a Minecraft whose
-            // skins work, and may well be one whose world can still be opened
-            // to the network in one press: the classes that hook reaches for
-            // are older than the ones that settle a UUID at the door. So the
-            // reason is carried forward and every other feature asked for
-            // again, one at a time.
-            return BuildSkinsOnly(runtime, gameDirectory, ex.Message, mappings, mappingPath);
-        }
+        return (mappings, mappingPath ?? intermediaryPath ?? mojangMappingPath ?? runtime.ClientJarPath);
     }
 
     /// <summary>
@@ -632,8 +651,13 @@ internal sealed class IdentityAdapterMappingService
             "addMessage",
             descriptor => descriptor == $"(L{component.ObfName};)V") ?? chatComponent.FindMethod(
             "addClientSystemMessage", descriptor => descriptor == $"(L{component.ObfName};)V");
-        var schedule = mappings.FindClass(BlockableEventLoop)?.FindMethod(
-            "schedule", descriptor => descriptor == "(Ljava/lang/Runnable;)V");
+        var eventLoop = mappings.FindClass(BlockableEventLoop);
+        // Both names enqueue even when called on the render thread. Minecraft
+        // 1.21.1 calls this tell(Runnable); Executor.execute can run inline and
+        // close the screen before the remaining native/mod init callbacks.
+        var schedule = eventLoop?.FindMethod(
+            "schedule", descriptor => descriptor == "(Ljava/lang/Runnable;)V")
+            ?? eventLoop?.FindMethod("tell", descriptor => descriptor == "(Ljava/lang/Runnable;)V");
         // The line the game writes in chat when a world opens is wanted, not
         // required: PublishCommand said it inline until 1.19.4, and a world
         // that opens without a line about it has still opened. The hook's own

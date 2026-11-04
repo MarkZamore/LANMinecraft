@@ -1,5 +1,7 @@
 ﻿using System.IO.Compression;
+using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Minecraft.Tests;
@@ -226,6 +228,66 @@ public sealed class IdentityAdapterAsmPackagingTests
             Assert.Contains(length.ToString(System.Globalization.CultureInfo.InvariantCulture), script, StringComparison.Ordinal);
             Assert.Contains(sha256, script, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public async Task BundledAsm_IsPrivateAndWorksWithOrWithoutTheLoadersAsm()
+    {
+        var common = FindRepositoryDirectory("Program", "IdentityAdapters", "Common");
+        var repository = Directory.GetParent(Directory.GetParent(Directory.GetParent(common)!.FullName)!.FullName)!.FullName;
+        var fixture = Path.Combine(repository, "artifacts", "asm-isolation-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixture);
+        var temporary = Path.Combine(fixture, "temp");
+        Directory.CreateDirectory(temporary);
+        var adapter = Path.Combine(fixture, "portable-identity-adapter.jar");
+        await RunTool("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            Path.Combine(common, "Build-IdentityAdapter.ps1"), "-AdapterName", "Minecraft-1.21.1-NeoForge", "-OutputPath", adapter);
+        using (var archive = ZipFile.OpenRead(adapter))
+        {
+            Assert.DoesNotContain(archive.Entries, entry => entry.FullName.StartsWith("org/objectweb/asm/", StringComparison.Ordinal));
+            Assert.NotNull(archive.GetEntry("minecraft/portable/internal/asm/ClassReader.class"));
+            Assert.NotNull(archive.GetEntry("minecraft/portable/internal/asm/tree/ClassNode.class"));
+            Assert.NotNull(archive.GetEntry("META-INF/LICENSE.asm.txt"));
+            Assert.Null(archive.GetEntry("RelocateAsm.class"));
+        }
+        var source = Path.Combine(repository, "Program.Tests", "Fixtures", "AsmClasspathProbe.java");
+        await RunTool("javac", "--release", "17", "-encoding", "UTF-8", "-d", fixture, source);
+        var notice = Path.Combine(fixture, "notice-agent.jar");
+        await using (var output = File.Create(notice))
+        await using (var input = typeof(PeerNoticeService).Assembly.GetManifestResourceStream("Minecraft.NoticeOverlayAgent.jar")!)
+            await input.CopyToAsync(output);
+        Directory.CreateDirectory(Path.Combine(fixture, "notice"));
+        foreach (var external in new[] { false, true })
+        {
+            var classPath = external ? fixture + Path.PathSeparator + Path.Combine(common, "lib", "asm-9.8.jar") : fixture;
+            var result = await RunTool("java", "-Xverify:all", "-Djava.io.tmpdir=" + temporary,
+                "-Dminecraft.portable.identity.enabled=true", "-javaagent:" + adapter,
+                "-Dlanminecraft.notice.directory=" + Path.Combine(fixture, "notice"), "-javaagent:" + notice,
+                "-cp", classPath, "AsmClasspathProbe", external ? "1" : "0");
+            Assert.Contains("ASM isolation passed: external=" + (external ? "1" : "0"), result, StringComparison.Ordinal);
+        }
+    }
+
+    private static async Task<string> RunTool(string tool, params string[] arguments)
+    {
+        var javaHome = Environment.GetEnvironmentVariable("JAVA_HOME");
+        var program = tool == "powershell" || string.IsNullOrWhiteSpace(javaHome)
+            ? tool + ".exe" : Path.Combine(javaHome, "bin", tool + ".exe");
+        var start = new ProcessStartInfo(program)
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
+        var text = await output + await error;
+        Assert.True(process.ExitCode == 0, text);
+        return text;
     }
 
     private static IEnumerable<string> EnumerateAdapterSources() => Directory.EnumerateFiles(

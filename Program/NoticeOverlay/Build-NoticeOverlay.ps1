@@ -28,6 +28,7 @@ if (-not $destination.StartsWith($buildPrefix, [System.StringComparison]::Ordina
 $manifest = Join-Path $sourceRoot 'MANIFEST.MF'
 $libRoot = Join-Path $programRoot 'IdentityAdapters\Common\lib'
 $license = Join-Path $libRoot 'LICENSE.asm.txt'
+$relocatorSource = Join-Path $programRoot 'IdentityAdapters\BuildTools\RelocateAsm.java'
 $artifacts = @(
     [pscustomobject]@{
         Name = 'asm-9.8.jar'; Length = 126113
@@ -47,7 +48,7 @@ $asmJars = @(foreach ($artifact in $artifacts) {
     }
     $path
 })
-foreach ($required in @($manifest, $license)) {
+foreach ($required in @($manifest, $license, $relocatorSource)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required file missing: $required" }
 }
 $javaFiles = @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'src') -Recurse -File -Filter '*.java' |
@@ -56,7 +57,7 @@ if ($javaFiles.Count -eq 0) { throw 'Notice overlay Java sources were not found.
 
 # A real unchanged build leaves the existing JAR untouched. In particular,
 # rebuilding the WPF project must not invalidate every installed agent cache.
-$inputs = @($PSCommandPath, $manifest, $license) + $asmJars + $javaFiles
+$inputs = @($PSCommandPath, $manifest, $license, $relocatorSource) + $asmJars + $javaFiles
 $inputDescription = ($inputs | ForEach-Object { $_.Substring($programRoot.Length) + ':' + (Get-Sha256 $_) }) -join "`n"
 $inputHashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
 try {
@@ -85,6 +86,7 @@ function Find-JavaTool([string]$name) {
 }
 $javac = Find-JavaTool 'javac'
 $jar = Find-JavaTool 'jar'
+$java = Find-JavaTool 'java'
 $stageRoot = [System.IO.Path]::GetFullPath((Join-Path $buildRoot ('stage-' + [Guid]::NewGuid().ToString('N'))))
 $classes = Join-Path $stageRoot 'classes'
 $hooks = Join-Path $stageRoot 'hooks'
@@ -125,6 +127,16 @@ try {
     $licenseTarget = Join-Path $asm 'META-INF\LICENSE.asm.txt'
     New-Item -ItemType Directory -Path (Split-Path -Parent $licenseTarget) -Force | Out-Null
     Copy-Item -LiteralPath $license -Destination $licenseTarget
+
+    # -javaagent exposes this JAR to the system loader too. A public ASM copy
+    # there makes strict Fabric classpath validation reject the entire game.
+    # Keep the overlay's pinned copy separate from both the loader and identity.
+    $buildTools = Join-Path $stageRoot 'build-tools'
+    New-Item -ItemType Directory -Path $buildTools -Force | Out-Null
+    & $javac "-J-Djava.io.tmpdir=$toolTemporary" "-J-Duser.home=$toolProfile" --release 17 -encoding UTF-8 -d $buildTools $relocatorSource
+    if ($LASTEXITCODE -ne 0) { throw "Notice ASM relocator compilation failed with exit code $LASTEXITCODE." }
+    & $java "-Djava.io.tmpdir=$toolTemporary" "-Duser.home=$toolProfile" -Xverify:all -cp $buildTools RelocateAsm $classes $asm 'minecraft/portable/notice/internal/asm'
+    if ($LASTEXITCODE -ne 0) { throw "Notice ASM relocation failed with exit code $LASTEXITCODE." }
 
     $package = 'minecraft\portable\notice'
     $compiledPackage = Join-Path $classes $package
