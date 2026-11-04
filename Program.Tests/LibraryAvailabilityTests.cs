@@ -135,6 +135,7 @@ public sealed class LibraryAvailabilityTests
                 {
                     var pack = Pack(0);
                     pack.Content.Description = "Short description.";
+                    library.SetCatalog([pack]);
                     library.ShowDetails(pack);
                 }
                 WindowCanvasTests.LayoutWindow(controls, new Size(804, 1001));

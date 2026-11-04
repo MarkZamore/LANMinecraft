@@ -47,7 +47,16 @@ internal static class WindowsThemeService
     {
         if (sender is Window window && e.OriginalSource == window &&
             window.GetType().Assembly == typeof(App).Assembly && !window.AllowsTransparency)
-            Attachments.GetValue(window, static owner => new WindowThemeAttachment(owner));
+            Attach(window, preferOpaqueClientClear: false);
+    }
+
+    // Production keeps the transparent Mica client. The explicit opaque choice
+    // is only for isolated probes whose fixture already covers the client.
+    internal static void Attach(Window window, bool preferOpaqueClientClear = false)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        if (!window.AllowsTransparency)
+            Attachments.GetValue(window, owner => new WindowThemeAttachment(owner, preferOpaqueClientClear));
     }
 
     internal static void RefreshAccent(Application application)
@@ -106,10 +115,12 @@ internal static class WindowsThemeService
     {
         private readonly Window _window;
         private readonly HwndSource? _source;
+        private readonly bool _preferOpaqueClientClear;
 
-        public WindowThemeAttachment(Window window)
+        public WindowThemeAttachment(Window window, bool preferOpaqueClientClear)
         {
             _window = window;
+            _preferOpaqueClientClear = preferOpaqueClientClear;
             var handle = new WindowInteropHelper(window).Handle;
             _source = HwndSource.FromHwnd(handle);
             _source?.AddHook(WindowMessage);
@@ -140,7 +151,8 @@ internal static class WindowsThemeService
                 // Native chrome stays usable when DWM materials are unavailable.
             }
             if (_source?.CompositionTarget is { } target)
-                target.BackgroundColor = available ? Colors.Transparent : (Color)_window.FindResource("Color.Canvas");
+                target.BackgroundColor = available && !_preferOpaqueClientClear
+                    ? Colors.Transparent : (Color)_window.FindResource("Color.Canvas");
         }
 
         private IntPtr WindowMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam, ref bool handled)

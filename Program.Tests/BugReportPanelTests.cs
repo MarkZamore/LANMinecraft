@@ -18,6 +18,31 @@ namespace Minecraft.Tests;
 public sealed class BugReportPanelTests
 {
     [Fact]
+    public void SuccessfulDeliveryShowsADialogAfterTheAcknowledgedSendAndKeepsANewDraft()
+    {
+        var click = Between(ReadWindowCode(), "private async void SendBugReportButton_Click(", "\n    }");
+        var send = click.IndexOf(".SendAsync(", StringComparison.Ordinal);
+        var delivered = click.IndexOf("NoticeDialog.Show(this, \"Отчёт доставлен\"", StringComparison.Ordinal);
+        Assert.True(send >= 0 && delivered > send);
+        Assert.Contains("Лаунчер получателя подтвердил получение и сохранение отчёта.", click, StringComparison.Ordinal);
+        Assert.Contains("if (BugReportMessageTextBox.Text == message) BugReportMessageTextBox.Clear();", click, StringComparison.Ordinal);
+        var closing = click.IndexOf("if (_lifetimeCts.IsCancellationRequested) return;", StringComparison.Ordinal);
+        Assert.True(closing > send && closing < delivered);
+    }
+
+    [Fact]
+    public void UnconfirmedDeliveryShowsFailureWithoutClearingTheDraftOrOpeningOnShutdown()
+    {
+        var click = Between(ReadWindowCode(), "private async void SendBugReportButton_Click(", "\n    }");
+        var failure = click[click.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.Contains("Доставка отчёта не подтверждена", failure, StringComparison.Ordinal);
+        Assert.Contains("if (!_lifetimeCts.IsCancellationRequested)", failure, StringComparison.Ordinal);
+        Assert.DoesNotContain("BugReportMessageTextBox.Clear", failure, StringComparison.Ordinal);
+        Assert.Contains("_bugReportSending = false;", failure, StringComparison.Ordinal);
+        Assert.Contains("RefreshDiagnosticsPanel();", failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RemovedStatus_HasNoStateOrProgressFormatting()
     {
         var source = ReadWindowCode();

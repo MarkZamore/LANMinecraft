@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -385,7 +385,7 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.Equal(240, card.ActualWidth, 3);
                 Assert.Equal(cards[0].ActualHeight, card.ActualHeight, 3);
             });
-            AssertCenteredGrid();
+            AssertLeftAlignedGrid();
             var cardBorder = VisualChildren<RoundedClipBorder>(cards[0]).Single();
             var radius = (CornerRadius)window.FindResource("Radius.Control");
             Assert.Equal(radius, cardBorder.CornerRadius);
@@ -393,7 +393,7 @@ public sealed class PackCatalogTests : IDisposable
             // preview must follow a new radius without requiring another resize.
             cardBorder.CornerRadius = new CornerRadius(16);
             Assert.Null(cardBorder.Clip);
-            var contentClip = Assert.IsType<System.Windows.Media.StreamGeometry>(cardBorder.Child.Clip);
+            var contentClip = Assert.IsType<System.Windows.Media.RectangleGeometry>(cardBorder.Child.Clip);
             Assert.False(contentClip.FillContains(new Point(1, 1)));
             Assert.True(contentClip.FillContains(new Point(16, 1)));
             cardBorder.CornerRadius = radius;
@@ -415,7 +415,7 @@ public sealed class PackCatalogTests : IDisposable
             var sizes = panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize).ToArray();
             WindowCanvasTests.LayoutWindow(window, new Size(width + 400, height));
             Assert.Equal(sizes, panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize));
-            AssertCenteredGrid();
+            AssertLeftAlignedGrid();
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             if (list.ScrollableHeight > 0) AssertScrollInput(list);
             var catalogOffset = list.VerticalOffset;
@@ -455,12 +455,12 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
             return true;
 
-            void AssertCenteredGrid()
+            void AssertLeftAlignedGrid()
             {
                 var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
                 var left = bounds.Min(rect => rect.Left);
-                var right = panel.ActualWidth - bounds.Max(rect => rect.Right);
-                Assert.InRange(Math.Abs(left - right), 0, 1);
+                Assert.InRange(Math.Abs(left), 0, 1);
+                Assert.True(bounds.Max(rect => rect.Right) <= panel.ActualWidth + 1);
                 // The incomplete final row keeps the same columns as the first.
                 var firstTop = bounds.Min(rect => rect.Top);
                 if (bounds.Any(rect => rect.Top > firstTop))
@@ -566,6 +566,7 @@ public sealed class PackCatalogTests : IDisposable
             pack.Mods.Add(unavailable);
             var parent = pack.Mods.First(node => node.HasChildren);
             parent.IsExpanded = true;
+            view.SetCatalog(catalog.Packs);
             view.Visibility = Visibility.Visible;
             view.ShowDetails(pack);
             WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));

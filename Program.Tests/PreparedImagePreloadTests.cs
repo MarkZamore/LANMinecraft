@@ -132,7 +132,9 @@ public sealed class PreparedImagePreloadTests
     }
 
     private static BitmapSource? DrawnBitmap(PreparedImage image) => VisualTreeHelper.GetDrawing(image)?
-        .Children.OfType<ImageDrawing>().Select(drawing => drawing.ImageSource).OfType<BitmapSource>().SingleOrDefault();
+        .Children.Select(drawing => drawing is ImageDrawing picture ? picture.ImageSource :
+            (drawing as GeometryDrawing)?.Brush is ImageBrush brush ? brush.ImageSource : null)
+        .OfType<BitmapSource>().SingleOrDefault();
 
     private static (int Width, int Height) ExpectedPixels(PreparedImage image, BitmapSource original)
     {

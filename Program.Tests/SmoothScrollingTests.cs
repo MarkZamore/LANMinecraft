@@ -9,6 +9,63 @@ namespace Minecraft.Tests;
 public static class SmoothScrollingTests
 {
     [Xunit.Fact]
+    public static void DelayedFramesKeepTheSameScrollAndSpringTiming()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            foreach (var bounce in new[] { false, true })
+            {
+                var delayed = SampleMotion(bounce, [150]);
+                var regular = SampleMotion(bounce, Enumerable.Repeat(150d / 9, 9));
+                Xunit.Assert.Equal(regular.Offset, delayed.Offset, 6);
+                Xunit.Assert.Equal(regular.BounceOffset, delayed.BounceOffset, 6);
+                Xunit.Assert.Equal(regular.IsAnimating, delayed.IsAnimating);
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    if (bounce) Xunit.Assert.NotEqual(0, delayed.BounceOffset);
+                    else Xunit.Assert.InRange(delayed.Offset, 25, SmoothScrollingController.WheelStep);
+                }
+            }
+            return true;
+        });
+    }
+
+    [Xunit.Fact]
+    public static void VeryLongFramesAreCappedAtTheSuspendLimit()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            foreach (var bounce in new[] { false, true })
+            {
+                var suspended = SampleMotion(bounce, [10_000]);
+                var bounded = SampleMotion(bounce, [250]);
+                Xunit.Assert.Equal(bounded.Offset, suspended.Offset, 6);
+                Xunit.Assert.Equal(bounded.BounceOffset, suspended.BounceOffset, 6);
+                Xunit.Assert.Equal(bounded.IsAnimating, suspended.IsAnimating);
+                Xunit.Assert.InRange(suspended.Offset, 0, SmoothScrollingController.WheelStep);
+                Xunit.Assert.InRange(suspended.BounceOffset, -18, 18);
+            }
+            return true;
+        });
+    }
+
+    private static (double Offset, double BounceOffset, bool IsAnimating) SampleMotion(bool bounce, IEnumerable<double> intervals)
+    {
+        var viewer = new ScrollViewer { Width = 400, Height = 300, Content = new Border { Height = 3200 } };
+        viewer.Measure(new Size(400, 300));
+        viewer.Arrange(new Rect(0, 0, 400, 300));
+        viewer.UpdateLayout();
+        using var controller = SmoothScrollingController.Attach(viewer);
+        controller.ScrollByWheelDelta(bounce ? 120 : -120);
+        foreach (var elapsed in intervals)
+        {
+            controller.AdvanceFrame(elapsed);
+            viewer.UpdateLayout();
+        }
+        return (viewer.VerticalOffset, controller.BounceOffset, controller.IsAnimating);
+    }
+
+    [Xunit.Fact]
     public static void WheelAndSpring_AccumulateClampCancelAndSettle()
     {
         WindowCanvasTests.OnAStaThread(() =>

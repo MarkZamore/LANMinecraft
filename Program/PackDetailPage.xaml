@@ -79,12 +79,12 @@
                         </Grid>
                     </Grid>
                 </local:RoundedClipBorder>
-                <Border Style="{StaticResource LibrarySectionStyle}">
+                <local:BackdropSurfaceBorder IsBackdropSurface="True" Style="{StaticResource LibrarySectionStyle}">
                     <StackPanel><TextBlock Text="О сборке" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
                         <TextBlock Text="{Binding Description}" TextWrapping="Wrap" LineHeight="{DynamicResource Font.LineHeightBody}"/>
                     </StackPanel>
-                </Border>
-                <Border Style="{StaticResource LibrarySectionStyle}">
+                </local:BackdropSurfaceBorder>
+                <local:BackdropSurfaceBorder IsBackdropSurface="True" Style="{StaticResource LibrarySectionStyle}">
                     <StackPanel>
                         <TextBlock x:Name="ModsHeading" Text="{Binding ModsTitle}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
                         <ItemsControl x:Name="ModsList">
@@ -100,7 +100,7 @@
                             </ItemsControl>
                         </StackPanel>
                     </StackPanel>
-                </Border>
+                </local:BackdropSurfaceBorder>
             </StackPanel>
         </ScrollViewer>
 </UserControl>

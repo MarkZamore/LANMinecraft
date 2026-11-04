@@ -189,16 +189,9 @@ public sealed class BugReportService : IPortableProtocolHandler
             // a refusal - a version mismatch, a size the other build will not
             // take - arrived as a dead connection halfway through the upload,
             // and the sentence explaining it was never read.
-            var accepted = PortableProtocol.Deserialize<BugReportAck>(
+            ValidateAcknowledgement(
                 await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token).ConfigureAwait(false),
-                JsonOptions);
-            if (accepted is null || !accepted.Ok)
-            {
-                throw new InvalidOperationException(
-                    string.IsNullOrWhiteSpace(accepted?.Message)
-                        ? "Получатель не принял отчёт."
-                        : accepted.Message);
-            }
+                "Accepted", reportId);
 
             await using (var archive = File.OpenRead(archivePath))
             {
@@ -220,16 +213,9 @@ public sealed class BugReportService : IPortableProtocolHandler
             }
             await connection.Stream.FlushAsync(timeout.Token).ConfigureAwait(false);
 
-            var ack = PortableProtocol.Deserialize<BugReportAck>(
+            ValidateAcknowledgement(
                 await PortableProtocol.ReadFrameAsync(connection.Stream, timeout.Token).ConfigureAwait(false),
-                JsonOptions);
-            if (ack is null || !ack.Ok)
-            {
-                throw new InvalidOperationException(
-                    string.IsNullOrWhiteSpace(ack?.Message)
-                        ? "Получатель не принял отчёт."
-                        : ack.Message);
-            }
+                "Stored", reportId);
 
             _logger.Info($"Bug report {reportId} ({info.Length / 1024} KiB) sent to {recipient}.");
             return manifest;
@@ -238,6 +224,25 @@ public sealed class BugReportService : IPortableProtocolHandler
         {
             TryDeleteDirectory(staging);
         }
+    }
+
+    private static void ValidateAcknowledgement(byte[] frame, string stage, string reportId)
+    {
+        using var document = JsonDocument.Parse(frame);
+        var ack = document.RootElement.Deserialize<BugReportAck>(JsonOptions);
+        if (ack is null || !ack.Ok)
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(ack?.Message)
+                ? "Получатель не принял отчёт." : ack.Message);
+        // DTO defaults are convenient for our own replies, but cannot supply
+        // protocol fields the receiver omitted from its actual confirmation.
+        bool HasField(string name) => document.RootElement.EnumerateObject().Any(property =>
+            string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (!HasField("protocol") || !HasField("version") || !HasField("stage") || !HasField("reportId") ||
+            !string.Equals(ack.Protocol, BugReportManifest.ProtocolName, StringComparison.Ordinal) ||
+            !PortableFormat.CanSpeak(ack.Version) ||
+            !string.Equals(ack.Stage, stage, StringComparison.Ordinal) ||
+            !string.Equals(ack.ReportId, reportId, StringComparison.Ordinal))
+            throw new InvalidDataException("Получатель не подтвердил нужный этап доставки этого отчёта.");
     }
 
     /// <summary>Receives a report from a friend and files it under Personal/BugReports.</summary>

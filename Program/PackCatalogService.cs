@@ -257,7 +257,14 @@ public sealed partial class PackCatalogService
         lock (_gate)
             return Packs.Where(pack => HasOnlineCatalog || PackMembership.Contains(settings, pack.Entry.RelativePath)).ToArray();
     }
-    public IReadOnlyList<CatalogPack> Packs { get { lock (_gate) return _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray(); } }
+    public IReadOnlyList<CatalogPack> Packs
+    {
+        get
+        {
+            lock (_gate) return IsStaged ? _overviewSnapshot :
+                _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+        }
+    }
     public IReadOnlyList<CatalogSource> Sources { get { lock (_gate) return _sources.ToArray(); } }
     public PackSyncSource? SourceFor(string relativePath)
     { lock (_gate) return RuntimeSource(relativePath)?.Source; }
@@ -590,6 +597,7 @@ public sealed partial class PackCatalogService
         }
         foreach (var path in _packs.Keys.ToArray())
             if (!IsCurrentEntry(_packs[path].Entry)) _packs.Remove(path);
+        if (IsStaged) ReconcileOverviewMembership();
     }
 
     private bool IsCurrentEntry(CatalogSource entry) => _sources.Any(current => current.Id == entry.Id &&
