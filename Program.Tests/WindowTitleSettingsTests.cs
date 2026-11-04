@@ -14,7 +14,7 @@ public sealed class WindowTitleSettingsTests : IDisposable
     [InlineData("Caves and Dungeons")]
     [InlineData("All The Mods 10")]
     [InlineData("All The Mods 9")]
-    [InlineData("All the Mods 9 Modified")]
+    [InlineData("All The Mods 9 Modified")]
     [InlineData("LL8 Extended")]
     [InlineData("TerraFirma Rebirth")]
     [InlineData("Unknown future pack")]
@@ -24,6 +24,16 @@ public sealed class WindowTitleSettingsTests : IDisposable
         var settings = Load(Runtime(), pack);
         Assert.True(settings.Enabled);
         Assert.Equal(pack, settings.Text);
+    }
+
+    [Fact]
+    public void ModifiedTitleCorrectsLegacyFolderCaseWithoutRenamingTheInstance()
+    {
+        const string legacy = "All the Mods 9 Modified";
+        var settings = Load(Runtime(), legacy);
+        Assert.Equal("All The Mods 9 Modified", settings.Text);
+        Assert.Equal(Load(Runtime(), settings.Text).ContentSha256, settings.ContentSha256);
+        Assert.EndsWith(legacy, GameDirectory(legacy));
     }
 
     [Fact]

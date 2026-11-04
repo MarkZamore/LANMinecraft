@@ -17,6 +17,7 @@ internal sealed record WindowTitleSettings(bool Enabled, string Text, string Con
         var packName = Path.GetFileName(Path.GetFullPath(gameDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Trim();
         if (string.IsNullOrWhiteSpace(packName)) packName = "Minecraft";
+        packName = PackDisplayName.CorrectCase(packName);
         var fingerprint = Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(PolicyVersion + "\0" + packName))).ToLowerInvariant();
         return new WindowTitleSettings(true, packName, fingerprint);

@@ -142,7 +142,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     /// <summary>The build they opened, by the name of its folder.</summary>
     public string PackName
     {
-        get => _packName;
+        get => PackDisplayName.CorrectCase(_packName);
         set { if (Set(ref _packName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
     }
 
@@ -387,16 +387,25 @@ public sealed class WorldViewModel
     public required string BuildName { get; init; }
     /// <summary>The build folder this world records, used to offer it only there.</summary>
     public string BuildRelativePath { get; init; } = "";
-    public string DisplayName => $"{Name} ({BuildName})";
+    public string DisplayName => $"{Name} ({PackDisplayName.For(BuildRelativePath, BuildName)})";
 }
 
 public static class PackDisplayName
 {
-    public static string For(string relativePath, string name) =>
-        (relativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase) ||
+    public static string CorrectCase(string name) =>
+        name.Equals("All The Mods 9 Modified", StringComparison.OrdinalIgnoreCase)
+            ? "All The Mods 9 Modified" : name;
+
+    public static string For(string relativePath, string name)
+    {
+        // Presentation only: published paths, ownership and peer identities retain
+        // their original values, including in old offline catalog snapshots.
+        name = CorrectCase(name);
+        return (relativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase) ||
          relativePath.Equals(PortablePackSyncService.TerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)) &&
         name.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase)
             ? PortablePackSyncService.TerraFirmaRelativePath : name;
+    }
 }
 
 public sealed class ClientBuildViewModel
