@@ -1,4 +1,4 @@
-﻿name: Build LANMinecraft.exe
+name: Build LANMinecraft.exe
 
 on:
   push:
@@ -155,6 +155,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Publishing failed." }
 
       - name: Scan portable host
+        id: antivirus
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -318,81 +320,64 @@ jobs:
             throw "Release contents are invalid. Missing: $missing; unexpected: $unexpected"
           }
 
+      - name: Prepare exact candidate
+        if: steps.antivirus.outcome != 'success'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
+          $candidate = Join-Path $artifactDir 'private-candidate'
+          $assets = Join-Path $candidate 'assets'
+          $antivirus = Join-Path $candidate 'antivirus'
+          [void][IO.Directory]::CreateDirectory($assets)
+          [void][IO.Directory]::CreateDirectory($antivirus)
+          $manifest = Get-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Raw | ConvertFrom-Json
+          $names = @('LANMinecraft.exe', 'update.json') + @($manifest.deltaPatches | ForEach-Object assetName)
+          $inventory = @(foreach ($name in $names) {
+            if ($name -notmatch '^(?:LANMinecraft\.exe|update\.json|LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff)$') { throw 'Unsafe candidate asset name.' }
+            $source = Join-Path $artifactDir $name
+            [IO.File]::Copy($source, (Join-Path $assets $name), $false)
+            [ordered]@{ name = $name; sizeBytes = ([IO.FileInfo]::new($source)).Length; sha256 = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() }
+          })
+          $scanRoot = Join-Path $artifactDir 'portable-host-antivirus'
+          $scans = @(Get-ChildItem -LiteralPath $scanRoot -Filter scan.json -File -Recurse -ErrorAction SilentlyContinue)
+          $scanPath = Join-Path $antivirus 'scan.json'
+          if ($scans.Count -ne 1) { throw 'Candidate cannot be promoted without exactly one original CI scan record.' }
+          [IO.File]::Copy($scans[0].FullName, $scanPath, $false)
+          [ordered]@{
+            schemaVersion = 1; repository = '${{ github.repository }}'; commitSha = '${{ github.sha }}'
+            releaseNumber = [int]$env:RELEASE_NUMBER; runId = [long]'${{ github.run_id }}'; runAttempt = [int]'${{ github.run_attempt }}'
+            ciScanSha256 = (Get-FileHash -LiteralPath $scanPath).Hash.ToLowerInvariant(); assets = $inventory
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $candidate 'candidate.json') -Encoding utf8
+
+      - name: Upload exact candidate
+        if: steps.antivirus.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-host-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/private-candidate/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Require local antivirus verification
+        if: steps.antivirus.outcome != 'success'
+        shell: pwsh
+        run: |
+          throw 'Candidate retained as an Actions artifact. Antivirus did not pass; latest is unchanged. Exact CI bytes require local active-Defender verification before publication; detections cannot be promoted.'
+
       - name: Publish latest release
+        if: steps.antivirus.outcome == 'success'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          . "$env:GITHUB_WORKSPACE/.github/scripts/GhRetry.ps1"
-
-          $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
-          $assets = @(
-            (Join-Path $artifactDir 'LANMinecraft.exe'),
-            (Join-Path $artifactDir 'update.json')
-          )
-          $assets += Get-ChildItem -LiteralPath $artifactDir -Filter '*.bsdiff' -File |
-            Sort-Object Name |
-            Select-Object -ExpandProperty FullName
-
-          # The release is replaced in place, never deleted first: every
-          # launcher finds its update through this one tag, and a failed
-          # re-create would leave all of them with nothing to check.
-          $exists = $false
-          Invoke-Gh release view latest *> $null
-          if ($LASTEXITCODE -eq 0) { $exists = $true }
-
-          if (-not $exists) {
-            if (git ls-remote --exit-code --tags origin refs/tags/latest 2>$null) {
-              git push origin --delete latest
-            }
-            Invoke-Gh release create latest `
-              @assets `
-              --target "${{ github.sha }}" `
-              --latest `
-              --title "Latest LANMinecraft.exe" `
-              --notes "Automated build for commit ${{ github.sha }}"
-            if ($LASTEXITCODE -ne 0) { throw "Latest release could not be published." }
-          }
-          else {
-            # update.json is the pointer, so it goes last: until it names the
-            # new build, a launcher checking mid-publish simply keeps the one
-            # it has.
-            $payload = @($assets | Where-Object { [System.IO.Path]::GetFileName($_) -ne 'update.json' })
-            Invoke-Gh release upload latest @payload --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Release assets could not be uploaded." }
-
-            # GitHub answered 502 here once and left the release without its
-            # pointer, which took the next build down with it. Invoke-Gh is what
-            # keeps trying now, and it does the same for every call around this
-            # one.
-            $manifest = Join-Path $artifactDir 'update.json'
-            Invoke-Gh release upload latest $manifest --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Update manifest could not be published." }
-
-            # Sweeping up comes after the pointer, not before it. The old
-            # update.json names the old patches, so removing them while it is
-            # still the live one hands a launcher that checks in that moment a
-            # file it cannot fetch; once the new pointer is up, nothing names
-            # them any more.
-            $keep = @($assets | ForEach-Object { [System.IO.Path]::GetFileName($_) })
-            $stale = (Invoke-Gh release view latest --json assets | ConvertFrom-Json).assets |
-              Where-Object { $_.name -notin $keep }
-            foreach ($asset in $stale) {
-              Invoke-Gh release delete-asset latest $asset.name --yes
-              if ($LASTEXITCODE -ne 0) { throw "Stale asset $($asset.name) could not be removed." }
-            }
-
-            Invoke-Gh release edit latest `
-              --target "${{ github.sha }}" `
-              --title "Latest LANMinecraft.exe" `
-              --notes "Automated build for commit ${{ github.sha }}"
-            if ($LASTEXITCODE -ne 0) { throw "Latest release could not be retargeted." }
-          }
-
-          $archiveTags = (Invoke-Gh release list --limit 100 --json tagName | ConvertFrom-Json).tagName |
-            Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |
-            Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
-          foreach ($tag in @($archiveTags | Select-Object -Skip 2)) {
-            Invoke-Gh release delete $tag --cleanup-tag --yes
-            if ($LASTEXITCODE -ne 0) { throw "Could not prune archive $tag." }
-          }
+          $ErrorActionPreference = 'Stop'
+          # The shared publisher routes every GitHub request through Invoke-Gh.
+          $scanRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\portable-host-antivirus'
+          $scans = @(Get-ChildItem -LiteralPath $scanRoot -Filter scan.json -File -Recurse)
+          if ($scans.Count -ne 1) { throw 'Successful antivirus evidence is missing or ambiguous.' }
+          & .\.github\scripts\Publish-LatestRelease.ps1 `
+            -AssetDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts') `
+            -Repository '${{ github.repository }}' -CommitSha '${{ github.sha }}' `
+            -ReleaseNumber ([int]$env:RELEASE_NUMBER) -AntivirusEvidencePath $scans[0].FullName -Publish

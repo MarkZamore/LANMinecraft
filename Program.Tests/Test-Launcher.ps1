@@ -1,7 +1,8 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [ValidateSet('Release', 'Full', 'Adapters')][string]$Profile = 'Release',
+    [ValidateSet('Release', 'Full', 'Adapters', 'AdaptersFull')][string]$Profile = 'Release',
+    [switch]$WithAdapters,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
     [switch]$NoRestore,
     [switch]$NoBuild,
@@ -14,14 +15,16 @@ $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
+if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
+$caseBudget = if ($WithAdapters) { 473 + 94 } else { 473 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
     if ($LASTEXITCODE -ne 0) { throw ('dotnet failed with exit code ' + $LASTEXITCODE) }
 }
 
-function Read-ReleaseSelectors {
-    [xml]$settings = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Release.runsettings') -Raw
+function Read-ReleaseSelectors([string]$ProfileName = 'Release') {
+    [xml]$settings = Get-Content -LiteralPath (Join-Path $PSScriptRoot ($ProfileName + '.runsettings')) -Raw
     $filter = [string]$settings.RunSettings.RunConfiguration.TestCaseFilter
     if ([string]::IsNullOrWhiteSpace($filter)) { throw 'The release filter is empty.' }
     $selectors = @($filter.Split('|') | ForEach-Object {
@@ -37,7 +40,7 @@ function Read-ReleaseSelectors {
     return $selectors
 }
 
-function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
+function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget = 473) {
     if (-not (Test-Path -LiteralPath $TrxPath -PathType Leaf)) { throw 'The release run produced no TRX.' }
     [xml]$trx = Get-Content -LiteralPath $TrxPath -Raw
     $counters = $trx.SelectSingleNode("//*[local-name()='Counters']")
@@ -52,7 +55,7 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
     # The reviewed compact profile has 473 cases: retain current critical data,
     # launch, UI, protocol and portable-runtime coverage; detailed matrices stay in Full/Adapters. The narrow
     # selectors must still reject the full suite (over 1100 cases).
-    if ($results.Count -gt 473) { throw 'The release profile exceeded its 473-case budget; review its selectors.' }
+    if ($results.Count -gt $CaseBudget) { throw ('The release profile exceeded its ' + $CaseBudget + '-case budget; review its selectors.') }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)
     $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($definition in $trx.SelectNodes("//*[local-name()='UnitTest']")) {
@@ -82,7 +85,9 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors) {
 if ($ValidateTrx) {
     # Exercises the real guard against saved/synthetic results without a build,
     # process launch, environment override or test run.
-    Assert-ReleaseResults ([IO.Path]::GetFullPath($ValidateTrx)) (Read-ReleaseSelectors)
+    $selectors = @(Read-ReleaseSelectors)
+    if ($WithAdapters) { $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique) }
+    Assert-ReleaseResults ([IO.Path]::GetFullPath($ValidateTrx)) $selectors $caseBudget
     return
 }
 
@@ -106,7 +111,14 @@ try {
     }
 
     if ($Profile -eq 'Release') {
-        $selectors = Read-ReleaseSelectors
+        $selectors = @(Read-ReleaseSelectors)
+        if ($WithAdapters) {
+            $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique)
+            [xml]$combined = Get-Content -LiteralPath $settingsPath -Raw
+            $combined.RunSettings.RunConfiguration.TestCaseFilter = ($selectors | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'
+            $settingsPath = Join-Path $session 'ReleaseWithAdapters.runsettings'
+            $combined.Save($settingsPath)
+        }
         if (-not $HostPath) {
             if ($NoBuild) { throw '-NoBuild requires -HostPath pointing at a current published PortabilityAuditHost.exe.' }
             $hostOutput = Join-Path $session 'host'
@@ -124,7 +136,7 @@ try {
     Invoke-Dotnet @('test', $testsProject, '-c', $Configuration, '--no-build', '--no-restore',
         '--settings', $settingsPath, '--logger', 'trx;LogFileName=tests.trx', '--results-directory', $session)
     if ($Profile -eq 'Release') {
-        $summary = Assert-ReleaseResults (Join-Path $session 'tests.trx') $selectors
+        $summary = Assert-ReleaseResults (Join-Path $session 'tests.trx') $selectors $caseBudget
         $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $session 'summary.json') -Encoding utf8
         Write-Host ("Release gate: {0} passed cases across {1} selected methods." -f $summary.Passed, $summary.Selectors)
         foreach ($name in @('fixtures', 'host')) {
