@@ -40,14 +40,12 @@ internal static class Probe
             throw new InvalidOperationException("Run the probe executable and store its evidence inside repository artifacts.");
         Directory.CreateDirectory(destination);
         var opaque = args.Contains("--opaque-client");
-        var renderMode = args.Contains("--hardware") ? RenderMode.Default : RenderMode.SoftwareOnly;
         var prepareBackdrop = !args.Contains("--original-backdrop");
         var screens = Option(args, "--screen") is { } screen ? new[] { screen } : new[] { "main", "overview", "detail" };
         if (screens.Any(value => value is not ("main" or "overview" or "detail"))) throw new ArgumentException("Unknown screen.");
         var app = new Minecraft.App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.InitializeComponent();
-        // Only this isolated diagnostic can override the production App policy.
-        RenderOptions.ProcessRenderMode = renderMode;
+        RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
         var theme = typeof(MainWindow).Assembly.GetType("Minecraft.WindowsThemeService", true)!;
         theme.GetMethod("Initialize", BindingFlags.Static | BindingFlags.Public)!.Invoke(null, [app]);
         var attachTheme = theme.GetMethod("Attach", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -75,7 +73,7 @@ internal static class Probe
                 window.SourceInitialized += (_, _) =>
                 {
                     attachTheme.Invoke(null, [window, opaque]);
-                    ((HwndTarget)PresentationSource.FromVisual(window)!.CompositionTarget).RenderMode = renderMode;
+                    ((HwndTarget)PresentationSource.FromVisual(window)!.CompositionTarget).RenderMode = RenderMode.SoftwareOnly;
                 };
                 var paths = new AppPaths(Path.Combine(destination, "fixture"));
                 paths.Ensure();
