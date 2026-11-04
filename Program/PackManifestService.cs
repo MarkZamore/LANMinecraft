@@ -64,8 +64,9 @@ public static class PackManifestService
             "neoforge" => PackLoaderKind.NeoForge,
             "fabric" => PackLoaderKind.Fabric,
             "quilt" => PackLoaderKind.Quilt,
+            "legacyfabric" => PackLoaderKind.LegacyFabric,
             _ => throw new InvalidDataException(
-                "loader.type must be one of: vanilla, forge, neoforge, fabric, quilt.")
+                "loader.type must be one of: vanilla, forge, neoforge, fabric, quilt, legacyfabric.")
         };
 
         string? loaderVersion = null;
@@ -86,14 +87,21 @@ public static class PackManifestService
         }
 
         var clientJar = ValidateClientJarName(manifest.ClientJar);
+        if (manifest.JavaMajorVersion is { } javaMajor && JavaRuntimeCatalog.ForMajorVersion(javaMajor) is null)
+        {
+            throw new InvalidDataException("javaMajorVersion must name a Java feature release installed by the launcher.");
+        }
         var canonical = $"{CurrentSchemaVersion}\n{minecraftVersion}\n{loaderKind.ToString().ToLowerInvariant()}\n{loaderVersion}\n{clientJar}";
+        // Absent overrides retain the identity of every existing descriptor.
+        if (manifest.JavaMajorVersion is { } selectedJava)
+            canonical += "\njavaMajorVersion=" + selectedJava.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var descriptorHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
         return new PackRuntimeDescriptor(
             CurrentSchemaVersion,
             minecraftVersion,
             new PackLoaderDescriptor(loaderKind, loaderVersion),
             clientJar,
-            descriptorHash);
+            descriptorHash) { JavaMajorVersion = manifest.JavaMajorVersion };
     }
 
     public static string ResolveClientJarPath(string packDirectory, PackRuntimeDescriptor descriptor)
@@ -154,6 +162,7 @@ public static class PackManifestService
         public string? MinecraftVersion { get; set; }
         public LoaderManifestDto? Loader { get; set; }
         public string? ClientJar { get; set; }
+        public int? JavaMajorVersion { get; set; }
     }
 
     private sealed class LoaderManifestDto

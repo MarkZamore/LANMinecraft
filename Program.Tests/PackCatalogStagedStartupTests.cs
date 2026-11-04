@@ -328,6 +328,65 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
     }
 
     [Fact]
+    public async Task OwnedIndexCancellationUsesCheckedSelectionAndLaterSelectionGetsAFreshBudget()
+    {
+        using var host = new CatalogHost();
+        var selected = host.Add("selected", "Selected pack", "Selected-Pack");
+        var later = host.Add("later", "Later pack", "Later-Pack");
+        host.Index = [selected, later];
+        var initial = new PackCatalogService(paths, logger, host.Client);
+        await initial.RefreshOnceAsync().WaitAsync(Deadline);
+        var frozen = initial.SessionManifest(selected.Source);
+        var selectedRequests = host.ManifestRequests(selected);
+        var laterRequests = host.ManifestRequests(later);
+        host.Publish(selected, "two");
+        host.Publish(later, "two");
+        host.IndexTimesOut = true;
+        var ownedBudget = new TaskCompletionSource<CancellationTokenSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var catalog = new PackCatalogService(paths, logger, host.Client, stagedStartup: true,
+            indexTimeoutSourceFactory: token =>
+            {
+                var source = CancellationTokenSource.CreateLinkedTokenSource(token);
+                ownedBudget.TrySetResult(source);
+                return source;
+            });
+
+        var first = catalog.EnsureLaunchReadyAsync(selected.RelativePath);
+        await host.IndexTimeoutStarted.Task.WaitAsync(Deadline);
+        // Cancel the actual owned source while the nominal 15-second clock
+        // still has time, so timer precision cannot decide the request count.
+        (await ownedBudget.Task.WaitAsync(Deadline)).Cancel();
+        await first.WaitAsync(Deadline);
+        Assert.Equal(1, host.IndexTimeoutCancellations);
+        Assert.Equal(selectedRequests, host.ManifestRequests(selected));
+        Assert.Equal(frozen, catalog.SessionManifest(selected.Source));
+
+        await catalog.EnsureLaunchReadyAsync(later.RelativePath).WaitAsync(Deadline);
+        Assert.Equal("two", Revision(catalog.SessionManifest(later.Source)));
+        Assert.Equal(laterRequests + 1, host.ManifestRequests(later));
+        Assert.Equal(1, host.IndexTimeoutCancellations);
+    }
+
+    [Fact]
+    public async Task IndexHttpFailureDoesNotSpendTheSelectedManifestBudget()
+    {
+        using var host = new CatalogHost();
+        var selected = host.Add("selected", "Selected pack", "Selected-Pack");
+        host.Index = [selected];
+        await new PackCatalogService(paths, logger, host.Client).RefreshOnceAsync().WaitAsync(Deadline);
+        var requests = host.ManifestRequests(selected);
+        host.Publish(selected, "two");
+        host.IndexFailureStatus = HttpStatusCode.ServiceUnavailable;
+        var catalog = Staged(host);
+
+        await catalog.EnsureLaunchReadyAsync(selected.RelativePath).WaitAsync(Deadline);
+        Assert.False(catalog.HasOnlineCatalog);
+        Assert.Equal("two", Revision(catalog.SessionManifest(selected.Source)));
+        Assert.Equal(requests + 1, host.ManifestRequests(selected));
+        Assert.Equal(0, host.IndexTimeoutCancellations);
+    }
+
+    [Fact]
     public async Task CorruptOwnPresentationKeepsTheFrozenCheckedGamePlanAndPreviousCardSeparate()
     {
         using var host = new CatalogHost();
@@ -416,7 +475,9 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
         internal CatalogSource[] Index = [];
         internal bool Offline;
         internal bool IndexTimesOut;
+        internal HttpStatusCode? IndexFailureStatus;
         internal int IndexTimeoutCancellations;
+        internal readonly TaskCompletionSource IndexTimeoutStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal HttpClient Client { get; }
         internal int IndexRequests => Requests.Count(request => request.Uri.AbsolutePath.EndsWith("/catalog.json", StringComparison.Ordinal));
 
@@ -483,8 +544,10 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
             if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
             if (uri.AbsolutePath.EndsWith("/catalog.json", StringComparison.Ordinal))
             {
+                if (IndexFailureStatus is { } failureStatus) return Reply(failureStatus, []);
                 if (IndexTimesOut)
                 {
+                    IndexTimeoutStarted.TrySetResult();
                     try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     { Interlocked.Increment(ref IndexTimeoutCancellations); throw; }

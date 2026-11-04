@@ -5,10 +5,35 @@ import pathlib
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 from pack_library import build_library, read_mods, stage_library, verify_library
 
 
 class LibraryPublisherTests(unittest.TestCase):
+    def test_presentation_zip_bytes_are_identical_on_windows_and_linux(self):
+        with patch.object(zipfile.sys, 'platform', 'win32'):
+            windows = build_library(self.pack, 'same-source')
+        with patch.object(zipfile.sys, 'platform', 'linux'):
+            linux = build_library(self.pack, 'same-source')
+        self.assertEqual(windows, linux)
+
+    def test_fabric_families_select_their_own_metadata_and_nested_mods(self):
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr("fabric.mod.json", json.dumps({"id": "fabric_child", "version": "2"}))
+        universal = io.BytesIO()
+        with zipfile.ZipFile(universal, "w") as archive:
+            archive.writestr("fabric.mod.json", json.dumps({"id": "fabric_base", "version": "1",
+                "jars": [{"file": "META-INF/jars/child.jar"}]}))
+            archive.writestr("META-INF/neoforge.mods.toml", '[[mods]]\nmodId="forge_variant"\nversion="1"\n')
+            archive.writestr("META-INF/jars/child.jar", nested.getvalue())
+            # This deliberately absent JarJar dependency belongs to another loader.
+            archive.writestr("META-INF/jarjar/metadata.json", json.dumps({"jars": [{"path": "forge-only.jar"}]}))
+        for loader in ("fabric", "quilt", "legacyfabric"):
+            with self.subTest(loader=loader):
+                records = read_mods(universal.getvalue(), "universal.jar", loader=loader)
+                self.assertEqual(["fabric_base", "fabric_child"], [record["id"] for record in records])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.pack = pathlib.Path(self.temp.name) / "Example Pack"

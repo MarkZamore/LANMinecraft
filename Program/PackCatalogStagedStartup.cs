@@ -13,6 +13,7 @@ public sealed partial class PackCatalogService
     private readonly Dictionary<string, string> _launchManifests = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Task<string>> _remoteManifestTasks = new(StringComparer.OrdinalIgnoreCase);
     private Task? _indexStartup;
+    private bool _indexBudgetExpired;
     private Task? _libraryStartup;
     private IReadOnlyList<CatalogPack> _overviewSnapshot = Array.Empty<CatalogPack>();
     private bool _overviewReady;
@@ -48,10 +49,10 @@ public sealed partial class PackCatalogService
 
     private async Task InitializeIndexCoreAsync(CancellationToken token)
     {
+        using var timeout = _indexTimeoutSourceFactory?.Invoke(token) ?? CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(15));
             var bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, timeout.Token).ConfigureAwait(false);
             var entries = ParseIndex(Encoding.UTF8.GetString(bytes));
             lock (_gate) { ReplaceIndex(entries); HasOnlineCatalog = true; }
@@ -59,6 +60,10 @@ public sealed partial class PackCatalogService
         catch (Exception ex) when (IsRecoverable(ex))
         {
             token.ThrowIfCancellationRequested();
+            if (ex is OperationCanceledException && timeout.IsCancellationRequested)
+            {
+                lock (_gate) _indexBudgetExpired = true;
+            }
             _logger.Warn("Library discovery: " + ex.Message);
         }
         token.ThrowIfCancellationRequested();
@@ -85,7 +90,14 @@ public sealed partial class PackCatalogService
     private async Task EnsureLaunchCoreAsync(string relativePath, CancellationToken token)
     {
         var networkClock = Stopwatch.StartNew();
-        await InitializeIndexAsync(token).ConfigureAwait(false);
+        Task indexStartup;
+        bool ownsIndexStartup;
+        lock (_gate)
+        {
+            ownsIndexStartup = _indexStartup is null;
+            indexStartup = InitializeIndexAsync(token);
+        }
+        await indexStartup.ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         _ = _paths.CombineUnderPacks(relativePath);
         if (IsWithdrawn(relativePath)) throw new IOException("Эта сборка удалена из каталога GitHub.");
@@ -110,7 +122,16 @@ public sealed partial class PackCatalogService
         }
 
         string raw;
-        try { raw = await GameManifestAsync(entry, TimeSpan.FromSeconds(15) - networkClock.Elapsed, token).ConfigureAwait(false); }
+        TimeSpan networkBudget;
+        lock (_gate)
+        {
+            // CancelAfter can fire just before Stopwatch reaches the nominal
+            // deadline. The launch which spent that CTS budget must not start
+            // another request in the fraction of time left by timer rounding.
+            networkBudget = ownsIndexStartup && _indexBudgetExpired
+                ? TimeSpan.Zero : TimeSpan.FromSeconds(15) - networkClock.Elapsed;
+        }
+        try { raw = await GameManifestAsync(entry, networkBudget, token).ConfigureAwait(false); }
         catch (IOException ex) when (!token.IsCancellationRequested &&
             PackManifestService.HasManifest(_paths.CombineUnderPacks(relativePath)) &&
             !PortablePackSyncService.IsUpdatePending(_paths.CombineUnderPacks(relativePath)))

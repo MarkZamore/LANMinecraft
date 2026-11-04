@@ -24,6 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Fixtures\LegacyStats\stats_btwqahost_unsent.dat"
+                      LogicalName="Minecraft.Tests.LegacyStats.native-unsent.dat" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Program\Minecraft.csproj"
                       AdditionalProperties="SkipPortableIdentityAdapter=true" />
     <ProjectReference Include="..\tools\PortabilityAuditHost\PortabilityAuditHost.csproj"

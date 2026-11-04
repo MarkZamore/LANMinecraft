@@ -29,6 +29,7 @@ namespace Minecraft;
 /// </remarks>
 public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logger)
 {
+    private readonly LegacyIdentityRegistryService _legacy = new(paths, logger);
     // Keyed by the account, not by the name. One Steam account has one UUID,
     // but two accounts may well answer to one name - and keying by the name
     // would let the second of them quietly overwrite the first, which is how
@@ -42,6 +43,7 @@ public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logge
     public void ObservePeer(PeerViewModel peer)
     {
         ArgumentNullException.ThrowIfNull(peer);
+        _legacy.ObservePeer(peer);
         Remember((peer.PlayerName ?? "").Trim(), Normalize(peer.MinecraftUuid), peer.SteamId);
     }
 
@@ -63,6 +65,7 @@ public sealed class PortableIdentityRegistryService(AppPaths paths, Logger logge
     public string Prepare(LocalIdentityContext identity)
     {
         ArgumentNullException.ThrowIfNull(identity);
+        _legacy.Prepare(identity);
         Remember((identity.IdentityName ?? "").Trim(), Normalize(identity.MinecraftUuid), identity.SteamId64);
         Write();
         return paths.IdentityRegistryFile;

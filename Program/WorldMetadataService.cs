@@ -82,6 +82,9 @@ public sealed class WorldMetadataService
                 : UnknownBuildName,
             BuildRelativePath = claimBuild ? context.BuildRelativePath : string.Empty,
             PackHash = claimBuild ? context.PackHash : string.Empty,
+            MinecraftVersion = claimBuild ? context.MinecraftVersion : string.Empty,
+            PlayerStorage = claimBuild && context.MinecraftVersion.Length > 0
+                ? WorldPlayerStorage.ForMinecraft(context.MinecraftVersion) : string.Empty,
             OwnerIdentityId = string.IsNullOrWhiteSpace(context.OwnerIdentityId) ? "" : context.OwnerIdentityId.Trim(),
             OwnerIdentityName = string.IsNullOrWhiteSpace(context.OwnerIdentityName) ? UnknownOwnerName : context.OwnerIdentityName.Trim(),
             CurrentHolderIdentityId = string.IsNullOrWhiteSpace(context.OwnerIdentityId) ? "" : context.OwnerIdentityId.Trim(),
@@ -220,6 +223,10 @@ public sealed class WorldMetadataService
             var existing = Read(worldPath);
             if (existing is not null && !string.IsNullOrWhiteSpace(existing.BuildRelativePath))
             {
+                if (BelongsToBuild(existing.BuildRelativePath, context.BuildRelativePath))
+                {
+                    RecordPlayedPlatform(worldPath, existing, context);
+                }
                 continue;
             }
 
@@ -234,6 +241,7 @@ public sealed class WorldMetadataService
 
                 metadata ??= EnsureMetadataCore(worldPath, context);
                 if (metadata is null) continue;
+                RecordPlayedPlatform(worldPath, metadata, context);
                 if (!string.IsNullOrWhiteSpace(metadata.BuildRelativePath))
                 {
                     // EnsureMetadataCore wrote a whole record, build included.
@@ -265,6 +273,24 @@ public sealed class WorldMetadataService
         }
 
         return stamped;
+    }
+
+    private void RecordPlayedPlatform(string worldPath, WorldMetadata metadata, WorldMetadataContext context)
+    {
+        if (context.MinecraftVersion.Length == 0) return;
+        lock (_gate)
+        {
+            metadata = Read(worldPath) ?? metadata;
+            var storage = WorldPlayerStorage.ForMinecraft(context.MinecraftVersion);
+            if (metadata.PlayerStorage.Length > 0 && metadata.PlayerStorage != storage)
+                throw new InvalidDataException("The played runtime does not match the world's player storage.");
+            metadata.MinecraftVersion = context.MinecraftVersion;
+            metadata.PlayerStorage = storage;
+            if (storage == WorldPlayerStorage.Legacy && SteamId64.TryParse(context.OwnerSteamId64, out var holder))
+                metadata.LegacyHostSteamId64 = holder.ToString();
+            metadata.SchemaVersion = Math.Max(metadata.SchemaVersion, CurrentSchemaVersion);
+            AtomicFile.WriteAllText(GetMetadataPath(worldPath), JsonSerializer.Serialize(metadata, _jsonOptions));
+        }
     }
 
     public string GetBuildName(string worldPath)

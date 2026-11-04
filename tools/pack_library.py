@@ -75,8 +75,9 @@ def read_mods(data, jar_name, depth=0, loader=None):
             text = archive.read("META-INF/MANIFEST.MF").decode("utf-8-sig").replace("\r\n", "\n")
             text = text.replace("\n ", "")
             manifest = dict(line.split(": ", 1) for line in text.splitlines() if ": " in line)
-        metadata_paths = ("META-INF/mods.toml",) if loader == "forge" else (
-            "META-INF/neoforge.mods.toml", "META-INF/mods.toml")
+        fabric_loader = loader in ("fabric", "quilt", "legacyfabric")
+        metadata_paths = () if fabric_loader else (("META-INF/mods.toml",) if loader == "forge" else (
+            "META-INF/neoforge.mods.toml", "META-INF/mods.toml"))
         for path in metadata_paths:
             if path in names:
                 doc = tomllib.loads(archive.read(path).decode("utf-8-sig"))
@@ -101,7 +102,7 @@ def read_mods(data, jar_name, depth=0, loader=None):
             result.append({"id": doc["id"], "name": doc.get("name", doc["id"]),
                            "version": str(doc.get("version", "")), "isLoadedMod": True, "_depth": depth})
         nested_paths = []
-        if "META-INF/jarjar/metadata.json" in names and loader not in ("fabric", "quilt"):
+        if "META-INF/jarjar/metadata.json" in names and not fabric_loader:
             nested_paths.extend(nested.get("path", "") for nested in
                                 json.loads(archive.read("META-INF/jarjar/metadata.json")).get("jars", []))
         if fabric:
@@ -124,6 +125,49 @@ def read_mods(data, jar_name, depth=0, loader=None):
     return result
 
 
+def runtime_sources(pack):
+    """Reviewed tooling-only JAR inputs, never installed as pack payload files."""
+    pack = pathlib.Path(pack).resolve()
+    manifest = pack / "library/runtime-sources.json"
+    if not manifest.exists():
+        return []
+    document = json.loads(manifest.read_text(encoding="utf-8-sig"))
+    if document.get("schemaVersion") != 1 or not isinstance(document.get("sources"), list):
+        raise ValueError("Invalid library runtime source manifest")
+    result, paths, ids = [], set(), set()
+    for row in document["sources"]:
+        rel, selected = row.get("cachePath"), row.get("modIds")
+        address = urlsplit(row.get("sourceUrl", ""))
+        if (not isinstance(rel, str) or not rel.startswith("artifacts/") or "\\" in rel or ":" in rel or
+                any(part in ("", ".", "..") for part in rel.split("/")) or not rel.endswith(".jar") or rel.casefold() in paths or
+                type(row.get("sizeBytes")) is not int or row["sizeBytes"] <= 0 or not re.fullmatch("[a-f0-9]{64}", row.get("sha256", "")) or
+                address.scheme != "https" or not address.hostname or address.username or address.password or
+                not isinstance(selected, list) or not selected or any(not isinstance(mid, str) or not mid for mid in selected) or
+                len(set(selected)) != len(selected) or ids.intersection(selected)):
+            raise ValueError("Invalid/duplicate runtime source or selected mod ID")
+        path = pack / rel
+        if not path.resolve().is_relative_to(pack) or any(part.is_symlink() or (hasattr(part, "is_junction") and part.is_junction()) for part in [path, *path.parents] if part != pack.parent):
+            raise ValueError("Linked or escaping runtime source")
+        paths.add(rel.casefold()); ids.update(selected); result.append(row)
+    return result
+
+
+def read_runtime_mods(pack, loader):
+    pack = pathlib.Path(pack)
+    mods, hashes = {}, {}
+    for row in runtime_sources(pack):
+        path = pack / row["cachePath"]
+        if not path.is_file() or path.stat().st_size != row["sizeBytes"] or hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+            raise ValueError("Missing/changed reviewed runtime source JAR: " + row["cachePath"])
+        records = {mod["id"]: mod for mod in read_mods(path.read_bytes(), path.name, loader=loader)}
+        for mod_id in row["modIds"]:
+            if mod_id not in records or not records[mod_id]["isLoadedMod"]:
+                raise ValueError("Selected runtime-source mod ID is absent: " + mod_id)
+            mods[mod_id] = records[mod_id]
+        hashes[row["cachePath"]] = row["sha256"]
+    return mods, hashes
+
+
 def read_pack_mods(pack, shipped=None):
     """Read metadata, optionally pinned to an exact-hash actual loader inventory.
 
@@ -141,6 +185,10 @@ def read_pack_mods(pack, shipped=None):
             existing = mods.get(mod["id"])
             if existing is None or mod["_depth"] < existing["_depth"]:
                 mods[mod["id"]] = mod
+    provided, runtime_hashes = read_runtime_mods(pack, runtime["loader"]["type"].lower())
+    for mod_id, mod in provided.items():
+        if mod_id not in mods:
+            mods[mod_id] = mod
     for mod in mods.values():
         mod.pop("_depth")
     inventory_path = pack / "library/loaded-mods.json"
@@ -149,13 +197,15 @@ def read_pack_mods(pack, shipped=None):
         actual_hashes = {jar.relative_to(pack).as_posix(): hashlib.sha256(jar.read_bytes()).hexdigest()
                          for jar in jars}
         if (inventory.get("schemaVersion") != 1 or inventory.get("sourceJars") != actual_hashes or
+                inventory.get("runtimeSources", {}) != runtime_hashes or
                 inventory.get("minecraftVersion") != runtime["minecraftVersion"] or
                 inventory.get("loader") != runtime["loader"]):
             raise ValueError("Actual loader inventory does not match the shipped JAR hashes")
         actual_mods = {}
         for loaded in inventory.get("mods", []):
             mod_id = loaded.get("id")
-            if mod_id in ("minecraft", "forge", "neoforge"):
+            if mod_id in ("minecraft", "forge", "neoforge") or (
+                    runtime["loader"]["type"].lower() in ("fabric", "quilt", "legacyfabric") and mod_id in ("fabricloader", "quilt_loader", "java")):
                 continue
             if mod_id not in mods or not mods[mod_id]["isLoadedMod"] or mod_id in actual_mods:
                 raise ValueError("Unexpected/duplicate actual loaded mod ID: " + str(mod_id))
@@ -238,6 +288,7 @@ def build_library(pack, revision):
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, payload in (("library.json", data), ("preview.jpg", preview)):
             entry = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            entry.create_system = 0
             entry.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(entry, payload)
     return buffer.getvalue()

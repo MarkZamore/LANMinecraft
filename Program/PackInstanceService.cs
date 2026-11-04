@@ -37,6 +37,7 @@ public sealed class PackInstanceService : IDisposable
         "saves",
         "schematics",
         "screenshots",
+        "stats",
         "xaero"
     };
 

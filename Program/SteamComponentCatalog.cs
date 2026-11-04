@@ -18,9 +18,14 @@ internal static class SteamComponentCatalog
     private static readonly string[] RequiredCapabilities =
     [UiCapability, "modern-configured-online-mode-at-native-publish", "author-steam-authentication-retained"];
 
-    internal static string EmbeddedJson()
+    internal static string EmbeddedJson() => ReadEmbedded("Minecraft.Steam.components.json");
+
+    /// <summary>Historical provenance/fixture input, never a production fallback.</summary>
+    internal static string HistoricalV2Json() => ReadEmbedded("Minecraft.Steam.components-v2.json");
+
+    private static string ReadEmbedded(string resource)
     {
-        using var stream = typeof(SteamComponentCatalog).Assembly.GetManifestResourceStream("Minecraft.Steam.components.json")
+        using var stream = typeof(SteamComponentCatalog).Assembly.GetManifestResourceStream(resource)
             ?? throw new InvalidDataException("Missing embedded Steam component catalog.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
@@ -53,8 +58,6 @@ internal static class SteamComponentCatalog
             var size = row.GetProperty("sizeBytes").GetInt64();
             var digest = Text(row, "sha256");
             ValidatePin(file, size, digest);
-            var authorFile = Text(row, "authorFileName");
-            ValidatePin(authorFile, row.GetProperty("authorSizeBytes").GetInt64(), Text(row, "authorSha256"));
             Require(Text(row, "authorVersion") == version && Text(row, "profile") == profile,
                 "Inconsistent Steam release/profile provenance.");
             var tag = Text(row, "deliveryTag");
@@ -62,7 +65,7 @@ internal static class SteamComponentCatalog
             var loaders = row.GetProperty("loaders").EnumerateArray().Select(value =>
             {
                 Require(Enum.TryParse<PackLoaderKind>(value.GetString(), false, out var loader) &&
-                        loader is PackLoaderKind.Forge or PackLoaderKind.NeoForge or PackLoaderKind.Fabric or PackLoaderKind.Quilt,
+                        loader is PackLoaderKind.Forge or PackLoaderKind.NeoForge or PackLoaderKind.Fabric or PackLoaderKind.Quilt or PackLoaderKind.LegacyFabric,
                     "Unsupported Steam loader.");
                 return loader;
             }).ToArray();
@@ -72,18 +75,39 @@ internal static class SteamComponentCatalog
             Require(SteamTransportCatalog.Compare(minimum, maximum) < 0, "Empty Steam compatibility range.");
             var derivation = row.GetProperty("derivation");
             var kind = Text(derivation, "type");
-            if (kind == "byte-identical-author-artifact")
-                Require(derivation.GetProperty("uiAbsent").GetBoolean() && authorFile == file &&
-                        Text(row, "authorSha256") == digest && row.GetProperty("authorSizeBytes").GetInt64() == size,
-                    "Unreviewed author Steam UI artifact.");
+            string? authorFile = null;
+            string? upstreamSource = null;
+            if (kind == "source-built-legacy-port")
+            {
+                Require(loaders.SequenceEqual([PackLoaderKind.LegacyFabric]) && minimum.SequenceEqual([1, 6, 4]) &&
+                        maximum.SequenceEqual([1, 6, 5]) && Text(row, "metadataPath") == "fabric.mod.json" &&
+                        Regex.IsMatch(Text(derivation, "sourceCommit"), "^[a-f0-9]{40}$", RegexOptions.CultureInvariant),
+                    "Unreviewed legacy Steam platform/source revision.");
+                Require(!row.TryGetProperty("authorFileName", out _) && !row.TryGetProperty("authorSha256", out _) &&
+                        !row.TryGetProperty("authorSizeBytes", out _),
+                    "A source-built legacy port must not claim an original author artifact.");
+                upstreamSource = Text(derivation, "upstreamSourceCommit");
+                Require(Regex.IsMatch(upstreamSource, "^[a-f0-9]{40}$", RegexOptions.CultureInvariant),
+                    "Missing legacy Steam upstream source revision.");
+                ValidateSourceClassPins(derivation.GetProperty("sourceBuiltClassSha256"));
+            }
             else
-                Require(kind == "source-built-native-ui-and-lan-online-mode" &&
-                        Text(derivation, "sourceCommit") == commit &&
+            {
+                Require(!loaders.Contains(PackLoaderKind.LegacyFabric), "Legacy Steam requires reviewed source-port provenance.");
+                authorFile = Text(row, "authorFileName");
+                ValidatePin(authorFile, row.GetProperty("authorSizeBytes").GetInt64(), Text(row, "authorSha256"));
+                if (kind == "byte-identical-author-artifact")
+                    Require(derivation.GetProperty("uiAbsent").GetBoolean() && authorFile == file &&
+                        Text(row, "authorSha256") == digest && row.GetProperty("authorSizeBytes").GetInt64() == size,
+                        "Unreviewed author Steam UI artifact.");
+                else Require(kind == "source-built-native-ui-and-lan-online-mode" &&
+                        Regex.IsMatch(Text(derivation, "sourceCommit"), "^[a-f0-9]{40}$", RegexOptions.CultureInvariant) &&
                         derivation.GetProperty("allOtherEntriesByteIdentical").GetBoolean(),
                     "Unreviewed Steam derivative.");
+            }
             builds.Add(new SteamTransportBuild(version, file, size, digest, CacheId(file, size, digest),
                 Array.AsReadOnly(loaders), Array.AsReadOnly(minimum), Array.AsReadOnly(maximum), authorFile, tag,
-                NativeLanUiSuppressed: true, VerifiedDownloadUri: uri));
+                NativeLanUiSuppressed: true, VerifiedDownloadUri: uri, UpstreamSourceCommit: upstreamSource));
         }
         Require(builds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count() == builds.Count,
             "Duplicate Steam delivery filename.");
@@ -140,7 +164,11 @@ internal static class SteamComponentCatalog
 
     private static void ValidateCoverage(IReadOnlyList<SteamTransportBuild> builds)
     {
-        foreach (var loader in new[] { PackLoaderKind.Forge, PackLoaderKind.NeoForge, PackLoaderKind.Fabric, PackLoaderKind.Quilt })
+        Require(builds.Any(build => build.Loaders.Contains(PackLoaderKind.LegacyFabric) &&
+                build.MinimumMinecraftVersion.SequenceEqual([1, 6, 4]) &&
+                build.ExclusiveMaximumMinecraftVersion.SequenceEqual([1, 6, 5])),
+            "Steam component index removes reviewed Legacy Fabric 1.6.4 coverage.");
+        foreach (var loader in new[] { PackLoaderKind.Forge, PackLoaderKind.NeoForge, PackLoaderKind.Fabric, PackLoaderKind.Quilt, PackLoaderKind.LegacyFabric })
         {
             var selected = builds.Where(build => build.Loaders.Contains(loader))
                 .OrderBy(build => build.MinimumMinecraftVersion, Comparer<IReadOnlyList<int>>.Create(SteamTransportCatalog.Compare)).ToArray();
@@ -161,6 +189,17 @@ internal static class SteamComponentCatalog
                     "Steam component index removes existing Minecraft/loader coverage.");
             }
         }
+    }
+
+    private static void ValidateSourceClassPins(JsonElement pins)
+    {
+        Require(pins.ValueKind == JsonValueKind.Object, "Legacy Steam source class pins must be an object.");
+        var entries = pins.EnumerateObject().ToArray();
+        Require(entries.Length is > 0 and <= 512 && entries.All(entry =>
+                Regex.IsMatch(entry.Name, "^link/e4steam/[A-Za-z0-9_$/]+\\.class$", RegexOptions.CultureInvariant) &&
+                entry.Value.ValueKind == JsonValueKind.String &&
+                Regex.IsMatch(entry.Value.GetString()!, "^[a-f0-9]{64}$", RegexOptions.CultureInvariant)),
+            "Invalid or absent legacy Steam source class pins.");
     }
 
     private static string Text(JsonElement element, string name) =>

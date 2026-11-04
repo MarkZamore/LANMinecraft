@@ -359,10 +359,17 @@ public sealed class MinecraftProcessService
         IProgress<RuntimePreparationProgress>? runtimeProgress = null,
         CancellationToken token = default) => StartClientAsync(settings, runtimeProgress, null, token);
 
+    public Task StartClientAsync(
+        AppSettings settings,
+        IProgress<RuntimePreparationProgress>? runtimeProgress,
+        LocalAiDownloadPlan? localAiDownloads,
+        CancellationToken token = default) => StartClientAsync(settings, runtimeProgress, localAiDownloads, string.Empty, token);
+
     public async Task StartClientAsync(
         AppSettings settings,
         IProgress<RuntimePreparationProgress>? runtimeProgress,
         LocalAiDownloadPlan? localAiDownloads,
+        string packHash,
         CancellationToken token = default)
     {
         if (IsClientRunning)
@@ -377,7 +384,7 @@ public sealed class MinecraftProcessService
         NotifyClientPreparingChanged(true);
         try
         {
-            await StartClientCoreAsync(settings, runtimeProgress, localAiDownloads, token).ConfigureAwait(false);
+            await StartClientCoreAsync(settings, runtimeProgress, localAiDownloads, packHash, token).ConfigureAwait(false);
         }
         finally
         {
@@ -391,13 +398,15 @@ public sealed class MinecraftProcessService
         AppSettings settings,
         IProgress<RuntimePreparationProgress>? runtimeProgress,
         LocalAiDownloadPlan? localAiDownloads,
+        string packHash,
         CancellationToken token)
     {
         if (IsClientRunning)
         {
             throw new InvalidOperationException("Minecraft is already running from this application.");
         }
-        var packDir = _paths.CombineUnderPacks(settings.ClientRelativePath);
+        var packRelativePath = settings.ClientRelativePath;
+        var packDir = _paths.CombineUnderPacks(packRelativePath);
         if (!HasPackData(packDir))
         {
             throw new DirectoryNotFoundException($"Minecraft pack folder has no {PackManifestService.ManifestFileName}: {packDir}");
@@ -405,7 +414,7 @@ public sealed class MinecraftProcessService
 
         var descriptor = PackManifestService.Load(packDir);
         var identityContext = _identityService.ResolveContext(settings);
-        var runtime = await _packRuntimes.PrepareAsync(settings.ClientRelativePath, runtimeProgress, token);
+        var runtime = await _packRuntimes.PrepareAsync(packRelativePath, runtimeProgress, token);
         Volatile.Write(ref _lastJavaPath, runtime.JavaPath);
         Volatile.Write(ref _lastGameVersion, runtime.Descriptor.MinecraftVersion);
         Volatile.Write(ref _lastProfileId, runtime.ProfileId);
@@ -413,7 +422,7 @@ public sealed class MinecraftProcessService
         {
             throw new InvalidOperationException("Pack manifest changed while its runtime was being prepared. Start the game again.");
         }
-        var instance = await _packInstances.PrepareAsync(settings.ClientRelativePath, token);
+        var instance = await _packInstances.PrepareAsync(packRelativePath, token);
         // PackInstanceService mirrors the pack over the instance mods folder and
         // deletes anything the pack does not carry, so launcher-owned JARs have
         // to be (re)installed after every prepare - the order here is load-bearing.
@@ -431,13 +440,13 @@ public sealed class MinecraftProcessService
         // is the one moment every Minecraft version has in common.
         var identityRegistryPath = _identityRegistry.Prepare(identityContext);
         var gameDir = instance.GameDirectory;
-        EnsureWorldsDirectoryAndSavesLink(gameDir, settings.ClientRelativePath);
+        EnsureWorldsDirectoryAndSavesLink(gameDir, packRelativePath);
         ValidatePackCompatibility(packDir);
-        _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext);
+        _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext, packRelativePath, descriptor);
         // After the profiles are written: the reset edits playerdata and the
         // Player compound of level.dat in place, and the game reads them on join.
         ResetPlayerModelsIfAsked(packDir);
-        await _waypointSync.PrepareForLaunchAsync(settings.ClientRelativePath, identityContext, token).ConfigureAwait(false);
+        await _waypointSync.PrepareForLaunchAsync(packRelativePath, identityContext, token).ConfigureAwait(false);
 
         var launcher = _packRuntimes.CreateLocalLauncher(runtime);
         var profile = await launcher.GetVersionAsync(runtime.ProfileId, token);
@@ -452,7 +461,7 @@ public sealed class MinecraftProcessService
         };
         launchPath.CreateDirs();
 
-        var javaTempDir = Path.Combine(_paths.Personal, "Temp", "Java", settings.ClientRelativePath);
+        var javaTempDir = Path.Combine(_paths.Personal, "Temp", "Java", packRelativePath);
         _paths.EnsureUnderRoot(javaTempDir);
         Directory.CreateDirectory(javaTempDir);
         // Beside Temp rather than inside it: startup cleanup empties Temp, and
@@ -470,7 +479,9 @@ public sealed class MinecraftProcessService
         Directory.CreateDirectory(Path.Combine(javaHome, "AppData", "Local"));
         var localAi = await new LocalAiProvisioningService(_paths)
             .PrepareAsync(packDir, gameDir, javaHome, runtimeProgress, token, localAiDownloads).ConfigureAwait(false);
-        var session = MSession.CreateOfflineSession(identityContext.IdentityName);
+        var sessionName = descriptor.Loader.Type == PackLoaderKind.LegacyFabric && descriptor.MinecraftVersion == "1.6.4"
+            ? LegacyPlayerIdentity.NativeName(identityContext.SteamId64) : identityContext.IdentityName;
+        var session = MSession.CreateOfflineSession(sessionName);
         session.UUID = identityContext.MinecraftUuid;
         session.AccessToken = identityContext.SessionAccessToken;
         session.UserType = "mojang";
@@ -490,7 +501,7 @@ public sealed class MinecraftProcessService
         // on one computer, and this is the pack in front of us on the computer
         // in front of us.
         var installedGb = MemorySizingService.GetInstalledMemoryGb();
-        var measured = _measuredMemory.Recall(settings.ClientRelativePath, video, installedGb);
+        var measured = _measuredMemory.Recall(packRelativePath, video, installedGb);
         // The number the player set, untouched: it is the heap, and it is what
         // -Xmx is about to be. Everything below is said about it rather than
         // taken out of it.
@@ -580,9 +591,9 @@ public sealed class MinecraftProcessService
         // the arguments themselves printed the type name sixty times over.
         var extraJvmArguments = BuildBaseJvmArguments(
             gameDir, javaTempDir, javaHome, skinRegistryPath, identityRegistryPath,
-            identityContext.MinecraftUuid);
+            identityContext.MinecraftUuid, JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion);
         extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
-        extraJvmArguments.AddRange(JavaCompatibilityArguments);
+        extraJvmArguments.AddRange(CompatibilityArgumentsFor(JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion));
         extraJvmArguments.AddRange(identityJvmArguments);
         // This renderer hooks LWJGL presentation, independently of Minecraft mappings,
         // loaders and the optional identity adapter. It is never installed in mods.
@@ -661,6 +672,8 @@ public sealed class MinecraftProcessService
         minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
 
         var started = false;
+        var worldSession = WorldLaunchSession.Capture(packDir, packRelativePath, gameDir, packHash,
+            descriptor, identityContext, DateTimeOffset.UtcNow);
         try
         {
             PackLaunchContextService.Write(packDir, gameDir, localAi is null
@@ -692,7 +705,7 @@ public sealed class MinecraftProcessService
         var processId = minecraftProcess.Id;
         // Written down before anything else can go wrong: a launcher restarted
         // while this game plays reads it and knows not to offer another.
-        _presence.Remember(minecraftProcess, settings.ClientRelativePath);
+        _presence.Remember(minecraftProcess, packRelativePath);
         if (_activeClientProcesses.TryAdd(processId, 0) && _activeClientProcesses.Count == 1)
         {
             NotifyClientRunningChanged(true);
@@ -702,8 +715,8 @@ public sealed class MinecraftProcessService
         // the completion source instead of the Process.
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = MonitorClientExitAsync(
-            minecraftProcess, settings.ClientRelativePath, exitCode, startupOutput, gameDir,
-            heapGb, video, installedGb);
+            minecraftProcess, packRelativePath, exitCode, startupOutput, gameDir,
+            heapGb, video, installedGb, worldSession);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -724,7 +737,8 @@ public sealed class MinecraftProcessService
         string gameDir,
         int heapGb = 0,
         VideoMemoryProfile video = default,
-        int installedGb = 0)
+        int installedGb = 0,
+        WorldLaunchSession? worldSession = null)
     {
         var processId = process.Id;
         // Timed here rather than from the process's own start time: a session
@@ -732,6 +746,7 @@ public sealed class MinecraftProcessService
         // Windows will not answer for the start time of a process that has
         // already exited.
         var played = Stopwatch.StartNew();
+        var confirmedExited = false;
         try
         {
             using var owned = process;
@@ -747,6 +762,7 @@ public sealed class MinecraftProcessService
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
+                confirmedExited = true;
             }
             finally
             {
@@ -792,6 +808,15 @@ public sealed class MinecraftProcessService
         }
         finally
         {
+            try
+            {
+                foreach (var world in WorldLaunchSession.StampClosedWorlds(_paths, confirmedExited ? worldSession : null, _logger))
+                    _logger.Info($"World {world} was attributed to the build and player captured for this game process.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
+            {
+                _logger.Warn($"Worlds played by the finished game could not be attributed: {ex.Message}");
+            }
             // A monitor that failed before publishing must still release the
             // startup wait; 0 keeps the crash path silent rather than inventing
             // an exit code for a process whose state is unknown.
@@ -1439,7 +1464,8 @@ public sealed class MinecraftProcessService
         string javaHome,
         string skinRegistryPath,
         string identityRegistryPath,
-        string? minecraftUuid)
+        string? minecraftUuid,
+        int javaMajorVersion = JavaRuntimeCatalog.DefaultMajorVersion)
     {
         var extraJvmArguments = new List<string>
         {
@@ -1493,7 +1519,7 @@ public sealed class MinecraftProcessService
             // multi-second stalls were the collector or the world save; the
             // second was proved by removing it, the first was never proved at
             // all because nothing wrote it down.
-            "-Xlog:gc:stdout:time,uptime"
+            javaMajorVersion >= 9 ? "-Xlog:gc:stdout:time,uptime" : "-verbose:gc"
             // G1 tuned for a big modded heap. Left alone it grew the committed
             // heap from 2 GB to 9.4 GB in one session in resize steps, each a
             // pause a player feels as a stutter; Xms=Xmx below ends that. The

@@ -6,6 +6,7 @@ using System.Windows.Threading;
 
 namespace Minecraft.Tests;
 
+[Collection("Native desktop focus")]
 public sealed class PeerNoticeOverlayTests
 {
     [Theory]
@@ -142,3 +143,8 @@ public sealed class PeerNoticeOverlayTests
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowPos(IntPtr handle, IntPtr after, int x, int y, int width, int height, uint flags);
 }
+
+// The foreground-window assertion must not race other collections' real WPF
+// windows. Keep every focus/style assertion; only isolate their desktop use.
+[CollectionDefinition("Native desktop focus", DisableParallelization = true)]
+public sealed class NativeDesktopFocusCollection { }

@@ -8,7 +8,8 @@ public enum PackLoaderKind
     Forge,
     NeoForge,
     Fabric,
-    Quilt
+    Quilt,
+    LegacyFabric
 }
 
 public sealed record PackLoaderDescriptor(PackLoaderKind Type, string? Version);
@@ -18,7 +19,11 @@ public sealed record PackRuntimeDescriptor(
     string MinecraftVersion,
     PackLoaderDescriptor Loader,
     string ClientJar,
-    string DescriptorHash);
+    string DescriptorHash)
+{
+    /// <summary>An explicit Java feature release requested by the pack.</summary>
+    public int? JavaMajorVersion { get; init; }
+}
 
 public enum RuntimePreparationStage
 {

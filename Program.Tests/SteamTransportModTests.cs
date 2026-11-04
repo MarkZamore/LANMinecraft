@@ -20,8 +20,8 @@ public sealed class SteamTransportModTests
     public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
     {
         Assert.Equal("0.3.4", SteamTransportCatalog.Version);
-        Assert.Equal(19, SteamTransportCatalog.Builds.Count);
-        Assert.Equal(6, SteamTransportCatalog.Builds.Count(build => build.Version == SteamTransportCatalog.Version));
+        Assert.Equal(20, SteamTransportCatalog.Builds.Count);
+        Assert.Equal(7, SteamTransportCatalog.Builds.Count(build => build.Version == SteamTransportCatalog.Version));
         Assert.Equal(13, SteamTransportCatalog.Builds.Count(build => build.Version == "0.3.2"));
         Assert.All(SteamTransportCatalog.Builds, build =>
         {
@@ -31,9 +31,14 @@ public sealed class SteamTransportModTests
             Assert.Equal(
                 $"https://github.com/MarkZamore/e4steam/releases/download/{build.DeliveryTag ?? "v" + build.Version}/{build.FileName}",
                 Assert.Single(build.DownloadUris).AbsoluteUri);
-            Assert.Equal(
-                $"https://github.com/Kamilhik/e4steam/releases/download/v{build.Version}/{build.AuthorFileName ?? build.FileName}",
-                build.UpstreamDownloadUri.AbsoluteUri);
+            if (build.UpstreamSourceCommit is { } sourceCommit)
+            {
+                Assert.Null(build.AuthorFileName);
+                Assert.Equal($"https://github.com/Kamilhik/e4steam/tree/{sourceCommit}", build.UpstreamDownloadUri.AbsoluteUri);
+            }
+            else Assert.Equal(
+                    $"https://github.com/Kamilhik/e4steam/releases/download/v{build.Version}/{build.AuthorFileName ?? build.FileName}",
+                    build.UpstreamDownloadUri.AbsoluteUri);
         });
 
         (string File, long Size, string Sha, int[] Minimum, int[] Maximum)[] latest =
@@ -61,7 +66,7 @@ public sealed class SteamTransportModTests
             Assert.Equal(expected.Maximum, build.ExclusiveMaximumMinecraftVersion);
         }
 
-        Assert.All(SteamTransportCatalog.Builds.Where(build => build.Version == SteamTransportCatalog.Version), build =>
+        Assert.All(SteamTransportCatalog.Builds.Where(build => build.Version == SteamTransportCatalog.Version && build.UpstreamSourceCommit is null), build =>
         {
             Assert.Equal("native-lan-ui-v2", build.DeliveryTag);
             Assert.NotNull(build.AuthorFileName);

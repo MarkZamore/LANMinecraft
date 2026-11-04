@@ -33,7 +33,9 @@ public sealed class PackLauncherFeaturesTests : IDisposable
         foreach (var features in new[] { """["local-ai-native-v1"]""", """["curated-mod-list-v1"]""", """["local-ai-native-v1","curated-mod-list-v1"]""",
                      """["launch-context-v1"]""", """["local-ai-native-v1","curated-mod-list-v1","launch-context-v1"]""",
                      """["private-identity-asm-v1"]""", """["registry-player-skins-v1"]""",
-                     """["private-identity-asm-v1","registry-player-skins-v1"]""" })
+                     """["private-identity-asm-v1","registry-player-skins-v1"]""",
+                     """["legacy-fabric-runtime-v1"]""", """["legacy-player-profiles-v1"]""", """["legacy-steam-v1"]""",
+                     """["legacy-fabric-runtime-v1","legacy-player-profiles-v1","legacy-steam-v1"]""" })
             PortablePackSyncService.ValidateSnapshot(Manifest(2, features), pack);
         var privateAsmOnLegacySchema = Assert.Throws<NotSupportedException>(() =>
             PortablePackSyncService.ValidateSnapshot(Manifest(1, """["private-identity-asm-v1"]"""), pack));
@@ -41,6 +43,9 @@ public sealed class PackLauncherFeaturesTests : IDisposable
         var registeredSkinsOnLegacySchema = Assert.Throws<NotSupportedException>(() =>
             PortablePackSyncService.ValidateSnapshot(Manifest(1, """["registry-player-skins-v1"]"""), pack));
         Assert.Contains("формат манифеста 2", registeredSkinsOnLegacySchema.Message, StringComparison.Ordinal);
+        foreach (var legacyFeature in new[] { "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1" })
+            Assert.Throws<NotSupportedException>(() => PortablePackSyncService.ValidateSnapshot(
+                Manifest(1, JsonSerializer.Serialize(new[] { legacyFeature })), pack));
 
         // A previously installed pack must not convert a capability failure
         // into offline fallback and silently continue with an unsupported pack.

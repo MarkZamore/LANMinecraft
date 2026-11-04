@@ -39,6 +39,20 @@ function Invoke-CheckedGh {
     return $result
 }
 
+function Read-ScanFinishedAt([string]$Json) {
+    # ConvertFrom-Json may materialize DateTime; converting that object back to
+    # text loses its ISO timezone and can swap month/day under another culture.
+    $document = [Text.Json.JsonDocument]::Parse($Json)
+    try {
+        $text = $document.RootElement.GetProperty('FinishedAtUtc').GetString()
+        if ([string]::IsNullOrWhiteSpace($text) -or $text -notmatch '(?:Z|[+-][0-9]{2}:[0-9]{2})$') {
+            throw 'Antivirus completion timestamp requires an explicit ISO timezone.'
+        }
+        return [DateTimeOffset]::Parse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None)
+    }
+    finally { $document.Dispose() }
+}
+
 function Assert-PublicationHead {
     $head = Invoke-CheckedGh api "repos/$Repository/git/ref/heads/main" | ConvertFrom-Json
     if ($head.object.sha -ne $commit) { throw 'The candidate is no longer the main head; coordinate the next release before publishing.' }
@@ -97,8 +111,9 @@ try {
         if ($ciProof.Result -eq 'Detected' -or @($ciProof.MatchingDetections).Count -gt 0 -or
             ($null -ne $ciProof.NativeExitCode -and [int]$ciProof.NativeExitCode -ne 0)) { throw 'A CI detection/nonzero scan result cannot be overridden by a local publication.' }
     }
-    $proof = Get-Content -LiteralPath $AntivirusEvidencePath -Raw | ConvertFrom-Json
-    $finished = [DateTimeOffset]::Parse([string]$proof.FinishedAtUtc)
+    $proofJson = Get-Content -LiteralPath $AntivirusEvidencePath -Raw
+    $proof = $proofJson | ConvertFrom-Json
+    $finished = Read-ScanFinishedAt $proofJson
     if ($proof.Result -ne 'Passed' -or $proof.NativeExitCode -ne 0 -or @($proof.MatchingDetections).Count -gt 0 -or
         $proof.Before.Sha256 -ne $manifest.sha256 -or $proof.After.Sha256 -ne $manifest.sha256 -or
         [long]$proof.Before.SizeBytes -ne [long]$manifest.sizeBytes -or [long]$proof.After.SizeBytes -ne [long]$manifest.sizeBytes -or

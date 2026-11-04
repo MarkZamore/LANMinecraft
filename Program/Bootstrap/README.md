@@ -58,6 +58,8 @@ The default performs verification/scanning without changing a release. Add expli
 
 The gate verifies authenticated run/repository/main-push/workflow identity and successful test/build/delta/content/upload steps. It downloads the official immutable artifact ZIP and checks GitHub's SHA256 digest, bounded safe paths, metadata, outer PE version/commit, and every EXE/manifest/patch hash and size. Optional `-CandidateDirectory` compares an existing extracted download byte-for-byte with that official artifact. Earlier local QA bytes or antivirus evidence cannot substitute for CI bytes.
 
+If the official ZIP has already been obtained, pass `-ArtifactArchivePath artifacts/agent-runs/<owned-task>/candidate.zip` to avoid another download. It must be an ordinary file inside this checkout. The same authenticated GitHub metadata, exact archive size and authoritative ZIP SHA256 are still required. The supplied archive is held read-only through verification/extraction and is never deleted by the helper; its owner retains cleanup responsibility.
+
 Actual active-Defender scanning precedes the shared publisher. Verified release files stay locked during upload, `update.json` goes last, and proof/system logs are never public release assets. The gate runs no tests/builds and changes no protection settings or privileges.
 
 Owned staging lives in `artifacts/agent-runs/verify-candidate-*` with `RUN.json`. ZIPs and failed/published payloads are removed in `finally`, retaining compact proof. Verified unpublished bytes remain for explicit review for at most 24 hours; the next verification for the same task removes previous completed payload staging before creating another copy.

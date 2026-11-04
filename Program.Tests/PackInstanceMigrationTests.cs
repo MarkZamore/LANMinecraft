@@ -258,6 +258,74 @@ public sealed class PackInstanceMigrationTests : IDisposable
     }
 
     [Fact]
+    public async Task LegacyClientStatisticsStayPersonalAcrossSourceClaimsUpdatesAndRepeatedPreparation()
+    {
+        var (paths, pack, service) = CreatePack();
+        using var scope = service;
+        Replace(pack, PackManifestService.ManifestFileName,
+            """
+            { "schemaVersion": 1, "minecraftVersion": "1.6.4", "javaMajorVersion": 17,
+              "loader": { "type": "legacyfabric", "version": "0.18.2" }, "clientJar": "client.jar" }
+            """);
+        const string current = "stats/stats_btwqahost_unsent.dat";
+        const string old = "stats/stats_btwqahost_unsent.old";
+        Write(pack, current, "author stats must not become the player's stats");
+        Write(pack, old, "author previous stats must not become personal");
+        Write(pack, "launcher/pack-owned.txt", "stats/**\n");
+        Write(pack, "config/version.txt", "one");
+        WriteSyncState(pack, "one", current, old, "launcher/pack-owned.txt", "config/version.txt");
+
+        await service.PrepareAsync(PackName);
+        var game = service.GetInstanceDirectory(PackName);
+        Assert.False(Directory.Exists(Path.Combine(game, "stats")));
+        using var fixture = typeof(PackInstanceMigrationTests).Assembly.GetManifestResourceStream("Minecraft.Tests.LegacyStats.native-unsent.dat")!;
+        using var bytes = new MemoryStream();
+        fixture.CopyTo(bytes);
+        var nativeBytes = bytes.ToArray();
+        Assert.Equal("5a90bcc8cbbc351f8843b352dcdd888dbd26bf5525d7f228f6577ddaa7fe9edc",
+            Convert.ToHexStringLower(SHA256.HashData(nativeBytes)));
+        foreach (var relative in new[] { current, old })
+        {
+            var destination = Path.Combine(game, relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.WriteAllBytes(destination, nativeBytes);
+        }
+
+        // Reproduce an old state which mistakenly considered stats managed.
+        // The personal-root boundary must also protect retirement of that claim.
+        var statePath = Path.Combine(game, ".portable-instance.json");
+        var state = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(statePath))!;
+        foreach (var relative in new[] { current, old })
+        {
+            var file = new FileInfo(Path.Combine(game, relative.Replace('/', Path.DirectorySeparatorChar)));
+            state["files"]![relative] = JsonSerializer.SerializeToNode(new
+            {
+                sizeBytes = file.Length, lastWriteUtcTicks = file.LastWriteTimeUtc.Ticks, sha256 = Sha256(file.FullName)
+            });
+        }
+        state["ownedFiles"] = JsonSerializer.SerializeToNode(new[] { current, old });
+        File.WriteAllText(statePath, state.ToJsonString());
+        Replace(pack, current, "different author stats after update");
+        Replace(pack, old, "different previous author stats after update");
+        Replace(pack, "config/version.txt", "two");
+        WriteSyncState(pack, "two", current, old, "launcher/pack-owned.txt", "config/version.txt");
+
+        await service.PrepareAsync(PackName);
+        await service.PrepareAsync(PackName);
+        await service.CleanupGeneratedLocalArtifactsAsync(PackName, removeSessionLogs: true);
+
+        Assert.Equal("two", Read(game, "config/version.txt"));
+        Assert.Equal(nativeBytes, File.ReadAllBytes(Path.Combine(game, current.Replace('/', Path.DirectorySeparatorChar))));
+        Assert.Equal(nativeBytes, File.ReadAllBytes(Path.Combine(game, old.Replace('/', Path.DirectorySeparatorChar))));
+        Assert.Equal("different author stats after update", Read(pack, current));
+        using var prepared = JsonDocument.Parse(File.ReadAllText(statePath));
+        Assert.DoesNotContain(prepared.RootElement.GetProperty("files").EnumerateObject(),
+            entry => entry.Name.StartsWith("stats/", StringComparison.Ordinal));
+        Assert.DoesNotContain(prepared.RootElement.GetProperty("ownedFiles").EnumerateArray(),
+            entry => entry.GetString()!.StartsWith("stats/", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ValidManagedFileList_ExcludesUnclaimedSourceConfigsAndScripts()
     {
         var (_, pack, service) = CreatePack();

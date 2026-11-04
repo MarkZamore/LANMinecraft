@@ -1,732 +1,1192 @@
 {
-  "schemaVersion": 2,
-  "componentId": "e4steam",
-  "publisher": "MarkZamore",
-  "profile": "native-lan-ui-v2",
-  "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
-  "capabilities": [
-    "native-lan-settings-ui-hidden-or-absent",
-    "modern-configured-online-mode-at-native-publish",
-    "author-steam-authentication-retained"
-  ],
-  "sourcePatches": [
-    {
-      "path": "source/native-ui.patch",
-      "sizeBytes": 4326,
-      "sha256": "3c13a5f977c8bcf4d1332723b067d71360b007c20cfeb7ce58d011d587c92716"
-    },
-    {
-      "path": "source/native-lan-auth-v2.patch",
-      "sizeBytes": 5379,
-      "sha256": "39f0df42c787ecc7aac55838d67dbf2ace37119cf836c0303e69774deda0633b"
-    }
-  ],
   "builds": [
     {
-      "version": "0.3.2",
+      "authorFileName": "e4steam-forge-mc1.7.x-v0.3.2.jar",
+      "authorSha256": "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c",
+      "authorSizeBytes": 2107709,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.7.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        8
+      ],
       "fileName": "e4steam-forge-mc1.7.x-v0.3.2.jar",
-      "sizeBytes": 2107709,
-      "sha256": "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c",
       "loaders": [
         "Forge"
       ],
+      "metadataPath": "mcmod.info",
       "minimumMinecraftVersion": [
         1,
         7
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        8
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.7.x-v0.3.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c",
+      "sizeBytes": 2107709,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.7.x-v0.3.2.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.7.x-v0.3.2.jar",
-      "authorSha256": "c44434c31a5bbfcf5cc34a9327f2c6c08e8ae633e34727486146d8f0ffb03c9c",
-      "authorSizeBytes": 2107709,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
+      "version": "0.3.2"
     },
     {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.8.x-v0.3.2.jar",
-      "sizeBytes": 3039265,
-      "sha256": "35caf65a4d97904066e2f1f6454d1ba4661bc73130305ffdb3917f90b3449972",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        8
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        9
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.8.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.8.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
       "authorFileName": "e4steam-forge-mc1.8.x-v0.3.2.jar",
       "authorSha256": "35caf65a4d97904066e2f1f6454d1ba4661bc73130305ffdb3917f90b3449972",
       "authorSizeBytes": 3039265,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.2",
       "deliveryTag": "v0.3.2",
       "derivation": {
+        "removedLanSettingsApplierAbsent": true,
         "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.9.x-v0.3.2.jar",
-      "sizeBytes": 3038887,
-      "sha256": "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.8.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        9
+      ],
+      "fileName": "e4steam-forge-mc1.8.x-v0.3.2.jar",
       "loaders": [
         "Forge"
       ],
+      "metadataPath": "mcmod.info",
+      "minimumMinecraftVersion": [
+        1,
+        8
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "35caf65a4d97904066e2f1f6454d1ba4661bc73130305ffdb3917f90b3449972",
+      "sizeBytes": 3039265,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.8.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.9.x-v0.3.2.jar",
+      "authorSha256": "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66",
+      "authorSizeBytes": 3038887,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.9.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        10
+      ],
+      "fileName": "e4steam-forge-mc1.9.x-v0.3.2.jar",
+      "loaders": [
+        "Forge"
+      ],
+      "metadataPath": "mcmod.info",
       "minimumMinecraftVersion": [
         1,
         9
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        10
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.9.x-v0.3.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66",
+      "sizeBytes": 3038887,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.9.x-v0.3.2.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.9.x-v0.3.2.jar",
-      "authorSha256": "263b4b6f75f06aa0c5c8380d8ae34415e4ae735925bb952f9718c2bc24539e66",
-      "authorSizeBytes": 3038887,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
+      "version": "0.3.2"
     },
     {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.10.x-v0.3.2.jar",
-      "sizeBytes": 3038892,
-      "sha256": "ede466e6c19878c513419d971ca860b533eaa1ea756bf2c34a0adfbe80ad82ba",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        10
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        11
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.10.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.10.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
       "authorFileName": "e4steam-forge-mc1.10.x-v0.3.2.jar",
       "authorSha256": "ede466e6c19878c513419d971ca860b533eaa1ea756bf2c34a0adfbe80ad82ba",
       "authorSizeBytes": 3038892,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.2",
       "deliveryTag": "v0.3.2",
       "derivation": {
+        "removedLanSettingsApplierAbsent": true,
         "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.11.x-v0.3.2.jar",
-      "sizeBytes": 3038892,
-      "sha256": "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.10.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        11
+      ],
+      "fileName": "e4steam-forge-mc1.10.x-v0.3.2.jar",
       "loaders": [
         "Forge"
       ],
+      "metadataPath": "mcmod.info",
+      "minimumMinecraftVersion": [
+        1,
+        10
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "ede466e6c19878c513419d971ca860b533eaa1ea756bf2c34a0adfbe80ad82ba",
+      "sizeBytes": 3038892,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.10.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.11.x-v0.3.2.jar",
+      "authorSha256": "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f",
+      "authorSizeBytes": 3038892,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.11.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        12
+      ],
+      "fileName": "e4steam-forge-mc1.11.x-v0.3.2.jar",
+      "loaders": [
+        "Forge"
+      ],
+      "metadataPath": "mcmod.info",
       "minimumMinecraftVersion": [
         1,
         11
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        12
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.11.x-v0.3.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f",
+      "sizeBytes": 3038892,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.11.x-v0.3.2.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.11.x-v0.3.2.jar",
-      "authorSha256": "3371478eac829f01a879962d1c2e0f3b31684aa16ab8e8ac3ec06e46bcf5a26f",
-      "authorSizeBytes": 3038892,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
+      "version": "0.3.2"
     },
     {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.12.x-v0.3.2.jar",
-      "sizeBytes": 3038928,
-      "sha256": "f554e6d20f037dbf8a2596eb0c3aaa3cf3ba0625d1caca9a3925cad297506e24",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        12
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        13
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.12.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.12.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "mcmod.info",
-      "authorVersion": "0.3.2",
       "authorFileName": "e4steam-forge-mc1.12.x-v0.3.2.jar",
       "authorSha256": "f554e6d20f037dbf8a2596eb0c3aaa3cf3ba0625d1caca9a3925cad297506e24",
       "authorSizeBytes": 3038928,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.2",
       "deliveryTag": "v0.3.2",
       "derivation": {
+        "removedLanSettingsApplierAbsent": true,
         "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.13.x-v0.3.2.jar",
-      "sizeBytes": 2901410,
-      "sha256": "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.12.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        13
+      ],
+      "fileName": "e4steam-forge-mc1.12.x-v0.3.2.jar",
       "loaders": [
         "Forge"
       ],
+      "metadataPath": "mcmod.info",
+      "minimumMinecraftVersion": [
+        1,
+        12
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "f554e6d20f037dbf8a2596eb0c3aaa3cf3ba0625d1caca9a3925cad297506e24",
+      "sizeBytes": 3038928,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.12.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.13.x-v0.3.2.jar",
+      "authorSha256": "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec",
+      "authorSizeBytes": 2901410,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.13.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        14
+      ],
+      "fileName": "e4steam-forge-mc1.13.x-v0.3.2.jar",
+      "loaders": [
+        "Forge"
+      ],
+      "metadataPath": "META-INF/mods.toml",
       "minimumMinecraftVersion": [
         1,
         13
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        14
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.13.x-v0.3.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec",
+      "sizeBytes": 2901410,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.13.x-v0.3.2.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "META-INF/mods.toml",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.13.x-v0.3.2.jar",
-      "authorSha256": "0cdb0ef6ce450faf2583ffd75b43e17426b20b402628e7c38466ce84d080f2ec",
-      "authorSizeBytes": 2901410,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
+      "version": "0.3.2"
     },
     {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.14.x-v0.3.2.jar",
-      "sizeBytes": 2903985,
-      "sha256": "b7d08bbfadbee160f37eeb1e665d55c4a50b4682806dd63f3db5879b8fa5e1c7",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        14
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        15
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.14.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.14.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "META-INF/mods.toml",
-      "authorVersion": "0.3.2",
       "authorFileName": "e4steam-forge-mc1.14.x-v0.3.2.jar",
       "authorSha256": "b7d08bbfadbee160f37eeb1e665d55c4a50b4682806dd63f3db5879b8fa5e1c7",
       "authorSizeBytes": 2903985,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.2",
       "deliveryTag": "v0.3.2",
       "derivation": {
+        "removedLanSettingsApplierAbsent": true,
         "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.15.x-v0.3.2.jar",
-      "sizeBytes": 2899585,
-      "sha256": "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.14.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
         1,
         15
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        16
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.15.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.15.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "META-INF/mods.toml",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.15.x-v0.3.2.jar",
-      "authorSha256": "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91",
-      "authorSizeBytes": 2899585,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-forge-mc1.16.x-v0.3.2.jar",
-      "sizeBytes": 2899902,
-      "sha256": "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca",
+      "fileName": "e4steam-forge-mc1.14.x-v0.3.2.jar",
       "loaders": [
         "Forge"
       ],
-      "minimumMinecraftVersion": [
-        1,
-        16
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        17
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.16.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.16.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
       "metadataPath": "META-INF/mods.toml",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-forge-mc1.16.x-v0.3.2.jar",
-      "authorSha256": "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca",
-      "authorSizeBytes": 2899902,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-fabric-mc1.14.x-v0.3.2.jar",
-      "sizeBytes": 3590675,
-      "sha256": "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2",
-      "loaders": [
-        "Fabric"
-      ],
       "minimumMinecraftVersion": [
         1,
         14
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        15
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.14.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.14.x-v0.3.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "b7d08bbfadbee160f37eeb1e665d55c4a50b4682806dd63f3db5879b8fa5e1c7",
+      "sizeBytes": 2903985,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.14.x-v0.3.2.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-fabric-mc1.14.x-v0.3.2.jar",
-      "authorSha256": "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2",
-      "authorSizeBytes": 3590675,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
+      "version": "0.3.2"
     },
     {
-      "version": "0.3.2",
-      "fileName": "e4steam-fabric-mc1.15.x-v0.3.2.jar",
-      "sizeBytes": 3589233,
-      "sha256": "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2",
-      "loaders": [
-        "Fabric"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        15
-      ],
+      "authorFileName": "e4steam-forge-mc1.15.x-v0.3.2.jar",
+      "authorSha256": "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91",
+      "authorSizeBytes": 2899585,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.15.x-v0.3.2.jar",
       "exclusiveMaximumMinecraftVersion": [
         1,
         16
       ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.15.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.15.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-fabric-mc1.15.x-v0.3.2.jar",
-      "authorSha256": "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2",
-      "authorSizeBytes": 3589233,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.2",
-      "fileName": "e4steam-fabric-mc1.16.x-v0.3.2.jar",
-      "sizeBytes": 3589535,
-      "sha256": "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f",
+      "fileName": "e4steam-forge-mc1.15.x-v0.3.2.jar",
       "loaders": [
-        "Fabric"
+        "Forge"
       ],
+      "metadataPath": "META-INF/mods.toml",
       "minimumMinecraftVersion": [
         1,
-        16
+        15
       ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "5de9df05e6834a1279631eedfa5879bf8abfa955226dc127fffd2a4292768b91",
+      "sizeBytes": 2899585,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.15.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.16.x-v0.3.2.jar",
+      "authorSha256": "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca",
+      "authorSizeBytes": 2899902,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.16.x-v0.3.2.jar",
       "exclusiveMaximumMinecraftVersion": [
         1,
         17
       ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.16.x-v0.3.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.16.x-v0.3.2.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
-      "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.2",
-      "authorFileName": "e4steam-fabric-mc1.16.x-v0.3.2.jar",
-      "authorSha256": "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f",
-      "authorSizeBytes": 3589535,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "v0.3.2",
-      "derivation": {
-        "type": "byte-identical-author-artifact",
-        "uiAbsent": true,
-        "removedLanSettingsApplierAbsent": true
-      }
-    },
-    {
-      "version": "0.3.4",
-      "fileName": "e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3805024,
-      "sha256": "1344aa71d9fe824dd9b01210f58f28569631f4c5747d6f040d82f65c7010a8d7",
+      "fileName": "e4steam-forge-mc1.16.x-v0.3.2.jar",
       "loaders": [
         "Forge"
       ],
+      "metadataPath": "META-INF/mods.toml",
+      "minimumMinecraftVersion": [
+        1,
+        16
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "a0e6a1ab6b29c36733c929e86905521e58b2943307fab4fda7da05b51b3449ca",
+      "sizeBytes": 2899902,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-forge-mc1.16.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-fabric-mc1.14.x-v0.3.2.jar",
+      "authorSha256": "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2",
+      "authorSizeBytes": 3590675,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.14.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        15
+      ],
+      "fileName": "e4steam-fabric-mc1.14.x-v0.3.2.jar",
+      "loaders": [
+        "Fabric"
+      ],
+      "metadataPath": "fabric.mod.json",
+      "minimumMinecraftVersion": [
+        1,
+        14
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "c9467b97bfa7691007b4226af0ba7d776393fd013a0ddc908f36e63d818e85f2",
+      "sizeBytes": 3590675,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.14.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-fabric-mc1.15.x-v0.3.2.jar",
+      "authorSha256": "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2",
+      "authorSizeBytes": 3589233,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.15.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        16
+      ],
+      "fileName": "e4steam-fabric-mc1.15.x-v0.3.2.jar",
+      "loaders": [
+        "Fabric"
+      ],
+      "metadataPath": "fabric.mod.json",
+      "minimumMinecraftVersion": [
+        1,
+        15
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "61e7c1783a3338bee600660ac630ed3d6fcb220831f110661e01dbdfee7679b2",
+      "sizeBytes": 3589233,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.15.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-fabric-mc1.16.x-v0.3.2.jar",
+      "authorSha256": "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f",
+      "authorSizeBytes": 3589535,
+      "authorVersion": "0.3.2",
+      "deliveryTag": "v0.3.2",
+      "derivation": {
+        "removedLanSettingsApplierAbsent": true,
+        "type": "byte-identical-author-artifact",
+        "uiAbsent": true
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.16.x-v0.3.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        17
+      ],
+      "fileName": "e4steam-fabric-mc1.16.x-v0.3.2.jar",
+      "loaders": [
+        "Fabric"
+      ],
+      "metadataPath": "fabric.mod.json",
+      "minimumMinecraftVersion": [
+        1,
+        16
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "b387a2b076527dd2f1ccbb3cf44ac97d3f4ce89722becb5e3bc57ad7933ba70f",
+      "sizeBytes": 3589535,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.2/e4steam-fabric-mc1.16.x-v0.3.2.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.2",
+      "version": "0.3.2"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar",
+      "authorSha256": "b1a6b34ca34edff830414a676de33a7ebe6fd3a43d0f18e687b717d45d87a312",
+      "authorSizeBytes": 3820487,
+      "authorVersion": "0.3.4",
+      "deliveryTag": "native-lan-ui-v2",
+      "derivation": {
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
+        "changedEntries": [
+          "e4steam.mixins.json",
+          "link/e4steam/lan/LanServerSettingsApplier.class",
+          "link/e4steam/mixin/IntegratedServerLanMixin.class",
+          "link/e4steam/mixin/PauseScreenMixin.class"
+        ],
+        "sourceBuiltClassSha256": {
+          "link/e4steam/lan/LanServerSettingsApplier.class": "08618f4e78c1de46a1f1465092b5e299e55a7729db5f16a0b9a5cea893c51cb8",
+          "link/e4steam/mixin/IntegratedServerLanMixin.class": "42b5a9ad18e9e7e0f33f2e292ae20eab521f8dd99815ee0da3deb3fa3a638bea",
+          "link/e4steam/mixin/PauseScreenMixin.class": "8f12142733c6137c0999b87a3c5f8e263af787ebb8e593dd99a4427f6b3d33b6"
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1017
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        18,
+        2
+      ],
+      "fileName": "e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar",
+      "loaders": [
+        "Forge"
+      ],
+      "metadataPath": "META-INF/mods.toml",
       "minimumMinecraftVersion": [
         1,
         17,
         1
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        18,
-        2
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-forge-mc1.17.1-1.18.1-v0.3.4-lanmc-native-ui.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "1344aa71d9fe824dd9b01210f58f28569631f4c5747d6f040d82f65c7010a8d7",
+      "sizeBytes": 3805024,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
-      "metadataPath": "META-INF/mods.toml",
+      "version": "0.3.4"
+    },
+    {
+      "authorFileName": "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
+      "authorSha256": "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc",
+      "authorSizeBytes": 3817117,
       "authorVersion": "0.3.4",
-      "authorFileName": "e4steam-forge-mc1.17.1-1.18.1-v0.3.4.jar",
-      "authorSha256": "b1a6b34ca34edff830414a676de33a7ebe6fd3a43d0f18e687b717d45d87a312",
-      "authorSizeBytes": 3820487,
-      "profile": "native-lan-ui-v2",
       "deliveryTag": "native-lan-ui-v2",
       "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
         "changedEntries": [
           "e4steam.mixins.json",
           "link/e4steam/lan/LanServerSettingsApplier.class",
           "link/e4steam/mixin/IntegratedServerLanMixin.class",
           "link/e4steam/mixin/PauseScreenMixin.class"
         ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1017,
-        "allOtherEntriesByteIdentical": true,
         "sourceBuiltClassSha256": {
-          "link/e4steam/lan/LanServerSettingsApplier.class": "08618f4e78c1de46a1f1465092b5e299e55a7729db5f16a0b9a5cea893c51cb8",
-          "link/e4steam/mixin/IntegratedServerLanMixin.class": "42b5a9ad18e9e7e0f33f2e292ae20eab521f8dd99815ee0da3deb3fa3a638bea",
-          "link/e4steam/mixin/PauseScreenMixin.class": "8f12142733c6137c0999b87a3c5f8e263af787ebb8e593dd99a4427f6b3d33b6"
-        }
-      }
-    },
-    {
-      "version": "0.3.4",
-      "fileName": "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3801632,
-      "sha256": "3f397fc193f14d3c543b5ef9b4613bc149a21ca8e14bd93c39de3d1bc6f9553c",
-      "loaders": [
-        "Forge"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        18,
-        2
-      ],
+          "link/e4steam/lan/LanServerSettingsApplier.class": "023c51b7b4bd7b70b1126d68aaaf87e7967d22e6183dc90679c4c9d30c0fc882",
+          "link/e4steam/mixin/IntegratedServerLanMixin.class": "96bda0f1548691346d60f0a0b616f78741771d96e3892a39c4c72a4483743086",
+          "link/e4steam/mixin/PauseScreenMixin.class": "8ddb76b46524295ba079c323575ade36cd866e7c81ccfbe3cfc142a5caf6df99"
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1018
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar",
       "exclusiveMaximumMinecraftVersion": [
         1,
         20,
         3
       ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar",
+      "fileName": "e4steam-forge-mc1.18.2-1.20.2-v0.3.4-lanmc-native-ui.2.jar",
+      "loaders": [
+        "Forge"
+      ],
+      "metadataPath": "META-INF/mods.toml",
+      "minimumMinecraftVersion": [
+        1,
+        18,
+        2
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "3f397fc193f14d3c543b5ef9b4613bc149a21ca8e14bd93c39de3d1bc6f9553c",
+      "sizeBytes": 3801632,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
-      "metadataPath": "META-INF/mods.toml",
+      "version": "0.3.4"
+    },
+    {
+      "authorFileName": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
+      "authorSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0",
+      "authorSizeBytes": 3815800,
       "authorVersion": "0.3.4",
-      "authorFileName": "e4steam-forge-mc1.18.2-1.20.2-v0.3.4.jar",
-      "authorSha256": "33421acbea4d904ac3cefa62ac1d4bd5f62f9e9169b81a4d16a052d2330bc6fc",
-      "authorSizeBytes": 3817117,
-      "profile": "native-lan-ui-v2",
       "deliveryTag": "native-lan-ui-v2",
       "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
         "changedEntries": [
           "e4steam.mixins.json",
           "link/e4steam/lan/LanServerSettingsApplier.class",
           "link/e4steam/mixin/IntegratedServerLanMixin.class",
           "link/e4steam/mixin/PauseScreenMixin.class"
         ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1018,
-        "allOtherEntriesByteIdentical": true,
         "sourceBuiltClassSha256": {
           "link/e4steam/lan/LanServerSettingsApplier.class": "023c51b7b4bd7b70b1126d68aaaf87e7967d22e6183dc90679c4c9d30c0fc882",
-          "link/e4steam/mixin/IntegratedServerLanMixin.class": "96bda0f1548691346d60f0a0b616f78741771d96e3892a39c4c72a4483743086",
-          "link/e4steam/mixin/PauseScreenMixin.class": "8ddb76b46524295ba079c323575ade36cd866e7c81ccfbe3cfc142a5caf6df99"
-        }
-      }
-    },
-    {
-      "version": "0.3.4",
+          "link/e4steam/mixin/IntegratedServerLanMixin.class": "d7c7b320c99712edc0fdd70b34a762fd95c80c8634ab74dbc288f2657a2c881e",
+          "link/e4steam/mixin/PauseScreenMixin.class": "c1c573269e85da0445b3624cab118d31aa3b2e1b4f17fdcd791853e869fa938e"
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1018
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        26,
+        4
+      ],
       "fileName": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3800314,
-      "sha256": "2cfedc07ee3c84b9b980351ea094d5f898c858f37ff46dada24c621061761d2e",
       "loaders": [
         "NeoForge"
       ],
+      "metadataPath": "META-INF/neoforge.mods.toml",
       "minimumMinecraftVersion": [
         1,
         20,
         2
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        26,
-        4
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-neoforge-mc1.20.2-26.3-v0.3.4-lanmc-native-ui.2.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "2cfedc07ee3c84b9b980351ea094d5f898c858f37ff46dada24c621061761d2e",
+      "sizeBytes": 3800314,
       "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
-      "metadataPath": "META-INF/neoforge.mods.toml",
-      "authorVersion": "0.3.4",
-      "authorFileName": "e4steam-neoforge-mc1.20.2-26.3-v0.3.4.jar",
-      "authorSha256": "b7c388393b7c27d188c17981073a2471c7ac52b95d5cff8b8dc8f19946d67be0",
-      "authorSizeBytes": 3815800,
-      "profile": "native-lan-ui-v2",
-      "deliveryTag": "native-lan-ui-v2",
-      "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
-        "changedEntries": [
-          "e4steam.mixins.json",
-          "link/e4steam/lan/LanServerSettingsApplier.class",
-          "link/e4steam/mixin/IntegratedServerLanMixin.class",
-          "link/e4steam/mixin/PauseScreenMixin.class"
-        ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1018,
-        "allOtherEntriesByteIdentical": true,
-        "sourceBuiltClassSha256": {
-          "link/e4steam/lan/LanServerSettingsApplier.class": "023c51b7b4bd7b70b1126d68aaaf87e7967d22e6183dc90679c4c9d30c0fc882",
-          "link/e4steam/mixin/IntegratedServerLanMixin.class": "d7c7b320c99712edc0fdd70b34a762fd95c80c8634ab74dbc288f2657a2c881e",
-          "link/e4steam/mixin/PauseScreenMixin.class": "c1c573269e85da0445b3624cab118d31aa3b2e1b4f17fdcd791853e869fa938e"
-        }
-      }
+      "version": "0.3.4"
     },
     {
-      "version": "0.3.4",
-      "fileName": "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3800700,
-      "sha256": "7dde29204bc3f50649bbf3b50163e96677a62467507d1218f9e58caa7785d006",
-      "loaders": [
-        "Fabric",
-        "Quilt"
-      ],
-      "minimumMinecraftVersion": [
-        1,
-        17
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        1,
-        19
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
-      "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.4",
       "authorFileName": "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar",
       "authorSha256": "0aaef192271c57c9af3be4a8b09e62101592953bb7c97c276df4b26c289aeef3",
       "authorSizeBytes": 3816090,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.4",
       "deliveryTag": "native-lan-ui-v2",
       "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
         "changedEntries": [
           "e4steam.mixins.json",
           "link/e4steam/lan/LanServerSettingsApplier.class",
           "link/e4steam/mixin/IntegratedServerLanMixin.class",
           "link/e4steam/mixin/PauseScreenMixin.class"
         ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1013,
-        "allOtherEntriesByteIdentical": true,
         "sourceBuiltClassSha256": {
           "link/e4steam/lan/LanServerSettingsApplier.class": "396634fdc57cc98c7ab814e15011c9b0cc3a75e47ca530ab310a62c9bc9d8a68",
           "link/e4steam/mixin/IntegratedServerLanMixin.class": "fd1570ac8073c0cad9fbabb234acfb27942d012ab4d8ee093ee416291331ad2a",
           "link/e4steam/mixin/PauseScreenMixin.class": "92e4e1d3a6badd8051348fc6c7e86e7542193a71eead494c7ab133047b29e5e9"
-        }
-      }
-    },
-    {
-      "version": "0.3.4",
-      "fileName": "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3797496,
-      "sha256": "67d43d3047cf7d349b38d1addf024ef69de44d79d2b19f5f0092b024a565f1bd",
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1013
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        19
+      ],
+      "fileName": "e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4-lanmc-native-ui.2.jar",
       "loaders": [
         "Fabric",
         "Quilt"
       ],
+      "metadataPath": "fabric.mod.json",
       "minimumMinecraftVersion": [
         1,
-        19
+        17
       ],
-      "exclusiveMaximumMinecraftVersion": [
-        26,
-        1
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar",
+      "profile": "native-lan-ui-v3",
+      "sha256": "7dde29204bc3f50649bbf3b50163e96677a62467507d1218f9e58caa7785d006",
+      "sizeBytes": 3800700,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc1.17-1.18.2-v0.3.4.jar",
       "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
-      "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.4",
+      "version": "0.3.4"
+    },
+    {
       "authorFileName": "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar",
       "authorSha256": "ec692ae255704971b24bdff28724ec48224d6c87c7e5d568e4252b4df15a447d",
       "authorSizeBytes": 3812904,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.4",
       "deliveryTag": "native-lan-ui-v2",
       "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
         "changedEntries": [
           "e4steam.mixins.json",
           "link/e4steam/lan/LanServerSettingsApplier.class",
           "link/e4steam/mixin/IntegratedServerLanMixin.class",
           "link/e4steam/mixin/PauseScreenMixin.class"
         ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1014,
-        "allOtherEntriesByteIdentical": true,
         "sourceBuiltClassSha256": {
           "link/e4steam/lan/LanServerSettingsApplier.class": "cb9446ff9bfec2e41b22fd3bf3bf0d58e063acbc135b0b800683d6db748c7de2",
           "link/e4steam/mixin/IntegratedServerLanMixin.class": "7c1a05a1b6b6c879befb0fce4811b5d714f07f8224a1372a98c1fc9c3a66e03d",
           "link/e4steam/mixin/PauseScreenMixin.class": "d48335a60bb6452c834c2900cafe91775f099fb52ff2ab696b9d1155410653bf"
-        }
-      }
-    },
-    {
-      "version": "0.3.4",
-      "fileName": "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar",
-      "sizeBytes": 3798124,
-      "sha256": "248fe6c4bf8f4decd0eea2c0883f15559eedd7491e6a9b5859b3bd1cafdcb26d",
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1014
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        26,
+        1
+      ],
+      "fileName": "e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4-lanmc-native-ui.2.jar",
       "loaders": [
         "Fabric",
         "Quilt"
       ],
-      "minimumMinecraftVersion": [
-        26,
-        1
-      ],
-      "exclusiveMaximumMinecraftVersion": [
-        26,
-        4
-      ],
-      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar",
-      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar",
-      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
       "metadataPath": "fabric.mod.json",
-      "authorVersion": "0.3.4",
+      "minimumMinecraftVersion": [
+        1,
+        19
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "67d43d3047cf7d349b38d1addf024ef69de44d79d2b19f5f0092b024a565f1bd",
+      "sizeBytes": 3797496,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc1.19-1.21.11-v0.3.4.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
+      "version": "0.3.4"
+    },
+    {
       "authorFileName": "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar",
       "authorSha256": "ea7ed37c3c2b8b41c7e458043b051725c22e81b9f9fa318a1474831cc484854e",
       "authorSizeBytes": 3813546,
-      "profile": "native-lan-ui-v2",
+      "authorVersion": "0.3.4",
       "deliveryTag": "native-lan-ui-v2",
       "derivation": {
-        "type": "source-built-native-ui-and-lan-online-mode",
-        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "addedEntries": [
+          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
+        ],
+        "allOtherEntriesByteIdentical": true,
         "changedEntries": [
           "e4steam.mixins.json",
           "link/e4steam/lan/LanServerSettingsApplier.class",
           "link/e4steam/mixin/IntegratedServerLanMixin.class",
           "link/e4steam/mixin/PauseScreenMixin.class"
         ],
-        "addedEntries": [
-          "META-INF/NOTICE-LANMinecraft-native-ui.txt"
-        ],
-        "unchangedOriginalEntries": 1014,
-        "allOtherEntriesByteIdentical": true,
         "sourceBuiltClassSha256": {
           "link/e4steam/lan/LanServerSettingsApplier.class": "cb9446ff9bfec2e41b22fd3bf3bf0d58e063acbc135b0b800683d6db748c7de2",
           "link/e4steam/mixin/IntegratedServerLanMixin.class": "9e32bc106976d0e070fac0a341179472437edfb13478475b175b7e32afe5e6f9",
           "link/e4steam/mixin/PauseScreenMixin.class": "c1c573269e85da0445b3624cab118d31aa3b2e1b4f17fdcd791853e869fa938e"
-        }
-      }
+        },
+        "sourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+        "type": "source-built-native-ui-and-lan-online-mode",
+        "unchangedOriginalEntries": 1014
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/native-lan-ui-v2/e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        26,
+        4
+      ],
+      "fileName": "e4steam-fabric-quilt-mc26.1-26.3-v0.3.4-lanmc-native-ui.2.jar",
+      "loaders": [
+        "Fabric",
+        "Quilt"
+      ],
+      "metadataPath": "fabric.mod.json",
+      "minimumMinecraftVersion": [
+        26,
+        1
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "248fe6c4bf8f4decd0eea2c0883f15559eedd7491e6a9b5859b3bd1cafdcb26d",
+      "sizeBytes": 3798124,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/releases/download/v0.3.4/e4steam-fabric-quilt-mc26.1-26.3-v0.3.4.jar",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
+      "version": "0.3.4"
+    },
+    {
+      "authorVersion": "0.3.4",
+      "deliveryTag": "legacy-fabric-164-v1",
+      "derivation": {
+        "sourceBuildReceipt": {
+          "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/legacy-fabric-164-v1/build-receipt.json",
+          "fileName": "build-receipt.json",
+          "sha256": "3a3c68e245502544be7ebfa7c469604ed7837372cd4e79e36aa9abb41b3ca038",
+          "sizeBytes": 79994
+        },
+        "sourceBuildRecipe": {
+          "path": "tools/legacy_fabric_164.py",
+          "sha256": "0c324f4b413909976eca90790aee5747c27ff8d16f3e5754b3c47488eadc2606"
+        },
+        "sourceBuiltClassSha256": {
+          "link/e4steam/Agnos.class": "3471d1a42fd46227ae640d9f975b66118e7aab04b53ef12387c0a2137009caae",
+          "link/e4steam/E4steamClient$1.class": "51190acbfc47b6f7cb08fe0c57ce6b390389cd66d0ba3bfd5c84687721ec6b20",
+          "link/e4steam/E4steamClient$2.class": "0d5358c9ec59fcaaaf63a8fd89aea7d6d7d9962100f49970ce7e739dc325ebcf",
+          "link/e4steam/E4steamClient$3.class": "a637d09f0e9b21c5fe95465d4f8783b6fbab61fcd9d1bbc15e0ec0f954630d6e",
+          "link/e4steam/E4steamClient$4.class": "20de2eca20e032bfcd5b634453f0ecd66bf442ace8326268f1caa72dd343d246",
+          "link/e4steam/E4steamClient$5.class": "d043dbc8b6d5740d8b47873f1a692a14633f3486b45fb6e546e60aab06247ec6",
+          "link/e4steam/E4steamClient$6.class": "812df1b5020d167cdebb8032d55f1f4b3fdd38ad55ca5390ab5edd1d43fcd3e6",
+          "link/e4steam/E4steamClient$7.class": "26ea08fe36632401d68fefa3aaed099d46f0ac0ef028e2cd8698db5654c5ec33",
+          "link/e4steam/E4steamClient.class": "24e42eba4f2de258080073b61b07e277b43b34861e103d068ab2ac8e54c21994",
+          "link/e4steam/E4steamConstants.class": "cc526fe01d2cb3bb0a95ab46a39dced1ea7b1e8465e38bea482d3e2565d753db",
+          "link/e4steam/HexCodec.class": "98a465e84caef0760f5c479fc056d79c5e311b3b67f2272369307685d8d4c085",
+          "link/e4steam/MinecraftVersion.class": "2b0700b837f378c9068d39f28d5d25a80fff8605b90b5164ece560fa78605066",
+          "link/e4steam/Mirror.class": "41fed27dc00e847c78232d42eb431878e460cadbd25cc49de378085fbc45efcc",
+          "link/e4steam/api/ApiConstants.class": "a4bb15dbf5c02c051ce6744598fe1157bf7445850444290c4b66e8c6dbc7a00f",
+          "link/e4steam/api/ApiError.class": "ce4472ffead3b8d87c0cee4c4412d92c799cacbe447f740f38c5d6b53c22823f",
+          "link/e4steam/api/ApiErrorCode.class": "138eed5e03d9c4de3531596de485cdf444d7a6eb76d0f75f1103c1928504d94f",
+          "link/e4steam/api/ApiLimits.class": "71e495907df924489fd4500378ee8581781d6267003b1d6c73cbddeffb3d6556",
+          "link/e4steam/api/ApiResult.class": "345e00f3b06f1a382450b058436d0a1a4cd400ba6685a41bd6bca7b61bed84d6",
+          "link/e4steam/api/ApiServiceKeys.class": "6f0c65aa1cd5457dcff2290633c26e37b00783c70bb6bb523556070dfff6eb3e",
+          "link/e4steam/api/ApiValidation.class": "2494411ee6404cc80741c16ed8e24233bc418b29e2244e3108af0b604c88414f",
+          "link/e4steam/api/ApiVersion.class": "7a5f7c4efb8b39dc1b15f025bc5340a4903057a56c045ef8c5eec64436481291",
+          "link/e4steam/api/ApiVersionRange.class": "d9c4ebebf7c84778cefd3dac509e1713b4aafa5fd75b465a023409da207113ae",
+          "link/e4steam/api/E4steamApi.class": "7f7417a34d407bc2f2e9cf0d1f7ec2ccf628c59bbc5b06bc0e4f8ab9b54a20b3",
+          "link/e4steam/api/Registration.class": "7795d9c4c97b6c1096bb2d77beda2c53f0bf467c960d4c372da55eee1b7751c8",
+          "link/e4steam/api/ResourceScope.class": "46545218d0ee6e27e740c482013be7b442b6d6b2f0e776ef2267330a3927b341",
+          "link/e4steam/api/Retryability.class": "4839f371c5018c3b22011dd0a300a63f3aef6ae7255a82e7aeb505adc3d031d1",
+          "link/e4steam/api/ServiceKey.class": "761c52959502f8ecbcd85418b4f82d72610508a73a164f14bf9fd508983e6f3c",
+          "link/e4steam/api/ServiceRegistry.class": "273efafc18733202150e2a771e5a5e83e1684652762dc4392744ace94b2204a5",
+          "link/e4steam/api/Subscription.class": "2e8f121d414a7b8ba4256275b0be6da168be80c81d8256a229bc47014b6cf4fe",
+          "link/e4steam/api/access/AccessService$AccessModeId.class": "069a0e7d592b4594d99ce4f15c1b984b5d0a1a963f8ab6d71cd4a2362e19f804",
+          "link/e4steam/api/access/AccessService$AccessModeProvider.class": "0f4e85bbe030638b2ecedb7589749a50dd399029b4dccf1af23d90bffe9d4d3c",
+          "link/e4steam/api/access/AccessService$AdmissionContext.class": "21dd7ac5ebb4e282da6289522e36da7dc2829eb45aa71f4a907d46ebe380e777",
+          "link/e4steam/api/access/AccessService$AdmissionDecision$Kind.class": "2b14d0bf19c7dffa56d3a7b14e20e6bd0f829bb25a0368537267b56a69412b06",
+          "link/e4steam/api/access/AccessService$AdmissionDecision.class": "f23e5f9c86c05aadd46b5047bb34444c5dc1b6d9f03ae4b76735a8143d2e356e",
+          "link/e4steam/api/access/AccessService$AdmissionPolicy.class": "26849e17ee3a8c131e6ced79cc7ae04fb5ba1c23c62f0fed4249a8a729126582",
+          "link/e4steam/api/access/AccessService$ConfirmableAccessModeProvider.class": "509799a619d0e348ee7886385e8e43dc5b2f9cac33122bcad93ead582c9dbe49",
+          "link/e4steam/api/access/AccessService.class": "f19001256ff1ce0b83aac0ed063a3968f521b9e89a4c6e63d19eb8fe52c0dcc0",
+          "link/e4steam/api/addon/AddonContext.class": "9203aa7841850847a8311669e2ed24efa525e33d295d60a501c141dc24f215ec",
+          "link/e4steam/api/addon/AddonDependency.class": "ea33f3664e997d115d76a6205b55ffc021f26a5b1cfa284b5712de40bff61599",
+          "link/e4steam/api/addon/AddonDescriptor.class": "b764357117d82040c07350ded37740315b615a17c6ba8659e509f6aac1a66292",
+          "link/e4steam/api/addon/AddonFailure.class": "adbef19a21329b504cc35e44afc4c86baf4782dfcc243307d5da4f1ced10582a",
+          "link/e4steam/api/addon/AddonHandle.class": "9238bb288e1199e921428924c09d5769115675d30567b48c2aa0598408ef1504",
+          "link/e4steam/api/addon/AddonId.class": "d3feecfe29bcd40a063f5baa2afb4d1bcc96bc6985bf959a1bebcb9e4d973035",
+          "link/e4steam/api/addon/AddonService.class": "4dbd2c50d54dbced9f08c9baa8e4cbb6eb2c0a00df03c10911775fee2b8e2d7a",
+          "link/e4steam/api/addon/AddonState.class": "f637c8a3433fa00d2bf4ac2084f50dc2dc1a86b7ad7df48d17b6a678ae955d69",
+          "link/e4steam/api/addon/E4steamAddon.class": "cf971648a3f11213a4e644ad6fca84143aa22d09a27c9b4cf5f1b98b84a82be5",
+          "link/e4steam/api/addon/E4steamAddonEntrypoint.class": "daab58d29a09af4bb4de44641792d3fb084c2a524b5150bd4ce9df52ef8f9314",
+          "link/e4steam/api/capability/Capabilities.class": "e47c0d74d72638de8ffc8422a73bf468770d63404127a6959d436d19dd0dc9fd",
+          "link/e4steam/api/capability/CapabilityId.class": "8e1f5d400f6898f53aaddcfe8fd398a264685056f25204b12205fd8de199a5a2",
+          "link/e4steam/api/capability/CapabilityService.class": "0ccdb0a6c351ccc058723071a1583061db7ae5828ac59a5301ff8efe24a352ac",
+          "link/e4steam/api/command/CommandService$ArgumentDescriptor.class": "41031f8a615d98a72b23575c81b22ae56fdbaf9470808e5e86f50bb6cd1ee840",
+          "link/e4steam/api/command/CommandService$ArgumentType.class": "c1a06fc11f90d8e62a1015f345108168bb1931ef3f9662c8f80cdfef2c4e7ce9",
+          "link/e4steam/api/command/CommandService$CommandContext.class": "1664da605a26531db705c676a326527d4e380d295a5d0119a975eafbacac7335",
+          "link/e4steam/api/command/CommandService$CommandDescriptor.class": "57c927d529110334d07e450733447229daaf0b9a23d37673684fa8776a73ef70",
+          "link/e4steam/api/command/CommandService$CommandHandler.class": "fc9861d7c3f13c67f4f1b2694ebefcd7bd7b537044e8de8f27c63cd2319a313d",
+          "link/e4steam/api/command/CommandService$CommandId.class": "d7782705f1da96171f4db110a6b68eaf05e9302f561900c94ed8224732e8bd45",
+          "link/e4steam/api/command/CommandService$CommandOutput.class": "ef85c8f61cef8f561386f5132d8b644d78f069a0e8d3027653a1f2d342161f98",
+          "link/e4steam/api/command/CommandService$SourceType.class": "cac7b59cb4d50e2fce970f956f41e71a5e6f7181e7cee4b13ef09f1fbfde70bb",
+          "link/e4steam/api/command/CommandService.class": "cc3b79275219bbc6eabdbc5d79144ee794a409251ebd7b75922eed6d7cfc8a0c",
+          "link/e4steam/api/config/ConfigService$ConfigKey.class": "9489d04aec70022145dc6f3f58e95137737efce162e2557b089e38d59816a9f8",
+          "link/e4steam/api/config/ConfigService$ConfigSchema.class": "713a9da18cac41c30c30541fb6a0094234f469fdaa68b6431a03584554f09fc7",
+          "link/e4steam/api/config/ConfigService$ConfigScope.class": "46beb4f2e9b8e9aff5a1d67220872f691ddce47a41f0ac2ddcfebf44aa86d77c",
+          "link/e4steam/api/config/ConfigService$ConfigSnapshot.class": "2e4e2ca16a00cda8bb068e5145c66170e17c1211f2052a77f7d084becf91e5bc",
+          "link/e4steam/api/config/ConfigService$ConfigTransaction.class": "ad0473a2971130fccf6467effe82516fc12d1b9f76db490b218d76aaaf646ee4",
+          "link/e4steam/api/config/ConfigService$ConfigValue.class": "262492d4dec0d0f49eb08368a297b64207fbbec7e2c4cf227cb374885b447fc9",
+          "link/e4steam/api/config/ConfigService$Migration.class": "837b50f0439f564c8eea3636563daad4f681205d641b2f8250bd6a5882b4b181",
+          "link/e4steam/api/config/ConfigService$ValueType.class": "19736fcfa32870f08419113d303f5790f564c69553d025ae638914c4b0a924fc",
+          "link/e4steam/api/config/ConfigService.class": "c1e48e9b247d14bf56358a39bdbea84e6e1d6a81f5ee07e7bcbf7c118cd25487",
+          "link/e4steam/api/dedicated/DedicatedServerService$DedicatedAccessMode.class": "fff85ae9e8a4791b623f19df80cf3a9f588f77a2e076fdfce95ea7c9a8177fdc",
+          "link/e4steam/api/dedicated/DedicatedServerService$DedicatedConfigSnapshot.class": "61b912c3656501bbd3d7991e2fe84dc1a02bcb0b27d0357d188b7d28810fc0fb",
+          "link/e4steam/api/dedicated/DedicatedServerService$DedicatedServerSnapshot.class": "3b0187cbf00d2e7b303f13ad04d3de3942ddc10def93ab8428bba412a8992718",
+          "link/e4steam/api/dedicated/DedicatedServerService$DedicatedServerState.class": "58f47214a3ef2ddce22d55ca22538822aa35011683ecbcb30ccecc07671c377c",
+          "link/e4steam/api/dedicated/DedicatedServerService$PublicationPlan.class": "f0ae6edaccdb4053f09f7e50c71eec67332cbf34f5b57199a0e409e1027e6615",
+          "link/e4steam/api/dedicated/DedicatedServerService$PublicationProposal.class": "73ee3462527b54cb786fcfce346467a37944408bc7d3bae2118408af053909bc",
+          "link/e4steam/api/dedicated/DedicatedServerService$ServerAuthorityRef.class": "77d06ac238039032d53b5633781d0f1621fc342b0154273f5ef6a0ce57c769b6",
+          "link/e4steam/api/dedicated/DedicatedServerService.class": "1cc8478287ae986c01a86a4b54479757c497a9118261bea8abd0648be180c89e",
+          "link/e4steam/api/diagnostics/DiagnosticsService$ComponentHealth.class": "db8a32b15ac3ed31a46734670ee797d6e003e0c294e0a2110f05ac2696fb25bc",
+          "link/e4steam/api/diagnostics/DiagnosticsService$DiagnosticsContributor.class": "7d94f29eae6ca44278b2a6e72eee156c84d6b7b662a5c4f4859be43d9aa90d21",
+          "link/e4steam/api/diagnostics/DiagnosticsService$DiagnosticsSection.class": "22c9d26ae333aac2984671bdc1dbac08c3e7ef5c5637129cabe8d011df29ca4e",
+          "link/e4steam/api/diagnostics/DiagnosticsService$DoctorPreview.class": "612f49fc95d858d3a8ef987e37f21b9e84819e7d4b644b5c3df07109d781fe47",
+          "link/e4steam/api/diagnostics/DiagnosticsService$Health.class": "e9b01192fd8f7e41cc429d58c0c8599de96aaf1047ebb3eab63259016cc35490",
+          "link/e4steam/api/diagnostics/DiagnosticsService$HealthSnapshot.class": "0c4893b2f8ad092faadd5e7c701641c51ac8733fe12656a49f4d16c2c11a148d",
+          "link/e4steam/api/diagnostics/DiagnosticsService$PrivacyOptions.class": "e7220d3b77d8fecc4681c4afca1b9039f80bef3b1d645dee1df64e43564bf911",
+          "link/e4steam/api/diagnostics/DiagnosticsService.class": "5c27be14d154d0358d18e7af58b16e4278e3de46fe19435fefdfc6b3f10969a7",
+          "link/e4steam/api/directory/PublicDirectoryService$AttestationAction.class": "42829a5042c88fc840f8015650d3ab118ed4d05d24bbd7d29997b1582ccbe217",
+          "link/e4steam/api/directory/PublicDirectoryService$AttestationChallenge.class": "bf86e3fd00d47ed9d6f76c6f5f5ff31c4b6307310ace3ccbb4755f12eb5f7231",
+          "link/e4steam/api/directory/PublicDirectoryService$AttestationReceipt.class": "5808223cbc122c7a568ca5e5efb3524aa0eb13597ad03f9dc91f629601fd787c",
+          "link/e4steam/api/directory/PublicDirectoryService$DirectoryAvailability.class": "578c81908aae7f6ed11a05deb705eb42f7d33f2f89eca37c9d2f3e57bdd3f6bb",
+          "link/e4steam/api/directory/PublicDirectoryService$DirectoryOrigin.class": "a12ae3b1b8fc9ad7c46e7d4489748dc541a33b37937f5a8a62e2e50143e367d1",
+          "link/e4steam/api/directory/PublicDirectoryService$JoinHandleRef.class": "0542ca0ef7d170238c91055c816272eb7b6a03084c05ccf18610e23732610942",
+          "link/e4steam/api/directory/PublicDirectoryService$JoinOperation.class": "32f525f99266893d938f1373f985b6bbc60d9c8f9ee3c1dc4626df8c4fee5408",
+          "link/e4steam/api/directory/PublicDirectoryService$JoinOperationId.class": "5df8caf648cead229cfe0ac25d1c2ef8d68acc05cd7335e0a122a64523cdff5a",
+          "link/e4steam/api/directory/PublicDirectoryService$JoinRequest.class": "298303779087bbd1e0b07571d08df01be3a6638953486ff05cac8356cffe8ce7",
+          "link/e4steam/api/directory/PublicDirectoryService$JoinState.class": "8fa45969c32956b72610e8fa72e85f44cc504a591ea5f636ddf12e6b311628bb",
+          "link/e4steam/api/directory/PublicDirectoryService$OpaqueTargetRef.class": "c838eaf94a127649707f7a9c8b158f0d3e86abcdc5d0a73e193b2ea0e51b2072",
+          "link/e4steam/api/directory/PublicDirectoryService$PublicationTarget.class": "82ef91e568c3412b1199b4a42d322f81793dce01cbc5dbf330c876ec2b11e49e",
+          "link/e4steam/api/directory/PublicDirectoryService$PublicationTargetRequest.class": "39634cada0e0b4757fd4ebbe12fe6d44878499a69f4a2eb78b7b871dbb37fc48",
+          "link/e4steam/api/directory/PublicDirectoryService$TargetKind.class": "ed4153063e3eda856e66663f8c7f8e42712eb9a9d2b3afc9c8cd62a8a6372dbe",
+          "link/e4steam/api/directory/PublicDirectoryService.class": "9bff9d607d693ecf2c3cf6131665c744a90abf75726cd2bd128c0b8fe4d1f567",
+          "link/e4steam/api/event/ApiEvent.class": "07c7e5a09b1e91cd8b19443ee75bcf54d6798c28ca4ba51c5abffa912e6abba2",
+          "link/e4steam/api/event/DedicatedStateEvent.class": "c83a34080d3bd174da40b9726b629972dc9aa3d1653d8bd7b1c7d89cd108f0bf",
+          "link/e4steam/api/event/EventListener.class": "0cbb6fac59a586853dbb81ad4b3e3afd9b5327a12f7a96a10e6a80bf568fefab",
+          "link/e4steam/api/event/EventService.class": "4b6e566d3601c996f3e1a944d21a6a6c8858c44c8d90db0576107b84991cc592",
+          "link/e4steam/api/event/EventType.class": "845a0058c67d6d4ea520180074cf8dd407a3854b1e5868597e9276e47ae4e879",
+          "link/e4steam/api/event/LifecycleEvent$Kind.class": "6ef37686ffdf5126d6f9fe311755c0192ecadc2aab14b3785b687762b24dae57",
+          "link/e4steam/api/event/LifecycleEvent.class": "d6735957bb25b474daaec5c343d7d41ece6048cd78be359cfa9d32c7b31e982b",
+          "link/e4steam/api/event/ProgressEvent.class": "90e4a01f576f27476da9ea5a35adad28e48c25988edd76503aaac890c03b910a",
+          "link/e4steam/api/event/RuntimeReadyEvent.class": "e6ebe639f936f37611d47b3bc43e144a518ceaa946dc87a5274524e9738ee009",
+          "link/e4steam/api/event/RuntimeStoppingEvent.class": "1f4ed76559e76f85e8be37d7e72a17713105e757b3d9938530276774098ea552",
+          "link/e4steam/api/event/SessionStateEvent.class": "d34c2561b28ac8a0f03d05c202b1cf75b4faf1b95f008121858a954f459bed5e",
+          "link/e4steam/api/experimental/ExperimentalApi.class": "6b1f52f75caf5dc0a9dad9e48a91a3af2cdac1347f5416a1ec2e20f14226310a",
+          "link/e4steam/api/identity/IdentityService$FriendRelationship.class": "bb6f02f2637494f7d277bb420b0c85d9230a68e31aa46e360581fd17966cc761",
+          "link/e4steam/api/identity/IdentityService$LocalIdentity.class": "90d097de6026967f628b031cff1459651181ed57770fb2c3240c4457f7756a22",
+          "link/e4steam/api/identity/IdentityService$MinecraftIdentity.class": "0e2ebe9331db51a200270fbcbdac566742fa725058d8909cae82d11144c81b86",
+          "link/e4steam/api/identity/IdentityService$PeerId.class": "74af204941273ab0c88c7128db4d07a43c90e39e60e6fd3dc0105f8146b81317",
+          "link/e4steam/api/identity/IdentityService$PeerIdentity.class": "71989ac9235162bcf48b7ea6abc6049cec2a8cae6e80747301de36602478561d",
+          "link/e4steam/api/identity/IdentityService$PresenceState.class": "7bbc2e88d18bd7ac30d7641fb05eb785d34cf2042edcefe005e60a872b03c1fa",
+          "link/e4steam/api/identity/IdentityService$RemoteIdentity.class": "997210acd4e269e61542831fe24dd36b43f4efc6963082f4ea0c0b88d5035c7d",
+          "link/e4steam/api/identity/IdentityService$SteamProfile.class": "54d15471eec5b6bb14d36b601b96d97687f3ed6fad42f6d382347ebc3860ce05",
+          "link/e4steam/api/identity/IdentityService.class": "5ab15ead9afd4e7e93ffd30df38387f883c63226a279a8c3d9ad4b17cc0b7649",
+          "link/e4steam/api/lobby/LobbyService$CreateRequest.class": "4116ae4f168c9f9c4d154f470a78d64a61059ac22c51ab0553ad1971552f768e",
+          "link/e4steam/api/lobby/LobbyService$LobbyId.class": "f0212f351f7027083325511c97b7ea2f52cda8a10ebd336dda5e6aa5d7a4d060",
+          "link/e4steam/api/lobby/LobbyService$LobbySnapshot.class": "28b95c6b464ad89927f4ebc70ea61e49e45efa6cf6b5bf9550b0e03ac0b1277a",
+          "link/e4steam/api/lobby/LobbyService$MemberSnapshot.class": "c81c64c435f60f8640ee6face48a6b3518e69aba812799d4015aed7e682f9f58",
+          "link/e4steam/api/lobby/LobbyService$Metadata.class": "955b5cd6b880962eb23c4e7cf60d7b7b37eef599b80b4b2ef7a8ff93d785b567",
+          "link/e4steam/api/lobby/LobbyService$MetadataValue$Type.class": "649737d958b025147b8547983181f4815052a6faa690211854980e4991cb4797",
+          "link/e4steam/api/lobby/LobbyService$MetadataValue.class": "ed778853979984e0e2e8f83fc9a60d091823b93c8b6ce7a9938200007589f4e9",
+          "link/e4steam/api/lobby/LobbyService$SearchPage.class": "a6ad992b9f700d4c206ab386afc240563bd8bf2398d349774e8b27de145b5269",
+          "link/e4steam/api/lobby/LobbyService$SearchQuery.class": "0a00ebe40e340cae43d07dbf81c0af8282701196a9099be892602fce403828f3",
+          "link/e4steam/api/lobby/LobbyService$Visibility.class": "ce059ad0d6e99df5023cb048328754c72a9b52b716510b686ab9d71f589472c0",
+          "link/e4steam/api/lobby/LobbyService.class": "c4360fa2050172c04bdfbfff3f4cb91722423df666238f4e518befc41c189e08",
+          "link/e4steam/api/localization/LocalizationService$LocaleSnapshot.class": "1557e4b19d8eef87675527bece9d01a223ff4b6a3fc2636aac2448b473255f97",
+          "link/e4steam/api/localization/LocalizationService$LocalizedMessage.class": "ec330fe74d1d9f4f2dc39d58a4a8f6c45a613ca4f5a0ec2e03134da7d1fd4fdb",
+          "link/e4steam/api/localization/LocalizationService$MessageArgument$Type.class": "40d5345ca0db5491234d713262f55df569f0137e80ceb77fb67c47cca268a11a",
+          "link/e4steam/api/localization/LocalizationService$MessageArgument.class": "8dbb3243aaf8d799c965ac4c7f2100e6c3749cc8f3556fb78343e971d05de571",
+          "link/e4steam/api/localization/LocalizationService$TranslationKey.class": "5c6f637df0004185956df69dfcb69bb7da34293a5156da26ada46c65cbc54990",
+          "link/e4steam/api/localization/LocalizationService.class": "45d1a6d1fc57ff90211a359b67cb1338a668eb707cac0185ceddb4dd13315ea1",
+          "link/e4steam/api/logging/SafeLogger$Level.class": "30cea7aa207801000fb17390fe680a6aa99787abc5e4ae63672bb33ed545c1ec",
+          "link/e4steam/api/logging/SafeLogger$SafeValue$Type.class": "718354ce0efc91d6134b6806145c44ddf9f102b3c1afc5fe85170f44459a55ec",
+          "link/e4steam/api/logging/SafeLogger$SafeValue.class": "62c741da1019352ec6c14b75256ec2534a718c89580ede49713d4c889c3f0aca",
+          "link/e4steam/api/logging/SafeLogger.class": "fbc7fd20afefd7fa4b36ffac5d05e982d5c24de28d7d23613e069a5cac06d669",
+          "link/e4steam/api/modpack/ModpackService$ArtifactSource.class": "99da17b9d6e0bee4361de8eabafca496cd4f2935ade304ce7b1ef11f186bca5b",
+          "link/e4steam/api/modpack/ModpackService$CompatibilityReport.class": "e1198e241a16536f1dccab1156da84374d8e652916b1944995871f425ccded0c",
+          "link/e4steam/api/modpack/ModpackService$CompatibilityStatus.class": "c702ddd5cfc3e44392e2a831fee1dc3e2837d7193787011c557f5a5a563dbbed",
+          "link/e4steam/api/modpack/ModpackService$Environment.class": "04248eb5d6adccd45f3f3bc458ca81730d0a381102e1f457444001285723526a",
+          "link/e4steam/api/modpack/ModpackService$InstallAction.class": "ab037ea78373f59996caf24b485000351f6d9b6414607280ba8f289079bef583",
+          "link/e4steam/api/modpack/ModpackService$InstallPlan.class": "d5ef58ae28629924a2663cf5ead405ffea212ca30b8c466b7fe62437f5ea2766",
+          "link/e4steam/api/modpack/ModpackService$ModEntry.class": "482eb93b682a5f4feb799c6bd5487f21abcb33d7a2b853facb4e3d52787d8a35",
+          "link/e4steam/api/modpack/ModpackService$ModpackId.class": "dfac423ac863313b9d181508304af2e95b4273bd70ab27761a6cd5c422691970",
+          "link/e4steam/api/modpack/ModpackService$ModpackManifest.class": "f60affb824578157eeb5eb15fa075f456d7cdb4b468b62d3a6940485f7736766",
+          "link/e4steam/api/modpack/ModpackService$ModpackProvider.class": "e6bf13b2c4a4e6940d7fe4c140e9d6a23fcdc0a1e08f62ebc840c7e0f9cd2a02",
+          "link/e4steam/api/modpack/ModpackService$PlannedEntry.class": "3e80fc2eb2cc3c2c03e6d00ccd605e7d982308b3778ef7e9ac7b989db9ee217e",
+          "link/e4steam/api/modpack/ModpackService$Side.class": "a9be4c479fd8dcf6fc1eaf58075abab1b0c32f56c536b5eda72bff422f652742",
+          "link/e4steam/api/modpack/ModpackService.class": "ff8277cb947a9ecdc6ff27f6d09722ffc29316bedf46367c42ff861c86012357",
+          "link/e4steam/api/network/NetworkService$ChannelDescriptor.class": "01ee58bcf515422313cb649a2c7ab42af373275f3462ac87535b4470311de38c",
+          "link/e4steam/api/network/NetworkService$ChannelHandle.class": "5087a37b6745e736f0918704bc2e3a4d43d0f33eb73b14b3667bdacc5411e4f3",
+          "link/e4steam/api/network/NetworkService$ChannelId.class": "48f02c202c0d72edbaf7578eea593238711a200634cfe61f9ed0e61494a6f09f",
+          "link/e4steam/api/network/NetworkService$ChannelState.class": "6c6d5cf411c4840e9f1dfbf51f8d10273742db328c86524292544dc03383032c",
+          "link/e4steam/api/network/NetworkService$Delivery.class": "baf48ef6fd17663f5da85f4c9bae396003f7c90bee0c3f082c7ebe8931db444f",
+          "link/e4steam/api/network/NetworkService$Direction.class": "5c02f6a24038ba72314cf7f4ee69f08cbf891d7bbbbfc28e47e9aea09f7b5619",
+          "link/e4steam/api/network/NetworkService$MessageContext.class": "0f5628a553e596e867cdeff99c0ddd49e772eaf58c322e50a8839a61bf72bc66",
+          "link/e4steam/api/network/NetworkService$MessageHandler.class": "25b0728781d8363478f4ab999793345a2e621583b8adbf6b52e177b30d30d249",
+          "link/e4steam/api/network/NetworkService$MessageReader.class": "0193677e019b1763ac95d775746b8ad31eb1f846ce03ea8f78d85421a2968a9e",
+          "link/e4steam/api/network/NetworkService$MessageWriter.class": "f9743ab26dd9a6a8b4f8d913629d90bccd9192d312a487c32cbf2710103ad656",
+          "link/e4steam/api/network/NetworkService$Requirement.class": "a8b279131723f6b2df349b4a7695cce0304a2dd2bdc1ed008fb620b0f63bd15d",
+          "link/e4steam/api/network/NetworkService$SendStatus.class": "1a36e82789fcf28a3985b99ddeadda8aaeec40292dfa8f9768324bc547a0dffa",
+          "link/e4steam/api/network/NetworkService.class": "73888c0b270353f90e8b209617dee5b823421b34e489aca3345a05e84c26f0cb",
+          "link/e4steam/api/runtime/Architecture.class": "7c6c60b4e26fcb281507e18865740f1beec0adecd8bb243276d7a01c2da329be",
+          "link/e4steam/api/runtime/CompatibilityFlag.class": "e559d73f759e9b7cd52652d2a7384932c03ee8050c56b27ea7f60b3b8f69e138",
+          "link/e4steam/api/runtime/LifecyclePhase.class": "0b295f9890fe4b24098040701a837fe2853eb2e2724aa691289cfe82862c004a",
+          "link/e4steam/api/runtime/LoaderInfo.class": "93d4e3452d30de89d614b8358e5410d4a7d27e85511a95a40fe55209f17066f2",
+          "link/e4steam/api/runtime/Platform.class": "d6052fb8d5dc3a8401b9fb58898d9028dea0942d37e02b0ff5c53f5d2ced2d9c",
+          "link/e4steam/api/runtime/RuntimeMode.class": "2beac4357e73519a8e4368174d33e66e0a3d4ac4507b94d971f7c189a3793db8",
+          "link/e4steam/api/runtime/RuntimeService.class": "5218ab5bab0bb1c0b80e2c232f59f759db66d6dc844cf027473b4f813c8e087a",
+          "link/e4steam/api/runtime/RuntimeSnapshot.class": "94360d1936788c88a1d96f30b66216a631fd93898ae2395cbc16410a93010d76",
+          "link/e4steam/api/runtime/SteamRuntimeState.class": "9250eb7331c0c37bf3c7ab53e4e11f65c8ee4376f9e595914c94387ff1127f41",
+          "link/e4steam/api/runtime/TransportCapability.class": "36fc669ba233161a290fb5cc5fbb8d4ebfd4388c77bbde4c92cdc5cd44dd22e9",
+          "link/e4steam/api/scheduler/ExecutionContext.class": "3f51aba204242e6fe5a81bdf9dfe961764b4ea64a4a540bee07ccb0e44ae7d5e",
+          "link/e4steam/api/scheduler/SchedulerService.class": "bf80fec9168b95ff595df789ff33663fdebcc54384d0156df4349547cd0601b0",
+          "link/e4steam/api/scheduler/TaskHandle.class": "90a8e1cd8d237820125b3eba0543f94743e59875a071012f5cfbf26d71501850",
+          "link/e4steam/api/scheduler/TaskState.class": "c893306802ad06b9602a021b8da0d93d9fa9b0d984105e63424891fdac5268f5",
+          "link/e4steam/api/session/SessionService$PeerPage.class": "aebb78afa2fad7f69b324fc0aaa68eae44de0cb80a1edda7fab63982c22a009f",
+          "link/e4steam/api/session/SessionService$PeerSnapshot.class": "f5bbb6a351392ab387dd22679a5bb432127ddd9816cec57e484a8691619de716",
+          "link/e4steam/api/session/SessionService$SessionId.class": "dea5e5c8e83cb25955c733780ff3b2e14add866bec96c5b1df507b2e4d238ee1",
+          "link/e4steam/api/session/SessionService$SessionRole.class": "1c1eea3ea47a0662a717027b98c4bdac01ff24e32a8094fab95e27aeea5fd330",
+          "link/e4steam/api/session/SessionService$SessionSnapshot.class": "ceb6c22b7d7a403e3472bf4b5adfbde1186ddfbea9b58d60139a908576b9a599",
+          "link/e4steam/api/session/SessionService$SessionState.class": "a2c350d86e5b10b9ee869f6f30ba7cc3850170af2f59d558a4d30e26b99f43ff",
+          "link/e4steam/api/session/SessionService.class": "e8411d4952ee9823dc38ee5ad0b47c7f716481c045628223124e8a5a6678dd22",
+          "link/e4steam/api/skin/SkinService$RejectionReason.class": "7193a5852a71436c2e21d9dd78ba92efecbb864dff4713b85801d02496290ed6",
+          "link/e4steam/api/skin/SkinService$SkinAsset.class": "f98f3e0ab10531b36667e86c42a61da31ed093a422943381a86575a5d515dff9",
+          "link/e4steam/api/skin/SkinService$SkinModel.class": "2e84956d5e68328adca69a38f64860adfef4d56ec873aadaed5141d48fd2250b",
+          "link/e4steam/api/skin/SkinService$SkinProvider.class": "3cf4b009a7ec6c65f27e085dac75df472445cc71e732a3261ab14572ea53c370",
+          "link/e4steam/api/skin/SkinService$SkinRequest.class": "51ac02fd8bcbe3667e167ca113e349128ffdb1ff6feb522607cfcd72b69c1a1c",
+          "link/e4steam/api/skin/SkinService$SkinResult.class": "8b7f4ef44585a7023ee05ddca80d17944c58d8024722c75e4c2aaacf697f65c7",
+          "link/e4steam/api/skin/SkinService.class": "7484f83d8dbfd2056f1a6ce1d1c6aa2d5a9423b4edd0ec6ad7947bf31d14fb60",
+          "link/e4steam/api/storage/StorageService$QuotaSnapshot.class": "30a19b6c0dc7cd1742fec8ac92ba3d8d372cd4d53ab17a54639796864a77c264",
+          "link/e4steam/api/storage/StorageService$StorageFormat.class": "374a3ec2fce977343915ef8b3b24f43314a68952700bd3b382a97160e6c29d57",
+          "link/e4steam/api/storage/StorageService$StorageKey.class": "eacc8697f7697f4ed0138cb7bb5595f4f348f5b54656f08b65a2ff841a29580e",
+          "link/e4steam/api/storage/StorageService$StorageScope.class": "dc2f6c2a0cd04f4085151227fcfed6139289afd37d225c04f583b0e1e2867ab6",
+          "link/e4steam/api/storage/StorageService$StoredValue.class": "08cac7ea9910205978d5f948ac1c79e5260d9bb8224d4960f7cc281ff3aa522f",
+          "link/e4steam/api/storage/StorageService.class": "c9090e2ca6fd4d7a58b527310b0760410a2c49b2da77ddefe10be2c8471d6db9",
+          "link/e4steam/api/udp/UdpService$Datagram.class": "54c7c1c59448f9d3b99874e0b6ded11ba295f93c17459ed86614131b057e7525",
+          "link/e4steam/api/udp/UdpService$DatagramHandler.class": "080c65e326d6080c801e56ff7a5c8ee31ca9e4dbfee575ed9c0a7586f5d543ef",
+          "link/e4steam/api/udp/UdpService$EndpointDescriptor.class": "c82099c87d3e6f1ea929bd5e80e453e314a5fc54d18618dd313f955a182ba561",
+          "link/e4steam/api/udp/UdpService$EndpointHandle.class": "9aa7f22fcb11e715391a76a78a2aadf57ca43cab5807f55f0531a4669f0edf09",
+          "link/e4steam/api/udp/UdpService$EndpointId.class": "7436ab1b4b78f465f73e9d47c0836455553157cf99347783a8fa82c355474a2f",
+          "link/e4steam/api/udp/UdpService.class": "a9a86693d4a09e4f35a0e20ac69fac1c3507b5755f7b2fb04ee39a71155423d5",
+          "link/e4steam/api/ui/UiService$ActionContext.class": "f22338c54250fbaddc07cfee2e938e639374b2358e101aac5b7f618c35299877",
+          "link/e4steam/api/ui/UiService$ActionDescriptor.class": "3f709764ef54b6ba9094434de96a116a8f34c2ea74c322e6d2d6afca934421f1",
+          "link/e4steam/api/ui/UiService$ActionHandler.class": "75ffafecce0954e241f809258c8f24c7ebe051463cd29b8c5e40543b51cf97f3",
+          "link/e4steam/api/ui/UiService$Availability.class": "623b9377679ef5f404335f92eb33219aacab3e156f9fa1c59186bb41dcc135b3",
+          "link/e4steam/api/ui/UiService$Confirmation.class": "2b59f8c9372f0f07f4cf27fca3ad7945e0cf722387c0cd4c7a93be3f2331f800",
+          "link/e4steam/api/ui/UiService$FieldType.class": "d7e2ec8bad709a0e754f93ce751f198132491994c265ac250dea8747ccc6dd26",
+          "link/e4steam/api/ui/UiService$FormDescriptor.class": "4f36deb908246937033541d70c48d35a51cface9152f67351adff96d4e836bee",
+          "link/e4steam/api/ui/UiService$FormField.class": "b400ec0da76c5b7b53a78c45fea20b4ec9c7857947785773d3fd9a6d7a7d80dc",
+          "link/e4steam/api/ui/UiService$FormResult.class": "cb4536ce8351e09577f3742d2656581ebf0659043a5f3d6a4c44b3404fb84f3d",
+          "link/e4steam/api/ui/UiService$Message.class": "5d3d53382cb1f3e103bb82cdb5cc9646b958bbdc9ee6abc5e3f5a46e568c04a2",
+          "link/e4steam/api/ui/UiService$SettingsCategory.class": "b8b9f4ac71849c2e9a89b162704c1e17b5907c431cb26bc061d67b1f73e6c47e",
+          "link/e4steam/api/ui/UiService$StatusBadge.class": "9c3214b14b4ea56977ebf6649d0a8d08c8b06eb081ceeef8e21d02275377e096",
+          "link/e4steam/api/ui/UiService$UiId.class": "38a40d4a50c139ef29c8b55bdac5ff34ab5b592737fff4dc535382af86f71447",
+          "link/e4steam/api/ui/UiService.class": "2ae486e94baa7353cbc6b5d134b84872717f37d022433a2fe6539244c23e9507",
+          "link/e4steam/api/world/WorldSettingsService$ApplyTiming.class": "5b9ff8ace6bf252c1b44d3d2a2ea379e9831500b302a7fd0a2ce91fead7ad178",
+          "link/e4steam/api/world/WorldSettingsService$SettingType.class": "7cd3af74b10f5d9ecf41cf932ca1aa6821fa067c0b00f9e0a4b028f47770dc0a",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingKey.class": "c151bdddf4f2d53d00ecff2c9d151b0e780f2c1473a220a09d5e72dc180c62a0",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingRule.class": "e65dc0a6da0420531a0db94e115366f9e79d8e39e68f0f9691a6f5bb10eb9cf4",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingValue.class": "560bce32676bd376cab978f75a66d707380e388e17214ec970eadf378df7b609",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingsPlan.class": "950137bca489cc4997b8aa72f779ebbed639baefdfb7099babcc7bf85a3fe6b2",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingsProposal.class": "8629785e623e1f7285aa6e1984d58cc3ef9c6c34c3eb1791709d7ed3b971c5d5",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingsSchema.class": "e5723202f96636e984ac3270a7ac4773bb491bf4eab3e6d789213a9b2e80abf6",
+          "link/e4steam/api/world/WorldSettingsService$WorldSettingsSnapshot.class": "2f995f3cd2ad638b5120c8e3dc5d3db857f1a73d7782f5c7a4bfda5e203bd9ae",
+          "link/e4steam/api/world/WorldSettingsService.class": "581c84c48ffe273274c4905cb3a39660e9c4c718afe5bce2cb4d265270f166cd",
+          "link/e4steam/internal/dedicated/DedicatedConfigFile.class": "7ecd758a0d03cf0fd4965894a89bd806a18b09ef6d1b03699ea581985d151235",
+          "link/e4steam/internal/dedicated/DedicatedServerPropertiesValidator$Validation.class": "c2d1861cc0ce84d316472dee07905f68fe0254207d8e96cebfeda02f3d67cadc",
+          "link/e4steam/internal/dedicated/DedicatedServerPropertiesValidator.class": "610bc7094a167d801a1e6d070e04ab5f2ada8ba34c9a1ffc20e6e3cc05768ded",
+          "link/e4steam/lan/LanSettings$Snapshot.class": "33e46ec7540a2d510bd9b81c52976ebc2280a625876fb431f04503b70f973e17",
+          "link/e4steam/lan/LanSettings.class": "ac4af9169d0ff7a7cc8f4839943e8b44cf812f66f2aa3d4ab2a795a98814fbf9",
+          "link/e4steam/legacy164/Legacy164Client.class": "a1bff7fd8617f0a54fc4da17d0a6ad0203d8b545221dab0bf2693f69f5532808",
+          "link/e4steam/legacy164/LegacyDiscovery$Poll.class": "1b4b089e26062cf7ddfde5731a975bde3724c0ebe8b265b12c9b9ddbb02db291",
+          "link/e4steam/legacy164/LegacyDiscovery$World.class": "2e80144d28d3522f48f2f05c85eaed443e367ac0ca2bc5067bace472cf860afa",
+          "link/e4steam/legacy164/LegacyDiscovery.class": "245c9fae46b07d76f4e4ac55bfa747ea1699e6391913ccfc637027bff26e2150",
+          "link/e4steam/legacy164/LegacyIdentity$LocalProof.class": "f75911b61ab7697cbf62f896037f60da6bb7872704fd7cb632b3ab60d8c47ad2",
+          "link/e4steam/legacy164/LegacyIdentity.class": "ee6fc205bd7c38737e7970a73ba08ee339e37eaf32bfbd0dd261b6a2985a53af",
+          "link/e4steam/legacy164/LegacyPublication$Publication.class": "c9e4f49b926ed1c691f966c1ca7958ef0d343ecdc8c1b6ae8be7ea31aed1948a",
+          "link/e4steam/legacy164/LegacyPublication.class": "0f91847d4c5c4db90cc2e61cd9b9e11ce7c3a978c9ab38b2bf13db77a042d58d",
+          "link/e4steam/legacy164/LegacyRegistry$Entry.class": "9a93d4717d11727ddd826dd9b147ee8de28e01ef2939818571efda8a09565ae5",
+          "link/e4steam/legacy164/LegacyRegistry.class": "bcccc75a63ea1e3f23ebe35e7721d719302e267532c40ca17a31f16ab45c3ae6",
+          "link/e4steam/legacy164/R.class": "6097233a872b8f97b340f93383415cc031c12915284dd8284f9000534ab76270",
+          "link/e4steam/legacy164/mixin/ClientLoginMixin.class": "ec8e8a2cdc78af1d79a3f9af9f2282bea6f21a410e7a9f9a432d0567cabd39b0",
+          "link/e4steam/legacy164/mixin/ClientTickMixin.class": "11f010b06b13a0fcff3d478962f1c2a90b6adb74e7a021278e489c149f9b67bb",
+          "link/e4steam/legacy164/mixin/DiscoveryDisplayMixin.class": "c9b6862c4990bd2d97991ba8f3009ddde23bde9910ce72d897aac934a68b16d9",
+          "link/e4steam/legacy164/mixin/DiscoveryMixin.class": "1d4bb278a4ebaebafd2599bc8b377c9431ad1a9750f2c94e55370d6a5a39c81c",
+          "link/e4steam/legacy164/mixin/IntegratedListenerMixin.class": "3ea03aceb4c433ac0964bd0349b51d1cb5af41f7c41b187973df3b0c0422f282",
+          "link/e4steam/legacy164/mixin/IntegratedServerMixin.class": "90c1734b640df5d5420b4683fbbad3bb192f2669341d19fcd30dd462a2450d51",
+          "link/e4steam/legacy164/mixin/LanDiscoveryMixin.class": "3b0684bb0f769b8702daf00636a65d0df9291f5b58095101f0d311d381dcccc4",
+          "link/e4steam/legacy164/mixin/LoginMixin.class": "e6df44cb156073215fc4616fd8f79d36b889fb107f3726edc0c39008ba315efb",
+          "link/e4steam/legacy164/mixin/PauseMixin.class": "cbb6dcfa5e6e390b4a8ae56ce627752e608fd0dce31775dae006e1d4b9f71ae6",
+          "link/e4steam/legacy164/mixin/PlayerAdmissionMixin.class": "3466ceabb1a18b021fc01c79742c7c30cf7dd97232ccd86733bca400bd322aad",
+          "link/e4steam/legacy164/mixin/PlayerDisplayMixin.class": "1e2cfafec294c7c1b3fb509f43f7cea55b522a84796ee0cd292c8a010dead556",
+          "link/e4steam/legacy164/mixin/SessionMixin.class": "c78f4b94ab7e53bb3686a1c553eae39677be88c864ea283a4acf58bcebf595dc",
+          "link/e4steam/legacy164/mixin/TabDisplayMixin.class": "eca05983f5b9d28d006c310995c566bb44024238d953f30616e3039fa884926e",
+          "link/e4steam/retro/RetroBootstrap$1.class": "19f03c0084812c9fd0546ec1451f0529e5e5479c7f3ab0930d951b139918244c",
+          "link/e4steam/retro/RetroBootstrap$2.class": "b912e90246c2c8b022df3f32928a4978e7e43ff9bda0af4272e3500d6c558b2d",
+          "link/e4steam/retro/RetroBootstrap$3.class": "f6dc0f3aae98f83b9f8830941e9a87352b2f6b12393d04b15f3a2a209ea94ca4",
+          "link/e4steam/retro/RetroBootstrap.class": "cd8cd7daaf18cffe25e735a9aaf151867e0f65ccee63247ed76f2033526a7ff7",
+          "link/e4steam/retro/RetroClientLoader.class": "0868c220f81c067fd2e0ec712db69e72a3afd87a3c8101cd0eb2ed8b328250e8",
+          "link/e4steam/retro/RetroDedicatedBootstrap$1.class": "a66d09214f6056fa080192695a628a388db2ef70e7063ca5e1f8a22c7a33239f",
+          "link/e4steam/retro/RetroDedicatedBootstrap$2.class": "63ce74929ee2a7505f6724dff1d198ee6a40e475e3fb7ed4c12228efe63d611d",
+          "link/e4steam/retro/RetroDedicatedBootstrap$Ingress.class": "88ca1841fff43cf906c19b8089d807badebaef249cd9394f2e1a7e347a0b5959",
+          "link/e4steam/retro/RetroDedicatedBootstrap.class": "4867bbb52571af292159a4c4edb42628f16faf7eea98265d8f3b36b4ffc6f935",
+          "link/e4steam/retro/RetroDedicatedConfig$AccessMode.class": "3a9db96d08bf53fe23357db87f7be15c18fd78886a084c9bc6ef9e4b67e3bc3b",
+          "link/e4steam/retro/RetroDedicatedConfig.class": "2835da521f218e066437f30243513a46750dd977e9b193bf41cb1ce52087df20",
+          "link/e4steam/retro/RetroForgeOverlayBootstrap.class": "f697cb1fd5bc0cb60c90dcdadb1c4599720dc761a63ed9001a184d9a7bcb5758",
+          "link/e4steam/retro/RetroForgeSplashPolicy.class": "c4896139d93a00201d989d9546f54b20d18beaef14a521d83e3fe173a83da63b",
+          "link/e4steam/retro/RetroPlatform.class": "64790368d0a7362e6b9648612f0ce401b592b4799703b905c60d8323b65d6f3d",
+          "link/e4steam/retro/RetroVersion$Metadata.class": "898ce04ed0e6f325e5cf8ad036fa751f1248ae41ed5283cf8f69ccecb902b6ac",
+          "link/e4steam/retro/RetroVersion.class": "e5c0222559f5f58a6c546be4ddfb144ddaad33a2fa5566b03ad35952e4e01ede",
+          "link/e4steam/steam/NativePlatform$Architecture.class": "ad22bb03fb7cce627a0c5fe4f7b77fcefd468b76ec1505b88e0ebd3541437dca",
+          "link/e4steam/steam/NativePlatform$OperatingSystem.class": "0a764f3830bcda50b25770f696471617b677c1b22e1011ea5a1bde38578852ff",
+          "link/e4steam/steam/NativePlatform.class": "eb4aa22aa0ec313334b61b67deecac86f99396598ded4a706c8ad94c1c194398",
+          "link/e4steam/steam/RetroDedicatedServerTransport$1.class": "7e06bb466ca10daeefa9bc725bb2f671ea30e56ee4db84763f6dc632cf1032c6",
+          "link/e4steam/steam/RetroDedicatedServerTransport$2.class": "3de1b6bfeac5e068ead9924742f5aa8604971e613e4624c7e961b2ab22f4af7f",
+          "link/e4steam/steam/RetroDedicatedServerTransport$3.class": "3c6e585545d8973d7b659da26cdbf1fc3184c3f4cc53f163f1ed58cdb3400d48",
+          "link/e4steam/steam/RetroDedicatedServerTransport$4.class": "84393e8326ff0f85e44b20b407db12537b517f582d5a2d747454497088e06358",
+          "link/e4steam/steam/RetroDedicatedServerTransport$5.class": "8e07336d2eaf8a2bb32063e0d330a9d8744713a18301d3334e516876428fa552",
+          "link/e4steam/steam/RetroDedicatedServerTransport$Backend$PeerListener.class": "54af8ccacf5376e524b34af03bfb870165ababede8d1ea00eb29800b98cedb03",
+          "link/e4steam/steam/RetroDedicatedServerTransport$Backend$ReceivedPacket.class": "bb12fa051798d80a51ec351c1d7d3ad19c9ce14040896312557f2bcdf1af222d",
+          "link/e4steam/steam/RetroDedicatedServerTransport$Backend.class": "2fe19ab1f5b37cdf22c756510a85315183a6ee2b8ae9bb180add027f01b0b511",
+          "link/e4steam/steam/RetroDedicatedServerTransport$GameServerBackend$1.class": "a5e728884990c9039414f95d9baf98281148822a0b01dc997b5ba844b90b43c4",
+          "link/e4steam/steam/RetroDedicatedServerTransport$GameServerBackend.class": "59d225290d0c02c6ed94a202c3911f55acc9d1d0cbded31373a73bec3f3c8568",
+          "link/e4steam/steam/RetroDedicatedServerTransport$Host.class": "ff9460e44931cfe326dfa9fe703bec978e422cf2d3c8740019ea4adada062539",
+          "link/e4steam/steam/RetroDedicatedServerTransport$ProofKey.class": "077d84e07ffce09f204f222f59537f6f75d9237cb1c46298355e906a9c833606",
+          "link/e4steam/steam/RetroDedicatedServerTransport.class": "1fda64e6836e1b83ddd4b816d29e515dd0c35e4264f58f53e738e927dd101882",
+          "link/e4steam/steam/RetroSteamAuthentication.class": "f0c8e2e844b82a555c93c11920af9919958d1bf8202c3763f799d02579360313",
+          "link/e4steam/steam/SteamAccessMode.class": "a925ca09fd1f0206e66c943baedfd9d4674b905e0e99b9e4789eb76a1605d638",
+          "link/e4steam/steam/SteamAddonHooks$1.class": "843d0a6253532a6bacb00cf91a24045bd9aa2ac75a874bcb8c789b91444fc15b",
+          "link/e4steam/steam/SteamAddonHooks$2.class": "c96c02de77ac8458187ba73c4e7af833e0c9ac05a5148aa0f98fb9ddb0042e2e",
+          "link/e4steam/steam/SteamAddonHooks$Delegate.class": "c08869476fe3d54b86d5a77da2dbb4e5e172487c7c88e57a921a6ed573bbe341",
+          "link/e4steam/steam/SteamAddonHooks.class": "f6c64d3d1515592fec733aae622ed17826eb3caade7fafaf1dcbc1c7310b6d5c",
+          "link/e4steam/steam/SteamAddonLobbyDirectory$Handle$1.class": "0949efc31ce277811030b97c23fcef9ba2eafaa6011291c0416661d4136852ba",
+          "link/e4steam/steam/SteamAddonLobbyDirectory$Handle.class": "2d4fcc43508a29f6edb1a5d4c5ba34c51b3fa12dbb4096c74fe77bc7d34f12c5",
+          "link/e4steam/steam/SteamAddonLobbyDirectory.class": "05fc84fdd55284536269fdce86ab2b980e6e16417f3f868617e16c2ef539ecd3",
+          "link/e4steam/steam/SteamAddress.class": "3ab1310c51fe691a77575393166d3cddfa02bf86931151b644b9763305ec744d",
+          "link/e4steam/steam/SteamApi.class": "9a3673952345a91d9c2b535ce59e3df53fe77a718a9cf2ee25b9cee81c12e835",
+          "link/e4steam/steam/SteamBridgeRegistry$Key.class": "cd45fa946347925ba0552b9c2608194442d5853aa26ce808e8118433dde8d625",
+          "link/e4steam/steam/SteamBridgeRegistry$Registration.class": "8b185151f6cd20923a12df8b0e8acc0a97829932c15b76016b4107c83ab80e25",
+          "link/e4steam/steam/SteamBridgeRegistry.class": "da6b76b38d8c34486a2974c504b9854ea853d0d1494fdcf25b3bf60804ee68bf",
+          "link/e4steam/steam/SteamBridgeRuntime.class": "7d6896af81d59b65802e20c893352418fcf3354df4f46d6c981df54430a7a070",
+          "link/e4steam/steam/SteamClientBridge$PendingAccept.class": "1081851b94c0b08c5ec11730b3e5fb804fe77830189031548dd3661118c2cbf1",
+          "link/e4steam/steam/SteamClientBridge.class": "22c50b1c9c55dce37185812b3062e137b59d69da7aa32c7e6cab3e1e6df045d5",
+          "link/e4steam/steam/SteamClientHealthMonitor.class": "70300f2fc6247c806eb18e66f2fad5d813c6e9ef2a792d27ff03be60d5e2bf4a",
+          "link/e4steam/steam/SteamConnectionBridge$InboundData.class": "b6bf902e84ea210c5efc01cb877eaa127c8eef35a1ba5460bb3d3c147188f972",
+          "link/e4steam/steam/SteamConnectionBridge$InboundFin.class": "01d968eb04dba3930d7f7eb715c5e42f3662d31b0dfb306ae69ba2e1f31beefc",
+          "link/e4steam/steam/SteamConnectionBridge$InboundFrame.class": "e846e078505f27924c974c42abe015ff2858c5627691f23cf231d53592796e0d",
+          "link/e4steam/steam/SteamConnectionBridge.class": "c94cb34b45877e71397c9f5a1a1baa0fed88c95f98c9fb3d154eed3f09e6c8b0",
+          "link/e4steam/steam/SteamCustomAccessGate$1.class": "381d42f31c263c0a702f07fbec5ad5d31feea4fdf07740597f00b8c14743b2da",
+          "link/e4steam/steam/SteamCustomAccessGate$2.class": "31d0fb89010096250c614a5f049024b91c066aae90dab4ce65b026c1932055e2",
+          "link/e4steam/steam/SteamCustomAccessGate$Provider.class": "c756531a374d3ce757ae16b24278d47acb1150dbdb52ed36f7412d958a61cca6",
+          "link/e4steam/steam/SteamCustomAccessGate.class": "d5edba9f89cf2b6d5459d27d2a3f21f8eec9ef44bd39a0253aeeeacd70e8438a",
+          "link/e4steam/steam/SteamDedicatedAddress.class": "ff6e3868a4eae8fa5a99e2766e4b85adac9e8df50baaa637c3de45f381649861",
+          "link/e4steam/steam/SteamDedicatedClientBridge$ClientLease.class": "df9cb471d8736aa2435fa1c586d0d7edbd347367a8c1887d4ff2eaaf13ea6381",
+          "link/e4steam/steam/SteamDedicatedClientBridge$Pending.class": "2d046846e1c52d21413d9e9dbdcca670fbdb95afcb586a069be466185f2324dc",
+          "link/e4steam/steam/SteamDedicatedClientBridge.class": "4800ae3b15a0cc83b5c1aaab979b4b91362083e65c4037db18d539b3e7325b98",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$Callback.class": "cb59e23f39cbd878535aeb7b12a60101eed9e7c5c280723fd58333a48859ecc6",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$PeerListener$1.class": "2a6e1d8645fef02e7ed8973aa0d085cf568fb7b19748563df30909c7400ddd97",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$PeerListener.class": "0c81843cf9cfea077cc2f620c2eb3b659e97c09dad2ef24b88ece6d5da39bbca",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$PendingAuth.class": "f2e5f7fe6bfd341ceb7ea58782d7a6c47854bd6589580b03de4a217f68f236dc",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$ReceivedPacket.class": "0f0aa10988d28d481d7c0aefc742ee09c0f288439fe6e998d9fbaed98d64ecc7",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend$TransportListener.class": "e0e138460677985b9471c909059f0749ba1aacf86feb3c7caf60794eb1ed6e4a",
+          "link/e4steam/steam/SteamGameServerRuntimeBackend.class": "9aa450e36deec40cd3cf47c951b1f99a7e895226b3f49e8921a5fa3947336c5f",
+          "link/e4steam/steam/SteamGuestJoinState$Phase.class": "595db8fe85d79570c9b4da665a1962c41eb64ddf8215567a3fb5c9de510ebd6e",
+          "link/e4steam/steam/SteamGuestJoinState.class": "3c32f6104fe03987c31217a2f1bdf6c4144932ebf4191062e351061c2993f46b",
+          "link/e4steam/steam/SteamInvitationAuthorizer$Decision.class": "e0987ebeb36140f59c143efab7ced9d9e3fc8a034e89d931fd73a553b600a6cd",
+          "link/e4steam/steam/SteamInvitationAuthorizer.class": "c0e6089daa862fdfcb3ef80ca5ae3fa4541583282daea3385adf21793a3699a1",
+          "link/e4steam/steam/SteamKnownPeerSessionGate.class": "a7485b3e9ed40c28286554870bafbffae0ef23ae35bd385efb355d7ad22d2314",
+          "link/e4steam/steam/SteamLifecycle.class": "bf8e39ac0e9e817dd126b2bb25af1d0437689bb4ef8649aff6814f999d268594",
+          "link/e4steam/steam/SteamLobbyManager$1.class": "4a7321a73e73215cf662ced6e6f0b8ed45d6e6cea224b21e00a68d6270eade8a",
+          "link/e4steam/steam/SteamLobbyManager$2.class": "431502e7a0e9f24a4667cd9f33556285c932b030e73582a5fa7f8be513af0855",
+          "link/e4steam/steam/SteamLobbyManager.class": "9050396ac84531a098963f4f9640f5208bbded3dce801178a0155046656c8b98",
+          "link/e4steam/steam/SteamLoopbackAuthentication.class": "81ab14925db9b9ec8b89a34700a8237c4841a8c9f8ac0f0f5c18434e7b3920ec",
+          "link/e4steam/steam/SteamMinecraftIdentity.class": "ac4bbb1759aaf2385e48dbe1ea5977d0566daa0c78135431a59176e0bdce264b",
+          "link/e4steam/steam/SteamNativeLibraryLoader$KnownNative.class": "4b5139ffabeb1cc139ea6beebc5ca30810e3ae6870332843cc85ad8e886d8e25",
+          "link/e4steam/steam/SteamNativeLibraryLoader$NativeNames.class": "1810de0d549d522f861a8a76bca8cc329f8578d6a3517f948e68c3e1bf77ef52",
+          "link/e4steam/steam/SteamNativeLibraryLoader$VerifiedLibrary.class": "affcf44fca1aee34435bf44b361a39028bd025d863a20391c28c1d1a908ea853",
+          "link/e4steam/steam/SteamNativeLibraryLoader.class": "47cc2c471da5ef6cf027b4d8fd7cf17f93c454efee1d8d3a4f35253ced3b41ed",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$DebugOutputCallback.class": "ac9abd15d10482b0199661e94f0414fe4d0a3d995498c268b516e07d3cbf8934",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$FlatApi.class": "b4dd1017c6791bdbc597ce77b7eb5b565705f57b963eacd568eaf7ac164e22ab",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$JnaNativeAccess.class": "d2f6f27f11d31087f62dc58f886ab82dfeed01f18bb0d43c49b20b5ecee59cdb",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$NativeAccess.class": "eec91a8a1feadbec4871a12c857ccb35dfe1ee0fda595cadf24fb2db4d856c59",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$Received.class": "b527a06b7fb0752e2025d7e4e28335035451a3b84a39844c02d29bd4c25ba412",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$SessionFailedCallback.class": "9ac154f07d422956060713f1cb70babc5030badd2b36024913ff8f99f3dcb327",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$SessionListener.class": "ad2af5d393320fb455901d31f0c30835eaf73d01e7a076855b265c8eeab0aa28",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport$SessionRequestCallback.class": "e1d4cb1a858de6e4eefb3dc14f8f958c962e0a306153e35567bc8622c59c9f8e",
+          "link/e4steam/steam/SteamNetworkingMessagesTransport.class": "bb2ce03950f2b0c77b4ce442814badb1afee471a9f8a2158be42200049d529b9",
+          "link/e4steam/steam/SteamNetworkingSocketsP2PTransport$ConnectionStatusCallback.class": "cf47e3066e6b89a3ea6203fb730d19d0ef8d4dd33cc9a666cb13051bceaf76dd",
+          "link/e4steam/steam/SteamNetworkingSocketsP2PTransport$FlatApi.class": "3fd4de155672ee195b3a3ea9ff328b680ed8ae9126674e2feb0e85ce54f594be",
+          "link/e4steam/steam/SteamNetworkingSocketsP2PTransport$Received.class": "e04ceb777d5a398c97d5f38373a5659078aa0c278beebb1906e29b402a05613e",
+          "link/e4steam/steam/SteamNetworkingSocketsP2PTransport$SessionListener.class": "c8a2b54b8dc98cc228d3bbeb0a35d64c1938a33f801642e1181611247b685335",
+          "link/e4steam/steam/SteamNetworkingSocketsP2PTransport.class": "90d89254d11f7595803e9ce95d0c35618eb3f9893645ec5998b9f76138e4dbda",
+          "link/e4steam/steam/SteamOutboundQueue$Kind.class": "1b2801400991f40a0025e0ece318afe710c78e491af2f522a16ce908f10d0ffb",
+          "link/e4steam/steam/SteamOutboundQueue$Packet.class": "5623404251cfbbd81119493ab0250b0eb79842f891486af4575011f5f6cfc93e",
+          "link/e4steam/steam/SteamOutboundQueue.class": "d2fb92fb079baa456638190eceb6f077af697a9f99eabc46b682da2cff9a49dd",
+          "link/e4steam/steam/SteamOverlayLoader.class": "25212ffbc094b281e1106837202b76eddf4b29a4eeebd1fb4450e1a4065b4061",
+          "link/e4steam/steam/SteamOverlayRelauncher$1.class": "29831d227a23453ca8a51db74993f17321b330c56ccbca778d523f9ea9dac86d",
+          "link/e4steam/steam/SteamOverlayRelauncher.class": "d305510ecfaacd345cafdd36be58be89bfbc283339885fca7b9aa7e98334396b",
+          "link/e4steam/steam/SteamPeerPrivacy.class": "c39aa4e869112f11e23d27584ab103e2b76f9346eb5ba063d804edaf5665460f",
+          "link/e4steam/steam/SteamProcessGuard$Context.class": "9214eb2c6440a60636a7e785999f2de28458712c19e049a37d6df4e550a9785d",
+          "link/e4steam/steam/SteamProcessGuard$Lease.class": "a2fd6385ae64bba503c595ff9c0573cf8fed4196ae63d59faee6097420bf1b5c",
+          "link/e4steam/steam/SteamProcessGuard.class": "bbc47331a1f47b1e9279e5fe43455bc277df929a43c95e6d61ba5d67b8d4d82c",
+          "link/e4steam/steam/SteamProtocol$DedicatedOpen.class": "07cb0296fad2ae9fa73e043c33b2681ad4280ff82f83222279711c889c96f932",
+          "link/e4steam/steam/SteamProtocol$Frame.class": "1b8a7d8ca1ed98c00d06fe73f7892e82231941607f889db99f66e9b85130dcae",
+          "link/e4steam/steam/SteamProtocol.class": "b133abfc18434e653c0be3abfb129a1b3681ebb44438d1158660c8df63833ab4",
+          "link/e4steam/steam/SteamPublicJoinTracker$Phase.class": "56af87d24338ddd0a7c8204d8b0fef233c97c851876cba2aeade96a0303c7012",
+          "link/e4steam/steam/SteamPublicJoinTracker$Snapshot.class": "4ac7384da447ac9a5ecd8c4ba6304f4a8ee9dae05125cdaa11a35b90cedcd3cd",
+          "link/e4steam/steam/SteamPublicJoinTracker.class": "dc3ba68580c43cf1cea1dad129da92e3549d3885e1f34e8ba5e5d4421eee3774",
+          "link/e4steam/steam/SteamReliableDataPacer$Bucket.class": "63abf13e29722e95b6c76e01ceed28fcd074fc22a37496b7bfdf208276b9c00f",
+          "link/e4steam/steam/SteamReliableDataPacer.class": "b960c3b862f5d5af9ca9e1dc5f9dac1bb14849ebac27a8784edf219245af62e8",
+          "link/e4steam/steam/SteamResetRetryQueue$Entry.class": "e8edee8ef5ee8cd91c277595175c3e93a1cc1174f8a55f6f786000ac41198cdb",
+          "link/e4steam/steam/SteamResetRetryQueue$Key.class": "7ab243cd8a6c3bc42297742be0b0b74d60e63deeabf30d1b50a29829b69508f7",
+          "link/e4steam/steam/SteamResetRetryQueue$Offer.class": "ab60a24511844b97f99eb98f757364512fbd26ba0f8b0bdb6bfae8e3c483c7e6",
+          "link/e4steam/steam/SteamResetRetryQueue$OfferStatus.class": "ec0ff31dd51a81cb4ad71e4db07928bdd5623b0a75ab30a523f0501aea9c6c23",
+          "link/e4steam/steam/SteamResetRetryQueue$SendOutcome.class": "df0a7ae3c8279990c37a3955e68000f77c3bcd89595798119774050aa2fc5202",
+          "link/e4steam/steam/SteamResetRetryQueue$State.class": "f73876bf2d3d4977bf67469b1a3479a06032c21b6e4bf189352e3eae2d60a6eb",
+          "link/e4steam/steam/SteamResetRetryQueue.class": "5e0dd226237a404bfd9f20a387056d1f93422b105adec5cf50e8137afe3f0ec6",
+          "link/e4steam/steam/SteamRuntime$1.class": "573d2040f92e149df1b8f0fb852afbb93707931344adc8a6734c530ca0165344",
+          "link/e4steam/steam/SteamRuntime$2.class": "21ab43e3da2db900e228400c02adae31c144a537c1e8c85147e2462df3d6c535",
+          "link/e4steam/steam/SteamRuntime$3.class": "a50071547eb4428d990736c7a89c9aa3dcd37af0f9e985952f2eab258feaeb7b",
+          "link/e4steam/steam/SteamRuntime$4.class": "2257e6e62a83eba73b44549c279fcf9fff7be77b49166cd7f8502bb50a3d842c",
+          "link/e4steam/steam/SteamRuntime$5.class": "21bfdcc94e9be457115b06dbdfd03b2b430f2308ef22371780906847f4261aab",
+          "link/e4steam/steam/SteamRuntime$6.class": "116df76b1be81d048fbb4b59d32ff9b244a05f050a5463532655fbcfa5459e36",
+          "link/e4steam/steam/SteamRuntime$Activity.class": "eecdc00cfa25b9b2f2bc7356159aa203fa48269fbaf6e1c444493a76d5f5a98c",
+          "link/e4steam/steam/SteamRuntime$AuthenticatedLoopbackPeer.class": "0805e4013bd88124a0b4fed1e652f0b2de5f45051fce53f48db67e2d98efc02e",
+          "link/e4steam/steam/SteamRuntime$DedicatedClientAuth.class": "ac1c5de68b8fde9b3c43c3a11fc18bcaa905213cca4242a6350d24e7172b02e5",
+          "link/e4steam/steam/SteamRuntime$HostRegistration.class": "866bfae2e0acad088b4fab5e18cfea0478202efbdb541dfc3b091b8dca30e07e",
+          "link/e4steam/steam/SteamRuntime$PublicHostLobbyTarget.class": "b2bdc478304bf14ed1c073662b3843c33724668dacdfda24c454460205a10bb4",
+          "link/e4steam/steam/SteamRuntime$SafeMinecraftIdentity.class": "c01ddf75adf4da0d5548f9875168335f712f1eea9ae5a7d9f06b83456417a8e8",
+          "link/e4steam/steam/SteamRuntime$SafePeerIdentity.class": "7549708f07ddfaab513268c390c8fd34437cc1d17808880a148e68f36127aa6f",
+          "link/e4steam/steam/SteamRuntime$SafePublicJoinSnapshot.class": "33f09d7e17c281a7934734b22009f8ac3d80762c5829a9a7ce2a0993cd8e1808",
+          "link/e4steam/steam/SteamRuntime$SafeSessionView.class": "548e561e43301b299a43f57209aed181afebbf37640d9d7dd82b47a555c183d8",
+          "link/e4steam/steam/SteamRuntime$Status.class": "83ba4a7b1a6f0a8da495883a3d82de936f93087a8621e1efc786c5b2bbd1547e",
+          "link/e4steam/steam/SteamRuntime$SteamTask.class": "2d230b10307f4775f9d4ce8660fc44a4e7dac27ccc2f760f6d5c681e9dd28a3f",
+          "link/e4steam/steam/SteamRuntime$WorkerGeneration.class": "ae6276c192cb844aa546eb894f4cf7ece0e7595cc01e9ed0b9bd5cbc9222f2e3",
+          "link/e4steam/steam/SteamRuntime.class": "9e5d95cfd56b2370185c20508a6067a40100999238c8e6013e9f6d298fa27e16",
+          "link/e4steam/steam/SteamRuntimeBackend$Config.class": "564d8463d0dad199c17896ce7569d6b81c2645fd094307594d36ebaba75418fd",
+          "link/e4steam/steam/SteamRuntimeBackend$RuntimeKind.class": "cc0203de6827f5f8aac6213c0c9572da2a059837fb97fe13198812e113f4a2d2",
+          "link/e4steam/steam/SteamRuntimeBackend$RuntimeReady.class": "8f82ea276e488bce54aec61a58fbec1ac0bd6306fd4af9af250341310c4fe583",
+          "link/e4steam/steam/SteamRuntimeBackend$ShutdownReason.class": "7b49cc7142bf58e8d2ebf6c3e7e7cbbd898b196b8d1d1997e14cafe4d0f3bad7",
+          "link/e4steam/steam/SteamRuntimeBackend$Snapshot.class": "0520b0292d3febe1d0a0b123746404efbee49e675972f9e87e39214ab9291435",
+          "link/e4steam/steam/SteamRuntimeBackend$State.class": "347f22691873f1b37d16b554d1bedb7b48608276becd9221c9771bd18b85edb9",
+          "link/e4steam/steam/SteamRuntimeBackend$StateListener.class": "de06aadea4b1527f47a2665f98a3622fc6a9df1bf03e5d9911fd6b3fc844d5bc",
+          "link/e4steam/steam/SteamRuntimeBackend.class": "cc8bcee3481f5ce0f04f1ca5f9d442b154519ce436b8b31f0940af03ae7c7f67",
+          "link/e4steam/steam/SteamSession$1.class": "3475e1f6b75359676030f7b7d29222ebc70780e1cf41eff387f2ed5778aa91ce",
+          "link/e4steam/steam/SteamSession$State.class": "d27fb62048195b4104197190c5bb5e8b527ec087b8beb0639ffb6e6510258719",
+          "link/e4steam/steam/SteamSession.class": "376af92a137901fd09c54053db874600279ac9c4220569597dfb866f1f076ec0",
+          "link/e4steam/steam/SteamUdpBridge.class": "80013a36fc55b1a7e1ae46600e13af21571a70a58415b97e4e6f402b34de88c7",
+          "link/e4steam/steam/SteamworksApi.class": "36a9d1253540cad283f3c6671b3c7949d41fe916e8586db57f64e274ad730f8c",
+          "link/e4steam/steam/VoiceChatUdpEndpoint$PlasmoPort.class": "c6b4cc9e795d26f2e6f8e5f688ecac654288b4aa20ba7ecace8b6fcaaf3a446e",
+          "link/e4steam/steam/VoiceChatUdpEndpoint.class": "966cb8dab6599574ff5dc01ce67c81eddf66257b7d441489fadecffd1a91f33b"
+        },
+        "sourceCommit": "204ed62ccb832f2756512c30026b812352a57d1b",
+        "type": "source-built-legacy-port",
+        "upstreamSourceCommit": "bdcea00e30ca519fa8190c0c5c04785d42b31dbc"
+      },
+      "downloadUrl": "https://github.com/MarkZamore/e4steam/releases/download/legacy-fabric-164-v1/e4steam-legacy-fabric-mc1.6.4-v0.3.4-lf164.1.jar",
+      "exclusiveMaximumMinecraftVersion": [
+        1,
+        6,
+        5
+      ],
+      "fileName": "e4steam-legacy-fabric-mc1.6.4-v0.3.4-lf164.1.jar",
+      "loaders": [
+        "LegacyFabric"
+      ],
+      "metadataPath": "fabric.mod.json",
+      "minimumMinecraftVersion": [
+        1,
+        6,
+        4
+      ],
+      "profile": "native-lan-ui-v3",
+      "sha256": "a35e616ee93e4cb9f6a9c2f0e9a06a36648e89639a07a6c47780b30c1b0c394e",
+      "sizeBytes": 2281194,
+      "upstreamDownloadUrl": "https://github.com/Kamilhik/e4steam/tree/bdcea00e30ca519fa8190c0c5c04785d42b31dbc",
+      "upstreamReleaseUrl": "https://github.com/Kamilhik/e4steam/releases/tag/v0.3.4",
+      "version": "0.3.4"
+    }
+  ],
+  "capabilities": [
+    "native-lan-settings-ui-hidden-or-absent",
+    "modern-configured-online-mode-at-native-publish",
+    "author-steam-authentication-retained"
+  ],
+  "componentId": "e4steam",
+  "profile": "native-lan-ui-v3",
+  "publisher": "MarkZamore",
+  "schemaVersion": 2,
+  "sourceCommit": "204ed62ccb832f2756512c30026b812352a57d1b",
+  "sourcePatches": [
+    {
+      "path": "source/native-ui.patch",
+      "sha256": "3c13a5f977c8bcf4d1332723b067d71360b007c20cfeb7ce58d011d587c92716",
+      "sizeBytes": 4326
+    },
+    {
+      "path": "source/native-lan-auth-v2.patch",
+      "sha256": "39f0df42c787ecc7aac55838d67dbf2ace37119cf836c0303e69774deda0633b",
+      "sizeBytes": 5379
     }
   ]
 }

@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)][ValidateRange(1,[long]::MaxValue)][long]$RunId,
     [ValidateRange(1,1000)][int]$RunAttempt = 1,
     [string]$CandidateDirectory,
+    [string]$ArtifactArchivePath,
     [switch]$Publish
 )
 $ErrorActionPreference = 'Stop'
@@ -37,6 +38,9 @@ Assert-PlainAncestors $runRoot
     necessaryResults = @('verification.json','local-antivirus/*/scan.json','RUN.json')
 } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
 $proof = [ordered]@{ Repository = $Repository; RunId = $RunId; RunAttempt = $RunAttempt; Commit = $commit; Release = $ExpectedRelease; Result = 'Unknown'; Published = $false }
+$archive = $null
+$ownsArchive = $false
+$archiveLock = $null
 
 function Invoke-CandidateGh {
     $result = Invoke-Gh @args
@@ -78,6 +82,8 @@ try {
         $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
         if ($record.owner -ne 'Publish-VerifiedCandidate.ps1' -or $record.commitSha -ne $commit -or $record.repository -ne $Repository -or [long]$record.runId -ne $RunId) { continue }
         if ($record.status -eq 'active') { throw 'Another verifier for this candidate is active; do not create a second full staging copy.' }
+        if ($ArtifactArchivePath -and [IO.Path]::GetFullPath($ArtifactArchivePath, (Get-Location).ProviderPath).StartsWith(
+            $previous + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { continue }
         Remove-OwnedTree (Join-Path $previous 'candidate') $previous
         $oldArchive = Join-Path $previous 'candidate.zip'
         if ([IO.File]::Exists($oldArchive)) { [IO.File]::Delete($oldArchive) }
@@ -98,22 +104,38 @@ try {
     }
     $artifactName = "portable-host-candidate-$RunId-$RunAttempt"
     $artifacts = Invoke-CandidateGh api "repos/$Repository/actions/runs/$RunId/artifacts?per_page=100" | ConvertFrom-Json
-    $matches = @($artifacts.artifacts | Where-Object name -eq $artifactName)
-    if ($matches.Count -ne 1 -or $matches[0].expired -or $matches[0].digest -notmatch '^sha256:[a-fA-F0-9]{64}$' -or
-        [long]$matches[0].size_in_bytes -le 0 -or [long]$matches[0].size_in_bytes -gt 2GB) { throw 'An exact bounded immutable candidate artifact with a GitHub SHA256 digest is required.' }
-    $artifact = $matches[0]
+    $candidateArtifacts = @($artifacts.artifacts | Where-Object name -eq $artifactName)
+    if ($candidateArtifacts.Count -ne 1 -or $candidateArtifacts[0].expired -or $candidateArtifacts[0].digest -notmatch '^sha256:[a-fA-F0-9]{64}$' -or
+        [long]$candidateArtifacts[0].size_in_bytes -le 0 -or [long]$candidateArtifacts[0].size_in_bytes -gt 2GB) { throw 'An exact bounded immutable candidate artifact with a GitHub SHA256 digest is required.' }
+    $artifact = $candidateArtifacts[0]
     $proof.ArtifactId = $artifact.id; $proof.ArtifactDigest = $artifact.digest
-    $archive = Join-Path $runRoot 'candidate.zip'
-    $authToken = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { [string](Invoke-CandidateGh auth token --hostname github.com) }
-    try {
-        # Authorization is sent only to GitHub's fixed API endpoint; default
-        # redirect behavior strips it from the signed storage redirect.
-        Invoke-WebRequest -Uri "https://api.github.com/repos/$Repository/actions/artifacts/$($artifact.id)/zip" `
-            -Headers @{ Authorization = 'Bearer ' + $authToken; Accept = 'application/vnd.github+json' } `
-            -OutFile $archive -TimeoutSec 180
+    if ($ArtifactArchivePath) {
+        $archive = [IO.Path]::GetFullPath($ArtifactArchivePath, (Get-Location).ProviderPath)
+        Assert-PlainAncestors ([IO.Path]::GetDirectoryName($archive))
+        if (-not [IO.File]::Exists($archive) -or
+            ([IO.File]::GetAttributes($archive) -band ([IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::Directory)) -ne 0) {
+            throw 'Provided artifact archive must be an ordinary repository-owned file.'
+        }
+        $proof.ArchiveSource = 'ProvidedReadOnlyArchive'
     }
-    finally { $authToken = $null }
-    if (([IO.FileInfo]::new($archive)).Length -gt 2GB -or
+    else {
+        $archive = Join-Path $runRoot 'candidate.zip'
+        $ownsArchive = $true
+        $authToken = if ($env:GH_TOKEN) { $env:GH_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { [string](Invoke-CandidateGh auth token --hostname github.com) }
+        try {
+            # Authorization is sent only to GitHub's fixed API endpoint; default
+            # redirect behavior strips it from the signed storage redirect.
+            Invoke-WebRequest -Uri "https://api.github.com/repos/$Repository/actions/artifacts/$($artifact.id)/zip" `
+                -Headers @{ Authorization = 'Bearer ' + $authToken; Accept = 'application/vnd.github+json' } `
+                -OutFile $archive -TimeoutSec 180
+        }
+        finally { $authToken = $null }
+        $proof.ArchiveSource = 'DirectGitHubDownload'
+    }
+    # Pin the exact ZIP against writes/replacement through hashing/extraction.
+    # Caller-provided downloads are read only and never removed by this helper.
+    $archiveLock = [IO.FileStream]::new($archive, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    if ($archiveLock.Length -ne [long]$artifact.size_in_bytes -or $archiveLock.Length -gt 2GB -or
         (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $artifact.digest.Substring(7)) { throw 'Downloaded artifact ZIP does not match GitHub authoritative digest/budget.' }
     $extracted = Join-Path $runRoot 'candidate'; [void][IO.Directory]::CreateDirectory($extracted)
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
@@ -193,7 +215,8 @@ try {
 catch { $proof.Result = 'Failed'; $proof.Reason = $_.Exception.Message; throw }
 finally {
     $proof.FinishedAtUtc = [DateTime]::UtcNow.ToString('O')
-    if ($archive -and [IO.File]::Exists($archive)) { [IO.File]::Delete($archive) }
+    if ($null -ne $archiveLock) { $archiveLock.Dispose() }
+    if ($ownsArchive -and $archive -and [IO.File]::Exists($archive)) { [IO.File]::Delete($archive) }
     if ($extracted -and ($proof.Published -or $proof.Result -ne 'Passed')) { Remove-OwnedTree $extracted }
     $runStatus = if ($proof.Published) { 'published-cleaned' } elseif ($proof.Result -eq 'Passed') { 'verified-awaiting-publication' } else { 'failed-cleaned' }
     [IO.File]::WriteAllText((Join-Path $runRoot 'RUN.json'), (@{

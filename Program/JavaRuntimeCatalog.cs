@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 
 namespace Minecraft;
 
@@ -125,9 +126,14 @@ internal static class JavaRuntimeCatalog
     /// A Minecraft nobody recognises gets <see cref="DefaultMajorVersion"/>,
     /// which is what every pack got before this existed.
     /// </remarks>
-    public static JavaRuntimePin RequiredFor(PackRuntimeDescriptor? descriptor) =>
-        ForMajorVersion(MajorVersionFor(descriptor?.MinecraftVersion))
-        ?? ForMajorVersion(DefaultMajorVersion)!;
+    public static JavaRuntimePin RequiredFor(PackRuntimeDescriptor? descriptor)
+    {
+        if (descriptor?.JavaMajorVersion is { } explicitMajor)
+            return ForMajorVersion(explicitMajor)
+                ?? throw new InvalidDataException("The pack requests a Java feature release the launcher cannot install.");
+        return ForMajorVersion(MajorVersionFor(descriptor?.MinecraftVersion))
+            ?? ForMajorVersion(DefaultMajorVersion)!;
+    }
 
     /// <summary>The feature release one Minecraft is built for.</summary>
     internal static int MajorVersionFor(string? minecraftVersion)
