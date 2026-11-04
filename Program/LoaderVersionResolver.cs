@@ -62,9 +62,14 @@ public sealed class LoaderVersionResolver(HttpClient httpClient, Logger? logger 
     public async Task<IReadOnlyList<string>> LoaderVersionsAsync(PackLoaderKind loader, string minecraft, CancellationToken token)
     {
         if (!Stable.IsMatch(minecraft)) throw new InvalidDataException("Для автоподбора нужен стабильный выпуск Minecraft.");
-        if (loader is PackLoaderKind.Fabric or PackLoaderKind.Quilt)
+        if (loader is PackLoaderKind.Fabric or PackLoaderKind.Quilt or PackLoaderKind.LegacyFabric)
         {
-            var endpoint = loader == PackLoaderKind.Fabric ? "https://meta.fabricmc.net/v2/versions/loader/" : "https://meta.quiltmc.org/v3/versions/loader/";
+            var endpoint = loader switch
+            {
+                PackLoaderKind.LegacyFabric => "https://meta.legacyfabric.net/v2/versions/loader/",
+                PackLoaderKind.Fabric => "https://meta.fabricmc.net/v2/versions/loader/",
+                _ => "https://meta.quiltmc.org/v3/versions/loader/"
+            };
             using var document = JsonDocument.Parse(await ReadAsync(endpoint + Uri.EscapeDataString(minecraft), token).ConfigureAwait(false));
             if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("Некорректный каталог загрузчика " + loader + ".");
             return document.RootElement.EnumerateArray().Where(entry => entry.TryGetProperty("loader", out _))

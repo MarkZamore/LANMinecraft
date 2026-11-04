@@ -112,7 +112,6 @@ public partial class MainWindow : Window
     private bool _shutdownStarted;
     private bool _shutdownComplete;
     private SteamPeerPresence? _lastPublishedPresence;
-    private DateTimeOffset? _sessionStartedUtc;
     private bool _restartAfterUpdateOnExit;
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
@@ -832,6 +831,12 @@ public partial class MainWindow : Window
         }
         var owner = GetActiveLocalOwner();
         var ownerSteamId = RequireIdentityService().ResolveContext(RequireSettings()).SteamId64.ToString();
+        var minecraftVersion = string.Empty;
+        if (PackManifestService.HasManifest(build.FullPath))
+        {
+            try { minecraftVersion = PackManifestService.Load(build.FullPath).MinecraftVersion; }
+            catch (Exception ex) when (ex is IOException or InvalidDataException) { }
+        }
 
         return new WorldMetadataContext
         {
@@ -840,7 +845,8 @@ public partial class MainWindow : Window
             PackHash = _localPackHash,
             OwnerIdentityId = owner.id,
             OwnerIdentityName = owner.name,
-            OwnerSteamId64 = ownerSteamId
+            OwnerSteamId64 = ownerSteamId,
+            MinecraftVersion = minecraftVersion
         };
     }
 
@@ -1253,14 +1259,8 @@ public partial class MainWindow : Window
         PostToUi(() =>
         {
             _minecraftRunning = isRunning;
-            if (isRunning)
-            {
-                _sessionStartedUtc = DateTimeOffset.UtcNow;
-            }
-
             if (!isRunning)
             {
-                StampWorldsPlayedThisSession();
                 RefreshWorlds();
                 RefreshControlsPresetStatus();
                 // The session may have left a measurement behind, and the split
@@ -1270,53 +1270,6 @@ public partial class MainWindow : Window
             }
             RefreshUi();
         });
-    }
-
-    /// <summary>
-    /// Gives a build to any world that was played just now and had none.
-    ///
-    /// A world nobody stamped is offered in every build, on purpose: hiding a
-    /// world the launcher cannot place is worse than showing it in the wrong
-    /// list. But it leaves worlds older than this file, and worlds dropped into
-    /// the folder by hand, ambiguous forever - and opening one under the wrong
-    /// build is how the blocks of every missing mod are lost. Which world the
-    /// game will open is not the launcher's to know; which one it did open is
-    /// written in that world's session.lock, so the answer is taken from what
-    /// happened rather than from a guess.
-    /// </summary>
-    private void StampWorldsPlayedThisSession()
-    {
-        if (_sessionStartedUtc is not { } startedUtc) return;
-        _sessionStartedUtc = null;
-
-        var context = CreateWorldMetadataContext();
-        if (context is null || _paths is not { } paths || _settings is not { } settings) return;
-
-        try
-        {
-            // A world the player just made is a real folder inside the
-            // instance, because the game made it there; it has to be moved
-            // beside the others before it can be stamped, or it is not among
-            // the worlds this looks at.
-            var instance = ResolveCurrentInstanceDirectory();
-            if (instance is not null)
-            {
-                new SavesFolderService(_logger).Adopt(
-                    WorldLocations.ForBuild(paths.Worlds, settings.ClientRelativePath),
-                    instance);
-            }
-            var stamped = RequireWorldMetadata().StampPlayedWorlds(paths.Worlds, context, startedUtc);
-            foreach (var world in stamped)
-            {
-                _logger?.Info(
-                    $"World {world} had no build recorded; it belongs to {context.BuildName} " +
-                    "from now on, because that is what it was played on.");
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger?.Warn($"Worlds played this session could not be attributed ({ex.Message}).");
-        }
     }
 
     /// <summary>
@@ -1451,7 +1404,7 @@ public partial class MainWindow : Window
             SetState("Starting client");
             try
             {
-                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, localAiDownloads, _lifetimeCts.Token);
+                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, localAiDownloads, _localPackHash, _lifetimeCts.Token);
             }
             catch
             {

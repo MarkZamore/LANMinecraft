@@ -62,6 +62,7 @@ public sealed class PackRuntimeService : IDisposable
         [
             new VanillaLoaderProvider(),
             new FabricLoaderProvider(),
+            new LegacyFabricLoaderProvider(),
             new QuiltLoaderProvider(),
             new ForgeLoaderProvider(),
             new NeoForgeLoaderProvider()
@@ -766,6 +767,7 @@ public sealed class PackRuntimeService : IDisposable
         PackLoaderKind.NeoForge => "NeoForge",
         PackLoaderKind.Forge => "Forge",
         PackLoaderKind.Fabric => "Fabric",
+        PackLoaderKind.LegacyFabric => "Legacy Fabric",
         PackLoaderKind.Quilt => "Quilt",
         _ => "Minecraft"
     };
@@ -783,7 +785,7 @@ public sealed class PackRuntimeService : IDisposable
     /// </summary>
     private bool RepairLoaderProfile(string runtimeRoot, PackRuntimeDescriptor descriptor, RuntimeState state)
     {
-        if (descriptor.Loader.Type is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt)) return false;
+        if (descriptor.Loader.Type is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt or PackLoaderKind.LegacyFabric)) return false;
         if (string.IsNullOrWhiteSpace(state.ProfileId)) return false;
 
         var path = Path.Combine(

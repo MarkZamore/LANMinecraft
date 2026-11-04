@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace Minecraft;
 
-public sealed class WorldPlayerManifestService
+public sealed partial class WorldPlayerManifestService
 {
     public const string ManifestFileName = ".minecraft-portable-players.json";
     /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
@@ -23,6 +23,8 @@ public sealed class WorldPlayerManifestService
 
     public WorldPlayersManifest Write(string worldPath, LocalIdentityContext? currentHolder)
     {
+        if (WorldPlayerStorage.Resolve(worldPath) == WorldPlayerStorage.Legacy)
+            return WriteLegacy(worldPath, currentHolder);
         var previous = Read(worldPath);
         var previousByMinecraftUuid = previous?.Players
             .GroupBy(player => player.MinecraftUuid, StringComparer.OrdinalIgnoreCase)
@@ -86,6 +88,13 @@ public sealed class WorldPlayerManifestService
             throw new InvalidDataException(
                 PortableFormat.DescribeUnreadable("Список игроков мира", manifest.SchemaVersion));
         }
+
+        if (manifest.PlayerStorage == WorldPlayerStorage.Legacy) return ValidateLegacy(worldPath, manifest);
+        if (manifest.PlayerStorage is not (null or WorldPlayerStorage.Uuid) ||
+            WorldPlayerStorage.Resolve(worldPath) == WorldPlayerStorage.Legacy)
+            throw new InvalidDataException("Player manifest storage does not match the world platform.");
+        if (manifest.UnassignedFiles.Count != 0 || manifest.Players.Any(player => player.StorageName is not null))
+            throw new InvalidDataException("A modern player manifest cannot contain legacy storage entries.");
 
         if (!string.IsNullOrWhiteSpace(manifest.CurrentHolderUuid) &&
             !Guid.TryParse(manifest.CurrentHolderUuid, out _))
@@ -173,7 +182,17 @@ public sealed class WorldPlayerManifestService
         if (!File.Exists(path)) return null;
         try
         {
-            return JsonSerializer.Deserialize<WorldPlayersManifest>(File.ReadAllText(path), _jsonOptions);
+            var manifest = JsonSerializer.Deserialize<WorldPlayersManifest>(File.ReadAllText(path), _jsonOptions);
+            if (manifest is not null && !PortableFormat.CanRead(manifest.SchemaVersion))
+                throw new InvalidDataException(PortableFormat.DescribeUnreadable("Список игроков мира", manifest.SchemaVersion));
+            if (manifest is not null)
+            {
+                if (manifest.Players is null || manifest.UnassignedFiles is null ||
+                    manifest.PlayerStorage is not (null or WorldPlayerStorage.Uuid or WorldPlayerStorage.Legacy))
+                    throw new InvalidDataException("Player manifest has an unsupported storage shape.");
+                if (manifest.PlayerStorage == WorldPlayerStorage.Legacy) ValidateLegacyIdentityFields(manifest);
+            }
+            return manifest;
         }
         catch (JsonException ex)
         {
@@ -297,6 +316,8 @@ public sealed class WorldPlayersManifest
     // A document with no version at all predates versioning; reading it as
     // version 1 keeps it inside the one rule rather than beside it.
     public int SchemaVersion { get; set; } = 1;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PlayerStorage { get; set; }
 
     public string CurrentHolderUuid { get; set; } = string.Empty;
 
@@ -309,10 +330,14 @@ public sealed class WorldPlayersManifest
 
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public List<WorldPlayerManifestEntry> Players { get; set; } = [];
+    /// <summary>Preserved legacy files whose names have no proven portable account mapping.</summary>
+    public List<WorldPlayerFileManifestEntry> UnassignedFiles { get; set; } = [];
 }
 
 public sealed class WorldPlayerManifestEntry
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StorageName { get; set; }
     public string PortableUuid { get; set; } = string.Empty;
     public string MinecraftUuid { get; set; } = string.Empty;
     public string LastKnownName { get; set; } = string.Empty;

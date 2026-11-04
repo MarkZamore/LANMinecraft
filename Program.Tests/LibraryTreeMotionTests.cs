@@ -7,6 +7,8 @@ using Path = System.Windows.Shapes.Path;
 
 namespace Minecraft.Tests;
 
+// Observe real WPF animation frames without competing desktop/CPU fixtures.
+[Collection("Native desktop focus")]
 public sealed class LibraryTreeMotionTests
 {
     [Fact]

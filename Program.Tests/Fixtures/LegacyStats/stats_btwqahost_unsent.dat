@@ -1,0 +1,14 @@
+{
+  "user":{
+    "name":"BtwQaHost",
+    "sessionid":"local"
+  },
+  "stats-change":[
+    {"1003":3},
+    {"1100":530},
+    {"1001":2},
+    {"1000":3},
+    {"1004":3}
+  ],
+  "checksum":"16e5697712c6fe7f958140cc1bb0ac8c"
+}

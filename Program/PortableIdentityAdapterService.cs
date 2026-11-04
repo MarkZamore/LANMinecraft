@@ -49,6 +49,24 @@ public sealed class PortableIdentityAdapterService : IDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            if (runtime.Descriptor.Loader.Type == PackLoaderKind.LegacyFabric &&
+                runtime.Descriptor.MinecraftVersion == "1.6.4")
+            {
+                // This runtime predates authlib. Its pack supplies the native
+                // name/skin bridge; passing modern profile transformations here
+                // would target classes which do not exist in Minecraft 1.6.4.
+                // These paths and the title remain ordinary launch context,
+                // independent of any content mod or pack name.
+                var packDirectory = _paths.CombineUnderPacks(Path.GetFileName(targetRoot));
+                var legacyTitle = WindowTitleSettings.Load(packDirectory, runtime, targetRoot);
+                return
+                [
+                    "-Dminecraft.portable.legacy.enabled=true",
+                    $"-Dminecraft.portable.legacy.registry={Path.Combine(_paths.Personal, "legacy-identity-profiles.properties")}",
+                    $"-Dminecraft.portable.identity.windowTitleText={legacyTitle.Text}"
+                ];
+            }
+
             var directory = Path.Combine(_paths.Launcher, "IdentityAdapters", runtime.Descriptor.DescriptorHash);
             _paths.EnsureUnderRoot(directory);
             Directory.CreateDirectory(directory);

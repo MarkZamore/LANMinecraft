@@ -524,6 +524,10 @@ public sealed class WorldMetadata
     public string BuildName { get; set; } = "";
     public string BuildRelativePath { get; set; } = "";
     public string PackHash { get; set; } = "";
+    public string MinecraftVersion { get; set; } = "";
+    public string PlayerStorage { get; set; } = "";
+    /// <summary>The proven owner of Data.Player, from a played session or a verified profile import.</summary>
+    public string LegacyHostSteamId64 { get; set; } = "";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public string MarkedBy { get; set; } = "LANMinecraft.exe";
     /// <summary>The creator's Minecraft UUID. It is never rewritten once set.</summary>
@@ -553,5 +557,6 @@ public sealed class WorldMetadataContext
 
     /// <summary>Empty until the machine is bound to a Steam account.</summary>
     public string OwnerSteamId64 { get; init; } = "";
+    public string MinecraftVersion { get; init; } = "";
 }
 

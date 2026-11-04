@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -26,13 +27,13 @@ public sealed class SteamComponentCatalogTests : IDisposable
     public void Dispose() => TempTree.Delete(_root);
 
     [Fact]
-    public void EmbeddedV2_PreservesAllReviewedBranchesAndPublisherDelivery()
+    public void EmbeddedV3_PreservesAllReviewedBranchesAndPublisherDelivery()
     {
         var catalog = SteamComponentCatalog.Parse(SteamComponentCatalog.EmbeddedJson());
-        Assert.Equal("native-lan-ui-v2", catalog.Profile);
-        Assert.Equal(19, catalog.Builds.Count);
+        Assert.Equal("native-lan-ui-v3", catalog.Profile);
+        Assert.Equal(20, catalog.Builds.Count);
         Assert.Equal(13, catalog.Builds.Count(build => build.Version == "0.3.2"));
-        Assert.Equal(6, catalog.Builds.Count(build => build.Version == "0.3.4"));
+        Assert.Equal(7, catalog.Builds.Count(build => build.Version == "0.3.4"));
         Assert.All(catalog.Builds, build =>
         {
             Assert.True(build.NativeLanUiSuppressed);
@@ -42,10 +43,24 @@ public sealed class SteamComponentCatalogTests : IDisposable
             Assert.StartsWith("/MarkZamore/e4steam/releases/download/", uri.AbsolutePath, StringComparison.Ordinal);
             Assert.EndsWith("/" + build.FileName, Uri.UnescapeDataString(uri.AbsolutePath), StringComparison.Ordinal);
             Assert.Empty(uri.Query);
-            Assert.NotEmpty(build.AuthorFileName!);
+            if (build.Loaders.Contains(PackLoaderKind.LegacyFabric))
+            {
+                Assert.Null(build.AuthorFileName);
+                Assert.NotNull(build.UpstreamSourceCommit);
+            }
+            else Assert.NotEmpty(build.AuthorFileName!);
         });
-        Assert.Equal(19, catalog.Builds.Select(build => build.CacheFileId).Distinct().Count());
+        Assert.Equal(20, catalog.Builds.Select(build => build.CacheFileId).Distinct().Count());
         Assert.Contains(catalog.SupersededBuilds, old => old.FileName.Contains("native-ui.1", StringComparison.Ordinal));
+        var current = Embedded()["builds"]!.AsArray();
+        var historical = JsonNode.Parse(SteamComponentCatalog.HistoricalV2Json())!;
+        Assert.Equal(19, historical["builds"]!.AsArray().Count);
+        foreach (var old in historical["builds"]!.AsArray())
+        {
+            old!["profile"] = catalog.Profile;
+            var preserved = Assert.Single(current, row => row!["fileName"]!.GetValue<string>() == old["fileName"]!.GetValue<string>());
+            Assert.True(JsonNode.DeepEquals(old, preserved), "An existing artifact's bytes or provenance changed.");
+        }
     }
 
     [Theory]
@@ -146,14 +161,15 @@ public sealed class SteamComponentCatalogTests : IDisposable
     }
 
     [Fact]
-    public async Task OfflineWithoutCache_UsesEmbeddedV2WithoutCreatingUnverifiedCache()
+    public async Task OfflineWithoutCache_UsesEmbeddedV3AndExactLegacyPinWithoutCreatingUnverifiedCache()
     {
         using var handler = new CatalogHandler { Offline = true };
         using var client = new HttpClient(handler);
         var service = Service(client);
         var selected = await service.LoadAsync();
-        Assert.Equal("native-lan-ui-v2", selected.Profile);
-        Assert.Equal(19, selected.Builds.Count);
+        Assert.Equal("native-lan-ui-v3", selected.Profile);
+        Assert.Equal(20, selected.Builds.Count);
+        AssertLegacyPin(selected);
         Assert.False(File.Exists(service.CachePath));
         Assert.Single(handler.Requests);
     }
@@ -186,8 +202,9 @@ public sealed class SteamComponentCatalogTests : IDisposable
         handler.Offline = true;
 
         var selected = await Service(client).LoadAsync();
-        Assert.Equal("native-lan-ui-v2", selected.Profile);
-        Assert.Equal(19, selected.Builds.Count);
+        Assert.Equal("native-lan-ui-v3", selected.Profile);
+        Assert.Equal(20, selected.Builds.Count);
+        AssertLegacyPin(selected);
         Assert.DoesNotContain(selected.Builds, build => build.FileName == FutureFile);
         Assert.Equal(corruptedBytes, File.ReadAllBytes(first.CachePath));
     }
@@ -247,7 +264,58 @@ public sealed class SteamComponentCatalogTests : IDisposable
         Assert.Equal(FutureHash, changed.Sha256);
         Assert.Equal(FutureProfile, changed.DeliveryTag);
         Assert.True(changed.NativeLanUiSuppressed);
-        Assert.Equal(19, catalog.Builds.Count);
+        Assert.Equal(20, catalog.Builds.Count);
+    }
+
+    [Fact]
+    public async Task HistoricalV2CacheIsPreservedButCannotRemoveLegacySupportWhenOffline()
+    {
+        using var handler = new CatalogHandler { Offline = true };
+        using var client = new HttpClient(handler);
+        var service = Service(client);
+        var historical = SteamComponentCatalog.HistoricalV2Json();
+        Directory.CreateDirectory(Path.GetDirectoryName(service.CachePath)!);
+        var envelope = new JsonObject
+        {
+            ["schemaVersion"] = 1, ["catalog"] = historical,
+            ["catalogSha256"] = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(historical))),
+            ["knownBuilds"] = new JsonArray()
+        };
+        File.WriteAllText(service.CachePath, envelope.ToJsonString());
+        var original = File.ReadAllBytes(service.CachePath);
+        var selected = await service.LoadAsync();
+        Assert.Equal("native-lan-ui-v3", selected.Profile);
+        AssertLegacyPin(selected);
+        Assert.Equal(original, File.ReadAllBytes(service.CachePath));
+        Assert.Contains("removes reviewed Legacy Fabric 1.6.4 coverage", File.ReadAllText(_paths.LogFile), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NetworkV2DowngradeCannotReplaceACheckedV3Cache()
+    {
+        using var handler = new CatalogHandler(Future().ToJsonString());
+        using var client = new HttpClient(handler);
+        var service = Service(client);
+        await service.LoadAsync();
+        var original = File.ReadAllBytes(service.CachePath);
+        handler.ResponseJson = SteamComponentCatalog.HistoricalV2Json();
+        var selected = await Service(client).LoadAsync();
+        AssertFuture(selected);
+        AssertLegacyPin(selected);
+        Assert.Equal(original, File.ReadAllBytes(service.CachePath));
+        Assert.Contains("removes reviewed Legacy Fabric 1.6.4 coverage", File.ReadAllText(_paths.LogFile), StringComparison.Ordinal);
+    }
+
+    private static void AssertLegacyPin(SteamComponentCatalogSnapshot selected)
+    {
+        var actual = Assert.Single(selected.Builds, build => build.Loaders.Contains(PackLoaderKind.LegacyFabric));
+        var expected = Assert.Single(SteamComponentCatalog.Parse(SteamComponentCatalog.EmbeddedJson()).Builds,
+            build => build.Loaders.Contains(PackLoaderKind.LegacyFabric));
+        Assert.Equal(expected.FileName, actual.FileName);
+        Assert.Equal(expected.SizeBytes, actual.SizeBytes);
+        Assert.Equal(expected.Sha256, actual.Sha256);
+        Assert.Equal(expected.CacheFileId, actual.CacheFileId);
+        Assert.Equal(expected.DownloadUris, actual.DownloadUris);
     }
 
     private sealed record Request(Uri Uri, bool NoCache, bool NoStore);

@@ -2,4 +2,5 @@
 tools/PackData/Logging/log4j2.xml -text
 
 # Keep the embedded checked Steam index byte-identical to the publisher profile.
-Program/Resources/steam-components.json -text
+Program/Resources/steam-components.json -text whitespace=cr-at-eol
+Program/Resources/steam-components-v2.json -text whitespace=cr-at-eol

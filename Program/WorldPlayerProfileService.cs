@@ -6,7 +6,7 @@ using System.Text;
 
 namespace Minecraft;
 
-public sealed class WorldPlayerProfileService
+public sealed partial class WorldPlayerProfileService
 {
     private readonly AppPaths _paths;
     private readonly Logger? _logger;
@@ -24,14 +24,17 @@ public sealed class WorldPlayerProfileService
         ProfileFileTransaction.RecoverPending(paths, logger);
     }
 
-    public void PrepareWorldsForLaunch(string worldsRoot, LocalIdentityContext identity)
+    public void PrepareWorldsForLaunch(string worldsRoot, LocalIdentityContext identity,
+        string? buildRelativePath = null, PackRuntimeDescriptor? runtime = null)
     {
         if (!Directory.Exists(worldsRoot))
         {
             return;
         }
 
-        var worldPaths = WorldLocations.Enumerate(worldsRoot)
+        var selectedRoot = string.IsNullOrEmpty(buildRelativePath)
+            ? worldsRoot : WorldLocations.ForBuild(worldsRoot, buildRelativePath);
+        var worldPaths = WorldLocations.Enumerate(selectedRoot)
             .OrderBy(worldPath => worldPath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var failures = new List<string>();
@@ -39,7 +42,7 @@ public sealed class WorldPlayerProfileService
         {
             try
             {
-                ValidateWorldForIdentityPreparation(worldPath, identity);
+                ValidateWorldForIdentityPreparation(worldPath, identity, runtime);
             }
             catch (Exception ex)
             {
@@ -59,6 +62,8 @@ public sealed class WorldPlayerProfileService
         {
             foreach (var worldPath in worldPaths)
             {
+                if (runtime is not null && buildRelativePath is not null)
+                    WorldPlayerStorage.RecordRuntime(worldPath, buildRelativePath, runtime, transaction);
                 PrepareWorldForIdentity(worldPath, identity, "launch", transaction);
             }
             transaction.Commit();
@@ -73,6 +78,8 @@ public sealed class WorldPlayerProfileService
     public string? PrepareWorldForOutgoingTransfer(string worldPath, LocalIdentityContext identity)
     {
         ValidateWorldForIdentityPreparation(worldPath, identity);
+        if (WorldPlayerStorage.Resolve(worldPath, _paths) == WorldPlayerStorage.Legacy)
+            return PrepareLegacyOutgoing(worldPath, identity);
         using var transaction = ProfileFileTransaction.Begin(_paths, "Prepare outgoing world transfer");
         try
         {
@@ -142,6 +149,12 @@ public sealed class WorldPlayerProfileService
         var levelPath = GetLevelPath(worldPath);
         if (!File.Exists(levelPath))
         {
+            return;
+        }
+
+        if (WorldPlayerStorage.Resolve(worldPath, _paths) == WorldPlayerStorage.Legacy)
+        {
+            PrepareLegacyWorld(worldPath, identity, transaction);
             return;
         }
 
@@ -291,13 +304,20 @@ public sealed class WorldPlayerProfileService
         return destinationPath;
     }
 
-    private void ValidateWorldForIdentityPreparation(string worldPath, LocalIdentityContext identity)
+    private void ValidateWorldForIdentityPreparation(string worldPath, LocalIdentityContext identity,
+        PackRuntimeDescriptor? runtime = null)
     {
+        WorldProfilePathGuard.EnsureUnlinked(worldPath, _paths.Root);
         WorldAccessGuard.EnsureClosed(worldPath);
         var levelPath = GetLevelPath(worldPath);
         if (!File.Exists(levelPath)) return;
 
         var level = NbtFile.Read(levelPath);
+        if (WorldPlayerStorage.Resolve(worldPath, _paths, runtime) == WorldPlayerStorage.Legacy)
+        {
+            ValidateLegacyWorld(worldPath, identity);
+            return;
+        }
         var currentPlayer = level.Root.GetCompound("Data")?.GetCompound("Player");
         if (currentPlayer is not null)
         {

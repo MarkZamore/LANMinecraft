@@ -224,7 +224,7 @@
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.UnpinnedOrEscapingArtifact_IsRejected|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.ValidNetworkProfile_SelectsNewPinnedBytesAndWritesCheckedCache|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.InvalidNetwork_PreservesPreviouslyCheckedCacheByteForByte|
-      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_UsesEmbeddedV2WithoutCreatingUnverifiedCache|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_UsesEmbeddedV3AndExactLegacyPinWithoutCreatingUnverifiedCache|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.CorruptCache_IsNotTrustedWhenOffline|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.PlayFindsR2WithoutRestartAndRetiresTheManagedR1Jar|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.OneFreshPlanPinsMeasureMetadataAndApplyEvenWhenR3Appears|
@@ -291,6 +291,32 @@
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.AHardLinkedCacheFileIsRejectedWithoutChangingTheOutsideCopy|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.AReparsedInstallationParentCannotWriteOutsideTheInstallation|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.MalformedPacketsAreRejectedBeforeAnyManagedCodeRuns|
-      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.NativeUpdaterWaitsForTheOuterProcessAndRestartsTheVerifiedReplacementAtItsPortableRoot</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.NativeUpdaterWaitsForTheOuterProcessAndRestartsTheVerifiedReplacementAtItsPortableRoot|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.HistoricalV2CacheIsPreservedButCannotRemoveLegacySupportWhenOffline|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.NetworkV2DowngradeCannotReplaceACheckedV3Cache|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.ExplicitJavaIsPinnedAndPartOfTheRuntimeIdentityWhileOldDescriptorsKeepTheirHash|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.UnpinnedJavaIsRejectedBeforeRuntimePreparation|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.OfficialProfileUsesItsOwnNamespaceAndRetainsLegacyMappingsAndLwjgl|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.AProfileForAnotherMinecraftIsRejectedBeforeWritingAProfile|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.LoggingAndCompatibilityOptionsFollowTheSelectedJava|
+      FullyQualifiedName=Minecraft.Tests.LegacySteamComponentCatalogTests.SourceBuiltLegacyPortHasExactCoverageAndSourceProvenanceWithoutAnInventedAuthorJar|
+      FullyQualifiedName=Minecraft.Tests.LegacySteamComponentCatalogTests.UnreviewedLegacyPortsAreRejected|
+      FullyQualifiedName=Minecraft.Tests.LegacyIdentityRegistryTests.CanonicalNativeNamesRoundTripAndKeepEveryAccountDistinct|
+      FullyQualifiedName=Minecraft.Tests.LegacyIdentityRegistryTests.SameDisplayNameRemainsTwoAccountsAndNicknameChangesDoNotChangeStorageKey|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.LegacyHostNicknameAndHostSwap_PreserveBothCharactersAndNameOwnedData|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.ManifestCannotAssignAnotherSteamAccountsLegacyFileToTheCurrentPlayer|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.StartingAnotherBuild_DoesNotValidateOrRewriteTheLegacyWorld|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.UnknownLegacyHostAndOldNamedProfile_ArePreservedWithoutAssigningTheirInventory|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.MissingUuidWithoutLegacyPlatformEvidence_IsStillRejectedAsCorruption|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.ForwardingAReceivedWorldBeforePlaying_ExportsTheImportedHolderRatherThanThePreviousHost|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.LegacyTransferManifestCoversUnknownFilesAndRejectsTraversalOrChangedBytes|
+      FullyQualifiedName=Minecraft.Tests.LegacyIdentityAdapterPreparationTests.PreAuthlibRuntimePassesLaunchContextWithoutExtractingOrRunningModernAgent|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.AStatsPrefixCannotAssignAnotherAccountsProfileThroughPathNormalization|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.UnassignedLegacyFilesRequireCanonicalPaths|
+      FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.ProfileDirectoryJunctionsAreRejectedBeforeReadingOrChangingAnything|
+      FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AccountAndBuildChangesDuringPlay_DoNotAttributeTheSavedHostToTheCurrentUiAccount|
+      FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AnAdoptedProcessWithoutLaunchIdentity_DoesNotAssignItsHostToTheCurrentAccount|
+      FullyQualifiedName=Minecraft.Tests.LegacyIdentityRegistryTests.SavedUnicodeAndDelimiterNames_AreEncodedWithoutChangingTheOrdinaryRegistry|
+      FullyQualifiedName=Minecraft.Tests.PackInstanceMigrationTests.LegacyClientStatisticsStayPersonalAcrossSourceClaimsUpdatesAndRepeatedPreparation</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

@@ -29,11 +29,14 @@ public sealed record SteamTransportBuild(
     string? AuthorFileName = null,
     string? DeliveryTag = null,
     bool NativeLanUiSuppressed = false,
-    Uri? VerifiedDownloadUri = null)
+    Uri? VerifiedDownloadUri = null,
+    string? UpstreamSourceCommit = null)
 {
-    /// <summary>The original author artifact, kept as provenance rather than a delivery fallback.</summary>
+    /// <summary>The original author artifact or source revision, never a delivery fallback.</summary>
     public Uri UpstreamDownloadUri { get; } = new(
-        $"https://github.com/Kamilhik/e4steam/releases/download/v{Version}/{AuthorFileName ?? FileName}",
+        UpstreamSourceCommit is not null
+            ? $"https://github.com/Kamilhik/e4steam/tree/{UpstreamSourceCommit}"
+            : $"https://github.com/Kamilhik/e4steam/releases/download/v{Version}/{AuthorFileName ?? FileName}",
         UriKind.Absolute);
 
     /// <summary>The single shared delivery source in the launcher's own repository.</summary>

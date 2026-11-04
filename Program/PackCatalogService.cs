@@ -178,6 +178,14 @@ public sealed partial class PackCatalogService
     private readonly Dictionary<string, CatalogPack> _packs = new(StringComparer.OrdinalIgnoreCase);
     private Task? _refresh;
     private readonly object _gate = new();
+    private readonly Func<CancellationToken, CancellationTokenSource>? _indexTimeoutSourceFactory;
+
+    internal PackCatalogService(AppPaths paths, Logger logger, HttpClient httpClient, bool stagedStartup,
+        Func<CancellationToken, CancellationTokenSource> indexTimeoutSourceFactory)
+        : this(paths, logger, httpClient, stagedStartup: stagedStartup)
+    {
+        _indexTimeoutSourceFactory = indexTimeoutSourceFactory;
+    }
 
     public PackCatalogService(AppPaths paths, Logger logger, HttpClient? httpClient = null, CancellationToken startupToken = default,
         bool stagedStartup = false)
