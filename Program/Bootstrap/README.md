@@ -41,3 +41,23 @@ Some platforms suppress those events for this custom-scan mode. The explicitly c
 Each run writes `scan.json`, complete raw stdout/stderr and decoded text into a unique artifacts subdirectory. Only target-matching scan/detection events enter its evidence; unrelated detections do not reject this artifact. `-DisableRemediation` suppresses custom-scan detection history/events, so empty history alone is never proof of a clean scan. It also leaves the file available for investigation if the custom scanner reports a detection; real-time protection remains enabled.
 
 The result applies to the recorded EXE hash and current engine/signatures. If CI rebuilds different bytes, scan those bytes too. A passing scan does not guarantee that another machine or a later protection update will make the same decision.
+
+## Exact CI candidate fallback
+
+Unavailable hosted Defender remains **Unknown**. CI creates/verifies deltas, retains `portable-host-candidate-<run ID>-<attempt>` as an Actions artifact, then fails with `latest` unchanged. The artifact contains only release assets, original scan JSON and repository/commit/version/run metadata. Detections and nonzero native scan results cannot be locally promoted.
+
+From the trusted checkout, verify the approved run and version:
+
+```powershell
+pwsh -NoProfile -File Program/Bootstrap/Publish-VerifiedCandidate.ps1 `
+    -Repository MarkZamore/LANMinecraft -ExpectedCommit <40-character-commit> `
+    -ExpectedRelease 444 -RunId <GitHub-run-ID> -RunAttempt 1
+```
+
+The default performs verification/scanning without changing a release. Add explicit `-Publish` when publication is authorized. Keep `main` at the approved commit until publication completes; a changed head or newer/conflicting latest release is rejected. Actions concurrency does not serialize a separate local publisher, so coordinate this publication window.
+
+The gate verifies authenticated run/repository/main-push/workflow identity and successful test/build/delta/content/upload steps. It downloads the official immutable artifact ZIP and checks GitHub's SHA256 digest, bounded safe paths, metadata, outer PE version/commit, and every EXE/manifest/patch hash and size. Optional `-CandidateDirectory` compares an existing extracted download byte-for-byte with that official artifact. Earlier local QA bytes or antivirus evidence cannot substitute for CI bytes.
+
+Actual active-Defender scanning precedes the shared publisher. Verified release files stay locked during upload, `update.json` goes last, and proof/system logs are never public release assets. The gate runs no tests/builds and changes no protection settings or privileges.
+
+Owned staging lives in `artifacts/agent-runs/verify-candidate-*` with `RUN.json`. ZIPs and failed/published payloads are removed in `finally`, retaining compact proof. Verified unpublished bytes remain for explicit review for at most 24 hours; the next verification for the same task removes previous completed payload staging before creating another copy.
