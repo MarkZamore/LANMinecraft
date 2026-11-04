@@ -104,12 +104,11 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         String textureUrlCheckerClasses = property(
             "textureUrlCheckerClasses",
             TEXTURE_URL_CHECKER);
-        // The UUID hooks and the skin hooks are no longer one thing. The UUID
-        // ones patch Minecraft's own classes and so need the runtime's
-        // mappings; the skin ones are all in com.mojang.authlib and need none.
-        // Where the mappings are absent - every Fabric runtime, since Fabric
-        // ships intermediary rather than TSRG2 - the launcher switches these
-        // off and the skin hooks still run.
+        // Login compatibility and the mapped PlayerInfo secure-skin selector
+        // are independent. Authlib can supply a registered local skin while
+        // PlayerInfo still rejects it for a remote player, whose lookup always
+        // requires secure textures. Keep that verified family when a different
+        // login hook is unavailable, including intermediary runtimes.
         //
         // Switched off by a flag rather than by emptying the alias lists,
         // because an empty property falls back to the built-in defaults, and
@@ -119,7 +118,8 @@ public final class PortableIdentityTransformer implements ClassFileTransformer {
         // quietly doing nothing.
         boolean identityHooks = !"false".equals(property("identityHooksEnabled", "true"));
         boolean loginClass = identityHooks && contains(listeners, className);
-        boolean playerInfoClass = identityHooks && contains(playerInfoClasses, className);
+        boolean playerInfoSkins = "true".equals(property("playerInfoSkinEnabled", Boolean.toString(identityHooks)));
+        boolean playerInfoClass = playerInfoSkins && contains(playerInfoClasses, className);
         boolean textureUrlCheckerClass = contains(textureUrlCheckerClasses, className);
         boolean gameProfileClass = contains(property("gameProfileClasses", GAME_PROFILE), className);
         boolean skinManagerClass = "true".equals(property("modernSkinLookupEnabled", "false")) &&

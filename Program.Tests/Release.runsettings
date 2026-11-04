@@ -64,6 +64,11 @@
       FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.TheDependencyAudit_IsPartOfEveryRestore|
       FullyQualifiedName=Minecraft.Tests.PortabilityTests.EveryPathTheLauncherKnows_IsUnderTheRoot|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.ANeoForgeRuntimeWithNoMappingsOfItsOwn_IsReadFromMojangsAlone|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.FullConfiguration_UsesTheSameIndependentPlayerInfoSkinFamily|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterPlayerInfoSkinTests.LoginFallback_RetainsIndependentlyMappedPlayerInfoSkins|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterPlayerInfoSkinTests.PreflightFallback_ReloadsOptionalMappingsRatherThanDiscardingPlayerInfoSkins|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterPlayerInfoSkinTests.IncompleteNativeSkinFamily_LeavesAuthlibEnabledWithoutGuessingAliases|
+      FullyQualifiedName=Minecraft.Tests.IdentityAdapterPlayerInfoSkinTests.AbsentActualPlayerInfoClass_DisablesOnlyTheOptionalSkinSelectionFamily|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterMappingServiceTests.PreflightSupport_ResolvesSiblingSrgWithoutTurningItIntoATransformTarget|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterPreflightClassSourcesTests.SplitNativeArchives_RequireTheirExactExplicitSupportingClasses|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterTransportCacheTests.SupportingClassSourceChange_InvalidatesEvenWithUnchangedSizeAndTimestamp|
