@@ -64,7 +64,7 @@ public sealed class PeerArrivalNotifier(Func<DateTimeOffset>? clock = null)
             // about a launcher being open. The second becomes a real peer a few
             // seconds later, and that is the moment worth announcing.
             var inLauncher = !peer.IsOutsideLauncher && peer.IsPresenceKnown;
-            var build = peer.IsMinecraftRunning ? (peer.PackName ?? "").Trim() : "";
+            var build = peer.IsMinecraftRunning ? peer.PackIdentity.Trim() : "";
             var known = _seen.TryGetValue(id, out var remembered);
             var seen = known ? remembered : Seen.Never;
 
@@ -82,13 +82,13 @@ public sealed class PeerArrivalNotifier(Func<DateTimeOffset>? clock = null)
             // The build a friend has merely chosen is published the whole time
             // they are idle, so what counts is the one they are actually in.
             var starting = !quiet && build.Length > 0 &&
-                           !string.Equals(build, seen.Build, StringComparison.Ordinal);
+                           !string.Equals(build, seen.Build, StringComparison.OrdinalIgnoreCase);
 
             if (arriving) seen = seen with { Announced = now };
             // Somebody first seen already inside a build is one piece of news
             // and not two: naming the build says everything the bare arrival
             // would have said, and more.
-            if (starting) notices.Add(new PeerNotice(peer.PeerName, EnteredBuildPrefix + build));
+            if (starting) notices.Add(new PeerNotice(peer.PeerName, EnteredBuildPrefix + peer.DisplayPackName.Trim()));
             else if (arriving) notices.Add(new PeerNotice(peer.PeerName, EnteredLauncher));
 
             _seen[id] = seen with { InLauncher = inLauncher, Build = build };

@@ -4,7 +4,7 @@ using System.Text;
 
 namespace Minecraft;
 
-/// <summary>One global final title policy, using the existing trimmed instance-folder name.</summary>
+/// <summary>One global final title policy, resolved from the installation's verified display names.</summary>
 internal sealed record WindowTitleSettings(bool Enabled, string Text, string ContentSha256)
 {
     internal const string PolicyVersion = "pack-name-v1";
@@ -17,7 +17,7 @@ internal sealed record WindowTitleSettings(bool Enabled, string Text, string Con
         var packName = Path.GetFileName(Path.GetFullPath(gameDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Trim();
         if (string.IsNullOrWhiteSpace(packName)) packName = "Minecraft";
-        packName = PackDisplayName.CorrectCase(packName);
+        packName = PackDisplayNames.ResolveDirectory(packDirectory, packName);
         var fingerprint = Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(PolicyVersion + "\0" + packName))).ToLowerInvariant();
         return new WindowTitleSettings(true, packName, fingerprint);

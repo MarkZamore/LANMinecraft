@@ -9,10 +9,12 @@ import minecraft.portable.identity.PortableLanAutoPublishTransformer;
 public final class LanAutoPublishProbe {
     private static final String TARGET = "LanAutoPublishProbe$ShareScreen";
     private static boolean modern;
+    private static boolean queuedTell;
     private static Class<?> patchedScreen;
 
     public static void main(String[] args) throws Exception {
         modern = args[0].equals("modern");
+        queuedTell = args[0].equals("queued-tell");
         configure();
         byte[] original;
         try (InputStream stream = LanAutoPublishProbe.class.getResourceAsStream("/" + TARGET + ".class")) {
@@ -51,6 +53,7 @@ public final class LanAutoPublishProbe {
         assertNativeDistancesUntouched(server);
         check(client.gui.current == screen && client.closes == 0, "screen closed before init lifecycle completed");
         check(client.queue.size() == 1, "screen close was not deferred exactly once");
+        check(!queuedTell || client.tellCalls == 1, "mapped tell did not enqueue the screen close");
         check(client.titles == 1 && client.gui.chat.messages == 1, "normal publication feedback lost");
         check(server.guestMode == GameType.CREATIVE && !server.guestCommands,
             "publication altered guest settings");
@@ -166,6 +169,10 @@ public final class LanAutoPublishProbe {
             property("minecraftScheduleMethods", "schedule");
             property("guiHudFields", "hud");
             property("chatAddMessageMethods", "addClientSystemMessage");
+        } else if (queuedTell) {
+            // Minecraft1.21.1: execute() runs inline on the client thread;
+            // BlockableEventLoop.tell(Runnable) always enqueues the task.
+            property("minecraftScheduleMethods", "tell");
         }
     }
 
@@ -273,6 +280,7 @@ public final class LanAutoPublishProbe {
         public Queue<Runnable> queue = new ArrayDeque<>();
         public int closes;
         public int titles;
+        public int tellCalls;
         public static Minecraft getInstance() { return INSTANCE; }
         public Server getSingleplayerServer() { return server; }
         public void updateTitle() { titles++; }
@@ -283,10 +291,11 @@ public final class LanAutoPublishProbe {
         }
         @Override public void execute(Runnable task) {
             // 26.2's executor can run on the render thread immediately; schedule must be used there.
-            if (modern) task.run();
+            if (modern || queuedTell) task.run();
             else queue.add(task);
         }
         public void schedule(Runnable task) { queue.add(task); }
+        public void tell(Runnable task) { tellCalls++; queue.add(task); }
         public void drain() { while (!queue.isEmpty()) queue.remove().run(); }
     }
 

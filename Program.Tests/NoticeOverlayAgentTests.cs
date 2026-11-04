@@ -13,7 +13,8 @@ public sealed class NoticeOverlayAgentTests
         var manifest = Read(jar, "META-INF/MANIFEST.MF");
         Assert.Contains("Premain-Class:", manifest, StringComparison.Ordinal);
         Assert.DoesNotContain(jar.Entries, entry => entry.FullName.StartsWith("net/minecraft/", StringComparison.Ordinal));
-        Assert.Contains(jar.Entries, entry => entry.FullName == "org/objectweb/asm/ClassReader.class");
+        Assert.DoesNotContain(jar.Entries, entry => entry.FullName.StartsWith("org/objectweb/asm/", StringComparison.Ordinal));
+        Assert.Contains(jar.Entries, entry => entry.FullName == "minecraft/portable/notice/internal/asm/ClassReader.class");
         var hooks = Assert.Single(jar.Entries, entry => entry.FullName.EndsWith("hooks.jar", StringComparison.Ordinal));
         using var nested = hooks.Open();
         using var copy = new MemoryStream();
@@ -21,6 +22,7 @@ public sealed class NoticeOverlayAgentTests
         copy.Position = 0;
         using var bootstrap = new ZipArchive(copy);
         Assert.DoesNotContain(bootstrap.Entries, entry => entry.FullName.StartsWith("org/objectweb/asm/", StringComparison.Ordinal));
+        Assert.DoesNotContain(bootstrap.Entries, entry => entry.FullName.StartsWith("minecraft/portable/notice/internal/asm/", StringComparison.Ordinal));
         foreach (var archive in new[] { jar, bootstrap })
         foreach (var entry in archive.Entries.Where(entry => entry.FullName.EndsWith(".class", StringComparison.Ordinal)))
         {

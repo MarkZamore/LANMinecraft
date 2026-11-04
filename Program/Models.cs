@@ -90,6 +90,7 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     private string _minecraftUuid = "";
     private string _packHash = "";
     private string _packName = "";
+    private PackDisplayNames? _displayNames;
     private int _release;
     private bool _isOutsideLauncher;
     private string _localPackHash = "";
@@ -143,7 +144,22 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     public string PackName
     {
         get => PackDisplayName.CorrectCase(_packName);
-        set { if (Set(ref _packName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
+        set { if (Set(ref _packName, value ?? "")) RefreshPackDisplayName(); }
+    }
+
+    /// <summary>The peer's unmodified wire identity, never a display title.</summary>
+    public string PackIdentity => _packName;
+    public string DisplayPackName => _displayNames?.Resolve(_packName, PackName) ?? PackDisplayName.For(_packName, PackName);
+    public PackDisplayNames? DisplayNames
+    {
+        get => _displayNames;
+        set { if (!ReferenceEquals(_displayNames, value)) { _displayNames = value; RefreshPackDisplayName(); } }
+    }
+    public void RefreshPackDisplayName()
+    {
+        OnPropertyChanged(nameof(DisplayPackName));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(DisplayName));
     }
 
     /// <summary>Which release of the launcher put them there, or 0 if unsaid.</summary>
@@ -306,11 +322,11 @@ public sealed class PeerViewModel : INotifyPropertyChanged
             {
                 return string.IsNullOrWhiteSpace(PackName)
                     ? On("В другой игре")
-                    : On(PackName.Trim());
+                    : On(DisplayPackName.Trim());
             }
             if (!IsPresenceKnown) return "на связи, данные Steam недоступны";
             if (!IsCompatible) return On("нужно обновить лаунчер");
-            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return On(PackName.Trim());
+            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return On(DisplayPackName.Trim());
             return Release > 0 ? $"В лаунчере {Release}" : "В лаунчере";
         }
     }
@@ -380,21 +396,22 @@ public sealed class PeerViewModel : INotifyPropertyChanged
     }
 }
 
-public sealed class WorldViewModel
+public sealed class WorldViewModel : INotifyPropertyChanged
 {
     public required string Name { get; init; }
     public required string Path { get; init; }
     public required string BuildName { get; init; }
     /// <summary>The build folder this world records, used to offer it only there.</summary>
     public string BuildRelativePath { get; init; } = "";
-    public string DisplayName => $"{Name} ({PackDisplayName.For(BuildRelativePath, BuildName)})";
+    public PackDisplayNames? DisplayNames { get; init; }
+    public string DisplayName => $"{Name} ({DisplayNames?.Resolve(string.IsNullOrWhiteSpace(BuildRelativePath) ? BuildName : BuildRelativePath, BuildName) ?? PackDisplayName.For(BuildRelativePath, BuildName)})";
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public void RefreshPackDisplayName() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
 }
 
 public static class PackDisplayName
 {
-    public static string CorrectCase(string name) =>
-        name.Equals("All The Mods 9 Modified", StringComparison.OrdinalIgnoreCase)
-            ? "All The Mods 9 Modified" : name;
+    public static string CorrectCase(string name) => PackDisplayNames.CorrectFallbackCase(name);
 
     public static string For(string relativePath, string name)
     {

@@ -18,8 +18,13 @@ public sealed class IdentityAdapterContentBoundaryTests
             using (var zip = ZipFile.OpenRead(adapter))
                 Assert.DoesNotContain(zip.Entries, entry => entry.FullName.EndsWith("/PortableMenuRegistrationTransformer.class", StringComparison.Ordinal));
             var fixture = RepositoryFile("Program.Tests", "Fixtures", "AgentContentBoundaryProbe.java");
-            await Run("javac", "--release", "17", "-cp", adapter, "-d", root, fixture);
-            var text = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + adapter, "AgentContentBoundaryProbe");
+            // The fixture generates bytecode with its own pinned ASM. Runtime
+            // agent internals are private and are not a test compile dependency.
+            var classPath = string.Join(Path.PathSeparator, adapter,
+                RepositoryFile("Program", "IdentityAdapters", "Common", "lib", "asm-9.8.jar"),
+                RepositoryFile("Program", "IdentityAdapters", "Common", "lib", "asm-tree-9.8.jar"));
+            await Run("javac", "--release", "17", "-cp", classPath, "-d", root, fixture);
+            var text = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath, "AgentContentBoundaryProbe");
             Assert.Contains("Agent content boundary passed: registrations=11, unchangedMenuChecks=22.", text, StringComparison.Ordinal);
         }
         finally { TempTree.Delete(root); }

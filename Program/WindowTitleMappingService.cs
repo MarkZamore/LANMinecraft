@@ -6,8 +6,8 @@ using System.Text;
 namespace Minecraft;
 
 /// <summary>
-/// Finds the title method independently of optional UUID/LAN mappings. The 26.2
-/// runtime is named even when the older adapter's core mapping path falls back.
+/// Verifies the native title factory independently of optional UUID/LAN hooks.
+/// Named clients need no mappings; remapped clients use their own mapping files.
 /// </summary>
 internal static class WindowTitleMappingService
 {
@@ -19,28 +19,47 @@ internal static class WindowTitleMappingService
     {
         var properties = new Dictionary<string, string>(StringComparer.Ordinal) { ["windowTitleEnabled"] = "false" };
         if (!settings.Enabled) return new IdentityAdapterConfiguration(string.Empty, properties, []);
-        foreach (var path in CandidateJars(runtime).Distinct(StringComparer.OrdinalIgnoreCase))
+        var paths = CandidateJars(runtime).Distinct(StringComparer.OrdinalIgnoreCase).Where(File.Exists).ToArray();
+        foreach (var path in paths)
         {
-            if (!File.Exists(path)) continue;
             using var archive = ZipFile.OpenRead(path);
             var entry = archive.GetEntry(MinecraftClass + ".class");
             if (entry is null) continue;
-            if (entry.Length is <= 0 or > MaximumClassBytes)
-                throw new InvalidDataException("Minecraft title class exceeds the supported size.");
-            using var stream = entry.Open();
-            var bytes = new byte[(int)entry.Length];
-            stream.ReadExactly(bytes);
-            var method = ReadTitleMethod(bytes);
-            properties["windowTitleEnabled"] = "true";
-            properties["windowTitleText"] = settings.Text;
-            properties["windowTitleClasses"] = MinecraftClass;
-            properties["createTitleMethods"] = method;
-            properties["createTitleDescriptors"] = TitleDescriptor;
-            return new IdentityAdapterConfiguration(string.Empty, properties,
-                [new IdentityAdapterTarget(Path.GetFullPath(path), MinecraftClass)]);
+            var method = ReadTitleMethod(entry, MinecraftClass, ["createTitle", "m_91270_"]);
+            return Configuration(path, MinecraftClass, MinecraftClass, method);
+        }
+        if (paths.Length != 0 && IdentityAdapterMappingService.FindMappedMethod(
+                runtime, MinecraftClass, "createTitle", TitleDescriptor) is { } mapped)
+        {
+            var classes = new[] { mapped.RuntimeClass, mapped.SourceClass }.Distinct(StringComparer.Ordinal).ToArray();
+            var methods = new[] { mapped.RuntimeMethod, mapped.SourceMethod }.Distinct(StringComparer.Ordinal).ToArray();
+            foreach (var path in paths)
+            {
+                using var archive = ZipFile.OpenRead(path);
+                foreach (var name in classes)
+                {
+                    if (archive.GetEntry(name + ".class") is not { } entry) continue;
+                    // The runtime uses intermediary/SRG while the pinned source
+                    // JAR can still be obfuscated. Verify the actual source class
+                    // and factory; preflight transforms that exact native target.
+                    _ = ReadTitleMethod(entry, name, methods);
+                    return Configuration(path, name, string.Join(",", classes), string.Join(",", methods));
+                }
+            }
         }
         throw new NotSupportedException($"No verified window title method for Minecraft {runtime.Descriptor.MinecraftVersion} " +
             $"{runtime.Descriptor.Loader.Type} {runtime.Descriptor.Loader.Version}.");
+
+        IdentityAdapterConfiguration Configuration(string path, string sourceClass, string aliases, string methods)
+        {
+            properties["windowTitleEnabled"] = "true";
+            properties["windowTitleText"] = settings.Text;
+            properties["windowTitleClasses"] = aliases;
+            properties["createTitleMethods"] = methods;
+            properties["createTitleDescriptors"] = TitleDescriptor;
+            return new IdentityAdapterConfiguration(string.Empty, properties,
+                [new IdentityAdapterTarget(Path.GetFullPath(path), sourceClass)]);
+        }
     }
 
     private static IEnumerable<string> CandidateJars(PreparedRuntime runtime)
@@ -84,10 +103,15 @@ internal static class WindowTitleMappingService
         yield return runtime.ClientJarPath;
     }
 
-    private static string ReadTitleMethod(byte[] bytes)
+    private static string ReadTitleMethod(ZipArchiveEntry entry, string className, string[] methods)
     {
+        if (entry.Length is <= 0 or > MaximumClassBytes)
+            throw new InvalidDataException("Minecraft title class exceeds the supported size.");
+        using var stream = entry.Open();
+        var bytes = new byte[(int)entry.Length];
+        stream.ReadExactly(bytes);
         var reader = new ClassFileReader(bytes);
-        return reader.ReadTitleMethod();
+        return reader.ReadTitleMethod(className, methods);
     }
 
     /// <summary>A bounded class-header/method-table read, not a new mapping database.</summary>
@@ -96,7 +120,7 @@ internal static class WindowTitleMappingService
         private readonly ReadOnlySpan<byte> _data = data;
         private int _offset;
 
-        internal string ReadTitleMethod()
+        internal string ReadTitleMethod(string className, string[] supportedMethods)
         {
             if (U4() != 0xCAFEBABE) throw InvalidClass();
             Skip(4); // minor and major versions; ASM preflight verifies runtime support.
@@ -125,7 +149,7 @@ internal static class WindowTitleMappingService
             }
             _ = U2(); // access flags
             var thisClass = U2();
-            if (thisClass >= count || classes[thisClass] >= count || utf8[classes[thisClass]] != MinecraftClass)
+            if (thisClass >= count || classes[thisClass] >= count || utf8[classes[thisClass]] != className)
                 throw InvalidClass();
             _ = U2(); // superclass
             Skip(U2() * 2); // interfaces
@@ -148,7 +172,7 @@ internal static class WindowTitleMappingService
                     hasCode |= utf8[type] == "Code";
                     SkipLength(U4());
                 }
-                if (utf8[name] is not ("createTitle" or "m_91270_") || utf8[descriptor] != TitleDescriptor ||
+                if (!supportedMethods.Contains(utf8[name], StringComparer.Ordinal) || utf8[descriptor] != TitleDescriptor ||
                     (flags & (0x0008 | 0x0100 | 0x0400)) != 0 || !hasCode) continue;
                 if (title is not null) throw new InvalidDataException("Minecraft has ambiguous window title methods.");
                 title = utf8[name];

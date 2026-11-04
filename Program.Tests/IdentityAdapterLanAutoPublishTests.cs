@@ -23,7 +23,7 @@ public sealed class IdentityAdapterLanAutoPublishTests
                 Path.Combine(common, "PortableLanAutoPublishHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishTransformer.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublishProbe.java"));
-            foreach (var mode in new[] { "modern", "legacy" })
+            foreach (var mode in new[] { "modern", "legacy", "queued-tell" })
             {
                 var output = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath,
                     "LanAutoPublishProbe", mode);

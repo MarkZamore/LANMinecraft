@@ -42,9 +42,11 @@ if (-not (Test-Path -LiteralPath $adapterRoot -PathType Container)) {
 $manifest = Join-Path $commonRoot "MANIFEST.MF"
 $libRoot = Join-Path $commonRoot "lib"
 $asmLicense = Join-Path $libRoot "LICENSE.asm.txt"
-# The transformers run on the bootstrap class loader, which cannot reach the
-# module-path ASM that NeoForge loads, so ASM is merged into the agent jar.
-# JDK 25 removed jdk.internal.org.objectweb.asm, hence the real library.
+# The transformers must carry their pinned ASM independently of whichever ASM
+# a loader supplies. JDK 25 removed jdk.internal.org.objectweb.asm. The build
+# relocates this library into a private package before merging it into the agent:
+# -javaagent also exposes its JAR to the system loader, and Fabric 0.19.5 rejects
+# a second public org/objectweb/asm copy even when only hooks go on bootstrap.
 $asmArtifacts = @(
     [pscustomobject]@{
         Name   = "asm-9.8.jar"
@@ -130,6 +132,11 @@ $javaFiles = @(
     Get-ChildItem -LiteralPath $adapterRoot -Recurse -File -Filter "*.java"
 ) | Sort-Object FullName | ForEach-Object FullName
 if ($javaFiles.Count -eq 0) { throw "Identity adapter Java sources were not found." }
+$relocatorSource = Join-Path $adaptersRoot "BuildTools\RelocateAsm.java"
+if (-not (Test-Path -LiteralPath $relocatorSource -PathType Leaf)) {
+    throw "Identity adapter ASM relocator was not found: $relocatorSource"
+}
+$java = Find-JavaTool "java"
 
 try {
     New-Item -ItemType Directory -Path $classes -Force | Out-Null
@@ -176,6 +183,13 @@ try {
     $licenseTarget = Join-Path $asmClasses "META-INF\LICENSE.asm.txt"
     New-Item -ItemType Directory -Path (Split-Path -Parent $licenseTarget) -Force | Out-Null
     Copy-Item -LiteralPath $asmLicense -Destination $licenseTarget -Force
+
+    $buildTools = Join-Path $stageRoot "build-tools"
+    New-Item -ItemType Directory -Path $buildTools -Force | Out-Null
+    & $javac --release 17 -encoding UTF-8 -d $buildTools $relocatorSource
+    if ($LASTEXITCODE -ne 0) { throw "Identity adapter ASM relocator compilation failed with exit code $LASTEXITCODE." }
+    & $java -Xverify:all -cp $buildTools RelocateAsm $classes $asmClasses
+    if ($LASTEXITCODE -ne 0) { throw "Identity adapter ASM relocation failed with exit code $LASTEXITCODE." }
 
     # A second jar holding only the classes the patched game calls, and nothing
     # else. The agent puts this one on the bootstrap search path so transformed

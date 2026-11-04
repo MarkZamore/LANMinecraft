@@ -138,6 +138,7 @@
   <ItemGroup>
     <!-- Offline fallback copied from the published GitHub pack-catalog index. -->
     <EmbeddedResource Include="LibrarySeed\catalog.json" LogicalName="Minecraft.Library.catalog.json" />
+    <EmbeddedResource Include="Resources\pack-display-names.json" LogicalName="Minecraft.PackDisplayNames.json" />
     <EmbeddedResource Include="LibrarySeed\*.zip" LogicalName="Minecraft.Library.%(Filename)%(Extension)" />
     <Compile Remove="Build\**" />
     <Compile Remove="Patch\**" />

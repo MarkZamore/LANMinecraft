@@ -70,10 +70,12 @@ $env:JAVA_HOME = 'C:\Tools\jdk-25.0.2'
 .\Program\NoticeOverlay\Test-NoticeOverlay.ps1
 ```
 
-The build checks the vendored ASM 9.8 hashes, compiles with `--release 8`, and
-packages ASM only on the agent/system class path. Only the small hooks/render
-JAR is appended to the bootstrap search path, avoiding interference with mod
-loaders' ASM. The audit checks Java 8 class versions, package boundaries, real
+The build checks the vendored ASM 9.8 hashes and compiles runtime classes with
+`--release 8`. Its ASM is relocated into `minecraft.portable.notice.internal.asm`,
+separately from the identity agent and the loader's public ASM. Strict Fabric
+classpath validation therefore sees only the loader's `org.objectweb.asm`.
+The build-only Java 17 relocator is not packaged. Only the small hooks/render
+JAR is appended to the bootstrap search path. The audit checks Java 8 class versions, package boundaries, real
 transformation of both presentation signatures, rejection of native methods,
 Unicode/expiry/bounds, and stable output on an unchanged build. Native OpenGL
 smoke tests additionally exercise actual installed LWJGL libraries, fullscreen
