@@ -73,6 +73,15 @@
         "repo": "Awakening-Of-The-Titans",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "better-than-wolves",
+      "relativePath": "Better Than Wolves",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Better-Than-Wolves",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
