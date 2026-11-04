@@ -1,26 +1,32 @@
-# Проверка обновления пересобранной ATM9
+# Проверка миграции файлов сборки
 
-Стенд использует производственные `PortablePackSyncService` и `PackInstanceService`. Старые canonical/instance читаются только по путям ownership-снимков; личные миры и настройки не копируются. Файлы мира, playerdata, options и screenshot в стенде являются синтетическими метками, а не резервной копией.
+Общий стенд использует производственные `PortablePackSyncService` и `PackInstanceService`. Выбор сборки, GitHub-источника, платформы и исторических helper-файлов принадлежит её репозиторию: каждый запуск требует `--contract` с проверенным `tools/qa/launcher-runtime-contract.json`. В инструменте нет списка сборок, стандартной сборки или правил по mod ID.
 
-Нужны Windows, .NET 10, прежняя локальная ATM9 и новая поставка после `generate_manifest.py stage`. Сборки .NET и Java не запускаются одновременно с проверками лаунчера.
+Старые canonical/instance читаются только по путям ownership-снимков; личные миры и настройки не копируются. Файлы мира, playerdata, options и screenshot в стенде являются синтетическими метками, а не резервной копией.
+
+Самостоятельная пользовательская сборка не обязана иметь GitHub-источник или регистрацию в каталоге. Контракт с `source: null` подходит для общего Forge runtime QA. Этот стенд отдельно проверяет обновление из release assets, поэтому при отсутствии источника он сразу сообщает, что нужен update-source; он не подставляет чужой репозиторий.
+
+Нужны Windows, .NET 10, исходная установленная сборка с ownership-снимками и новая поставка после её собственного `generate_manifest.py stage`. Сборки .NET и Java согласуются с владельцем текущей задачи. При уже собранном актуальном лаунчере `-p:BuildProjectReferences=false` не собирает `Program` повторно. Команда сборки инструмента не запускает проверки или игровые процессы.
 
 ```powershell
 $env:JAVA_HOME = 'C:\Tools\jdk-25.0.2'
-dotnet run --project tools/PackMigrationQa -p:SkipPortableIdentityAdapter=true -- . artifacts/atm9-original/dist
-# Вторая независимая копия имитирует старую установку без ownership-файлов.
-dotnet run --project tools/PackMigrationQa -p:SkipPortableIdentityAdapter=true -- . artifacts/atm9-original/dist --legacy
-
-# Отдельная ATM9 Modified: собственные исходный профиль и источник поставки.
-dotnet run --project tools/PackMigrationQa -p:SkipPortableIdentityAdapter=true -- . artifacts/atm9-modified/dist --pack "All the Mods 9 Modified" --source-repo All-The-Mods-9-Modified
-dotnet run --project tools/PackMigrationQa -p:SkipPortableIdentityAdapter=true -- . artifacts/atm9-modified/dist --pack "All the Mods 9 Modified" --source-repo All-The-Mods-9-Modified --legacy
+dotnet build tools/PackMigrationQa -p:BuildProjectReferences=false
+$qa = 'tools/PackMigrationQa/bin/Debug/net10.0-windows/win-x64/PackMigrationQa.dll'
+dotnet $qa <workspace> <pack-dist> --contract <pack-repository>/tools/qa/launcher-runtime-contract.json
+# Для старой установки без ownership-файлов нужна отдельная текущая копия:
+dotnet $qa <workspace> <pack-dist> --legacy --contract <pack-repository>/tools/qa/launcher-runtime-contract.json
 ```
 
-Без параметров сохраняется сценарий оригинальной ATM9. `--pack` выбирает относительный путь старой canonical/instance и независимой копии; для другого профиля `--source-repo` обязателен, чтобы случайно не проверить его против оригинала. `--source-repo` закрепляет единственный допустимый GitHub-источник под владельцем `MarkZamore` с тегом `pack-latest`. Реальные сетевые запросы не выполняются. Отчёт сохраняет профиль и источник, а `history-proof` повторно использует их; старые отчёты без этих полей по-прежнему относятся к оригинальной ATM9.
+Результаты по умолчанию сохраняются в новом `artifacts/agent-runs/pack-migration/<guid>` внутри переданного workspace. Третий позиционный аргумент может явно выбрать новый путь под `artifacts/agent-runs`; существующие каталоги и пути через ссылки отклоняются. Перед созданием стенда агент выполняет общий `python tools/workspace_storage.py --check` и согласует размер с другими активными стендами. `RUN.json` фиксирует владельца, оценку временного размера, необходимые результаты и срок удаления через 24 часа. Установка остаётся только для явно запланированных `history-proof`/runtime-этапов; после всей цепочки владелец удаляет восстановимые копии и оставляет компактные результаты. Не создавайте второй полный стенд, пока предыдущая копия не убрана или не нужна для согласованного сравнения.
 
-При запуске DLL из отдельного worktree первый аргумент всё равно указывает корень прежней установки. Положение самой DLL не выбирает источник ownership-снимка. Сборка только этого инструмента с `-p:BuildProjectReferences=false` использует уже собранный актуальный лаунчер без повторной сборки `Program`.
+Контракт связывается с отчётом по SHA256. `report.json` содержит stable ID, фактический путь сборки, её источник и платформу; установка не выводится из положения DLL. Настоящие сетевые запросы не выполняются: HTTP-обработчик подставляет локальные release assets по объявленному GitHub URL. Проверяются обрыв после первого байта, сохранность старой ревизии до apply, persistent pending после прерванной записи, отказ offline fallback и подготовки instance, повторная попытка, SHA256/размер активных файлов, удаление подтверждённых исторических файлов, исключение неизвестных модов/скриптов из активного состава, сохранность меток и идемпотентность. Исходный managed-снимок проверяется повторно в конце.
 
-HTTP-обработчик подставляет локальные release assets по штатным GitHub URL без сети. Проверяются обрыв после первого полученного байта, сохранность старой ревизии до apply, persistent pending после прерванной записи, отказ offline fallback и подготовки instance, повторная попытка, SHA256/размер всех активных файлов, удаление подтверждённых исторических файлов, исключение неизвестных модов/скриптов из активного состава, сохранность меток и идемпотентность. Повторный sync запрашивает только manifest. Исходный managed-снимок проверяется повторно в конце.
+Для объявленной в контракте проверки прежних helper-файлов:
 
-Результаты, независимая установка и snapshot сохраняются в новом каталоге `artifacts/atm9-original/qa-migration` для оригинала либо `artifacts/pack-migration/qa-migration` для другого профиля. Третий позиционный аргумент задаёт новый каталог внутри `artifacts` явно. В существующий каталог стенд не пишет. Успешная миграция файлов сама по себе не подтверждает запуск Minecraft или подключения через Steam: эти проверки выполняются отдельно на той же ревизии.
+```powershell
+dotnet $qa history-proof <migration-installation> <pack-dist> <historical-manifest> <historical-payload-root> --contract <pack-repository>/tools/qa/launcher-runtime-contract.json
+```
 
-Для дополнительной проверки прежних custom-helper JAR используйте `history-proof <migration-installation> <dist> <historical-manifest> <historical-payload-root>` через собранную DLL стенда. Команда принимает только независимую установку с прежним PASS-отчётом внутри `artifacts`. Она сверяет три реальных старых helper JAR с опубликованным историческим manifest, добавляет их исключительно в QA canonical/instance и подтверждает удаление штатным sync без загрузки payload. `history-proof-report.json` содержит происхождение, SHA256, размеры, результат очистки и повторного запуска. Архив источника не изменяется.
+Команда принимает только независимую установку с прежним PASS-отчётом внутри `artifacts`. В отчёте должны явно совпасть путь сборки и источник; если сохранён SHA контракта, он также обязан совпасть. Старые отчёты без identity не трактуются как какая-либо известная сборка. Каждый `retiredHelpers.filePrefix` и `expectedCount` берётся из pack-owned контракта, сверяется с опубликованным историческим manifest и не может повторно выбрать тот же файл. Найденные файлы проверяются по реальным SHA/размерам, добавляются только в QA canonical/instance и должны удалиться штатным sync без payload-загрузок. Архив источника не изменяется. `history-proof-report.json` сохраняет происхождение, выбранные хеши, контракт и результаты повторного sync.
+
+Это проверка файловой миграции. Она не подтверждает загрузку клиента/мира, контентные механики, скины или настоящее Steam-соединение. Такие сценарии и их критерии приёмки находятся в репозитории соответствующей сборки.

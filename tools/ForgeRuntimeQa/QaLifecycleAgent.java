@@ -12,21 +12,27 @@ import java.util.function.Function;
 /** Test-only native lifecycle/observation requests. No bytecode transformation. */
 public final class QaLifecycleAgent {
     private final Path root, game, evidence, ready, stop;
-    private final String freshWorld;
+    private final String freshWorld, worldPrefix;
     private boolean created, modsRecorded;
     private int menuSamples;
 
     private QaLifecycleAgent() throws Exception {
         root = Path.of(required("root")).toRealPath();
         boolean underArtifacts = false;
-        for (Path component : root) if (component.toString().equalsIgnoreCase("artifacts")) underArtifacts = true;
-        if (!underArtifacts) throw new SecurityException("QA root must stay below artifacts");
-        if (!Files.isRegularFile(root.resolve(".atm9-original-qa.json")))
-            throw new SecurityException("Not a marked original ATM9 QA fixture");
+        var components = new ArrayList<String>();
+        for (Path component : root) components.add(component.toString());
+        for (int index = 0; index + 2 < components.size(); index++)
+            if (components.get(index).equalsIgnoreCase("artifacts") && components.get(index + 1).equalsIgnoreCase("agent-runs")) underArtifacts = true;
+        if (!underArtifacts) throw new SecurityException("QA root must stay below artifacts/agent-runs/<task-id>");
+        if (!Files.isRegularFile(root.resolve(".forge-runtime-qa.json")))
+            throw new SecurityException("Not a marked Forge runtime QA fixture");
         game = child(required("game")); evidence = child(required("evidence"));
         ready = evidence.resolve("ready.flag"); stop = evidence.resolve("stop.flag");
         freshWorld = System.getProperty("lanminecraft.qa.freshWorld");
-        if (freshWorld != null && !freshWorld.matches("ATM9Qa[A-Za-z0-9_-]{0,48}"))
+        worldPrefix = required("worldPrefix");
+        if (!worldPrefix.matches("[A-Za-z][A-Za-z0-9]{2,15}") || !worldPrefix.endsWith("Qa"))
+            throw new SecurityException("Unsafe reserved QA world prefix");
+        if (freshWorld != null && !freshWorld.matches(java.util.regex.Pattern.quote(worldPrefix) + "[A-Za-z0-9_-]{0,48}"))
             throw new SecurityException("Unsafe QA world name");
         if (freshWorld != null && Files.exists(game.resolve("saves").resolve(freshWorld), LinkOption.NOFOLLOW_LINKS))
             throw new SecurityException("Fresh QA world already exists");
@@ -38,9 +44,9 @@ public final class QaLifecycleAgent {
     public static void premain(String ignored, Instrumentation instrumentation) {
         try {
             var agent = new QaLifecycleAgent();
-            var worker = new Thread(() -> agent.run(instrumentation), "ATM9-original-QA-lifecycle");
+            var worker = new Thread(() -> agent.run(instrumentation), "Forge-runtime-QA-lifecycle");
             worker.setDaemon(true); worker.start();
-        } catch (Throwable failure) { System.err.println("[ATM9 Original QA] Agent refused: " + failure); }
+        } catch (Throwable failure) { System.err.println("[Forge Runtime QA] Agent refused: " + failure); }
     }
 
     private void run(Instrumentation instrumentation) {
@@ -193,7 +199,7 @@ public final class QaLifecycleAgent {
     private synchronized void event(String kind, Map<String, ?> values) throws IOException {
         var row = new LinkedHashMap<String, Object>(); row.put("kind", kind); row.put("utc", Instant.now().toString()); row.putAll(values);
         Files.writeString(evidence.resolve("observations.jsonl"), json(row) + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        System.out.println("[ATM9 Original QA] " + kind);
+        System.out.println("[Forge Runtime QA] " + kind);
     }
     private static String json(Object value) {
         if (value == null) return "null";

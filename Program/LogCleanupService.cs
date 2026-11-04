@@ -67,6 +67,7 @@ public static class LogCleanupService
         catch
         {
         }
+        PortableRuntimeCache.Cleanup(paths);
         CleanupDotNetExtractionCache();
         CleanupRenamedExtractionRoots();
     }

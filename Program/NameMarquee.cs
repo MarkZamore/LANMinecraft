@@ -43,6 +43,8 @@ internal readonly record struct MarqueeSchedule(TimeSpan Travel, TimeSpan Hold)
 /// motion here means "there is more of this than you can see", and on a name
 /// that is all there it would say something untrue. The walk stops the moment
 /// the field is opened for editing - from then on the caret is the player's.
+/// Hidden fields and minimized windows release the animation clock until the
+/// name can be read again.
 /// </summary>
 internal sealed class NameMarquee
 {
@@ -63,6 +65,7 @@ internal sealed class NameMarquee
 
     private readonly TextBox _field;
     private readonly Logger? _logger;
+    private Window? _window;
     private bool _allowed = true;
     private double _walking;
     private bool _told;
@@ -73,25 +76,66 @@ internal sealed class NameMarquee
         _logger = logger;
         _field.TextChanged += (_, _) => Refresh();
         _field.SizeChanged += (_, _) => Refresh();
-        _field.Loaded += (_, _) => Refresh();
+        _field.Loaded += OnLoaded;
+        _field.Unloaded += OnUnloaded;
+        _field.IsVisibleChanged += (_, _) => Refresh();
         // The field can only say how much of the name it hides once it has been
         // laid out, and the first name is put in before that. Every later pass
         // is watched too: the window lays out constantly - progress bars, lists,
         // the timer - and one pass that answered oddly used to stop the walk for
-        // good. The check here is two property reads, and only a real
-        // disagreement reaches Refresh.
+        // good. Only a visible field with a changed tail reaches Refresh.
         _field.LayoutUpdated += OnLayoutUpdated;
+        if (_field.IsLoaded) ObserveWindow(Window.GetWindow(_field));
+    }
+
+    private bool CanWalk => _allowed && _field.IsLoaded && _field.IsVisible &&
+                            _window is { IsVisible: true, WindowState: not WindowState.Minimized };
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        ObserveWindow(Window.GetWindow(_field));
+        Refresh();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        ObserveWindow(null);
+        Stop();
+    }
+
+    private void ObserveWindow(Window? window)
+    {
+        if (ReferenceEquals(_window, window)) return;
+        if (_window is not null)
+        {
+            _window.StateChanged -= OnWindowStateChanged;
+            _window.Closed -= OnWindowClosed;
+        }
+        _window = window;
+        if (_window is not null)
+        {
+            _window.StateChanged += OnWindowStateChanged;
+            _window.Closed += OnWindowClosed;
+        }
+    }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e) => Refresh();
+
+    private void OnWindowClosed(object? sender, EventArgs e)
+    {
+        ObserveWindow(null);
+        Stop();
     }
 
     private void OnLayoutUpdated(object? sender, EventArgs e)
     {
-        if (!_allowed || _field.ViewportWidth <= 0) return;
+        if (!CanWalk || _field.ViewportWidth <= 0) return;
         var tail = Math.Max(0, _field.ExtentWidth - _field.ViewportWidth);
         if (Math.Abs(tail - _walking) < SmallestTail) return;
         Refresh();
     }
 
-    /// <summary>True while the name is walking; false when it fits or editing is on.</summary>
+    /// <summary>True while a visible name is walking; false when hidden, fitting or edited.</summary>
     public bool IsWalking => _walking > 0;
 
     /// <summary>The tail currently being walked, in pixels; zero when still.</summary>
@@ -108,7 +152,7 @@ internal sealed class NameMarquee
     /// <summary>Starts, stops or re-paces the walk to match what the field now holds.</summary>
     public void Refresh()
     {
-        if (!_allowed)
+        if (!CanWalk)
         {
             Stop();
             return;
@@ -160,6 +204,9 @@ internal sealed class NameMarquee
 
     private void Walk(double tail)
     {
+        // A hidden field can retain its last native scroll position. Every
+        // visible walk starts with the same readable rest at the first letter.
+        _field.ScrollToHorizontalOffset(0);
         var schedule = MarqueeSchedule.For(tail);
         var walk = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
         var at = TimeSpan.Zero;
@@ -188,12 +235,18 @@ internal sealed class NameMarquee
         if (_walking <= 0) return;
         _field.BeginAnimation(HorizontalOffsetProperty, null);
         _field.SetValue(HorizontalOffsetProperty, 0d);
-        _field.ScrollToHorizontalOffset(0);
+        if (_field.IsVisible && _window is { WindowState: not WindowState.Minimized })
+            _field.ScrollToHorizontalOffset(0);
         _walking = 0;
     }
 
     private static void OnHorizontalOffsetChanged(DependencyObject target, DependencyPropertyChangedEventArgs change)
     {
-        if (target is TextBox field && change.NewValue is double offset) field.ScrollToHorizontalOffset(offset);
+        // Removing a clock can deliver one final property notification. Do not
+        // turn that, or an already queued tick, into work for a hidden field.
+        if (target is TextBox { IsLoaded: true, IsVisible: true } field &&
+            Window.GetWindow(field) is { WindowState: not WindowState.Minimized } &&
+            change.NewValue is double offset)
+            field.ScrollToHorizontalOffset(offset);
     }
 }

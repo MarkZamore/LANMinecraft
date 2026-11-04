@@ -75,3 +75,20 @@ paths are not automatically treated as necessary production data.
 contains private process environment from original traces and must remain local.
 Optional `audit-status.json` and `audit-findings.json` add reviewed scenario/build
 boundaries and findings; they must never describe an unfinished native/game case as passed.
+
+The launcher-owned PowerShell updater receives `PSModuleAnalysisCachePath` before
+process startup, pointing to `Minecraft/Launcher/PowerShell/ModuleAnalysisCache`.
+This shared file is outside temporary/update cleanup and is not deleted while a
+helper may be using it. `PowerShellChildEnvironmentTests` exercises production
+update scheduling with a real Windows PowerShell recipient and preserves a held
+cache across cleanup and failed starts. The fixture reports only the selected
+cache variable, never the complete inherited environment.
+
+This is the supported module-analysis cache control, not a claim to redirect
+Windows PowerShell's separate `StartupProfileData-NonInteractive` cache or Windows
+Known Folders. Setting `LOCALAPPDATA` in a process environment does not override
+`SHGetKnownFolderPath`; Windows Shell, text-input state, Steam overlay diagnostics
+and other operating-system/client-managed records remain separate audit findings.
+The historical 381/383 captures and their unknown kernel-loss statistics are not
+a fresh zero-write result for a later launcher build. The module-cache control is
+documented in [Windows PowerShell 5.1](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_windows_powershell_5.1).

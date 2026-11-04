@@ -10,21 +10,24 @@ using CmlLib.Core;
 using CmlLib.Core.Auth;
 using CmlLib.Core.ProcessBuilder;
 using Minecraft;
+using LauncherQa;
 
 // All mutations, including native world creation and shutdown, are confined to
 // a marked independent fixture. No personal instance/world is an input.
 if (args.Length < 2) throw new ArgumentException(
-    "Usage: prepare <fixture-root> --source <pack> [--cache-root <installation>] [--mode baseline|integrated]; " +
-    "launch <fixture-root> --label <new-label> --agent <qa-agent.jar> [--heap 10240] [--world ATM9Qa...] [--fresh-world ATM9Qa...] [--mixin-export]; " +
+    "Usage: prepare <fixture-root> --contract <pack-owned-json> --source <pack> [--cache-root <installation>] [--mode baseline|integrated]; " +
+    "launch <fixture-root> --label <new-label> --agent <qa-agent.jar> [--heap <MiB>] [--world <reserved-world>] [--fresh-world <reserved-world>] [--mixin-export]; " +
     "adopt <migration-installation> --cache-root <prepared-qa-installation>; ready|stop|audit <fixture-root> --label <label>");
 var command = args[0];
 var root = FixturePath(args[1]);
 var options = ParseOptions(args.Skip(2).ToArray());
 var json = new JsonSerializerOptions { WriteIndented = true, PropertyNameCaseInsensitive = true };
-var marker = Path.Combine(root, ".atm9-original-qa.json");
+var marker = Path.Combine(root, ".forge-runtime-qa.json");
 var paths = new AppPaths(root);
-var packName = options.GetValueOrDefault("pack-name", "All The Mods 9");
-RequireComponent(packName);
+if (command is "prepare" or "adopt" && !options.ContainsKey("contract"))
+    throw new ArgumentException("A new fixture requires --contract from the pack source repository.");
+var contract = PackQaContract.Load(options.GetValueOrDefault("contract", Path.Combine(root, "qa-contract.json")));
+var packName = contract.PackRelativePath;
 var label = options.GetValueOrDefault("label", "run-01");
 if (!System.Text.RegularExpressions.Regex.IsMatch(label, "^[A-Za-z0-9_-]{1,64}$"))
     throw new ArgumentException("Invalid evidence label.");
@@ -42,6 +45,9 @@ if (command == "adopt")
     using var reportDocument = JsonDocument.Parse(File.ReadAllText(reportPath));
     using var historyDocument = JsonDocument.Parse(File.ReadAllText(historyPath));
     var report = reportDocument.RootElement; var history = historyDocument.RootElement;
+    if (!report.TryGetProperty("qaContractSha256", out var reportContract) || reportContract.GetString() != contract.Sha256 ||
+        !history.TryGetProperty("qaContractSha256", out var historyContract) || historyContract.GetString() != contract.Sha256)
+        throw new IOException("Adoption requires migration and history evidence for this exact pack QA contract.");
     if (report.GetProperty("status").GetString() != "PASS" ||
         report.GetProperty("personalWorldsCopied").GetBoolean() ||
         report.GetProperty("originalInstallationModified").GetBoolean() ||
@@ -88,7 +94,7 @@ if (command == "adopt")
         Directory.Move(sentinel, archivedSentinel);
     }
     var cacheRoot = FixturePath(Required("cache-root"));
-    if (!File.Exists(Path.Combine(cacheRoot, ".atm9-original-qa.json")))
+    if (!File.Exists(Path.Combine(cacheRoot, ".forge-runtime-qa.json")))
         throw new IOException("Adoption reads caches only from an independent prepared QA installation.");
     var cachePaths = new AppPaths(cacheRoot);
     var cacheCopies = new List<object>();
@@ -110,7 +116,9 @@ if (command == "adopt")
         personalWorldsCopied = false, cacheCopies, syntheticSentinelWorldNotOpened = "PackMigrationQa",
         exactSyntheticSentinelArchivedOutsideSaves = Directory.Exists(archivedSentinel)
     });
-    Write(marker, new Fixture("integrated", packName, DateTimeOffset.UtcNow));
+    RequireMatchingRuntime(PackManifestService.Load(canonical));
+    FreezeContract();
+    Write(marker, new Fixture("integrated", packName, DateTimeOffset.UtcNow, contract.Sha256));
     Console.WriteLine($"ADOPTED verifiedFiles={verifiedFiles} mode=integrated");
     return;
 }
@@ -125,8 +133,12 @@ if (command == "prepare")
     var descriptor = PackManifestService.Load(source);
     if (descriptor.MinecraftVersion != "1.20.1" || descriptor.Loader.Type != PackLoaderKind.Forge)
         throw new ArgumentException("This native QA agent is limited to Minecraft 1.20.1 Forge.");
+    RequireMatchingRuntime(descriptor);
     if (IsWithin(root, source) || IsWithin(source, root)) throw new IOException("Source and fixture must be disjoint.");
     paths.Ensure();
+    Write(Path.Combine(root, "RUN.json"), new { owner = "ForgeRuntimeQa", purpose = "Explicit pack-owned runtime acceptance",
+        createdAtUtc = DateTimeOffset.UtcNow, expectedSizeBytes = 20L * 1024 * 1024 * 1024,
+        deleteAfterUtc = DateTimeOffset.UtcNow.AddDays(2), results = new[] { "source-snapshot.json", "qa-contract.json", "evidence" } });
     var destination = paths.CombineUnderPacks(packName);
     var files = CopyTree(source, destination, skipInfrastructure: true);
     Write(Path.Combine(root, "source-snapshot.json"), new
@@ -152,7 +164,8 @@ if (command == "prepare")
             cacheCopies.Add(new { source = pair.Item1, target = pair.Item2, count = records.Count, treeSha256 = TreeHash(records) });
         }
     }
-    Write(marker, new Fixture(mode, packName, DateTimeOffset.UtcNow));
+    FreezeContract();
+    Write(marker, new Fixture(mode, packName, DateTimeOffset.UtcNow, contract.Sha256));
     Write(Path.Combine(root, "cache-copy.json"), cacheCopies);
     var logger = new Logger(paths.LogFile);
     using var runtimes = new PackRuntimeService(paths, logger);
@@ -163,8 +176,10 @@ if (command == "prepare")
     return;
 }
 
-if (!File.Exists(marker)) throw new IOException("Not a marked ATM9 original QA fixture.");
+if (!File.Exists(marker)) throw new IOException("Not a marked Forge runtime QA fixture.");
 var fixture = Read<Fixture>(marker);
+if (fixture.QaContractSha256 != contract.Sha256 || fixture.PackName != contract.PackRelativePath)
+    throw new IOException("The frozen QA fixture and pack-owned contract do not match.");
 packName = fixture.PackName;
 if (command == "prepare-integration")
 {
@@ -251,15 +266,16 @@ if (Directory.Exists(evidence)) throw new IOException("Use a new evidence label.
 Directory.CreateDirectory(Path.Combine(root, "evidence"));
 if (HasLiveQaClient())
     throw new IOException("This fixture already has a live QA process.");
-var heap = int.Parse(options.GetValueOrDefault("heap", "10240"), CultureInfo.InvariantCulture);
-if (heap is < 4096 or > 24576) throw new ArgumentException("Heap must be 4096..24576 MiB.");
-var player = options.GetValueOrDefault("player", "ATM9Qa");
+var heap = int.Parse(options.GetValueOrDefault("heap", contract.DefaultHeapMiB.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture);
+if (heap < 512) throw new ArgumentException("QA heap must be at least 512 MiB.");
+var player = options.GetValueOrDefault("player", contract.QaPlayerName);
 if (!System.Text.RegularExpressions.Regex.IsMatch(player, "^[A-Za-z0-9_]{3,16}$")) throw new ArgumentException("Invalid QA player name.");
 var world = options.GetValueOrDefault("world");
 var freshWorld = options.GetValueOrDefault("fresh-world");
 if (world is not null && freshWorld is not null) throw new ArgumentException("Use --world or --fresh-world.");
 foreach (var name in new[] { world, freshWorld }.OfType<string>())
-    if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^ATM9Qa[A-Za-z0-9_-]{0,48}$")) throw new ArgumentException("Only reserved disposable ATM9Qa worlds are accepted.");
+    if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^" + System.Text.RegularExpressions.Regex.Escape(contract.QaWorldPrefix) + "[A-Za-z0-9_-]{0,48}$"))
+        throw new ArgumentException("Only the pack contract's reserved disposable QA worlds are accepted.");
 var agent = Path.GetFullPath(Required("agent"));
 RejectLinks(agent);
 if (!File.Exists(agent)) throw new FileNotFoundException("Build the test-only QA agent first.", agent);
@@ -268,6 +284,7 @@ var launchLogger = new Logger(paths.LogFile);
 using var runtimeService = new PackRuntimeService(paths, launchLogger);
 using var preparing = new CancellationTokenSource(TimeSpan.FromMinutes(45));
 var prepared = await runtimeService.PrepareAsync(packName, Progress(), preparing.Token);
+RequireMatchingRuntime(prepared.Descriptor);
 using var instances = new PackInstanceService(paths, launchLogger);
 PackInstanceContext instance;
 var integrationArguments = new List<string>();
@@ -290,7 +307,7 @@ var home = Path.Combine(root, "java-home");
 Directory.CreateDirectory(home);
 // Reproduce the production order: prepare the ordinary instance, managed
 // transport and identity adapter before the optional file-only AI bootstrap.
-// The author Verity runtime in Java owns its backend; the harness owns no AI
+    // The pack's runtime in Java owns its backend; the harness owns no AI
 // process handle and the original pack without a descriptor is unchanged.
 var localAi = fixture.Mode == "integrated"
     ? await new LocalAiProvisioningService(paths).PrepareAsync(
@@ -308,7 +325,7 @@ if (localAi is not null)
         productionFilesPrepared = true, nativeBackendStartedByHarness = false,
         nativeBackendReadinessVerified = false, gameBackendLifetimeVerified = false,
         microphoneActivatedByHarness = false,
-        processOwner = "Verity in Java; file-only production provisioning has no launcher process lifetime."
+        processOwner = "Pack runtime in Java; file-only production provisioning has no launcher process lifetime."
     });
 }
 if (world is not null && !File.Exists(Path.Combine(instance.GameDirectory, "saves", world, "level.dat")))
@@ -396,7 +413,7 @@ var arguments = new List<string>
     "-Dfile.encoding=UTF-8", "-Duser.home=" + home, "-Djava.io.tmpdir=" + temporary,
     "-XX:ErrorFile=" + Path.Combine(evidence, "hs_err_pid%p.log"),
     "-Dlanminecraft.qa.root=" + root, "-Dlanminecraft.qa.game=" + instance.GameDirectory,
-    "-Dlanminecraft.qa.evidence=" + evidence, "-javaagent:" + agent
+    "-Dlanminecraft.qa.evidence=" + evidence, "-Dlanminecraft.qa.worldPrefix=" + contract.QaWorldPrefix, "-javaagent:" + agent
 };
 if (freshWorld is not null) arguments.Add("-Dlanminecraft.qa.freshWorld=" + freshWorld);
 if (options.ContainsKey("mixin-export"))
@@ -418,7 +435,7 @@ arguments.AddRange(integrationArguments);
 var launchOption = new MLaunchOption
 {
     Path = launchPath, JavaPath = prepared.JavaPath, Session = session,
-    MaximumRamMb = heap, MinimumRamMb = fixture.Mode == "integrated" ? heap : 1024, GameLauncherName = "LANMinecraft",
+    MaximumRamMb = heap, MinimumRamMb = fixture.Mode == "integrated" ? heap : Math.Min(1024, heap), GameLauncherName = "LANMinecraft",
     GameLauncherVersion = "1", VersionType = $"{prepared.Descriptor.Loader.Type} {prepared.Descriptor.Loader.Version}",
     FullScreen = false, ScreenWidth = 960, ScreenHeight = 540, QuickPlaySingleplayer = world,
     QuickPlayPath = Path.Combine(evidence, "quickplay.json"), ExtraJvmArguments = arguments.Select(value => new MArgument(value)).ToList()
@@ -515,18 +532,29 @@ static Dictionary<string, string> ParseOptions(string[] values)
     }
     return result;
 }
+void FreezeContract()
+{
+    var snapshot = Path.Combine(root, "qa-contract.json");
+    File.Copy(contract.SourceFile, snapshot, overwrite: false);
+    if (PackQaContract.Load(snapshot).Sha256 != contract.Sha256)
+        throw new IOException("The pack QA contract changed while the fixture was prepared.");
+}
+void RequireMatchingRuntime(PackRuntimeDescriptor descriptor)
+{
+    if (descriptor.MinecraftVersion != contract.MinecraftVersion ||
+        !descriptor.Loader.Type.ToString().Equals(contract.LoaderType, StringComparison.OrdinalIgnoreCase) ||
+        descriptor.Loader.Version != contract.LoaderVersion)
+        throw new IOException("The actual pack runtime does not match its declared QA contract.");
+}
 static string FixturePath(string path)
 {
     var full = Path.GetFullPath(path);
-    if (!full.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains("artifacts", StringComparer.OrdinalIgnoreCase))
-        throw new IOException("Fixture must be below an artifacts directory.");
+    var parts = full.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    if (!Enumerable.Range(0, Math.Max(0, parts.Length - 2)).Any(index => parts[index].Equals("artifacts", StringComparison.OrdinalIgnoreCase) &&
+            parts[index + 1].Equals("agent-runs", StringComparison.OrdinalIgnoreCase)))
+        throw new IOException("Fixture must be below artifacts/agent-runs/<task-id>.");
     RejectLinks(full);
     return full;
-}
-static void RequireComponent(string value)
-{
-    if (string.IsNullOrWhiteSpace(value) || value is "." or ".." || Path.GetFileName(value) != value || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        throw new ArgumentException("Expected one safe path component.");
 }
 static void RejectLinks(string path)
 {
@@ -583,7 +611,7 @@ static IEnumerable<string> ReadSharedLines(string path)
     using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
     while (reader.ReadLine() is { } line) yield return line;
 }
-record Fixture(string Mode, string PackName, DateTimeOffset CreatedAtUtc);
+record Fixture(string Mode, string PackName, DateTimeOffset CreatedAtUtc, string QaContractSha256);
 record FileRecord(string Path, long SizeBytes, string Sha256);
 record Run(int ProcessId, DateTimeOffset StartedAtUtc, string GameDirectory, string Mode, string Label);
 record ErrorFamily(string Family, long Count, string FirstTime, string LastTime);

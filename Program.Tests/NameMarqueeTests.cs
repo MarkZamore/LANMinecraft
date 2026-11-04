@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Threading;
 
 namespace Minecraft.Tests;
 
@@ -63,9 +66,11 @@ public sealed class NameMarqueeTests
     {
         var walking = WindowCanvasTests.OnAStaThread(() =>
         {
-            var field = Field("Oskar");
+            using var fixture = new ShownField("Oskar");
+            var field = fixture.Field;
             var marquee = new NameMarquee(field);
             marquee.Refresh();
+            Assert.False(IsAnimated(field));
             return marquee.IsWalking;
         });
 
@@ -78,10 +83,12 @@ public sealed class NameMarqueeTests
     {
         var (walking, tail, hidden) = WindowCanvasTests.OnAStaThread(() =>
         {
-            var field = Field("MarkZamoreLongest");
+            using var fixture = new ShownField("MarkZamoreLongest");
+            var field = fixture.Field;
             var marquee = new NameMarquee(field);
             marquee.Refresh();
-            return (marquee.IsWalking, marquee.Tail, marquee.Tail);
+            WaitFor(() => IsAnimated(field), "The visible overflowing field did not attach its WPF animation clock.");
+            return (marquee.IsWalking, marquee.Tail, field.ExtentWidth - field.ViewportWidth);
         });
 
         Assert.True(hidden > 1, $"the test name should not fit the field, but it hides only {hidden:0.0} px");
@@ -96,10 +103,13 @@ public sealed class NameMarqueeTests
     {
         var (walkingWhileEditing, offset) = WindowCanvasTests.OnAStaThread(() =>
         {
-            var field = Field("MarkZamoreLongest");
+            using var fixture = new ShownField("MarkZamoreLongest");
+            var field = fixture.Field;
             var marquee = new NameMarquee(field);
             marquee.Refresh();
             marquee.SetAllowed(false);
+            AssertStopped(field);
+            fixture.Window.UpdateLayout();
             return (marquee.IsWalking, field.HorizontalOffset);
         });
 
@@ -107,17 +117,178 @@ public sealed class NameMarqueeTests
         Assert.Equal(0, offset, 3);
     }
 
+    [Fact]
+    public void HiddenAndUnloadedFieldsReleaseTheirClockAndResumeWhenShown()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            using var fixture = new ShownField("MarkZamoreLongest");
+            var field = fixture.Field;
+            var marquee = new NameMarquee(field);
+            marquee.Refresh();
+            WaitForMovement(field);
+
+            fixture.Parent.Visibility = Visibility.Hidden;
+            Assert.Equal(Visibility.Visible, field.Visibility);
+            WaitFor(() => !field.IsVisible, "The ancestor did not hide its field.");
+            field.Text = "MarkZamoreLongestHidden";
+            marquee.Refresh();
+            fixture.Window.UpdateLayout();
+            AssertStopped(field);
+
+            fixture.Parent.Visibility = Visibility.Visible;
+            WaitFor(() => IsAnimated(field), "Showing the overflowing field did not attach a new clock.");
+            field.Visibility = Visibility.Collapsed;
+            marquee.Refresh();
+            AssertStopped(field);
+            field.Visibility = Visibility.Visible;
+            WaitFor(() => IsAnimated(field), "Expanding the field did not attach a new clock.");
+
+            fixture.Parent.Children.Remove(field);
+            WaitFor(() => !field.IsLoaded, "The removed field did not unload.");
+            field.Text = "MarkZamoreLongestDetached";
+            marquee.Refresh();
+            AssertStopped(field);
+
+            var replacement = new Window
+            {
+                Resources = fixture.Window.Resources, Content = field, Width = 320, Height = 160,
+                WindowStartupLocation = WindowStartupLocation.Manual, Left = -32000, Top = -32000,
+                ShowActivated = false, ShowInTaskbar = false, UseLayoutRounding = true
+            };
+            try
+            {
+                replacement.Show();
+                ((HwndTarget)PresentationSource.FromVisual(replacement)!.CompositionTarget).RenderMode = RenderMode.SoftwareOnly;
+                WaitForMovement(field);
+                fixture.Window.Close();
+                Assert.True(IsAnimated(field), "Closing the previous host must not stop the reparented field.");
+                WaitForMovement(field);
+                replacement.Close();
+                field.Text = "MarkZamoreLongestClosed";
+                marquee.Refresh();
+                AssertStopped(field);
+            }
+            finally { replacement.Close(); }
+            return true;
+        });
+    }
+
+    [Fact]
+    public void MinimizedWindowsReleaseTheClockAndResumeOnlyForVisibleOverflow()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            using var fixture = new ShownField("MarkZamoreLongest");
+            var field = fixture.Field;
+            var marquee = new NameMarquee(field);
+            marquee.Refresh();
+            WaitForMovement(field);
+
+            fixture.Window.WindowState = WindowState.Minimized;
+            WaitFor(() => fixture.Window.WindowState == WindowState.Minimized, "The fixture window did not minimize.");
+            // IsVisible alone is insufficient: minimized Windows can retain a
+            // visible and loaded logical subtree while it is absent onscreen.
+            field.Text = "MarkZamoreLongestMinimized";
+            marquee.Refresh();
+            AssertStopped(field);
+            fixture.Parent.Visibility = Visibility.Hidden;
+            fixture.Window.WindowState = WindowState.Normal;
+            fixture.Window.UpdateLayout();
+            AssertStopped(field);
+            fixture.Parent.Visibility = Visibility.Visible;
+            WaitFor(() => IsAnimated(field), "Restoring a visible overflowing field did not attach its clock.");
+
+            fixture.Window.WindowState = WindowState.Minimized;
+            field.Text = "Oskar";
+            fixture.Window.WindowState = WindowState.Normal;
+            fixture.Window.UpdateLayout();
+            WaitFor(() => field.ViewportWidth > 0 && field.ExtentWidth <= field.ViewportWidth + 1,
+                "The restored short name did not fit its real viewport.");
+            AssertStopped(field);
+
+            field.Text = "MarkZamoreLongest";
+            fixture.Window.UpdateLayout();
+            WaitFor(() => IsAnimated(field), "The longer name did not start after the text changed.");
+            marquee.SetAllowed(false);
+            fixture.Window.WindowState = WindowState.Minimized;
+            fixture.Window.WindowState = WindowState.Normal;
+            marquee.Refresh();
+            fixture.Window.UpdateLayout();
+            AssertStopped(field);
+            marquee.SetAllowed(true);
+            WaitForMovement(field);
+            return true;
+        });
+    }
+
     /// <summary>
     /// A field the size the window gives it, with the launcher's own typeface -
     /// the width of a name is a property of the font, not of the layout.
     /// </summary>
-    private static TextBox Field(string name)
+    private sealed class ShownField : IDisposable
     {
-        var window = WindowCanvasTests.LoadWindow();
-        var field = Assert.IsType<TextBox>(window.FindName("PlayerNameTextBox"));
-        field.Text = name;
-        field.Width = Wide;
-        WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
-        return field;
+        public Window Window { get; } = WindowCanvasTests.LoadWindow();
+        public TextBox Field { get; }
+        public Panel Parent { get; }
+        public ShownField(string name)
+        {
+            Field = Assert.IsType<TextBox>(Window.FindName("PlayerNameTextBox"));
+            Parent = Assert.IsAssignableFrom<Panel>(Field.Parent);
+            Field.Text = name;
+            Field.Width = Wide;
+            Window.WindowStartupLocation = WindowStartupLocation.Manual;
+            Window.Left = -32000; Window.Top = -32000;
+            Window.ShowActivated = false; Window.ShowInTaskbar = false;
+            Window.Show();
+            ((HwndTarget)PresentationSource.FromVisual(Window)!.CompositionTarget).RenderMode = RenderMode.SoftwareOnly;
+            WindowCanvasTests.LayoutWindow(Window, new Size(804, 521));
+            WaitFor(() => Field.IsLoaded && Field.IsVisible && Field.ViewportWidth > 0,
+                "The real name field did not establish its visible viewport.");
+        }
+        public void Dispose() => Window.Close();
+    }
+
+    private static bool IsAnimated(TextBox field) =>
+        DependencyPropertyHelper.GetValueSource(field, NameMarquee.HorizontalOffsetProperty).IsAnimated;
+
+    private static double AnimatedOffset(TextBox field) => (double)field.GetValue(NameMarquee.HorizontalOffsetProperty);
+
+    private static void WaitForMovement(TextBox field)
+    {
+        WaitFor(() => IsAnimated(field) && AnimatedOffset(field) > 0.01,
+            "The attached WPF clock did not advance the overflowing name after its reading hold.");
+        var start = AnimatedOffset(field);
+        WaitFor(() => IsAnimated(field) && Math.Abs(AnimatedOffset(field) - start) > 0.01,
+            "The real animated offset stopped advancing.");
+    }
+
+    private static void AssertStopped(TextBox field)
+    {
+        WaitFor(() => !IsAnimated(field), "An inactive name field retained an animation clock.");
+        Assert.Equal(0, AnimatedOffset(field), 3);
+        Pump(30);
+        var before = field.HorizontalOffset;
+        Pump(120);
+        Assert.False(IsAnimated(field));
+        Assert.Equal(0, AnimatedOffset(field), 3);
+        Assert.Equal(before, field.HorizontalOffset, 3);
+    }
+
+    private static void WaitFor(Func<bool> condition, string failure)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (!condition() && elapsed.Elapsed.TotalSeconds < 4) Pump(10);
+        Assert.True(condition(), failure);
+    }
+
+    private static void Pump(int milliseconds)
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Send) { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+        timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+        timer.Start();
+        try { Dispatcher.PushFrame(frame); }
+        finally { timer.Stop(); }
     }
 }
