@@ -25,6 +25,37 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
 
     public void Dispose() => TempTree.Delete(root);
 
+    [Fact]
+    public async Task CatalogInstallationRename_ResumesOfflineBeforePublishingTheNewPath()
+    {
+        using var host = new CatalogHost();
+        var entry = host.Add("generic-pack", "Previous Name", "Generic-Repo");
+        const string target = "New Display Name";
+        host.Index = [entry with { InstallationPath = target }];
+        var settings = new AppSettings { ClientRelativePath = entry.RelativePath };
+        var previous = paths.CombineUnderPacks(entry.RelativePath);
+        Directory.CreateDirectory(previous);
+        File.WriteAllText(Path.Combine(previous, "owned.txt"), "original");
+        var catalog = Staged(host);
+        catalog.MigrateStartupIndex = entries => new PackRenameMigration(paths, afterMove: _ =>
+            throw new IOException("interrupted after move")).Apply(settings, entries, _ => { });
+
+        await Assert.ThrowsAsync<IOException>(() => catalog.InitializeIndexAsync().WaitAsync(Deadline));
+        Assert.False(catalog.IsIndexReady);
+        Assert.DoesNotContain(catalog.Sources, source => source.RelativePath == target);
+        Assert.False(Directory.Exists(previous));
+
+        host.Offline = true;
+        var restarted = Staged(host);
+        new PackRenameMigration(paths).Apply(settings, restarted.Sources, _ => { });
+        await restarted.InitializeIndexAsync().WaitAsync(Deadline);
+        Assert.Equal(target, settings.ClientRelativePath);
+        Assert.Equal(entry.RelativePath, restarted.CompatibilityPathFor(target));
+        Assert.Equal(target, restarted.InstallationPathFor(entry.RelativePath));
+        Assert.True(restarted.IsWithdrawn(entry.RelativePath));
+        Assert.Equal("original", File.ReadAllText(Path.Combine(paths.CombineUnderPacks(target), "owned.txt")));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

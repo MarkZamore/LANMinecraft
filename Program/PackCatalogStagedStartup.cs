@@ -13,6 +13,7 @@ public sealed partial class PackCatalogService
     private readonly Dictionary<string, string> _launchManifests = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Task<string>> _remoteManifestTasks = new(StringComparer.OrdinalIgnoreCase);
     private Task? _indexStartup;
+    internal Action<IReadOnlyList<CatalogSource>>? MigrateStartupIndex { get; set; }
     private bool _indexBudgetExpired;
     private Task? _libraryStartup;
     private IReadOnlyList<CatalogPack> _overviewSnapshot = Array.Empty<CatalogPack>();
@@ -51,11 +52,11 @@ public sealed partial class PackCatalogService
     {
         using var timeout = _indexTimeoutSourceFactory?.Invoke(token) ?? CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        List<CatalogSource>? entries = null;
         try
         {
             var bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, timeout.Token).ConfigureAwait(false);
-            var entries = ParseIndex(Encoding.UTF8.GetString(bytes));
-            lock (_gate) { ReplaceIndex(entries); HasOnlineCatalog = true; }
+            entries = ParseIndex(Encoding.UTF8.GetString(bytes));
         }
         catch (Exception ex) when (IsRecoverable(ex))
         {
@@ -67,6 +68,27 @@ public sealed partial class PackCatalogService
             _logger.Warn("Library discovery: " + ex.Message);
         }
         token.ThrowIfCancellationRequested();
+        if (entries is not null)
+        {
+            if (MigrateStartupIndex is { } migrate)
+            {
+                // Persist the checked paths before moving data. The next startup
+                // must be able to resume even when the network is unavailable.
+                lock (_gate)
+                {
+                    var snapshot = IndexSnapshot();
+                    snapshot.Packs = entries;
+                    AtomicFile.WriteAllTextIfChanged(Path.Combine(_cache, "catalog.json"),
+                        JsonSerializer.Serialize(snapshot, JsonOptions));
+                }
+                migrate(entries);
+            }
+            lock (_gate)
+            {
+                ReplaceIndex(entries);
+                HasOnlineCatalog = true;
+            }
+        }
         lock (_gate) IsIndexReady = true;
         SaveStagedIndex();
         PresentationChanged?.Invoke();

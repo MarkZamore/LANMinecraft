@@ -103,7 +103,8 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         SkinService skinService,
         IPeerTransport transport,
         WorldTransferRuntimeOptions? runtimeOptions = null,
-        IWorldTransferConfirmation? confirmation = null)
+        IWorldTransferConfirmation? confirmation = null,
+        bool recoverAtStartup = true)
     {
         _paths = paths;
         _logger = logger;
@@ -118,8 +119,11 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         _confirmation = confirmation;
         _runtimeOptions = runtimeOptions ?? new WorldTransferRuntimeOptions();
         _runtimeOptions.Validate();
-        WorldTransferRecoveryService.Recover(paths, logger);
+        if (recoverAtStartup) WorldTransferRecoveryService.Recover(paths, logger);
     }
+
+    internal Func<string, string>? CompatibilityPathFor { get; init; }
+    internal Func<string, string>? InstallationPathFor { get; init; }
 
     public event Action<string>? StatusChanged;
     public event Action? BecameHost;
@@ -335,6 +339,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     string waypointManifestSha = "";
                     await RunWithHeartbeatAsync(progress, () =>
                     {
+                        RebindTransferBuild(stagingWorld, CompatibilityPathFor);
                         _playerProfiles.PrepareWorldForOutgoingTransfer(stagingWorld, identity);
                         playerManifestSha = _playerProfiles.GetPlayerManifestHash(stagingWorld);
                         _waypointSync.Store.EnsureManifest(stagingWorld);
@@ -835,6 +840,19 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             TaskScheduler.Default);
     }
 
+    private string? RebindTransferBuild(string worldPath, Func<string, string>? resolve)
+    {
+        var metadata = _worldMetadata.Read(worldPath);
+        if (metadata is null || resolve is null || string.IsNullOrEmpty(metadata.BuildRelativePath))
+            return metadata?.BuildRelativePath;
+        var old = metadata.BuildRelativePath;
+        var current = resolve(old);
+        if (string.Equals(old, current, StringComparison.OrdinalIgnoreCase)) return old;
+        if (!_worldMetadata.TryRebindBuild(worldPath, old, metadata.BuildName, current))
+            throw new IOException("Could not update the transferred world's installation path.");
+        return current;
+    }
+
     private string InstallReceivedWorld(string extractedWorldPath, string? worldName)
     {
         var safeWorldName = GetSafeWorldName(worldName);
@@ -844,7 +862,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         // world under mods it does not know is how its blocks are lost.
         // Landing it in the right place now rather than letting the next launch
         // move it means it is where the player looks the moment it arrives.
-        var build = new WorldMetadataService().Read(extractedWorldPath)?.BuildRelativePath;
+        var build = RebindTransferBuild(extractedWorldPath, InstallationPathFor);
         var destinationRoot = WorldLocations.ForBuild(_paths.Worlds, build ?? "");
         var worldDir = GetAvailableWorldDirectory(safeWorldName, destinationRoot);
         _paths.EnsureUnderRoot(worldDir);

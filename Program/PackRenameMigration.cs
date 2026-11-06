@@ -10,7 +10,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
     Action<int>? afterMove = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly string[] _roots = [paths.Packs, paths.Instances, paths.Worlds, paths.Runtimes];
+    private readonly string[] _roots = [paths.Packs, paths.Instances, paths.Worlds, paths.Runtimes, paths.PackConflicts];
 
     public void Apply(AppSettings settings, IEnumerable<CatalogSource> catalog, Action<AppSettings> save)
     {
@@ -22,79 +22,117 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
         using var gate = new FileStream(Path.Combine(journalRoot, "migration.lock"), FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
         foreach (var entry in aliases)
-        foreach (var old in entry.LegacyRelativePaths)
         {
-            if (!PackCatalogService.ValidFolder(old) || !PackCatalogService.ValidFolder(entry.RelativePath) ||
-                old.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase))
+            if (!PackCatalogService.ValidFolder(entry.RelativePath) ||
+                entry.LegacyRelativePaths.Any(old => !PackCatalogService.ValidFolder(old) || Same(old, entry.RelativePath)))
                 throw new InvalidDataException("Invalid catalog rename.");
-            var journalPath = Path.Combine(journalRoot, Convert.ToHexString(
-                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(entry.Id + "|" + old))) + ".json");
-            EnsureOrdinaryParents(journalPath);
-            var pending = File.Exists(journalPath);
-            var oldExists = _roots.Any(root => Exists(Path.Combine(root, old)));
-            if (!pending && !oldExists && !RefersTo(settings, old)) continue;
-            var oldMemory = settings.MemoryByPack.FirstOrDefault(pair => Same(pair.Key, old));
-            var newMemory = settings.MemoryByPack.FirstOrDefault(pair => Same(pair.Key, entry.RelativePath));
-            if (oldMemory.Key is not null && newMemory.Key is not null && oldMemory.Value != newMemory.Value)
-                throw new IOException("Переименование сборки остановлено: для старого и нового имени сохранены разные настройки памяти.");
-            var sessions = liveSessions?.Invoke() ?? new ClientPresenceService(paths, logger).ReadLiveSessions();
-            if (sessions.Any(session => Same(session.PackRelativePath, old) || Same(session.PackRelativePath, entry.RelativePath)))
-                throw new IOException("Закройте Minecraft перед переименованием сборки " + old + ".");
-            foreach (var world in FlatWorldsFor(old))
+            ResumeIntermediateRename(settings, entry, journalRoot, save);
+            var existingAliases = entry.LegacyRelativePaths
+                .Count(old => _roots.Any(root => Exists(Path.Combine(root, old))));
+            if (existingAliases > 1)
+                throw new IOException("Переименование сборки остановлено: найдены установки по нескольким прежним путям.");
+            foreach (var old in entry.LegacyRelativePaths)
+                ApplyAlias(settings, entry, old, journalRoot, save);
+        }
+    }
+
+    private void ResumeIntermediateRename(AppSettings settings, CatalogSource entry, string journalRoot,
+        Action<AppSettings> save)
+    {
+        var pending = entry.LegacyRelativePaths
+            .Select(old => (Old: old, Path: JournalPath(journalRoot, entry.Id, old)))
+            .Where(item => File.Exists(item.Path)).ToArray();
+        if (pending.Length == 0) return;
+        if (pending.Length > 1) throw new IOException("Multiple unfinished renames for one pack.");
+        var (old, journalPath) = pending[0];
+        var journal = ReadJournal(journalPath);
+        if (Same(journal.New, entry.RelativePath)) return;
+        if (Same(journal.New, old) ||
+            !entry.LegacyRelativePaths.Contains(journal.New, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidDataException("Pack rename journal has an unknown historical destination.");
+        ApplyAlias(settings, entry with { RelativePath = journal.New }, old, journalRoot, save);
+    }
+
+    private string JournalPath(string journalRoot, string id, string old)
+    {
+        var journalPath = Path.Combine(journalRoot, Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(id + "|" + old))) + ".json");
+        EnsureOrdinaryParents(journalPath);
+        return journalPath;
+    }
+
+    private static Journal ReadJournal(string path) =>
+        JsonSerializer.Deserialize<Journal>(File.ReadAllText(path), Json)
+        ?? throw new InvalidDataException("Invalid pack rename journal.");
+
+    private void ApplyAlias(AppSettings settings, CatalogSource entry, string old, string journalRoot, Action<AppSettings> save)
+    {
+        var journalPath = JournalPath(journalRoot, entry.Id, old);
+        var pending = File.Exists(journalPath);
+        var oldExists = _roots.Any(root => Exists(Path.Combine(root, old)));
+        if (!pending && !oldExists && !RefersTo(settings, old) && !FlatWorldsFor(old).Any()) return;
+        var oldMemory = settings.MemoryByPack.FirstOrDefault(pair => Same(pair.Key, old));
+        var newMemory = settings.MemoryByPack.FirstOrDefault(pair => Same(pair.Key, entry.RelativePath));
+        if (oldMemory.Key is not null && newMemory.Key is not null && oldMemory.Value != newMemory.Value)
+            throw new IOException("Переименование сборки остановлено: для старого и нового имени сохранены разные настройки памяти.");
+        var sessions = liveSessions?.Invoke() ?? new ClientPresenceService(paths, logger).ReadLiveSessions();
+        if (sessions.Any(session => Same(session.PackRelativePath, old) || Same(session.PackRelativePath, entry.RelativePath)))
+            throw new IOException("Закройте Minecraft перед переименованием сборки " + old + ".");
+        foreach (var world in FlatWorldsFor(old))
+        {
+            EnsureOrdinaryParents(world);
+            var sessionLock = Path.Combine(world, "session.lock");
+            if (File.Exists(sessionLock))
+            { using var held = new FileStream(sessionLock, FileMode.Open, FileAccess.Read, FileShare.None); }
+        }
+        Journal journal;
+        if (pending)
+        {
+            journal = ReadJournal(journalPath);
+            if (journal.SchemaVersion != 1 || journal.Id != entry.Id || journal.Old != old || journal.New != entry.RelativePath ||
+                journal.Roots.Any(index => index < 0 || index >= _roots.Length) || journal.Roots.Distinct().Count() != journal.Roots.Count)
+                throw new InvalidDataException("Pack rename journal does not match the catalog.");
+        }
+        else
+        {
+            if (oldExists && _roots.Any(root => Exists(Path.Combine(root, entry.RelativePath))))
+                throw new IOException("Переименование сборки остановлено: путь " + entry.RelativePath + " уже занят.");
+            var oldSaves = Path.Combine(paths.Instances, old, "saves");
+            journal = new Journal { Id = entry.Id, Old = old, New = entry.RelativePath,
+                SavesJunction = Exists(oldSaves) && (File.GetAttributes(oldSaves) & FileAttributes.ReparsePoint) != 0 };
+            for (var index = 0; index < _roots.Length; index++)
             {
-                EnsureOrdinaryParents(world);
-                var sessionLock = Path.Combine(world, "session.lock");
-                if (File.Exists(sessionLock))
-                { using var held = new FileStream(sessionLock, FileMode.Open, FileAccess.Read, FileShare.None); }
-            }
-            Journal journal;
-            if (pending)
-            {
-                journal = JsonSerializer.Deserialize<Journal>(File.ReadAllText(journalPath), Json)
-                    ?? throw new InvalidDataException("Invalid pack rename journal.");
-                if (journal.SchemaVersion != 1 || journal.Id != entry.Id || journal.Old != old || journal.New != entry.RelativePath ||
-                    journal.Roots.Any(index => index < 0 || index >= _roots.Length) || journal.Roots.Distinct().Count() != journal.Roots.Count)
-                    throw new InvalidDataException("Pack rename journal does not match the catalog.");
-            }
-            else
-            {
-                var oldSaves = Path.Combine(paths.Instances, old, "saves");
-                journal = new Journal { Id = entry.Id, Old = old, New = entry.RelativePath,
-                    SavesJunction = Exists(oldSaves) && (File.GetAttributes(oldSaves) & FileAttributes.ReparsePoint) != 0 };
-                for (var index = 0; index < _roots.Length; index++)
-                {
-                    var source = Path.Combine(_roots[index], old);
-                    var target = Path.Combine(_roots[index], entry.RelativePath);
-                    EnsureOrdinaryParents(source);
-                    EnsureOrdinaryParents(target);
-                    if (Exists(source) && Exists(target))
-                        throw new IOException("Переименование сборки остановлено: уже существуют обе папки " + old + " и " + entry.RelativePath + ".");
-                    if (Exists(source)) journal.Roots.Add(index);
-                }
-                // Validate all trees and locks before the first move or journal.
-                ValidateTrees(old, entry.RelativePath);
-                AtomicFile.WriteAllText(journalPath, JsonSerializer.Serialize(journal, Json));
-            }
-            ValidateTrees(old, entry.RelativePath);
-            for (var step = 0; step < journal.Roots.Count; step++)
-            {
-                var root = _roots[journal.Roots[step]];
-                var source = Path.Combine(root, old);
-                var target = Path.Combine(root, entry.RelativePath);
+                var source = Path.Combine(_roots[index], old);
+                var target = Path.Combine(_roots[index], entry.RelativePath);
                 EnsureOrdinaryParents(source);
                 EnsureOrdinaryParents(target);
-                if (Exists(source) && Exists(target)) throw new IOException("Pack rename destination is occupied: " + target);
-                if (Directory.Exists(source)) Directory.Move(source, target);
-                else if (!Directory.Exists(target)) throw new IOException("Pack rename data is missing: " + source);
-                afterMove?.Invoke(step + 1);
+                if (Exists(source) && !Directory.Exists(source))
+                    throw new IOException("Pack rename source is not a directory: " + source);
+                if (Exists(source)) journal.Roots.Add(index);
             }
-            RetargetSaves(old, entry.RelativePath, journal.SavesJunction);
-            RewriteOwnedJson(old, entry);
-            RewriteSettings(settings, old, entry.RelativePath);
-            save(settings);
-            File.Delete(journalPath);
-            logger?.Info("Catalog pack renamed: " + old + " -> " + entry.RelativePath + ".");
+            // Validate all trees and locks before the first move or journal.
+            ValidateTrees(old, entry.RelativePath);
+            AtomicFile.WriteAllText(journalPath, JsonSerializer.Serialize(journal, Json));
         }
+        ValidateTrees(old, entry.RelativePath);
+        for (var step = 0; step < journal.Roots.Count; step++)
+        {
+            var root = _roots[journal.Roots[step]];
+            var source = Path.Combine(root, old);
+            var target = Path.Combine(root, entry.RelativePath);
+            EnsureOrdinaryParents(source);
+            EnsureOrdinaryParents(target);
+            if (Exists(source) && Exists(target)) throw new IOException("Pack rename destination is occupied: " + target);
+            if (Directory.Exists(source)) Directory.Move(source, target);
+            else if (!Directory.Exists(target)) throw new IOException("Pack rename data is missing: " + source);
+            afterMove?.Invoke(step + 1);
+        }
+        RetargetSaves(old, entry.RelativePath, journal.SavesJunction);
+        RewriteOwnedJson(old, entry);
+        RewriteSettings(settings, old, entry.RelativePath);
+        save(settings);
+        File.Delete(journalPath);
+        logger?.Info("Catalog pack renamed: " + old + " -> " + entry.RelativePath + ".");
     }
 
     private void ValidateTrees(string old, string current)
@@ -180,11 +218,13 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
 
     private IEnumerable<string> FlatWorldsFor(string old)
     {
+        EnsureOrdinaryParents(paths.Worlds);
         if (!Directory.Exists(paths.Worlds)) yield break;
         foreach (var world in Directory.EnumerateDirectories(paths.Worlds))
         {
             if ((File.GetAttributes(world) & FileAttributes.ReparsePoint) != 0 || !File.Exists(Path.Combine(world, "level.dat"))) continue;
             var metadata = Path.Combine(world, WorldMetadataService.MetadataFileName);
+            EnsureOrdinaryParents(metadata);
             if (!File.Exists(metadata)) continue;
             JsonNode? node;
             try { node = JsonNode.Parse(File.ReadAllText(metadata)); }

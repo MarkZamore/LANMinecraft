@@ -92,7 +92,9 @@ public sealed class KnownPackTests
         {
             var entry = snapshot[index];
             Assert.Equal(entry.GetProperty("id").GetString(), sources[index].Id);
-            Assert.Equal(WorldLocations.CanonicalBuildPath(entry.GetProperty("relativePath").GetString()), sources[index].RelativePath);
+            var path = entry.TryGetProperty("installationPath", out var installation)
+                ? installation.GetString() : entry.GetProperty("relativePath").GetString();
+            Assert.Equal(WorldLocations.CanonicalBuildPath(path), sources[index].RelativePath);
             var source = entry.GetProperty("source");
             Assert.Equal(new PackSyncSource(source.GetProperty("owner").GetString()!,
                 source.GetProperty("repo").GetString()!, source.GetProperty("tag").GetString()!), sources[index].Source);
