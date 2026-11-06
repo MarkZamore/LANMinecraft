@@ -1347,7 +1347,7 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
             ApplyPlayerName();
-            if (!_selectedNativeRuntime) ApplyMemoryText(chosenByPlayer: false);
+            if (!_selectedNativeRuntime) ApplyMemoryText();
             var settings = RequireSettings();
             if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
             {
@@ -2302,11 +2302,11 @@ public partial class MainWindow : Window
     /// machine where the launcher would have offered five, and it ran out of
     /// them while generating a world. A number the player types is written down
     /// by <see cref="MemoryTextBox_TextChanged"/> on the keystroke that types
-    /// it, and Enter says so again; neither needs this to say it a third time.
+    /// it. Confirming an unchanged value with Enter does not pin it.
     /// </remarks>
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
-        ApplyMemoryText(chosenByPlayer: false);
+        ApplyMemoryText();
     }
 
     private void MemoryTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
@@ -2369,7 +2369,7 @@ public partial class MainWindow : Window
     {
         if (e.Key != Key.Enter) return;
 
-        ApplyMemoryText(chosenByPlayer: true);
+        ApplyMemoryText();
         Keyboard.ClearFocus();
         e.Handled = true;
     }
@@ -2863,15 +2863,15 @@ public partial class MainWindow : Window
     /// itself - pressing Play, above all - because a number the player never
     /// touched goes on following the pack it is for.
     /// </summary>
-    private void ApplyMemoryText(bool chosenByPlayer)
+    private void ApplyMemoryText()
     {
         if (int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb))
         {
-            SetMemoryGb(memoryGb, chosenByPlayer);
+            SetMemoryGb(memoryGb, chosenByPlayer: false);
             return;
         }
 
-        SetMemoryGb(MinHeapGb, chosenByPlayer);
+        SetMemoryGb(MinHeapGb, chosenByPlayer: false);
     }
 
     private void SetMemoryGb(int memoryGb, bool chosenByPlayer)
@@ -2972,7 +2972,8 @@ public partial class MainWindow : Window
     {
         if (_recommendedMemoryGb is not { } memoryGb || !MemoryTextBox.IsEnabled ||
             _settings is null || _settingsService is null || _memoryEstimateWait?.IsEnabled == true) return;
-        SetMemoryGb(memoryGb, chosenByPlayer: true);
+        _settingsService.ForgetMemoryForPack(_settings);
+        SetMemoryGb(memoryGb, chosenByPlayer: false);
     }
 
     private void StartMemoryEstimateWait()
@@ -3085,7 +3086,7 @@ public partial class MainWindow : Window
         _recommendedMemoryGb = estimateGb;
         MemoryEstimateButton.IsEnabled = MemoryTextBox.IsEnabled && _memoryEstimateWait?.IsEnabled != true;
         MemoryEstimateText.Text = $"Рекомендуется от {estimateGb} ГБ";
-        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы выделить эту память.";
+        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы автоматически использовать рекомендацию.";
     }
 
     /// <summary>
