@@ -441,7 +441,8 @@ public sealed class MinecraftProcessService
         var identityJvmArguments = await _identityAdapter
             .PrepareJvmArgumentsAsync(runtime, instance.GameDirectory, token)
             .ConfigureAwait(false);
-        var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
+        var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext,
+            waitForPeerBytes: descriptor.Loader.Type == PackLoaderKind.LegacyFabric);
         // Who each name is. The adapter reads it when a profile is built, which
         // is the one moment every Minecraft version has in common.
         var identityRegistryPath = _identityRegistry.Prepare(identityContext);

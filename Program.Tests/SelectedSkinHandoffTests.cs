@@ -83,6 +83,49 @@ public sealed class SelectedSkinHandoffTests : IDisposable
             new InMemoryPeerTransport(new InMemoryPeerNetwork(), peer, "Player"));
     }
 
+    [Fact]
+    public async Task PeerSkinIsAdvertisedOnlyWhenItsVerifiedBytesAreReady()
+    {
+        var paths = new AppPaths(_root);
+        paths.Ensure();
+        var bytes = File.ReadAllBytes(WriteSkin("slim"));
+        var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        var network = new InMemoryPeerNetwork();
+        await using var sender = network.CreateTransport(76561198256236531UL);
+        await using var receiver = network.CreateTransport(76561198256236532UL);
+        var accepted = new TaskCompletionSource<PeerConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        sender.ConnectionAccepted += (_, connection) => accepted.TrySetResult(connection);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await sender.StartListeningAsync(timeout.Token);
+        await using var service = new SkinService(paths, new Logger(paths.LogFile), receiver);
+        await service.StartAsync();
+        service.ObservePeer(new PeerViewModel
+        {
+            SteamId = sender.LocalPeer, MinecraftUuid = Uuid, IsSkinAvailable = true,
+            SkinSha256 = hash, SkinModel = "slim"
+        });
+        await using var connection = await accepted.Task.WaitAsync(timeout.Token);
+        var stream = connection.Stream;
+        await PortableProtocol.ReadFrameAsync(stream, timeout.Token);
+        var legacyRegistry = service.PrepareRegistry(new AppSettings(), new LocalIdentityContext(), waitForPeerBytes: true);
+        Assert.Equal(paths.LegacySkinRegistryFile, legacyRegistry);
+        Assert.False(File.Exists(legacyRegistry));
+        Assert.Contains(hash, File.ReadAllText(paths.SkinRegistryFile), StringComparison.Ordinal);
+
+        await PortableProtocol.WriteJsonAsync(stream, new SkinResponse
+        {
+            Ok = true, PlayerUuid = Uuid, Sha256 = hash, Model = "slim", SizeBytes = bytes.Length
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web), timeout.Token);
+        await stream.WriteAsync(bytes, timeout.Token);
+        await stream.FlushAsync(timeout.Token);
+
+        while (!File.Exists(legacyRegistry)) await Task.Delay(20, timeout.Token);
+        var fields = Assert.Single(File.ReadAllLines(legacyRegistry)).Split('|');
+        Assert.Equal(new[] { Uuid, hash, "slim" }, fields[..3]);
+        using var http = new HttpClient();
+        Assert.Equal(bytes, await http.GetByteArrayAsync(fields[3], timeout.Token));
+    }
+
     private string WriteSkin(string model)
     {
         const int width = 64;
