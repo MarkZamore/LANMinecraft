@@ -162,9 +162,11 @@ public sealed class PackRuntimeService : IDisposable
         // game is Minecraft's own; everything after it belongs to the loader,
         // however many rounds that takes.
         var loaderName = LoaderDisplayName(descriptor.Loader.Type);
-        var usePinnedInstallerJava = descriptor.Loader.Type == PackLoaderKind.Forge &&
-            descriptor.MinecraftVersion == "1.20.1" && requiredJava.MajorVersion == 17 &&
-            descriptor.Loader.Version is "47.3.7" or "1.20.1-47.3.7";
+        var usePinnedInstallerJava = (descriptor.Loader.Type, descriptor.MinecraftVersion,
+            descriptor.Loader.Version, requiredJava.MajorVersion) is
+            (PackLoaderKind.Forge, "1.20.1", "47.3.7" or "1.20.1-47.3.7", 17) or
+            (PackLoaderKind.NeoForge, "1.21.1", "21.1.248", 21) or
+            (PackLoaderKind.NeoForge, "26.3", "26.3.0.99", 25);
         var includeInstallerJava = provider.RequiresInstallerJava && !usePinnedInstallerJava;
         var launcher = CreateLauncher(
             runtimeRoot,
