@@ -124,6 +124,8 @@
                          Padding="{DynamicResource Pad.None}"
                          HorizontalContentAlignment="Stretch"
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.ScrollUnit="Pixel"
                          PreviewKeyDown="ControlRoot_PreviewKeyDown"
                          PreviewMouseLeftButtonUp="ItemsList_PreviewMouseLeftButtonUp"
                          SelectionChanged="ItemsList_SelectionChanged"/>

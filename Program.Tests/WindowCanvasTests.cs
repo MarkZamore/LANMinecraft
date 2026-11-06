@@ -695,10 +695,33 @@ public sealed class WindowCanvasTests
                     list.ApplyTemplate();
                     list.UpdateLayout();
                     var popupScroll = VisualDescendants<ScrollViewer>(list).First();
-                    popupScroll.ScrollToEnd();
+                    Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(list));
+                    RaiseWheelOnItem(0);
+                    var popupSmooth = SmoothScrollingController.Attach(popupScroll);
+                    if (SystemParameters.ClientAreaAnimation)
+                    {
+                        Assert.True(popupSmooth.IsAnimating);
+                        popupSmooth.AdvanceFrame(75);
+                    }
                     DrainDispatcher();
                     Assert.True(popupScroll.VerticalOffset > 0);
                     Assert.Equal(offset, body.VerticalOffset, 3);
+
+                    popupScroll.ScrollToEnd();
+                    DrainDispatcher();
+                    RaiseWheelOnItem(list.Items.Count - 1);
+                    if (SystemParameters.ClientAreaAnimation)
+                        Assert.NotEqual(0, popupSmooth.BounceOffset);
+                    Assert.Equal(offset, body.VerticalOffset, 3);
+
+                    void RaiseWheelOnItem(int index)
+                    {
+                        var item = Assert.IsType<ListBoxItem>(list.ItemContainerGenerator.ContainerFromIndex(index));
+                        var itemWheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
+                            { RoutedEvent = UIElement.PreviewMouseWheelEvent };
+                        item.RaiseEvent(itemWheel);
+                        Assert.True(itemWheel.Handled);
+                    }
                 }
                 finally
                 {
