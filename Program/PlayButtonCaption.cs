@@ -7,7 +7,7 @@ namespace Minecraft;
 /// prepared.
 ///
 /// Captions wrap inside the bounded play button. They name the work and its
-/// moving numbers - "Сборка", "Java 21.0.12", "NeoForge" - without a sentence
+/// moving numbers - "Сборка", "Java", "NeoForge" - without a sentence
 /// around them. The pair of sizes carries one unit because both halves use
 /// the same measure.
 /// </summary>
@@ -34,7 +34,8 @@ internal static class PlayButtonCaption
             RuntimePreparationStage.Downloading when moving =>
                 WithBytes(progress.Message, progress, bytesPerSecond),
             RuntimePreparationStage.InstallingJava when moving =>
-                WithBytes(progress.Message, progress, bytesPerSecond),
+                WithBytes("Java", progress, bytesPerSecond),
+            RuntimePreparationStage.InstallingJava => "Java",
             _ => progress.Message
         };
     }

@@ -130,6 +130,16 @@ public sealed class PlayButtonCaptionTests
         Assert.Equal("0 Б/с", PlayButtonCaption.Rate(0).Replace('.', ','));
     }
 
+    [Fact]
+    public void JavaCaptionOmitsTheVersionAndKeepsTheDownloadNumbers()
+    {
+        var progress = new RuntimePreparationProgress(
+            RuntimePreparationStage.InstallingJava, "Java 17.0.20.1",
+            DownloadedBytes: 1024, TotalBytes: 2048);
+        Assert.Equal("Java: 1 / 2 КБ (1 КБ/с)", PlayButtonCaption.For(progress, 1024));
+        Assert.Equal("Java", PlayButtonCaption.For(progress with { TotalBytes = 0 }, 0));
+    }
+
     private static IEnumerable<string> Captions()
     {
         var byteStages = new[]
@@ -138,17 +148,7 @@ public sealed class PlayButtonCaptionTests
             RuntimePreparationStage.Downloading,
             RuntimePreparationStage.InstallingJava,
         };
-        // Every word the preparation can put in front of a pair of sizes: the
-        // Java it is fetching, and the name of whatever set of files is coming
-        // down - the base game, or the loader the pack asks for.
-        // Every Java the catalogue pins, not just the one this build defaults
-        // to. A 1.16 pack fetches Java 8, whose version reads "1.8.0_504" - the
-        // longest of the four - and it was never measured while this named the
-        // default alone.
-        var subjects = JavaRuntimeCatalog.Releases
-            .Select(release => $"Java {release.JavaVersion}")
-            .Concat(["Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"])
-            .ToArray();
+        string[] subjects = ["Java", "Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"];
         foreach (var stage in byteStages)
         {
             foreach (var subject in subjects)
