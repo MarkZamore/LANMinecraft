@@ -105,6 +105,15 @@
         "repo": "Minecraft-Rust-Edition",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-10",
+      "relativePath": "Minecraft Rust Mods",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Minecraft-Rust-Mods",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
