@@ -15,6 +15,8 @@ An explicitly prepared pack declares its platform in `portable-pack.json`:
 
 The loader provider requests the official `https://meta.legacyfabric.net/v2/versions/loader/<minecraft>/<loader>/profile/json` profile through CmlLib's configurable Fabric installer. It preserves upstream libraries, including `net.legacyfabric:intermediary` and Legacy Fabric's patched LWJGL/native artifacts. Its installed ID is `legacyfabric-loader-<loader>-<minecraft>`; ordinary Fabric profiles in the shared store are separate. The inherited vanilla client is named explicitly using the same Knot game-JAR repair as Fabric and Quilt.
 
+For legacy native entries that only declare a top-level Maven repository, the provider supplies that repository as classifier download metadata. This lets CmlLib resolve the publisher's native archives on an empty cache while keeping the original classifiers and extraction rules.
+
 The library's platform metadata uses `legacyfabric`; the preparation indicator says `Legacy Fabric`. Existing library cards continue to show their Minecraft version and mod count.
 
 Minecraft 1.6.4 uses name-based player files and no authlib. The old UUID/authlib agent must not be applied to that runtime. Player storage, authenticated Steam identity, chosen skins and native network UI are separate compatibility contracts implemented by the legacy module and the launcher's legacy profile services. A successful runtime installation alone does not certify those features.
