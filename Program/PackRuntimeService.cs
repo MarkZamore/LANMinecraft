@@ -162,13 +162,17 @@ public sealed class PackRuntimeService : IDisposable
         // game is Minecraft's own; everything after it belongs to the loader,
         // however many rounds that takes.
         var loaderName = LoaderDisplayName(descriptor.Loader.Type);
+        var usePinnedInstallerJava = descriptor.Loader.Type == PackLoaderKind.Forge &&
+            descriptor.MinecraftVersion == "1.20.1" && requiredJava.MajorVersion == 17 &&
+            descriptor.Loader.Version is "47.3.7" or "1.20.1-47.3.7";
+        var includeInstallerJava = provider.RequiresInstallerJava && !usePinnedInstallerJava;
         var launcher = CreateLauncher(
             runtimeRoot,
             temporaryRoot,
             progress,
             localOnly: false,
             subject: "Minecraft",
-            includeInstallerJava: provider.RequiresInstallerJava);
+            includeInstallerJava: includeInstallerJava);
         IVersion baseVersion;
         try
         {
@@ -189,6 +193,13 @@ public sealed class PackRuntimeService : IDisposable
             ValidateClientJar(sourceClientJar, clientFile);
             CopyClientJar(sourceClientJar, clientFile.Path!);
         }
+        else
+        {
+            await FromMojangAsync(
+                $"Minecraft {descriptor.MinecraftVersion} client",
+                () => InstallOfficialClientAsync(launcher.GameInstaller, clientFile, token).AsTask(), token)
+                .ConfigureAwait(false);
+        }
 
         await FromMojangAsync(
             $"Minecraft {descriptor.MinecraftVersion}",
@@ -196,18 +207,18 @@ public sealed class PackRuntimeService : IDisposable
                 retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
                 token),
             token).ConfigureAwait(false);
-        // Some loader installers still run on Mojang's Java.
-        // The game uses the pack's independently pinned Java.
-        var installerJavaPath = "";
-        if (provider.RequiresInstallerJava)
+        var gameJava = await _javaRuntime
+            .EnsureAsync(_paths.JavaRuntimes, requiredJava, progress, token)
+            .ConfigureAwait(false);
+
+        // Other loader installers keep using the runtime they already support.
+        var installerJavaPath = usePinnedInstallerJava ? gameJava.JavaPath : "";
+        if (includeInstallerJava)
         {
             installerJavaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath() ?? "";
             if (!File.Exists(installerJavaPath))
                 throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
         }
-        var gameJava = await _javaRuntime
-            .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
-            .ConfigureAwait(false);
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
@@ -218,7 +229,7 @@ public sealed class PackRuntimeService : IDisposable
             progress,
             localOnly: false,
             subject: loaderName,
-            includeInstallerJava: provider.RequiresInstallerJava);
+            includeInstallerJava: includeInstallerJava);
 
         var context = new PackLoaderInstallationContext(
             descriptor,
@@ -239,7 +250,7 @@ public sealed class PackRuntimeService : IDisposable
             progress,
             localOnly: true,
             subject: loaderName,
-            includeInstallerJava: provider.RequiresInstallerJava);
+            includeInstallerJava: includeInstallerJava);
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
@@ -363,6 +374,15 @@ public sealed class PackRuntimeService : IDisposable
             throw new InvalidDataException("Official Minecraft metadata does not contain a client jar artifact.");
         }
         return clientFile;
+    }
+
+    internal static ValueTask InstallOfficialClientAsync(IGameInstaller installer, GameFile clientFile, CancellationToken token)
+    {
+        if (clientFile.Size <= 0 || clientFile.Hash is not { Length: 40 } hash || !hash.All(Uri.IsHexDigit) ||
+            !Uri.TryCreate(clientFile.Url, UriKind.Absolute, out var source) || source.Scheme != Uri.UriSchemeHttps ||
+            source.Host is not ("piston-data.mojang.com" or "launcher.mojang.com"))
+            throw new InvalidDataException("Official Minecraft client metadata must include a Mojang HTTPS URL, size and SHA-1.");
+        return installer.Install([clientFile], null, null, token);
     }
 
     private static void ValidateClientJar(string sourcePath, GameFile expected)
