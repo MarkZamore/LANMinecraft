@@ -122,7 +122,7 @@ public sealed class PackLauncherFeaturesTests : IDisposable
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Requests.Add(request.RequestUri!);
-            if (request.RequestUri!.GetLeftPart(UriPartial.Path) == PackCatalogService.NumberedIndexUri.GetLeftPart(UriPartial.Path) &&
+            if (request.RequestUri!.GetLeftPart(UriPartial.Path) == PackCatalogService.IndexUri.GetLeftPart(UriPartial.Path) &&
                 catalogueSource is not null)
                 return Task.FromResult(Json(JsonSerializer.Serialize(new
                 {

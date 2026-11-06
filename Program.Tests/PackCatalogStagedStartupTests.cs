@@ -62,21 +62,20 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
         using var host = new CatalogHost();
         var legacy = host.Add("old-catalog-id", "Existing pack", "Existing-Pack");
         host.Index = [legacy];
-        host.NumberedIndexMissing = true;
 
         var beforePublication = Staged(host);
         await beforePublication.PrepareLibraryAsync().WaitAsync(Deadline);
         Assert.Equal(legacy.Id, Assert.Single(beforePublication.Packs).Entry.Id);
-        Assert.Equal(new[] { PackCatalogService.NumberedIndexUri.AbsolutePath, PackCatalogService.IndexUri.AbsolutePath },
-            host.Requests.Select(request => request.Uri.AbsolutePath).Where(path => path.EndsWith("/catalog.json", StringComparison.Ordinal)));
+        Assert.Equal(PackCatalogService.IndexUri.AbsolutePath, Assert.Single(host.Requests.Select(request => request.Uri.AbsolutePath)
+            .Where(path => path.EndsWith("/catalog.json", StringComparison.Ordinal))));
 
         var numbered = legacy with { Id = "minecraft-500", LegacyId = legacy.Id };
-        host.Index = [numbered];
-        host.NumberedIndexMissing = false;
+        host.Index = [legacy with { NumberedId = numbered.Id }];
         var current = Staged(host);
         await current.PrepareLibraryAsync().WaitAsync(Deadline);
         var verified = Assert.Single(current.Packs);
-        Assert.Equal(numbered.Id, verified.Entry.Id);
+        Assert.Equal(numbered, verified.Entry);
+        Assert.Equal(2, host.IndexRequests);
         Assert.Equal(legacy.Id, verified.Content.Id);
         Assert.Equal(legacy.RelativePath, verified.Entry.RelativePath);
 
@@ -537,7 +536,6 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
         internal readonly HashSet<string> CorruptBundles = new(StringComparer.Ordinal);
         internal CatalogSource[] Index = [];
         internal bool Offline;
-        internal bool NumberedIndexMissing;
         internal bool IndexTimesOut;
         internal HttpStatusCode? IndexFailureStatus;
         internal int IndexTimeoutCancellations;
@@ -608,8 +606,6 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
             if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
             if (uri.AbsolutePath.EndsWith("/catalog.json", StringComparison.Ordinal))
             {
-                if (NumberedIndexMissing && uri.AbsolutePath == PackCatalogService.NumberedIndexUri.AbsolutePath)
-                    return Reply(HttpStatusCode.NotFound, []);
                 if (IndexFailureStatus is { } failureStatus) return Reply(failureStatus, []);
                 if (IndexTimesOut)
                 {

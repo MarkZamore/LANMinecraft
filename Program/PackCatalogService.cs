@@ -12,6 +12,7 @@ namespace Minecraft;
 public sealed record CatalogSource(string Id, string RelativePath, PackSyncSource Source)
 {
     public string? LegacyId { get; init; }
+    public string? NumberedId { get; init; }
     public string? InstallationPath { get; init; }
     public string? CompatibilityPath { get; init; }
     public List<string> LegacyRelativePaths { get; init; } = [];
@@ -28,7 +29,8 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
 
     public bool Equals(CatalogSource? other) => other is not null &&
         Id == other.Id && RelativePath == other.RelativePath && Source == other.Source &&
-        LegacyId == other.LegacyId && InstallationPath == other.InstallationPath &&
+        LegacyId == other.LegacyId && NumberedId == other.NumberedId &&
+        InstallationPath == other.InstallationPath &&
         CompatibilityPath == other.CompatibilityPath &&
         (LegacyRelativePaths is null ? other.LegacyRelativePaths is null :
             other.LegacyRelativePaths is not null && LegacyRelativePaths.SequenceEqual(other.LegacyRelativePaths, StringComparer.Ordinal)) &&
@@ -40,6 +42,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
         var hash = new HashCode();
         hash.Add(Id, StringComparer.Ordinal);
         hash.Add(LegacyId, StringComparer.Ordinal);
+        hash.Add(NumberedId, StringComparer.Ordinal);
         hash.Add(RelativePath, StringComparer.Ordinal);
         hash.Add(Source);
         hash.Add(InstallationPath, StringComparer.Ordinal);
@@ -191,7 +194,6 @@ public sealed class CatalogPack
 public sealed partial class PackCatalogService
 {
     public static readonly Uri IndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/catalog.json");
-    internal static readonly Uri NumberedIndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/v2/catalog.json");
     private const int MaximumBundleBytes = 8 * 1024 * 1024;
     private const int MaximumManifestBytes = 8 * 1024 * 1024;
     private const int MaximumSourceHistoryPerPack = 16;
@@ -506,17 +508,7 @@ public sealed partial class PackCatalogService
 
     private async Task<List<CatalogSource>> ReadIndexAsync(CancellationToken token)
     {
-        byte[] bytes;
-        try
-        {
-            bytes = await ReadBoundedAsync(MutableMetadataUri(NumberedIndexUri), 256 * 1024, token).ConfigureAwait(false);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            // During deployment the v1 endpoint remains authoritative until
-            // the numbered projection appears. Other failures use the cache.
-            bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, token).ConfigureAwait(false);
-        }
+        var bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, token).ConfigureAwait(false);
         return ParseIndex(Encoding.UTF8.GetString(bytes));
     }
 
@@ -624,7 +616,7 @@ public sealed partial class PackCatalogService
     private static List<CatalogSource> ParseIndex(string json, bool useEmbeddedAliases = true)
     {
         var index = JsonSerializer.Deserialize<CatalogIndex>(json, JsonOptions);
-        if (index is null || index.SchemaVersion is not (1 or 2) || index.Packs is null || index.Packs.Count > 100)
+        if (index is null || index.SchemaVersion != 1 || index.Packs is null || index.Packs.Count > 100)
             throw new InvalidDataException("Unsupported library index.");
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -647,7 +639,13 @@ public sealed partial class PackCatalogService
         // membership. The embedded index is parsed without recursively reading
         // itself to obtain its own aliases.
         IReadOnlyList<CatalogSource> aliases = useEmbeddedAliases ? SeedSources().ToArray() : [];
-        var canonical = index.Packs.Select(entry => CanonicalSource(entry, aliases)).ToList();
+        // The shared index keeps the original wire ID for older clients.
+        // From here on, the numbered ID is canonical and the old key is retained
+        // for existing bundles, caches and journals.
+        var canonical = index.Packs.Select(entry => CanonicalSource(
+            entry.NumberedId is { } numbered
+                ? entry with { Id = numbered, LegacyId = entry.Id, NumberedId = null }
+                : entry, aliases)).ToList();
         if (canonical.Select(entry => entry.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != canonical.Count ||
             canonical.Select(entry => Key(entry.Source)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != canonical.Count)
             throw new InvalidDataException("Invalid/duplicate library rename targets.");
@@ -675,6 +673,9 @@ public sealed partial class PackCatalogService
         if (!ids.Add(entry.Id) || (entry.LegacyId is { } legacy &&
             (string.IsNullOrWhiteSpace(legacy) || legacy.Length > 100 || legacy != legacy.Trim() || !ids.Add(legacy))))
             throw new InvalidDataException("Invalid/duplicate library ID or legacy ID.");
+        if (entry.NumberedId is { } numbered && (entry.LegacyId is not null ||
+            numbered.Length > 100 || !Regex.IsMatch(numbered, @"^minecraft-[1-9][0-9]*\z") || !ids.Add(numbered)))
+            throw new InvalidDataException("Invalid/duplicate numbered library ID.");
     }
 
     public static bool ValidFolder(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 &&

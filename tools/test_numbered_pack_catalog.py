@@ -26,8 +26,8 @@ class NumberedPackCatalogTests(unittest.TestCase):
         self.assertEqual(project_catalog(source, self.allocations), {
             "schemaVersion": 1,
             "packs": [
-                {**wolves, "id": "minecraft-8", "legacyId": "better-than-wolves"},
-                {**java, "id": "minecraft-3", "legacyId": "minecraft-26-2"},
+                {**wolves, "numberedId": "minecraft-8"},
+                {**java, "numberedId": "minecraft-3"},
             ],
         })
         self.assertEqual(java["id"], "minecraft-26-2")
@@ -40,7 +40,7 @@ class NumberedPackCatalogTests(unittest.TestCase):
         ]}
         self.assertEqual(project_catalog(source, self.allocations)["packs"], [
             {"id": "minecraft-9"},
-            {"id": "minecraft-10", "legacyId": "minecraft-rust-mods"},
+            {"id": "minecraft-rust-mods", "numberedId": "minecraft-10"},
             {"id": "minecraft-11"},
         ])
         self.assertEqual(project_catalog({"schemaVersion": 1, "packs": []}, self.allocations)["packs"], [])
@@ -50,6 +50,14 @@ class NumberedPackCatalogTests(unittest.TestCase):
                     ["all-the-mods-10", "ALL-THE-MODS-10"]):
             with self.subTest(ids=ids), self.assertRaises(ValueError):
                 project_catalog({"schemaVersion": 1, "packs": [{"id": pack_id} for pack_id in ids]}, self.allocations)
+
+    def test_verifies_existing_numbers_and_is_idempotent(self):
+        source = {"schemaVersion": 1, "packs": [{"id": "all-the-mods-10"}, {"id": "minecraft-9"}]}
+        numbered = project_catalog(source, self.allocations)
+        self.assertEqual(project_catalog(numbered, self.allocations), numbered)
+        numbered["packs"][0]["numberedId"] = "minecraft-2"
+        with self.assertRaisesRegex(ValueError, "Incorrect numberedId"):
+            project_catalog(numbered, self.allocations)
 
     def test_rejects_reused_and_skipped_numbers(self):
         for number in ("minecraft-8", "minecraft-12"):
