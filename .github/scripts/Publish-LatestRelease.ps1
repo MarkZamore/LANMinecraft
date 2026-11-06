@@ -7,10 +7,12 @@ param(
     [Parameter(Mandatory)][ValidateRange(1,65535)][int]$ReleaseNumber,
     [string]$AntivirusEvidencePath,
     [string]$CiAntivirusEvidencePath,
+    [switch]$AllowUnavailableHostedDefender,
     [switch]$Publish
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GhRetry.ps1')
+. (Join-Path $PSScriptRoot 'HostedDefenderPolicy.ps1')
 $assetRoot = [IO.Path]::GetFullPath($AssetDirectory, (Get-Location).ProviderPath)
 $commit = $CommitSha.ToLowerInvariant()
 $locks = [Collections.Generic.List[IO.FileStream]]::new()
@@ -105,7 +107,7 @@ try {
     if (-not $Publish) {
         return [pscustomobject]@{ Manifest = $manifest; AssetPaths = @($assetPaths) + @($manifestPath); Executable = $exe }
     }
-    if (-not $AntivirusEvidencePath) { throw 'Publishing requires fresh successful antivirus evidence for these exact bytes.' }
+    if (-not $AntivirusEvidencePath) { throw 'Publishing requires a fresh antivirus record for these exact bytes.' }
     if ($CiAntivirusEvidencePath) {
         $ciProof = Get-Content -LiteralPath $CiAntivirusEvidencePath -Raw | ConvertFrom-Json
         if ($ciProof.Result -eq 'Detected' -or @($ciProof.MatchingDetections).Count -gt 0 -or
@@ -114,22 +116,35 @@ try {
     $proofJson = Get-Content -LiteralPath $AntivirusEvidencePath -Raw
     $proof = $proofJson | ConvertFrom-Json
     $finished = Read-ScanFinishedAt $proofJson
-    if ($proof.Result -ne 'Passed' -or $proof.NativeExitCode -ne 0 -or @($proof.MatchingDetections).Count -gt 0 -or
-        $proof.Before.Sha256 -ne $manifest.sha256 -or $proof.After.Sha256 -ne $manifest.sha256 -or
+    if ($proof.Before.Sha256 -ne $manifest.sha256 -or $proof.After.Sha256 -ne $manifest.sha256 -or
         [long]$proof.Before.SizeBytes -ne [long]$manifest.sizeBytes -or [long]$proof.After.SizeBytes -ne [long]$manifest.sizeBytes -or
         -not ([IO.Path]::GetFullPath([string]$proof.Executable)).Equals($exe, [StringComparison]::OrdinalIgnoreCase) -or
-        $finished -lt [DateTimeOffset]::UtcNow.AddHours(-4) -or $finished -gt [DateTimeOffset]::UtcNow.AddMinutes(5) -or
-        $proof.CompletionMethod -notin @('DefenderOperationalScanId','CalibratedEnglishExactTargetOutput')) { throw 'Antivirus evidence is absent, stale, negative or belongs to different executable bytes.' }
-    foreach ($status in @($proof.DefenderBefore, $proof.DefenderAfter)) {
-        if ($status.AMServiceEnabled -ne $true -or $status.AntivirusEnabled -ne $true -or $status.RealTimeProtectionEnabled -ne $true -or
-            $status.AMRunningMode -ne 'Normal' -or $status.DefenderSignaturesOutOfDate -ne $false) { throw 'Antivirus evidence does not show active current protection.' }
+        $finished -lt [DateTimeOffset]::UtcNow.AddHours(-4) -or $finished -gt [DateTimeOffset]::UtcNow.AddMinutes(5)) {
+        throw 'Antivirus evidence is absent, stale or belongs to different executable bytes.'
     }
+    if ($proof.Result -eq 'Passed') {
+        if ($proof.NativeExitCode -ne 0 -or @($proof.MatchingDetections).Count -gt 0 -or
+            $proof.CompletionMethod -notin @('DefenderOperationalScanId','CalibratedEnglishExactTargetOutput')) {
+            throw 'The antivirus record does not prove a completed clean scan.'
+        }
+        foreach ($status in @($proof.DefenderBefore, $proof.DefenderAfter)) {
+            if ($status.AMServiceEnabled -ne $true -or $status.AntivirusEnabled -ne $true -or $status.RealTimeProtectionEnabled -ne $true -or
+                $status.AMRunningMode -ne 'Normal' -or $status.DefenderSignaturesOutOfDate -ne $false) { throw 'Antivirus evidence does not show active current protection.' }
+        }
+        $releaseNotes = "Automated build for commit $commit. Microsoft Defender checked the published executable."
+    }
+    elseif ($AllowUnavailableHostedDefender) {
+        Assert-HostedDefenderUnavailable $proof $Repository $commit
+        Write-Warning 'Microsoft Defender was unavailable before scanning. No antivirus verdict is available for this release.'
+        $releaseNotes = "Automated build for commit $commit. Microsoft Defender was unavailable on the GitHub-hosted runner, so this executable was not scanned."
+    }
+    else { throw 'Publication outside the hosted workflow requires a completed clean antivirus scan.' }
     Assert-PublicationHead
     $latest = Read-Latest
     if ($null -eq $latest) {
         $refs = @(Invoke-CheckedGh api "repos/$Repository/git/matching-refs/tags/latest" | ConvertFrom-Json)
         if (@($refs | Where-Object ref -eq 'refs/tags/latest').Count) { [void](Invoke-CheckedGh api --method DELETE "repos/$Repository/git/refs/tags/latest") }
-        [void](Invoke-CheckedGh release create latest @assetPaths $manifestPath --repo $Repository --target $commit --latest --title 'Latest LANMinecraft.exe' --notes "Automated build for commit $commit")
+        [void](Invoke-CheckedGh release create latest @assetPaths $manifestPath --repo $Repository --target $commit --latest --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
     else {
         [void](Invoke-CheckedGh release upload latest @assetPaths --repo $Repository --clobber)
@@ -141,7 +156,7 @@ try {
         foreach ($asset in @($current.assets | Where-Object { -not $expected.Contains($_.name) })) {
             [void](Invoke-CheckedGh release delete-asset latest $asset.name --repo $Repository --yes)
         }
-        [void](Invoke-CheckedGh release edit latest --repo $Repository --target $commit --title 'Latest LANMinecraft.exe' --notes "Automated build for commit $commit")
+        [void](Invoke-CheckedGh release edit latest --repo $Repository --target $commit --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
     $archiveTags = (Invoke-CheckedGh release list --repo $Repository --limit 100 --json tagName | ConvertFrom-Json).tagName |
         Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } | Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending

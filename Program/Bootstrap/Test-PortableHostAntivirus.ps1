@@ -22,6 +22,7 @@ $evidenceDirectory = Join-Path $artifactsBase $runId
 $summaryPath = Join-Path $evidenceDirectory 'scan.json'
 $evidence = [ordered]@{
     SchemaVersion = 1; Result = 'Unknown'; Reason = ''; StartedAtUtc = [DateTime]::UtcNow.ToString('O')
+    DefenderUnavailableAtPreflight = $false
     Executable = [IO.Path]::GetFullPath($ExecutablePath, $workingDirectory); EvidenceDirectory = $evidenceDirectory
     Before = $null; After = $null; DefenderBefore = $null; DefenderAfter = $null
     Tool = $null; Arguments = @(); NativeExitCode = $null; TimedOut = $false; IsAdministrator = $false
@@ -184,7 +185,13 @@ try {
     $heldExecutable = [IO.FileStream]::new($evidence.Executable, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     $evidence.Before = Read-TargetFingerprint $heldExecutable
     $evidence.DefenderBefore = Read-DefenderStatus
-    Assert-DefenderStatus $evidence.DefenderBefore
+    try { Assert-DefenderStatus $evidence.DefenderBefore }
+    catch {
+        # Fingerprint the locked EXE again before reporting a pre-scan skip.
+        $evidence.After = Read-TargetFingerprint $heldExecutable
+        $evidence.DefenderUnavailableAtPreflight = $true
+        throw
+    }
     $eventLog = Get-WinEvent -ListLog $eventLogName -ErrorAction Stop
     if (-not $eventLog.IsEnabled) { throw 'The Defender Operational event log is disabled; scan completion cannot be verified.' }
     try { $lastEvent = Get-WinEvent -LogName $eventLogName -MaxEvents 1 -ErrorAction Stop }

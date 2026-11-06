@@ -154,6 +154,10 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) { throw "Publishing failed." }
 
+      - name: Test hosted Defender publication policy
+        shell: pwsh
+        run: ./.github/scripts/Test-HostedDefenderPolicy.ps1
+
       - name: Scan portable host
         id: antivirus
         continue-on-error: true
@@ -320,8 +324,24 @@ jobs:
             throw "Release contents are invalid. Missing: $missing; unexpected: $unexpected"
           }
 
+      - name: Publish latest release
+        id: publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The shared publisher routes every GitHub request through Invoke-Gh.
+          $scanRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\portable-host-antivirus'
+          $scans = @(Get-ChildItem -LiteralPath $scanRoot -Filter scan.json -File -Recurse)
+          if ($scans.Count -ne 1) { throw 'Antivirus evidence is missing or ambiguous.' }
+          & .\.github\scripts\Publish-LatestRelease.ps1 `
+            -AssetDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts') `
+            -Repository '${{ github.repository }}' -CommitSha '${{ github.sha }}' `
+            -ReleaseNumber ([int]$env:RELEASE_NUMBER) -AntivirusEvidencePath $scans[0].FullName -AllowUnavailableHostedDefender -Publish
+
       - name: Prepare exact candidate
-        if: steps.antivirus.outcome != 'success'
+        if: failure() && steps.publish.outcome == 'failure' && steps.antivirus.outcome == 'failure'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -351,7 +371,7 @@ jobs:
           } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $candidate 'candidate.json') -Encoding utf8
 
       - name: Upload exact candidate
-        if: steps.antivirus.outcome != 'success'
+        if: failure() && steps.publish.outcome == 'failure' && steps.antivirus.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: portable-host-candidate-${{ github.run_id }}-${{ github.run_attempt }}
@@ -359,25 +379,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
-
-      - name: Require local antivirus verification
-        if: steps.antivirus.outcome != 'success'
-        shell: pwsh
-        run: |
-          throw 'Candidate retained as an Actions artifact. Antivirus did not pass; latest is unchanged. Exact CI bytes require local active-Defender verification before publication; detections cannot be promoted.'
-
-      - name: Publish latest release
-        if: steps.antivirus.outcome == 'success'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # The shared publisher routes every GitHub request through Invoke-Gh.
-          $scanRoot = Join-Path $env:GITHUB_WORKSPACE 'artifacts\portable-host-antivirus'
-          $scans = @(Get-ChildItem -LiteralPath $scanRoot -Filter scan.json -File -Recurse)
-          if ($scans.Count -ne 1) { throw 'Successful antivirus evidence is missing or ambiguous.' }
-          & .\.github\scripts\Publish-LatestRelease.ps1 `
-            -AssetDirectory (Join-Path $env:GITHUB_WORKSPACE 'artifacts') `
-            -Repository '${{ github.repository }}' -CommitSha '${{ github.sha }}' `
-            -ReleaseNumber ([int]$env:RELEASE_NUMBER) -AntivirusEvidencePath $scans[0].FullName -Publish

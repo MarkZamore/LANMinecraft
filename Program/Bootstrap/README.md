@@ -12,7 +12,7 @@ Generation ownership is recorded beside the directory in `Runtime/<SHA256>.lease
 
 Publishing needs PowerShell 7.2 or newer, the existing .NET SDK/JDK and Visual Studio x64 C++ tools with a Windows SDK. Compiler discovery uses `vswhere`; `VsDevCmd` supplies the matching compiler/SDK environment. The host uses `/MT`, so users do not need a separate Visual C++ redistributable. CI must verify this prerequisite before publishing. Hashes, deltas and release assets are generated after wrapping the final EXE.
 
-This controls the launcher's own payload and temporary paths. It does not redirect Windows Known Folders, font/input/shell caches, Steam state or graphics-driver caches. Broad `APPDATA`/`USERPROFILE` replacement is deliberately avoided. Native self-extraction remains a shape that antivirus can inspect; scan the actual final artifact without changing security settings before publication. A successful scan or local I/O trace is evidence for that build and machine, not a universal guarantee.
+This controls the launcher's own payload and temporary paths. It does not redirect Windows Known Folders, font/input/shell caches, Steam state or graphics-driver caches. Broad `APPDATA`/`USERPROFILE` replacement is deliberately avoided. Native self-extraction remains a shape that antivirus can inspect; the release workflow attempts to scan the actual final artifact without changing security settings. A successful scan or local I/O trace is evidence for that build and machine, not a universal guarantee.
 
 ## Antivirus publication gate
 
@@ -44,7 +44,9 @@ The result applies to the recorded EXE hash and current engine/signatures. If CI
 
 ## Exact CI candidate fallback
 
-Unavailable hosted Defender remains **Unknown**. CI creates/verifies deltas, retains `portable-host-candidate-<run ID>-<attempt>` as an Actions artifact, then fails with `latest` unchanged. The artifact contains only release assets, original scan JSON and repository/commit/version/run metadata. Detections and nonzero native scan results cannot be locally promoted.
+A regular push to `main` builds, tests and publishes the release on GitHub. If the GitHub-hosted runner reports unavailable Defender protection at preflight, before any scan is attempted, the workflow can publish after the same version, hash, delta and asset checks. The evidence remains **Unknown**, and the release notes explicitly say that Defender did not scan the executable. No local Defender or manual step is needed for that case. This exception applies only to the hosted main-push workflow and fresh evidence for the exact unchanged executable.
+
+A detection, failed scan or ambiguous scan result still blocks automated publication. When antivirus evidence blocks publication, the workflow retains `portable-host-candidate-<run ID>-<attempt>` for diagnosis if the release assets and original scan record are available. This artifact contains only the release assets, original scan JSON and repository/commit/version/run metadata. The optional manual verifier below can handle eligible failures. Detections and nonzero native scan results cannot be promoted.
 
 From the trusted checkout, verify the approved run and version:
 
