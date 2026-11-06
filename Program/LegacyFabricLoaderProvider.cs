@@ -11,6 +11,7 @@ internal sealed class LegacyFabricLoaderProvider : IPackLoaderProvider
 {
     internal const string MetadataHost = "https://meta.legacyfabric.net";
     public PackLoaderKind Kind => PackLoaderKind.LegacyFabric;
+    public bool RequiresInstallerJava => false;
 
     public Task<string> InstallAsync(PackLoaderInstallationContext context, CancellationToken token) =>
         InstallProfileAsync(context.HttpClient, context.Launcher.MinecraftPath,
