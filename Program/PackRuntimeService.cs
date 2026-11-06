@@ -94,6 +94,8 @@ public sealed class PackRuntimeService : IDisposable
     {
         var packDirectory = _paths.CombineUnderPacks(packRelativePath);
         var descriptor = PackManifestService.Load(packDirectory);
+        if (descriptor.NativeRuntime is not null)
+            throw new InvalidOperationException("Native clients do not use the Java pack runtime.");
         // A pack may bring the client jar or leave it to be fetched. One that
         // names a jar must have that jar - it was named for a reason, and a
         // missing one is a broken pack rather than a silent download. One that

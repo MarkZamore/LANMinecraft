@@ -12,6 +12,7 @@ public sealed partial class WorldPlayerManifestService
     /// <summary>The launcher's one format version; see <see cref="PortableFormat"/>.</summary>
     internal const int CurrentSchemaVersion = PortableFormat.SchemaVersion;
     private static readonly string[] ProfileDirectories = ["playerdata", "stats", "advancements"];
+    private static readonly string[] NestedProfileDirectories = ["players/data", "players/stats", "players/advancements"];
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     /// <summary>
@@ -23,22 +24,25 @@ public sealed partial class WorldPlayerManifestService
 
     public WorldPlayersManifest Write(string worldPath, LocalIdentityContext? currentHolder)
     {
-        if (WorldPlayerStorage.Resolve(worldPath) == WorldPlayerStorage.Legacy)
+        WorldProfilePathGuard.EnsureUnlinked(worldPath);
+        var storage = WorldPlayerStorage.Resolve(worldPath);
+        if (storage == WorldPlayerStorage.Legacy)
             return WriteLegacy(worldPath, currentHolder);
+        var profileDirectories = storage == WorldPlayerStorage.NestedUuid ? NestedProfileDirectories : ProfileDirectories;
         var previous = Read(worldPath);
         var previousByMinecraftUuid = previous?.Players
             .GroupBy(player => player.MinecraftUuid, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase)
             ?? new Dictionary<string, WorldPlayerManifestEntry>(StringComparer.OrdinalIgnoreCase);
         var effectiveHolderUuid = ResolveEffectiveUuid(currentHolder);
-        var playerUuids = EnumerateProfileUuids(worldPath).OrderBy(uuid => uuid).ToArray();
+        var playerUuids = EnumerateProfileUuids(worldPath, profileDirectories).OrderBy(uuid => uuid).ToArray();
         var players = new List<WorldPlayerManifestEntry>(playerUuids.Length);
         foreach (var uuid in playerUuids)
         {
             var minecraftUuid = uuid.ToString("D").ToLowerInvariant();
             previousByMinecraftUuid.TryGetValue(minecraftUuid, out var existing);
             var isCurrentHolder = effectiveHolderUuid == uuid;
-            var files = EnumerateProfileFiles(worldPath, uuid)
+            var files = EnumerateProfileFiles(worldPath, uuid, profileDirectories)
                 .Select(path => CreateFileEntry(worldPath, path))
                 .OrderBy(file => file.Path, StringComparer.Ordinal)
                 .ToList();
@@ -64,6 +68,7 @@ public sealed partial class WorldPlayerManifestService
         var manifest = new WorldPlayersManifest
         {
             SchemaVersion = CurrentSchemaVersion,
+            PlayerStorage = storage == WorldPlayerStorage.NestedUuid ? storage : null,
             CurrentHolderUuid = currentHolder is null
                 ? previous?.CurrentHolderUuid ?? string.Empty
                 : effectiveHolderUuid?.ToString("D").ToLowerInvariant() ?? string.Empty,
@@ -79,6 +84,7 @@ public sealed partial class WorldPlayerManifestService
 
     public WorldPlayersManifest Validate(string worldPath)
     {
+        WorldProfilePathGuard.EnsureUnlinked(worldPath);
         var manifest = Read(worldPath)
             ?? throw new InvalidDataException($"Player manifest is missing in world {Path.GetFileName(worldPath)}.");
         // Anything this build has ever written is readable; only a document
@@ -90,9 +96,10 @@ public sealed partial class WorldPlayerManifestService
         }
 
         if (manifest.PlayerStorage == WorldPlayerStorage.Legacy) return ValidateLegacy(worldPath, manifest);
-        if (manifest.PlayerStorage is not (null or WorldPlayerStorage.Uuid) ||
-            WorldPlayerStorage.Resolve(worldPath) == WorldPlayerStorage.Legacy)
+        var storage = manifest.PlayerStorage ?? WorldPlayerStorage.Uuid;
+        if (storage != WorldPlayerStorage.Resolve(worldPath))
             throw new InvalidDataException("Player manifest storage does not match the world platform.");
+        var profileDirectories = storage == WorldPlayerStorage.NestedUuid ? NestedProfileDirectories : ProfileDirectories;
         if (manifest.UnassignedFiles.Count != 0 || manifest.Players.Any(player => player.StorageName is not null))
             throw new InvalidDataException("A modern player manifest cannot contain legacy storage entries.");
 
@@ -127,7 +134,8 @@ public sealed partial class WorldPlayerManifestService
             {
                 var path = ResolveManifestPath(worldPath, file.Path);
                 var relative = NormalizeRelativePath(Path.GetRelativePath(worldPath, path));
-                if (!IsProfilePathForUuid(relative, minecraftUuid))
+                if (!string.Equals(relative, file.Path, StringComparison.Ordinal) ||
+                    !IsProfilePathForUuid(relative, minecraftUuid, profileDirectories))
                 {
                     throw new InvalidDataException($"Player manifest file is assigned to the wrong UUID: {file.Path}");
                 }
@@ -136,7 +144,7 @@ public sealed partial class WorldPlayerManifestService
                     throw new InvalidDataException($"Player manifest contains a duplicate file: {file.Path}");
                 }
                 if (!File.Exists(path)) throw new InvalidDataException($"Player profile file is missing: {file.Path}");
-                if (IsPrimaryPlayerDataPath(relative, minecraftUuid))
+                if (IsPlayerDataPath(relative, minecraftUuid, storage))
                 {
                     var embeddedUuid = NbtFile.Read(path).Root.GetUuid();
                     if (embeddedUuid != minecraftUuid)
@@ -154,7 +162,7 @@ public sealed partial class WorldPlayerManifestService
             }
         }
 
-        var actualFiles = EnumerateAllProfileFiles(worldPath)
+        var actualFiles = EnumerateAllProfileFiles(worldPath, profileDirectories)
             .Select(path => NormalizeRelativePath(Path.GetRelativePath(worldPath, path)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!actualFiles.SetEquals(manifestFiles))
@@ -188,7 +196,7 @@ public sealed partial class WorldPlayerManifestService
             if (manifest is not null)
             {
                 if (manifest.Players is null || manifest.UnassignedFiles is null ||
-                    manifest.PlayerStorage is not (null or WorldPlayerStorage.Uuid or WorldPlayerStorage.Legacy))
+                    manifest.PlayerStorage is not (null or WorldPlayerStorage.Uuid or WorldPlayerStorage.NestedUuid or WorldPlayerStorage.Legacy))
                     throw new InvalidDataException("Player manifest has an unsupported storage shape.");
                 if (manifest.PlayerStorage == WorldPlayerStorage.Legacy) ValidateLegacyIdentityFields(manifest);
             }
@@ -200,10 +208,10 @@ public sealed partial class WorldPlayerManifestService
         }
     }
 
-    private static HashSet<Guid> EnumerateProfileUuids(string worldPath)
+    private static HashSet<Guid> EnumerateProfileUuids(string worldPath, string[] profileDirectories)
     {
         var result = new HashSet<Guid>();
-        foreach (var directoryName in ProfileDirectories)
+        foreach (var directoryName in profileDirectories)
         {
             var directory = Path.Combine(worldPath, directoryName);
             if (!Directory.Exists(directory)) continue;
@@ -218,10 +226,10 @@ public sealed partial class WorldPlayerManifestService
         return result;
     }
 
-    private static IEnumerable<string> EnumerateProfileFiles(string worldPath, Guid uuid)
+    private static IEnumerable<string> EnumerateProfileFiles(string worldPath, Guid uuid, string[] profileDirectories)
     {
         var prefix = uuid.ToString("D").ToLowerInvariant();
-        foreach (var directoryName in ProfileDirectories)
+        foreach (var directoryName in profileDirectories)
         {
             var directory = Path.Combine(worldPath, directoryName);
             if (!Directory.Exists(directory)) continue;
@@ -232,9 +240,9 @@ public sealed partial class WorldPlayerManifestService
         }
     }
 
-    private static IEnumerable<string> EnumerateAllProfileFiles(string worldPath)
+    private static IEnumerable<string> EnumerateAllProfileFiles(string worldPath, string[] profileDirectories)
     {
-        foreach (var directoryName in ProfileDirectories)
+        foreach (var directoryName in profileDirectories)
         {
             var directory = Path.Combine(worldPath, directoryName);
             if (!Directory.Exists(directory)) continue;
@@ -248,23 +256,26 @@ public sealed partial class WorldPlayerManifestService
         }
     }
 
-    private static bool IsProfilePathForUuid(string relativePath, Guid uuid)
+    private static bool IsProfilePathForUuid(string relativePath, Guid uuid, string[] profileDirectories)
     {
         var normalizedUuid = uuid.ToString("D");
-        var separator = relativePath.IndexOf('/');
+        var separator = relativePath.LastIndexOf('/');
         if (separator <= 0) return false;
         var directory = relativePath[..separator];
-        if (!ProfileDirectories.Contains(directory, StringComparer.OrdinalIgnoreCase)) return false;
+        if (!profileDirectories.Contains(directory, StringComparer.OrdinalIgnoreCase)) return false;
         var fileName = relativePath[(separator + 1)..];
         return fileName.StartsWith(normalizedUuid + ".", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsPrimaryPlayerDataPath(string relativePath, Guid uuid)
+    private static bool IsPlayerDataPath(string relativePath, Guid uuid, string storage)
     {
-        return string.Equals(
-            relativePath,
-            $"playerdata/{uuid:D}.dat",
-            StringComparison.OrdinalIgnoreCase);
+        if (storage == WorldPlayerStorage.NestedUuid)
+        {
+            var path = $"players/data/{uuid:D}.dat";
+            return relativePath.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                   relativePath.Equals(path + "_old", StringComparison.OrdinalIgnoreCase);
+        }
+        return relativePath.Equals($"playerdata/{uuid:D}.dat", StringComparison.OrdinalIgnoreCase);
     }
 
     private static WorldPlayerFileManifestEntry CreateFileEntry(string worldPath, string path)

@@ -9,8 +9,19 @@ internal static class WorldPlayerStorage
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     public const string Legacy = "legacy-name-v1";
     public const string Uuid = "uuid-v1";
+    public const string NestedUuid = "nested-uuid-v1";
+    public const string SingleplayerUuidTag = "singleplayer_uuid";
 
-    public static string ForMinecraft(string? minecraftVersion) => minecraftVersion == "1.6.4" ? Legacy : Uuid;
+    public static string ForMinecraft(string? minecraftVersion)
+    {
+        if (minecraftVersion == "1.6.4") return Legacy;
+        // Java Edition 26.1 introduced this layout, which Horizon 26.3 also writes.
+        return Version.TryParse(minecraftVersion, out var version) && version.Major == 26 && version.Minor is >= 1 and <= 3
+            ? NestedUuid : Uuid;
+    }
+
+    public static string WorldGenSettingsPath(string worldPath) =>
+        Path.Combine(worldPath, "data", "minecraft", "world_gen_settings.dat");
 
     public static string Resolve(string worldPath, AppPaths? paths = null, PackRuntimeDescriptor? runtime = null)
     {
@@ -20,23 +31,19 @@ internal static class WorldPlayerStorage
         if (metadata is not null && !PortableFormat.CanRead(metadata.SchemaVersion))
             throw new InvalidDataException(PortableFormat.DescribeUnreadable("Мир", metadata.SchemaVersion));
         var recorded = metadata?.PlayerStorage;
-        if (!string.IsNullOrEmpty(recorded))
+        var version = metadata?.MinecraftVersion;
+        if (!string.IsNullOrEmpty(version))
         {
-            if (recorded is not (Legacy or Uuid) || string.IsNullOrEmpty(metadata!.MinecraftVersion) ||
-                recorded != ForMinecraft(metadata.MinecraftVersion))
+            var storage = ForMinecraft(version);
+            if (!string.IsNullOrEmpty(recorded) && recorded != storage && !CanCorrectRecordedStorage(recorded, storage))
                 throw new InvalidDataException("World player storage does not match its recorded Minecraft version.");
-            if (runtime is not null && recorded != ForMinecraft(runtime.MinecraftVersion))
+            if (runtime is not null && storage != ForMinecraft(runtime.MinecraftVersion))
                 throw new InvalidDataException("This world's player storage is incompatible with the selected runtime.");
-            return recorded;
+            return ResolvePlatform(worldPath, storage);
         }
-        if (!string.IsNullOrEmpty(metadata?.MinecraftVersion))
-        {
-            var resolved = ForMinecraft(metadata.MinecraftVersion);
-            if (runtime is not null && resolved != ForMinecraft(runtime.MinecraftVersion))
-                throw new InvalidDataException("This world's player storage is incompatible with the selected runtime.");
-            return resolved;
-        }
-        if (runtime is not null) return ForMinecraft(runtime.MinecraftVersion);
+        if (!string.IsNullOrEmpty(recorded))
+            throw new InvalidDataException("World player storage has no recorded Minecraft version.");
+        if (runtime is not null) return ResolvePlatform(worldPath, ForMinecraft(runtime.MinecraftVersion));
         if (paths is not null)
         {
             var build = metadata?.BuildRelativePath;
@@ -49,10 +56,21 @@ internal static class WorldPlayerStorage
             if (!string.IsNullOrEmpty(build))
             {
                 var pack = paths.CombineUnderPacks(build);
-                if (PackManifestService.HasManifest(pack)) return ForMinecraft(PackManifestService.Load(pack).MinecraftVersion);
+                if (PackManifestService.HasManifest(pack))
+                    return ResolvePlatform(worldPath, ForMinecraft(PackManifestService.Load(pack).MinecraftVersion));
             }
         }
-        return Uuid;
+        return File.Exists(WorldGenSettingsPath(worldPath)) ? NestedUuid : Uuid;
+    }
+
+    // Older launchers recorded every non-legacy world as uuid-v1, including 26.2 and 26.3.
+    public static bool CanCorrectRecordedStorage(string recorded, string storage) => recorded == Uuid && storage == NestedUuid;
+
+    private static string ResolvePlatform(string worldPath, string storage)
+    {
+        if (storage != NestedUuid && File.Exists(WorldGenSettingsPath(worldPath)))
+            throw new InvalidDataException("This world's player storage is incompatible with the selected runtime.");
+        return storage;
     }
 
     public static void RecordRuntime(string worldPath, string buildPath, PackRuntimeDescriptor runtime,

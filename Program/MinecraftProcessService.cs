@@ -414,6 +414,12 @@ public sealed class MinecraftProcessService
 
         var descriptor = PackManifestService.Load(packDir);
         var identityContext = _identityService.ResolveContext(settings);
+        if (descriptor.NativeRuntime is not null)
+        {
+            await StartNativeClientAsync(settings, identityContext, packDir, packRelativePath, descriptor,
+                packHash, runtimeProgress, token).ConfigureAwait(false);
+            return;
+        }
         var runtime = await _packRuntimes.PrepareAsync(packRelativePath, runtimeProgress, token);
         Volatile.Write(ref _lastJavaPath, runtime.JavaPath);
         Volatile.Write(ref _lastGameVersion, runtime.Descriptor.MinecraftVersion);
@@ -646,52 +652,114 @@ public sealed class MinecraftProcessService
         // session/access token and must never enter this diagnostic line.
         var mainClass = profile.GetInheritedProperty(version => version.MainClass);
         _logger.Info("Java: " + string.Join(' ', finalArguments.TakeWhile(argument => argument != mainClass)));
-        minecraftProcess.StartInfo.WorkingDirectory = gameDir;
-        minecraftProcess.StartInfo.UseShellExecute = false;
         minecraftProcess.StartInfo.CreateNoWindow = true;
         minecraftProcess.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-        // A JVM that refuses an option writes to stderr before log4j exists, so
-        // without these pipes the only trace of the failure would be an exit code.
-        minecraftProcess.StartInfo.RedirectStandardOutput = true;
-        minecraftProcess.StartInfo.RedirectStandardError = true;
-        // Read as UTF-8, which is what the game writes: it is started with
-        // -Dfile.encoding=UTF-8 and every modern JVM says so on the console
-        // too. Without this .NET decodes the pipe in the console's own code
-        // page, which on a Russian Windows is not UTF-8 - the mod named oωo
-        // arrived in the captured log as oП‰o, and everything Cyrillic the game
-        // ever said went the same way. That text is not only read by people:
-        // it is scanned for the phrases a JVM uses when it runs out of memory,
-        // and it is what a bug report carries.
-        minecraftProcess.StartInfo.StandardOutputEncoding = Utf8NoBom;
-        minecraftProcess.StartInfo.StandardErrorEncoding = Utf8NoBom;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
         localAi?.ConfigureEnvironment(minecraftProcess.StartInfo.Environment);
-        var startupOutput = new StartupOutputBuffer();
-        startupOutput.MirrorTo(gameDir);
-        minecraftProcess.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
-        minecraftProcess.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
 
-        var started = false;
         var worldSession = WorldLaunchSession.Capture(packDir, packRelativePath, gameDir, packHash,
             descriptor, identityContext, DateTimeOffset.UtcNow);
-        try
-        {
-            PackLaunchContextService.Write(packDir, gameDir, localAi is null
+        await RunClientAsync(minecraftProcess, packRelativePath, gameDir, worldSession, token,
+            beforeStart: () => PackLaunchContextService.Write(packDir, gameDir, localAi is null
                 ? new Dictionary<string, Uri>(StringComparer.Ordinal)
                 : new Dictionary<string, Uri>(StringComparer.Ordinal)
                 {
                     [PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint
-                });
-            if (!minecraftProcess.Start())
+                }),
+            afterStart: noticeOverlay.BindProcess, heapGb: heapGb, video: video, installedGb: installedGb);
+
+        _logger.Info($"Minecraft client started with profile {runtime.ProfileId}.");
+    }
+
+    private async Task StartNativeClientAsync(AppSettings settings, LocalIdentityContext identityContext,
+        string packDir, string packRelativePath, PackRuntimeDescriptor descriptor, string packHash,
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+    {
+        var runtime = descriptor.NativeRuntime!;
+        progress?.Report(new(RuntimePreparationStage.Verifying, "Проверка файлов игры"));
+        NativeRuntimeFiles? files = await Task.Run(() => NativeRuntimeFiles.Open(packDir, descriptor, token), token)
+            .ConfigureAwait(false);
+        try
+        {
+            var instance = await _packInstances.PrepareAsync(packRelativePath, token).ConfigureAwait(false);
+            var gameDir = instance.GameDirectory;
+            var executable = files.ExecutablePath;
+            var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
+            var identityRegistryPath = _identityRegistry.Prepare(identityContext);
+
+            var buildWorlds = WorldLocations.ForBuild(_paths.Worlds, packRelativePath);
+            if (Directory.Exists(buildWorlds) && (File.GetAttributes(buildWorlds) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("The worlds directory cannot be a filesystem link.");
+            new SavesFolderService(_logger).Prepare(_paths.Worlds, gameDir, packRelativePath);
+            if (!SavesFolderService.PointsAt(Path.Combine(gameDir, SavesFolderService.SavesFolderName), buildWorlds))
+                throw new InvalidDataException("Не удалось подключить папку миров к нативной сборке.");
+            _playerProfiles.PrepareWorldsForLaunch(_paths.Worlds, identityContext, packRelativePath, descriptor);
+
+            Volatile.Write(ref _lastJavaPath, "");
+            Volatile.Write(ref _lastGameVersion, descriptor.MinecraftVersion);
+            Volatile.Write(ref _lastProfileId, $"{runtime.Adapter}/{runtime.Version}");
+            var worldSession = WorldLaunchSession.Capture(packDir, packRelativePath, gameDir, packHash,
+                descriptor, identityContext, DateTimeOffset.UtcNow);
+            var process = new Process
             {
+                StartInfo = NativeClientLaunch.CreateStartInfo(_paths, identityContext, packRelativePath,
+                    gameDir, executable, runtime.Version, skinRegistryPath, identityRegistryPath)
+            };
+            progress?.Report(new(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
+            var lifetime = files;
+            files = null;
+            await RunClientAsync(process, packRelativePath, gameDir, worldSession, token,
+                nativeExecutable: executable, nativeFiles: lifetime).ConfigureAwait(false);
+            _logger.Info($"Native client started with profile {runtime.Adapter}/{runtime.Version}.");
+        }
+        finally
+        {
+            files?.Dispose();
+        }
+    }
+
+    private async Task RunClientAsync(Process process, string packRelativePath, string gameDir,
+        WorldLaunchSession worldSession, CancellationToken token, Action? beforeStart = null,
+        Action<Process>? afterStart = null, int heapGb = 0, VideoMemoryProfile video = default,
+        int installedGb = 0, string? nativeExecutable = null, NativeRuntimeFiles? nativeFiles = null)
+    {
+        var startupOutput = new StartupOutputBuffer();
+        var started = false;
+        var monitored = false;
+        var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (nativeExecutable is null) process.StartInfo.WorkingDirectory = gameDir;
+            else process.StartInfo.Environment.Remove(SteamworksApiFacade.NoOverlayVariable);
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.StandardOutputEncoding = Utf8NoBom;
+            process.StartInfo.StandardErrorEncoding = Utf8NoBom;
+            startupOutput.MirrorTo(gameDir);
+            process.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
+            process.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
+
+            token.ThrowIfCancellationRequested();
+            beforeStart?.Invoke();
+            if (!process.Start())
                 throw new InvalidOperationException("Minecraft process could not be started.");
-            }
+            started = true;
             // The pipes must be drained for the whole session or the game blocks
             // once a buffer fills, so the process outlives this method.
-            minecraftProcess.BeginOutputReadLine();
-            minecraftProcess.BeginErrorReadLine();
-            noticeOverlay.BindProcess(minecraftProcess);
-            started = true;
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            afterStart?.Invoke(process);
+
+            var processId = process.Id;
+            _presence.Remember(process, packRelativePath, nativeExecutable);
+            if (_activeClientProcesses.TryAdd(processId, 0) && _activeClientProcesses.Count == 1)
+                NotifyClientRunningChanged(true);
+
+            // The monitor owns the Process object from here on.
+            _ = MonitorClientExitAsync(process, packRelativePath, exitCode, startupOutput, gameDir,
+                heapGb, video, installedGb, worldSession, nativeExecutable is not null, nativeFiles);
+            monitored = true;
         }
         catch (Win32Exception ex) when (MinecraftLaunchFailure.IsNativeMemoryError(ex.NativeErrorCode))
         {
@@ -699,24 +767,18 @@ public sealed class MinecraftProcessService
         }
         finally
         {
-            if (!started) { startupOutput.Close(); minecraftProcess.Dispose(); }
+            if (!monitored)
+            {
+                if (started)
+                {
+                    try { process.Kill(entireProcessTree: true); process.WaitForExit(); }
+                    catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
+                }
+                startupOutput.Close();
+                process.Dispose();
+                nativeFiles?.Dispose();
+            }
         }
-
-        var processId = minecraftProcess.Id;
-        // Written down before anything else can go wrong: a launcher restarted
-        // while this game plays reads it and knows not to offer another.
-        _presence.Remember(minecraftProcess, packRelativePath);
-        if (_activeClientProcesses.TryAdd(processId, 0) && _activeClientProcesses.Count == 1)
-        {
-            NotifyClientRunningChanged(true);
-        }
-        // The monitor owns the Process object from here on and may dispose it
-        // before the startup window closes, so the exit code travels through
-        // the completion source instead of the Process.
-        var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = MonitorClientExitAsync(
-            minecraftProcess, packRelativePath, exitCode, startupOutput, gameDir,
-            heapGb, video, installedGb, worldSession);
 
         await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(2), token));
         token.ThrowIfCancellationRequested();
@@ -725,8 +787,6 @@ public sealed class MinecraftProcessService
             throw MinecraftLaunchFailure.FromProcessExit(
                 exitCode.Task.Result, startupOutput.Describe(), ReadLatestLogTail(gameDir));
         }
-
-        _logger.Info($"Minecraft client started with profile {runtime.ProfileId}.");
     }
 
     private async Task MonitorClientExitAsync(
@@ -738,7 +798,9 @@ public sealed class MinecraftProcessService
         int heapGb = 0,
         VideoMemoryProfile video = default,
         int installedGb = 0,
-        WorldLaunchSession? worldSession = null)
+        WorldLaunchSession? worldSession = null,
+        bool native = false,
+        NativeRuntimeFiles? nativeFiles = null)
     {
         var processId = process.Id;
         // Timed here rather than from the process's own start time: a session
@@ -753,12 +815,14 @@ public sealed class MinecraftProcessService
             using var placementCancellation = new CancellationTokenSource();
             var placementTask = _gameWindowPlacement.TrackAsync(processId, placementCancellation.Token);
             using var watchingMemory = new CancellationTokenSource();
-            var heldMemory = WatchMemoryAsync(process, watchingMemory.Token);
+            var heldMemory = native ? Task.FromResult((Resident: 0L, Committed: 0L))
+                : WatchMemoryAsync(process, watchingMemory.Token);
             using var adoptingWorlds = new CancellationTokenSource();
             var adopted = AdoptClosedWorldsAsync(gameDir, adoptingWorlds.Token);
             var endedByLauncher = false;
             using var watchingShutdown = new CancellationTokenSource();
-            var hungShutdown = EndHungShutdownAsync(process, gameDir, watchingShutdown.Token);
+            var hungShutdown = native ? Task.FromResult(false)
+                : EndHungShutdownAsync(process, gameDir, watchingShutdown.Token);
             try
             {
                 await process.WaitForExitAsync().ConfigureAwait(false);
@@ -772,10 +836,12 @@ public sealed class MinecraftProcessService
                 await adopted.ConfigureAwait(false);
                 watchingMemory.Cancel();
                 var held = await heldMemory.ConfigureAwait(false);
-                ReportMemoryHeld(held.Resident, held.Committed, heapGb);
-                RememberMemoryHeld(
-                    packRelativePath, video, installedGb, heapGb, played.Elapsed,
-                    held.Resident, held.Committed);
+                if (!native)
+                {
+                    ReportMemoryHeld(held.Resident, held.Committed, heapGb);
+                    RememberMemoryHeld(packRelativePath, video, installedGb, heapGb, played.Elapsed,
+                        held.Resident, held.Committed);
+                }
                 // A game that dies after the two second startup window used to
                 // leave no trace at all: the window had closed, so nobody
                 // reported the exit code and nobody kept what the process said
@@ -783,7 +849,7 @@ public sealed class MinecraftProcessService
                 // moment it happens.
                 // A process the launcher ended after the game had finished is not
                 // a crash, and what it said on its way out is not a crash report.
-                if (!endedByLauncher) ReportUnexpectedExit(process, startupOutput, gameDir, heapGb);
+                if (!endedByLauncher) ReportUnexpectedExit(process, startupOutput, gameDir, heapGb, native);
                 // The pipes are done; what they carried is on disk for a report.
                 startupOutput.Close();
                 // Published before any cleanup so the launch method never has
@@ -793,14 +859,20 @@ public sealed class MinecraftProcessService
                 placementCancellation.Cancel();
                 await placementTask.ConfigureAwait(false);
             }
-            await _waypointSync.FlushAsync().ConfigureAwait(false);
-            await _packInstances.CleanupGeneratedLocalArtifactsAsync(
-                packRelativePath, process.ExitCode == 0 || endedByLauncher).ConfigureAwait(false);
+            if (!native)
+            {
+                await _waypointSync.FlushAsync().ConfigureAwait(false);
+                await _packInstances.CleanupGeneratedLocalArtifactsAsync(
+                    packRelativePath, process.ExitCode == 0 || endedByLauncher).ConfigureAwait(false);
+            }
         }
         catch (ArgumentException)
         {
-            await _waypointSync.FlushAsync().ConfigureAwait(false);
-            await _packInstances.CleanupGeneratedLocalArtifactsAsync(packRelativePath, removeSessionLogs: false).ConfigureAwait(false);
+            if (!native)
+            {
+                await _waypointSync.FlushAsync().ConfigureAwait(false);
+                await _packInstances.CleanupGeneratedLocalArtifactsAsync(packRelativePath, removeSessionLogs: false).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
@@ -822,8 +894,12 @@ public sealed class MinecraftProcessService
             // an exit code for a process whose state is unknown.
             exitCode.TrySetResult(0);
             _presence.Forget(processId);
-            NoticeOverlay.ProcessExited(processId);
-            CleanupJavaTemporaryDirectory(packRelativePath);
+            nativeFiles?.Dispose();
+            if (!native)
+            {
+                NoticeOverlay.ProcessExited(processId);
+                CleanupJavaTemporaryDirectory(packRelativePath);
+            }
             if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
             {
                 NotifyClientRunningChanged(false);
@@ -895,7 +971,7 @@ public sealed class MinecraftProcessService
     }
 
     private void ReportUnexpectedExit(
-        Process process, StartupOutputBuffer startupOutput, string gameDir, int heapGb)
+        Process process, StartupOutputBuffer startupOutput, string gameDir, int heapGb, bool native)
     {
         try
         {
@@ -909,7 +985,7 @@ public sealed class MinecraftProcessService
             // Out of memory is the one ending a player can act on, and the one
             // the game itself would have answered with a dangerous offer, so it
             // is said in the window rather than left in the log.
-            if (NamesOutOfMemory(console, tail))
+            if (!native && NamesOutOfMemory(console, tail))
             {
                 _logger.Warn($"The game ran out of the {heapGb} GB heap it was given.");
                 ClientRanOutOfMemory?.Invoke(heapGb);
@@ -1335,7 +1411,7 @@ public sealed class MinecraftProcessService
             // launcher's setting, so 0 stands for "not known" and the ending is
             // still named, without a number that might be someone else's.
             _ = MonitorClientExitAsync(process, session.PackRelativePath, exitCode, new StartupOutputBuffer(),
-                _paths.CombineUnderInstances(session.PackRelativePath), heapGb: 0);
+                _paths.CombineUnderInstances(session.PackRelativePath), native: session.ExecutablePath is not null);
         }
         if (adopted > 0) NotifyClientRunningChanged(true);
         return adopted;

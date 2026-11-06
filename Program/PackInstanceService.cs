@@ -243,8 +243,9 @@ public sealed class PackInstanceService : IDisposable
         string? conflictRoot = null;
         string GetConflictRoot() => conflictRoot ??= CreateConflictRoot(packRelativePath);
         RemoveVerifiedRetiredFiles(packDir, gameDir, token);
-        EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), GetConflictRoot, token);
-        SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor.ClientJar, state, managedPaths, GetConflictRoot, token);
+        if (descriptor.NativeRuntime is null)
+            EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), GetConflictRoot, token);
+        SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor, state, managedPaths, GetConflictRoot, token);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
         state.PackRevision = ReadPackRevision(packDir);
@@ -273,7 +274,7 @@ public sealed class PackInstanceService : IDisposable
         string packDir,
         string gameDir,
         string packRelativePath,
-        string clientJarName,
+        PackRuntimeDescriptor descriptor,
         InstanceState state,
         IReadOnlySet<string>? managedPaths,
         Func<string> getConflictRoot,
@@ -288,7 +289,7 @@ public sealed class PackInstanceService : IDisposable
         var currentOwned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ownedWrites = 0;
 
-        foreach (var directory in EnumerateSourceDirectories(packDir, clientJarName))
+        foreach (var directory in EnumerateSourceDirectories(packDir, descriptor))
         {
             token.ThrowIfCancellationRequested();
             var relative = Path.GetRelativePath(packDir, directory);
@@ -308,7 +309,7 @@ public sealed class PackInstanceService : IDisposable
             Directory.CreateDirectory(destination);
         }
 
-        foreach (var sourcePath in EnumerateSourceFiles(packDir, clientJarName))
+        foreach (var sourcePath in EnumerateSourceFiles(packDir, descriptor))
         {
             token.ThrowIfCancellationRequested();
             var relative = NormalizeRelativePath(Path.GetRelativePath(packDir, sourcePath));
@@ -575,30 +576,31 @@ public sealed class PackInstanceService : IDisposable
         transport is not null && relative.Equals(transport.FileName, StringComparison.Ordinal) &&
         new FileInfo(path).Length == transport.SizeBytes && HashesEqual(HashFile(path), transport.Sha256);
 
-    private IEnumerable<string> EnumerateSourceFiles(string packDir, string clientJarName)
+    private IEnumerable<string> EnumerateSourceFiles(string packDir, PackRuntimeDescriptor descriptor)
     {
-        foreach (var entry in EnumerateCanonicalEntries(packDir, clientJarName))
+        foreach (var entry in EnumerateCanonicalEntries(packDir, descriptor))
         {
             if (File.Exists(entry)) yield return entry;
         }
     }
 
-    private IEnumerable<string> EnumerateSourceDirectories(string packDir, string clientJarName)
+    private IEnumerable<string> EnumerateSourceDirectories(string packDir, PackRuntimeDescriptor descriptor)
     {
-        foreach (var entry in EnumerateCanonicalEntries(packDir, clientJarName))
+        foreach (var entry in EnumerateCanonicalEntries(packDir, descriptor))
         {
             if (Directory.Exists(entry)) yield return entry;
         }
     }
 
-    private IEnumerable<string> EnumerateCanonicalEntries(string packDir, string clientJarName)
+    private IEnumerable<string> EnumerateCanonicalEntries(string packDir, PackRuntimeDescriptor descriptor)
     {
         var pending = new Stack<string>();
         foreach (var entry in Directory.EnumerateFileSystemEntries(packDir))
         {
             var name = Path.GetFileName(entry);
             if (string.Equals(name, "mods", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, clientJarName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, descriptor.ClientJar, StringComparison.OrdinalIgnoreCase) ||
+                (descriptor.NativeRuntime is not null && name.Equals(PackManifestService.NativePayloadRoot, StringComparison.OrdinalIgnoreCase)) ||
                 string.Equals(name, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, PortablePackSyncService.SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(name, PortablePackSyncService.SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||

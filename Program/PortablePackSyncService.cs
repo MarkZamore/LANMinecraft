@@ -121,7 +121,9 @@ public sealed partial class PortablePackSyncService
     private const int FeatureManifestGeneration = 2;
     private static readonly HashSet<string> SupportedLauncherFeatures =
         new(["local-ai-native-v1", "local-ai-recipe-v1", "local-ai-blob-urls-v1", "curated-mod-list-v1", "launch-context-v1", "private-identity-asm-v1", "registry-player-skins-v1",
-            "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1"], StringComparer.Ordinal);
+            "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1",
+            PackManifestService.NativeRuntimeFeature, PackManifestService.NativeSteamFeature,
+            PackManifestService.Minecraft26WorldLayoutFeature], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
@@ -161,7 +163,11 @@ public sealed partial class PortablePackSyncService
     /// custom/legacy pack; damaged existing state must never activate unknown
     /// files as if the pack were custom.
     /// </summary>
-    internal static IReadOnlySet<string>? ReadManagedPaths(string packDirectory)
+    internal static IReadOnlySet<string>? ReadManagedPaths(string packDirectory) =>
+        ReadManagedFiles(packDirectory)?.Select(file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    internal static IReadOnlyList<ManagedFileSnapshot>? ReadManagedFiles(
+        string packDirectory, IReadOnlyList<string>? requiredFeatures = null)
     {
         var path = Path.Combine(packDirectory, SyncStateFileName);
         if (!File.Exists(path)) return null;
@@ -170,18 +176,21 @@ public sealed partial class PortablePackSyncService
             var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(path), JsonOptions);
             if (state?.SchemaVersion != SyncStateCacheGeneration || state.Files is not { Count: > 0 })
                 throw new InvalidDataException("Pack sync state has no valid managed file snapshot.");
+            if (requiredFeatures is not null && requiredFeatures.Any(feature =>
+                    state.RequiredLauncherFeatures?.Contains(feature, StringComparer.Ordinal) != true))
+                throw new InvalidDataException("The verified installation does not declare the required launcher features.");
             var packRoot = Path.GetFullPath(packDirectory)
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var files = new List<ManagedFileSnapshot>(state.Files.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (relative, file) in state.Files)
             {
-                ValidateManifestPath(relative, packRoot);
-                if (file is null || file.SizeBytes < 0)
+                var managedPath = ValidateManifestPath(relative, packRoot);
+                if (!seen.Add(managedPath) || file is null || file.SizeBytes < 0)
                     throw new InvalidDataException("Pack sync state contains an invalid managed file.");
-                ValidateSha256(file.Sha256, relative);
-                paths.Add(relative);
+                files.Add(new ManagedFileSnapshot(managedPath, file.SizeBytes, ValidateSha256(file.Sha256, managedPath)));
             }
-            return paths;
+            return files;
         }
         catch (JsonException ex)
         {
@@ -1450,7 +1459,8 @@ public sealed partial class PortablePackSyncService
         var state = new SyncStateDto
         {
             SchemaVersion = SyncStateCacheGeneration,
-            Revision = manifest.Revision
+            Revision = manifest.Revision,
+            RequiredLauncherFeatures = manifest.RequiredLauncherFeatures.Count == 0 ? null : [.. manifest.RequiredLauncherFeatures]
         };
         foreach (var file in manifest.Files)
         {
@@ -1570,6 +1580,7 @@ public sealed partial class PortablePackSyncService
                 $"Сборке требуется другой формат манифеста ({manifest.SchemaVersion}). Обновите лаунчер и повторите «Играть».");
         }
         var requiredFeatures = manifest.RequiredLauncherFeatures;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         if (manifest.SchemaVersion == LegacyRemoteManifestGeneration)
         {
             if (requiredFeatures.ValueKind != JsonValueKind.Undefined)
@@ -1581,7 +1592,6 @@ public sealed partial class PortablePackSyncService
             if (requiredFeatures.ValueKind != JsonValueKind.Array || requiredFeatures.GetArrayLength() == 0)
                 throw new NotSupportedException(
                     "Манифест сборки не указывает обязательные функции. Обновите лаунчер и повторите «Играть».");
-            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var value in requiredFeatures.EnumerateArray())
             {
                 if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } feature ||
@@ -1708,10 +1718,10 @@ public sealed partial class PortablePackSyncService
             var path = ValidateManifestPath(legacy.Path, packRoot);
             legacyFiles.Add(new ValidatedFile(path, legacy.SizeBytes, ValidateSha256(legacy.Sha256, path)));
         }
-        return new ValidatedManifest(revision, files, assets, filesByPath, assetByCoveredPath, legacyFiles);
+        return new ValidatedManifest(revision, files, assets, filesByPath, assetByCoveredPath, legacyFiles, seen);
     }
 
-    private static string ValidateManifestPath(string? value, string packRoot)
+    internal static string ValidateManifestPath(string? value, string packRoot)
     {
         var path = value ?? "";
         if (path.Length is 0 or > 512 ||
@@ -1997,7 +2007,8 @@ public sealed partial class PortablePackSyncService
         IReadOnlyList<ValidatedAsset> Assets,
         Dictionary<string, ValidatedFile> FilesByPath,
         Dictionary<string, ValidatedAsset> AssetByCoveredPath,
-        IReadOnlyList<ValidatedFile> LegacyFiles);
+        IReadOnlyList<ValidatedFile> LegacyFiles,
+        IReadOnlySet<string> RequiredLauncherFeatures);
 
     private sealed class SourceMarkerDto
     {
@@ -2049,6 +2060,8 @@ public sealed partial class PortablePackSyncService
         public string Revision { get; set; } = "";
         public Dictionary<string, SyncStateFileDto> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<RemoteFileDto>? RetiredFiles { get; set; } = [];
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? RequiredLauncherFeatures { get; set; }
     }
 
     private sealed class SyncStateFileDto

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media.Imaging;
 
 namespace Minecraft.Tests;
@@ -94,6 +95,37 @@ public sealed class CatalogPresentationTests
             WindowCanvasTests.LayoutWindow(window, new Size(1000, 800));
             Assert.Equal("Дополнительные моды", ((TextBlock)library.FindName("ModsHeading")).Text);
             Assert.Equal(Visibility.Collapsed, ((StackPanel)library.FindName("LibrariesSection")).Visibility);
+            return true;
+        });
+    }
+
+    [Fact]
+    public void EmptyNativeDetailHidesTheModSectionAndRoutesOnlyTheProjectLink()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var pack = ModifiedPack();
+            pack.Content.NativeProject = new CatalogNativeProject("Example Engine", "Nightly 2026-11-05",
+                new string('a', 40), "https://example.org/engine");
+            pack.Content.Mods = [];
+            pack.Content.VisibleModIds = null;
+            pack.BuildTree();
+            var window = WindowCanvasTests.LoadWindow();
+            var library = (PackLibraryView)window.FindName("LibraryView");
+            foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
+                if (child != library) child.Visibility = Visibility.Hidden;
+            library.Visibility = Visibility.Visible;
+            library.SetCatalog([pack]);
+            library.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(1000, 800));
+            Assert.Equal(Visibility.Collapsed, ((FrameworkElement)library.FindName("ModsSection")).Visibility);
+            var link = (Hyperlink)library.FindName("PackProjectLink");
+            Assert.Equal(pack.WebsiteUri, link.NavigateUri);
+            var opened = new List<Uri>();
+            library.ModPageRequested += opened.Add;
+            library.MembershipRequested += _ => throw new InvalidOperationException("Link changed pack membership.");
+            link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+            Assert.Equal(pack.WebsiteUri, Assert.Single(opened));
             return true;
         });
     }

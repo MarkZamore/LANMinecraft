@@ -217,7 +217,7 @@ public partial class PackLibraryView : UserControl
         page = new PackDetailPage(pack);
         page.ReturnRequested += ShowCatalog;
         page.MembershipRequested += p => MembershipRequested?.Invoke(p);
-        page.ModPageRequested += RequestModPage;
+        page.ProjectPageRequested += uri => ModPageRequested?.Invoke(uri);
         pages.Add(pack, page);
         preparation.Add(pack, page.Prepare(ContentWidth, System.Windows.Media.VisualTreeHelper.GetDpi(this)).GetEnumerator());
         return page;

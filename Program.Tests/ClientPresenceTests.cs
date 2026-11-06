@@ -43,4 +43,18 @@ public sealed class ClientPresenceTests
         Assert.True(ClientPresenceService.IsStillRunning(session, ("java", Started.AddMilliseconds(900))));
         Assert.False(ClientPresenceService.IsStillRunning(session, ("java", Started.AddSeconds(5))));
     }
+
+    [Fact]
+    public void NativeSessionsRequireTheOriginalExecutablePath()
+    {
+        var path = Path.GetFullPath(Path.Combine("verified-pack", "client.exe"));
+        var session = new ClientPresenceService.ClientSession(4242, Started, "Native")
+        {
+            ExecutablePath = path
+        };
+        Assert.True(ClientPresenceService.IsStillRunning(session, (path.ToUpperInvariant(), Started)));
+        Assert.False(ClientPresenceService.IsStillRunning(session, ("client", Started)));
+        Assert.False(ClientPresenceService.IsStillRunning(session, (Path.Combine(Path.GetTempPath(), "client.exe"), Started)));
+        Assert.False(ClientPresenceService.IsStillRunning(session, (path, Started.AddMinutes(1))));
+    }
 }

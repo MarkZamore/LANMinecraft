@@ -64,7 +64,7 @@ public sealed partial class WorldPlayerProfileService
             {
                 if (runtime is not null && buildRelativePath is not null)
                     WorldPlayerStorage.RecordRuntime(worldPath, buildRelativePath, runtime, transaction);
-                PrepareWorldForIdentity(worldPath, identity, "launch", transaction);
+                PrepareWorldForIdentity(worldPath, identity, "launch", transaction, runtime);
             }
             transaction.Commit();
         }
@@ -78,13 +78,23 @@ public sealed partial class WorldPlayerProfileService
     public string? PrepareWorldForOutgoingTransfer(string worldPath, LocalIdentityContext identity)
     {
         ValidateWorldForIdentityPreparation(worldPath, identity);
-        if (WorldPlayerStorage.Resolve(worldPath, _paths) == WorldPlayerStorage.Legacy)
+        var storage = WorldPlayerStorage.Resolve(worldPath, _paths);
+        if (storage == WorldPlayerStorage.Legacy)
             return PrepareLegacyOutgoing(worldPath, identity);
         using var transaction = ProfileFileTransaction.Begin(_paths, "Prepare outgoing world transfer");
         try
         {
             var levelPath = GetLevelPath(worldPath);
             if (!File.Exists(levelPath)) return null;
+
+            if (storage == WorldPlayerStorage.NestedUuid)
+            {
+                using var locked = WorldAccessGuard.LockClosed(worldPath);
+                WriteNestedHostProfile(NbtFile.Read(levelPath), levelPath, playerUuid: null, transaction);
+                WriteManifest(worldPath, identity, transaction);
+                transaction.Commit();
+                return null;
+            }
 
             var level = NbtFile.Read(levelPath);
             var data = level.Root.GetCompound("Data");
@@ -143,7 +153,8 @@ public sealed partial class WorldPlayerProfileService
         string worldPath,
         LocalIdentityContext identity,
         string reason,
-        ProfileFileTransaction transaction)
+        ProfileFileTransaction transaction,
+        PackRuntimeDescriptor? runtime = null)
     {
         WorldAccessGuard.EnsureClosed(worldPath);
         var levelPath = GetLevelPath(worldPath);
@@ -152,13 +163,24 @@ public sealed partial class WorldPlayerProfileService
             return;
         }
 
-        if (WorldPlayerStorage.Resolve(worldPath, _paths) == WorldPlayerStorage.Legacy)
+        var storage = WorldPlayerStorage.Resolve(worldPath, _paths, runtime);
+        if (storage == WorldPlayerStorage.Legacy)
         {
             PrepareLegacyWorld(worldPath, identity, transaction);
             return;
         }
 
         var canonicalUuid = GetCanonicalIdentityUuid(identity);
+        if (storage == WorldPlayerStorage.NestedUuid)
+        {
+            using var locked = WorldAccessGuard.LockClosed(worldPath);
+            var nestedLevel = NbtFile.Read(levelPath);
+            var hasProfile = HasNestedPlayerProfile(worldPath, canonicalUuid);
+            WriteNestedHostProfile(nestedLevel, levelPath, hasProfile ? canonicalUuid : null, transaction);
+            WriteManifest(worldPath, identity, transaction);
+            return;
+        }
+
         var level = NbtFile.Read(levelPath);
         var data = level.Root.GetCompound("Data");
         if (data is not null && !RestoreWorldGenSettings(worldPath, levelPath, data, _logger))
@@ -261,6 +283,8 @@ public sealed partial class WorldPlayerProfileService
         }
 
         var level = NbtFile.Read(levelPath);
+        if (WorldPlayerStorage.Resolve(worldPath, _paths) == WorldPlayerStorage.NestedUuid)
+            return ReadNestedHostUuid(RequireNestedWorldData(level));
         return level.Root.GetCompound("Data")?.GetCompound("Player")?.GetUuid();
     }
 
@@ -313,18 +337,31 @@ public sealed partial class WorldPlayerProfileService
         if (!File.Exists(levelPath)) return;
 
         var level = NbtFile.Read(levelPath);
-        if (WorldPlayerStorage.Resolve(worldPath, _paths, runtime) == WorldPlayerStorage.Legacy)
+        var storage = WorldPlayerStorage.Resolve(worldPath, _paths, runtime);
+        if (storage == WorldPlayerStorage.Legacy)
         {
             ValidateLegacyWorld(worldPath, identity);
             return;
         }
+
+        var uuid = GetCanonicalIdentityUuid(identity);
+        if (storage == WorldPlayerStorage.NestedUuid)
+        {
+            _ = ReadNestedHostUuid(RequireNestedWorldData(level));
+            var settingsPath = WorldPlayerStorage.WorldGenSettingsPath(worldPath);
+            if (!File.Exists(settingsPath) || NbtFile.Read(settingsPath).Root.GetCompound("data") is null)
+                throw new InvalidDataException("The world generation settings in data/minecraft/world_gen_settings.dat are missing or damaged.");
+            _ = HasNestedPlayerProfile(worldPath, uuid);
+            _ = _manifests.Read(worldPath);
+            return;
+        }
+
         var currentPlayer = level.Root.GetCompound("Data")?.GetCompound("Player");
         if (currentPlayer is not null)
         {
             ValidatePlayerCompound(currentPlayer, Path.GetFileName(worldPath));
         }
 
-        var uuid = GetCanonicalIdentityUuid(identity);
         var profilePath = GetPlayerDataPath(worldPath, uuid);
         if (File.Exists(profilePath)) ValidatePlayerDataFile(profilePath, uuid);
 
@@ -353,7 +390,7 @@ public sealed partial class WorldPlayerProfileService
     private void WriteLevel(NbtFile level, string levelPath, ProfileFileTransaction transaction)
     {
         transaction.Track(levelPath);
-        transaction.Track(Path.Combine(Path.GetDirectoryName(levelPath)!, "level.dat_old"));
+        transaction.Track(Path.Combine(Path.GetDirectoryName(levelPath)!, NbtFile.LauncherBackupFileName));
         level.Write(levelPath);
         _ = NbtFile.Read(levelPath);
     }

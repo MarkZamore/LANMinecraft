@@ -9,10 +9,13 @@ public enum PackLoaderKind
     NeoForge,
     Fabric,
     Quilt,
-    LegacyFabric
+    LegacyFabric,
+    Native
 }
 
 public sealed record PackLoaderDescriptor(PackLoaderKind Type, string? Version);
+
+public sealed record NativePackRuntimeDescriptor(string Executable, string Platform, string Adapter, string Version);
 
 public sealed record PackRuntimeDescriptor(
     int SchemaVersion,
@@ -23,6 +26,7 @@ public sealed record PackRuntimeDescriptor(
 {
     /// <summary>An explicit Java feature release requested by the pack.</summary>
     public int? JavaMajorVersion { get; init; }
+    public NativePackRuntimeDescriptor? NativeRuntime { get; init; }
 }
 
 public enum RuntimePreparationStage

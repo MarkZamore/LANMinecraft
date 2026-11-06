@@ -255,6 +255,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 await VerifyPeerTransferReadyAsync(peer, settings, token).ConfigureAwait(false);
 
                 var worldDir = ResolveWorldToSend(worldPath);
+                WorldProfilePathGuard.EnsureUnlinked(worldDir, _paths.Worlds);
                 WorldAccessGuard.EnsureClosed(worldDir);
                 StatusChanged?.Invoke("Saving personal waypoints...");
                 RaiseProgress(0, 0, "Сохранение точек");
@@ -326,13 +327,17 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                     var progress = new TransferProgressChannel(this, stream, transferId, token);
                     StatusChanged?.Invoke("Creating safe world snapshot...");
                     await progress.PublishStageAsync(SnapshotStage, "Копирование мира");
-                    await CopyWorldDirectoryAsync(
-                        worldDir,
-                        stagingWorld,
-                        (current, total) => progress.PublishAsync(
-                            SnapshotStage, "Копирование мира", current, total),
-                        progress.HeartbeatAsync,
-                        token).ConfigureAwait(false);
+                    // The receiver can take a while to accept. Reacquire the world lock for the actual copy.
+                    using (WorldAccessGuard.LockClosed(worldDir))
+                    {
+                        await CopyWorldDirectoryAsync(
+                            worldDir,
+                            stagingWorld,
+                            (current, total) => progress.PublishAsync(
+                                SnapshotStage, "Копирование мира", current, total),
+                            progress.HeartbeatAsync,
+                            token).ConfigureAwait(false);
+                    }
                     StatusChanged?.Invoke("Preparing player profiles...");
                     await progress.PublishStageAsync(ProfileStage, "Подготовка профилей");
                     string playerManifestSha = "";

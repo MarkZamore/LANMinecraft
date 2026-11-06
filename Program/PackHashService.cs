@@ -127,7 +127,8 @@ public sealed class PackHashService : IDisposable
                 var slash = relative.IndexOf('/');
                 var included = slash < 0
                     ? IncludedFiles.Contains(relative, StringComparer.OrdinalIgnoreCase)
-                    : IncludedRoots.Contains(relative[..slash], StringComparer.OrdinalIgnoreCase);
+                    : IncludedRoots.Contains(relative[..slash], StringComparer.OrdinalIgnoreCase) ||
+                      relative.StartsWith(PackManifestService.NativePayloadRoot + "/", StringComparison.OrdinalIgnoreCase);
                 if (!included || ShouldSkip(relative)) continue;
                 var file = Path.Combine(clientDir, relative.Replace('/', Path.DirectorySeparatorChar));
                 EnsureOrdinaryManagedPath(clientDir, relative);

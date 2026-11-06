@@ -19,17 +19,23 @@ public static class WorldAccessGuard
 
     public static void EnsureClosed(string worldPath)
     {
+        using var locked = LockClosed(worldPath);
+    }
+
+    internal static FileStream? LockClosed(string worldPath)
+    {
         var lockPath = Path.Combine(worldPath, "session.lock");
-        if (!File.Exists(lockPath)) return;
+        if (!File.Exists(lockPath)) return null;
+        FileStream? stream = null;
         try
         {
-            using var stream = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            var lockLength = Math.Max(1, stream.Length);
-            stream.Lock(0, lockLength);
-            stream.Unlock(0, lockLength);
+            stream = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            stream.Lock(0, Math.Max(1, stream.Length));
+            return stream;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            stream?.Dispose();
             throw new InvalidOperationException(
                 $"World {Path.GetFileName(worldPath)} is open in Minecraft. Close the world before continuing.",
                 ex);

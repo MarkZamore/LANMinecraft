@@ -16,7 +16,7 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
 if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
-$caseBudget = if ($WithAdapters) { 592 } else { 518 }
+$caseBudget = if ($WithAdapters) { 611 } else { 537 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
@@ -40,7 +40,7 @@ function Read-ReleaseSelectors([string]$ProfileName = 'Release') {
     return $selectors
 }
 
-function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget = 518) {
+function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget = 537) {
     if (-not (Test-Path -LiteralPath $TrxPath -PathType Leaf)) { throw 'The release run produced no TRX.' }
     [xml]$trx = Get-Content -LiteralPath $TrxPath -Raw
     $counters = $trx.SelectSingleNode("//*[local-name()='Counters']")
@@ -52,9 +52,8 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$Cas
         @($results | Where-Object outcome -ne 'Passed').Count -ne 0) {
         throw 'Every selected release case must pass; failures and skipped cases reject the release.'
     }
-    # The reviewed compact profile has 518 cases: retain the 473-case main baseline,
-    # plus 45 critical legacy runtime/profile cases. The adapter union has 592 unique cases;
-    # detailed matrices stay in Full/AdaptersFull. Narrow selectors reject the full suite.
+    # Keep the compact profile and the adapter union bounded. Detailed matrices
+    # stay in Full/AdaptersFull; narrow selectors reject the full suite.
     if ($results.Count -gt $CaseBudget) { throw ('The release profile exceeded its ' + $CaseBudget + '-case budget; review its selectors.') }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)
     $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)

@@ -10,7 +10,7 @@ public partial class PackDetailPage : UserControl, IDisposable
     private readonly CatalogPack pack;
     public event Action? ReturnRequested;
     public event Action<CatalogPack>? MembershipRequested;
-    public event Action<CatalogModNode>? ModPageRequested;
+    public event Action<Uri>? ProjectPageRequested;
     private readonly List<TreeViewItem> nodes = [];
     private double savedOffset;
     private bool active;
@@ -122,7 +122,16 @@ public partial class PackDetailPage : UserControl, IDisposable
     private void ReturnCatalog_Click(object sender, RoutedEventArgs e) => ReturnRequested?.Invoke();
     private void Membership_Click(object sender, RoutedEventArgs e) => MembershipRequested?.Invoke(pack);
     private void ModLink_Click(object sender, RoutedEventArgs e)
-    { if (sender is Hyperlink { DataContext: CatalogModNode node }) ModPageRequested?.Invoke(node); e.Handled = true; }
+    {
+        if (sender is Hyperlink { DataContext: CatalogModNode { WebsiteUri: { } uri } })
+            ProjectPageRequested?.Invoke(uri);
+        e.Handled = true;
+    }
+    private void PackProjectLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (pack.WebsiteUri is { } uri) ProjectPageRequested?.Invoke(uri);
+        e.Handled = true;
+    }
     public void Dispose()
     {
         DetailScroll.LayoutUpdated -= RestoreOffset;

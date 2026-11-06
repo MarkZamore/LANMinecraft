@@ -1,7 +1,7 @@
 """Build a deterministic presentation bundle, separately from installed game files.
 
 Python 3.12 standard library only. The pack owns library/content.json and preview.jpg.
-All mod names come from shipped jars; curated semantic relationships live in content.
+Mod names come from shipped JARs or a verified native inventory.
 """
 import hashlib
 import io
@@ -168,6 +168,58 @@ def read_runtime_mods(pack, loader):
     return mods, hashes
 
 
+def read_native_mods(pack, runtime, shipped):
+    descriptor = runtime["nativeRuntime"]
+    if runtime.get("schemaVersion") != 2 or "loader" in runtime or not isinstance(descriptor, dict):
+        raise ValueError("Invalid native runtime descriptor")
+
+    native_dir = pack / "native"
+    if not native_dir.is_dir() or native_dir.is_symlink() or native_dir.is_junction():
+        raise ValueError("Missing or linked native runtime")
+    files = {}
+    paths = set()
+    for root, dirs, names in native_dir.walk():
+        for name in dirs + names:
+            path = root / name
+            if path.is_symlink() or path.is_junction():
+                raise ValueError("Linked native runtime entry: " + str(path.relative_to(pack)))
+        for name in names:
+            path = root / name
+            rel = path.relative_to(pack).as_posix()
+            if not path.is_file() or rel.casefold() in paths:
+                raise ValueError("Invalid or duplicate native runtime file: " + rel)
+            paths.add(rel.casefold())
+            with path.open("rb") as stream:
+                files[rel] = hashlib.file_digest(stream, "sha256").hexdigest()
+    if not isinstance(descriptor.get("executable"), str) or descriptor["executable"] not in files:
+        raise ValueError("Native executable is absent from the shipped runtime")
+    if shipped is not None and set(files) != {rel for rel in shipped if rel.startswith("native/")}:
+        raise ValueError("Native runtime files differ from the shipped payload")
+
+    inventory_path = pack / "library/loaded-mods.json"
+    if not inventory_path.is_file():
+        raise ValueError("Native runtime requires an actual loaded-mod inventory")
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8-sig"))
+    if (not isinstance(inventory, dict) or inventory.get("schemaVersion") != 1 or
+            inventory.get("minecraftVersion") != runtime["minecraftVersion"] or
+            inventory.get("nativeRuntime") != descriptor or inventory.get("nativeFiles") != files or
+            not isinstance(inventory.get("mods"), list)):
+        raise ValueError("Actual native mod inventory does not match the shipped runtime")
+
+    mods = {}
+    for row in inventory["mods"]:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid native mod inventory entry")
+        mod_id, name, version, source = (row.get(key) for key in ("id", "name", "version", "source"))
+        if (not isinstance(mod_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,127}", mod_id) or
+                mod_id in mods or not isinstance(name, str) or not name.strip() or len(name) > 256 or
+                not isinstance(version, str) or not version.strip() or len(version) > 128 or
+                not isinstance(source, str) or source not in files):
+            raise ValueError("Invalid native mod ID, metadata or verified source: " + str(mod_id))
+        mods[mod_id] = {"id": mod_id, "name": name, "version": version, "isLoadedMod": True}
+    return mods
+
+
 def read_pack_mods(pack, shipped=None):
     """Read metadata, optionally pinned to an exact-hash actual loader inventory.
 
@@ -177,6 +229,8 @@ def read_pack_mods(pack, shipped=None):
     """
     pack = pathlib.Path(pack)
     runtime = json.loads((pack / "portable-pack.json").read_text(encoding="utf-8-sig"))
+    if "nativeRuntime" in runtime:
+        return read_native_mods(pack, runtime, shipped)
     jars = (sorted((pack / "mods").glob("*.jar")) if shipped is None else
             sorted(pack / rel for rel in shipped if rel.startswith("mods/") and rel.lower().endswith(".jar")))
     mods = {}
@@ -216,6 +270,26 @@ def read_pack_mods(pack, shipped=None):
     return mods
 
 
+def is_https_project_page(value):
+    parsed = urlsplit(value) if isinstance(value, str) else None
+    return (parsed and parsed.scheme == "https" and parsed.hostname and
+            not parsed.username and not parsed.password and len(value) <= 2048)
+
+
+def native_project_metadata(authored):
+    project = authored.get("nativeProject")
+    if not isinstance(project, dict):
+        raise ValueError("Native library requires official project metadata")
+    name, version, revision, website = (project.get(field) for field in ("name", "version", "revision", "websiteUrl"))
+    if (not all(isinstance(label, str) and label.strip() and len(label) <= 80 and
+                not any(ord(c) < 32 or 127 <= ord(c) < 160 for c in label)
+                for label in (name, version)) or
+            not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision) or
+            not is_https_project_page(website)):
+        raise ValueError("Invalid native project name, version, revision or official HTTPS page")
+    return {"name": name, "version": version, "revision": revision, "websiteUrl": website}
+
+
 def build_library(pack, revision):
     pack = pathlib.Path(pack)
     authored = json.loads((pack / "library/content.json").read_text(encoding="utf-8-sig"))
@@ -224,6 +298,11 @@ def build_library(pack, revision):
     pages = json.loads(pages_path.read_text(encoding="utf-8-sig")) if pages_path.exists() else {}
     mods = read_pack_mods(pack)
     presentation = {}
+    if "nativeRuntime" in runtime:
+        loader = "native"
+        presentation["nativeProject"] = native_project_metadata(authored)
+    else:
+        loader = runtime["loader"]["type"]
     if "modsTitle" in authored:
         title = authored["modsTitle"]
         if not isinstance(title, str) or not title.strip() or len(title) > 120:
@@ -254,9 +333,7 @@ def build_library(pack, revision):
         entry = pages.get(mod["id"])
         page = entry.get("url") if isinstance(entry, dict) else entry
         available = entry.get("available", True) if isinstance(entry, dict) else True
-        parsed = urlsplit(page) if isinstance(page, str) else None
-        if (not parsed or parsed.scheme != "https" or not parsed.hostname or
-                parsed.username or parsed.password or len(page) > 2048):
+        if not is_https_project_page(page):
             raise ValueError("Missing/invalid official project page for mod: " + mod["id"])
         if not isinstance(available, bool):
             raise ValueError("Invalid project page availability for mod: " + mod["id"])
@@ -279,7 +356,7 @@ def build_library(pack, revision):
     presentation.update(group_presentation(authored, mods))
     doc = {"schemaVersion": 1, "id": authored["id"], "relativePath": authored.get("relativePath", pack.name),
            "name": authored["name"], "summary": authored["summary"], "description": authored["description"],
-           "minecraftVersion": runtime["minecraftVersion"], "loader": runtime["loader"]["type"],
+           "minecraftVersion": runtime["minecraftVersion"], "loader": loader,
            "revision": revision, **presentation,
            "mods": sorted(mods.values(), key=lambda m: (m["name"].casefold(), m["id"]))}
     data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
