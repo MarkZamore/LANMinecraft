@@ -166,12 +166,16 @@ public sealed class SmoothScrollingController : IDisposable
     }
     void OnWheel(object sender, MouseWheelEventArgs e)
     {
-        if (!e.Handled && !IsComboBoxSource(e.OriginalSource as DependencyObject) && ScrollByWheelDelta(e.Delta)) e.Handled = true;
+        if (!e.Handled && !HasOwnWheelHandler(e.OriginalSource as DependencyObject) && ScrollByWheelDelta(e.Delta)) e.Handled = true;
     }
-    bool IsComboBoxSource(DependencyObject source)
+    bool HasOwnWheelHandler(DependencyObject source)
     {
         while (source != null && source != viewer) {
-            if (source is ComboBox || source is ComboBoxItem) return true;
+            // Popup items can reach the outer viewer through the logical route.
+            // Let their own viewport see the wheel before the outer scroll lock.
+            if (source is ComboBox || source is ComboBoxItem ||
+                source is ScrollViewer scroll && scroll.GetValue(ControllerProperty) is SmoothScrollingController nested && !nested.disposed)
+                return true;
             DependencyObject parent = null;
             if (source is Visual || source is System.Windows.Media.Media3D.Visual3D) parent = VisualTreeHelper.GetParent(source);
             source = parent ?? LogicalTreeHelper.GetParent(source);

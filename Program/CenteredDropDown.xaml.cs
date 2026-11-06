@@ -10,6 +10,7 @@ public partial class CenteredDropDown : UserControl
 {
     private bool _synchronizingSelection;
     private ScrollViewer? _lockedScroll;
+    private SmoothScrollingController? _popupScrolling;
     private double _lockedVerticalOffset;
     private double _lockedHorizontalOffset;
 
@@ -108,6 +109,9 @@ public partial class CenteredDropDown : UserControl
     private void DropDownPopup_Opened(object? sender, EventArgs e)
     {
         LockParentScroll();
+        ItemsList.ApplyTemplate();
+        if (FindScrollViewer(ItemsList) is { } scroll)
+            _popupScrolling = SmoothScrollingController.Attach(scroll);
         ControlMotion.TurnChevron(DropDownChevron, expanded: true, animate: IsLoaded);
         ItemsList.SelectedItem = SelectedItem;
         if (SelectedItem is not null)
@@ -119,9 +123,21 @@ public partial class CenteredDropDown : UserControl
 
     private void DropDownPopup_Closed(object? sender, EventArgs e)
     {
+        _popupScrolling?.Cancel();
+        _popupScrolling = null;
         UnlockParentScroll();
         ControlMotion.TurnChevron(DropDownChevron, expanded: false, animate: IsLoaded);
         DropDownButton.IsChecked = false;
+    }
+
+    private static ScrollViewer? FindScrollViewer(DependencyObject root)
+    {
+        if (root is ScrollViewer viewer) return viewer;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            if (FindScrollViewer(VisualTreeHelper.GetChild(root, i)) is { } child) return child;
+        }
+        return null;
     }
 
     private void LockParentScroll()
