@@ -53,7 +53,19 @@ public sealed class StartupPreparationPriorityTests
         Assert.DoesNotContain("RefreshOnceAsync", data, StringComparison.Ordinal);
         Assert.DoesNotContain("PrepareLibraryAsync", data, StringComparison.Ordinal);
         var dataQueue = Method(source, "private Task RefreshLauncherDataAsync()");
-        Assert.Contains("_launcherDataByPack.GetValueOrDefault(pack", dataQueue, StringComparison.Ordinal);
+        var checkFolder = dataQueue.IndexOf("if (!PackCatalogService.ValidFolder(pack)) return Task.CompletedTask;", StringComparison.Ordinal);
+        Assert.True(checkFolder >= 0 && checkFolder < dataQueue.IndexOf("_launcherDataByPack.GetValueOrDefault(pack", StringComparison.Ordinal));
+        var startupFinished = data.IndexOf("await _catalogStartup;", StringComparison.Ordinal);
+        var checkSelection = data.IndexOf("!CanRefreshLauncherDataFor(pack)", StringComparison.Ordinal);
+        var ensureReady = data.IndexOf("catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token)", StringComparison.Ordinal);
+        var recheckSelection = data.IndexOf("if (!CanRefreshLauncherDataFor(pack)) return;", StringComparison.Ordinal);
+        Assert.True(startupFinished >= 0 && startupFinished < checkSelection &&
+                    checkSelection < ensureReady && ensureReady < recheckSelection);
+        Assert.Contains("ex is IOException or InvalidDataException", data, StringComparison.Ordinal);
+        var currentPack = Method(source, "private bool CanRefreshLauncherDataFor(");
+        Assert.Contains("BuildComboBox.SelectedItem is ClientBuildViewModel build", currentPack, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(pack, build.RelativePath,", currentPack, StringComparison.Ordinal);
+        Assert.Contains("string.Equals(pack, _settings?.ClientRelativePath,", currentPack, StringComparison.Ordinal);
 
         // Play keeps its integrity gate and must not await UI warming.
         var click = Method(source, "private async void PlayButton_Click(");

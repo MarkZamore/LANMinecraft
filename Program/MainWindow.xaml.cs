@@ -1492,6 +1492,7 @@ public partial class MainWindow : Window
         if (_catalogStartup is null || _packSync is null || _settings is null || _shutdownStarted)
             return Task.CompletedTask;
         var pack = _settings.ClientRelativePath;
+        if (!PackCatalogService.ValidFolder(pack)) return Task.CompletedTask;
         var previous = _launcherDataByPack.GetValueOrDefault(pack, Task.CompletedTask);
         _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
         _launcherDataByPack[pack] = _launcherDataRefresh;
@@ -1504,21 +1505,30 @@ public partial class MainWindow : Window
         {
             await previous;
             if (_catalogStartup is not null) await _catalogStartup;
-            if (_shutdownStarted || _minecraftPreparing || _packSync is null) return;
+            if (_packSync is null || !CanRefreshLauncherDataFor(pack)) return;
             if (_catalog is { } catalog) await catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token);
-            if (_shutdownStarted || _minecraftPreparing) return;
-            if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token), _lifetimeCts.Token) && !_shutdownStarted)
+            if (!CanRefreshLauncherDataFor(pack)) return;
+            if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token), _lifetimeCts.Token) &&
+                CanRefreshLauncherDataFor(pack))
             {
                 RefreshControlsPresetStatus();
                 RefreshUi();
             }
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested) { }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or UnauthorizedAccessException or
+        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or
                                    System.Text.Json.JsonException or NotSupportedException)
         {
             _logger?.Warn("The pack's launcher data could not be refreshed: " + ex.Message);
         }
+    }
+
+    private bool CanRefreshLauncherDataFor(string pack)
+    {
+        return !_shutdownStarted && !_minecraftPreparing &&
+               BuildComboBox.SelectedItem is ClientBuildViewModel build &&
+               string.Equals(pack, build.RelativePath, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(pack, _settings?.ClientRelativePath, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
