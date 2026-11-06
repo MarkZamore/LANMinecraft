@@ -2683,11 +2683,10 @@ public partial class MainWindow : Window
 
                 var progress = new Progress<UpdatePreparationProgress>(value =>
                 {
-                    UpdateProgressBar.IsIndeterminate = value.Fraction is null;
-                    if (value.Fraction is not null)
-                    {
-                        UpdateProgressBar.Value = Math.Clamp(value.Fraction.Value * 100d, 0d, 100d);
-                    }
+                    // Only show a fill when the updater can measure progress.
+                    UpdateProgressBar.Value = value.Fraction is { } fraction
+                        ? Math.Clamp(fraction * 100d, 0d, 100d)
+                        : 0d;
                     if (value.Stage == UpdatePreparationStage.Downloading && value.TotalBytes > 0)
                     {
                         // Keyed on what is moving. One constant scope covered the
