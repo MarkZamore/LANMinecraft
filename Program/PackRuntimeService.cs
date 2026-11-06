@@ -96,6 +96,8 @@ public sealed class PackRuntimeService : IDisposable
         var descriptor = PackManifestService.Load(packDirectory);
         if (descriptor.NativeRuntime is not null)
             throw new InvalidOperationException("Native clients do not use the Java pack runtime.");
+        if (!_providers.TryGetValue(descriptor.Loader.Type, out var provider))
+            throw new NotSupportedException($"Unsupported loader: {descriptor.Loader.Type}");
         // A pack may bring the client jar or leave it to be fetched. One that
         // names a jar must have that jar - it was named for a reason, and a
         // missing one is a broken pack rather than a silent download. One that
@@ -165,7 +167,8 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             localOnly: false,
-            subject: "Minecraft");
+            subject: "Minecraft",
+            includeInstallerJava: provider.RequiresInstallerJava);
         IVersion baseVersion;
         try
         {
@@ -193,12 +196,14 @@ public sealed class PackRuntimeService : IDisposable
                 retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
                 token),
             token).ConfigureAwait(false);
-        // Mojang's component keeps running the loader installer, which NeoForge
-        // 21.1.244 was built against; only the game moves to the pinned runtime.
-        var installerJavaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath();
-        if (string.IsNullOrWhiteSpace(installerJavaPath) || !File.Exists(installerJavaPath))
+        // Some loader installers still run on Mojang's Java.
+        // The game uses the pack's independently pinned Java.
+        var installerJavaPath = "";
+        if (provider.RequiresInstallerJava)
         {
-            throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
+            installerJavaPath = launcher.GetJavaPath(baseVersion) ?? launcher.GetDefaultJavaPath() ?? "";
+            if (!File.Exists(installerJavaPath))
+                throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
         }
         var gameJava = await _javaRuntime
             .EnsureAsync(_paths.JavaRuntimes, JavaRuntimeCatalog.RequiredFor(descriptor), progress, token)
@@ -207,17 +212,13 @@ public sealed class PackRuntimeService : IDisposable
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingLoader,
             loaderName));
-        if (!_providers.TryGetValue(descriptor.Loader.Type, out var provider))
-        {
-            throw new NotSupportedException($"Unsupported loader: {descriptor.Loader.Type}");
-        }
-
         launcher = CreateLauncher(
             runtimeRoot,
             temporaryRoot,
             progress,
             localOnly: false,
-            subject: loaderName);
+            subject: loaderName,
+            includeInstallerJava: provider.RequiresInstallerJava);
 
         var context = new PackLoaderInstallationContext(
             descriptor,
@@ -237,7 +238,8 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             localOnly: true,
-            subject: loaderName);
+            subject: loaderName,
+            includeInstallerJava: provider.RequiresInstallerJava);
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
@@ -306,7 +308,8 @@ public sealed class PackRuntimeService : IDisposable
         string temporaryRoot,
         IProgress<RuntimePreparationProgress>? progress,
         bool localOnly,
-        string subject)
+        string subject,
+        bool includeInstallerJava = true)
     {
         var minecraftPath = new MinecraftPath(runtimeRoot);
         // Everything a version is made of is the same bytes for every build
@@ -324,6 +327,11 @@ public sealed class PackRuntimeService : IDisposable
         foreach (var extractor in extractors.OfType<ClientFileExtractor>().ToArray())
         {
             extractors.Remove(extractor);
+        }
+        if (!includeInstallerJava)
+        {
+            foreach (var extractor in extractors.OfType<JavaFileExtractor>().ToArray())
+                extractors.Remove(extractor);
         }
         parameters.GameInstaller = new PortableGameInstaller(
             _httpClient,

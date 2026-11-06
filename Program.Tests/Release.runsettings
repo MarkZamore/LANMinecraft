@@ -304,6 +304,7 @@
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.UnpinnedJavaIsRejectedBeforeRuntimePreparation|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.OfficialProfileUsesItsOwnNamespaceAndRetainsLegacyMappingsAndLwjgl|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.AProfileForAnotherMinecraftIsRejectedBeforeWritingAProfile|
+      FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.ColdPreparationUsesPinnedGameJavaWithoutRequestingMojangJava|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.LoggingAndCompatibilityOptionsFollowTheSelectedJava|
       FullyQualifiedName=Minecraft.Tests.LegacySteamComponentCatalogTests.SourceBuiltLegacyPortHasExactCoverageAndSourceProvenanceWithoutAnInventedAuthorJar|
       FullyQualifiedName=Minecraft.Tests.LegacySteamComponentCatalogTests.UnreviewedLegacyPortsAreRejected|

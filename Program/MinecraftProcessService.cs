@@ -653,7 +653,10 @@ public sealed class MinecraftProcessService
         var mainClass = profile.GetInheritedProperty(version => version.MainClass);
         _logger.Info("Java: " + string.Join(' ', finalArguments.TakeWhile(argument => argument != mainClass)));
         minecraftProcess.StartInfo.CreateNoWindow = true;
-        minecraftProcess.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+        // Windows applies the startup show state to LWJGL 2's first ShowWindow call.
+        minecraftProcess.StartInfo.WindowStyle = descriptor.Loader.Type == PackLoaderKind.LegacyFabric
+            ? ProcessWindowStyle.Normal
+            : ProcessWindowStyle.Hidden;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
         localAi?.ConfigureEnvironment(minecraftProcess.StartInfo.Environment);
 

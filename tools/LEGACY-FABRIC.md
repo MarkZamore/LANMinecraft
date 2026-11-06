@@ -13,6 +13,8 @@ An explicitly prepared pack declares its platform in `portable-pack.json`:
 
 `javaMajorVersion` is optional and must name an installed launcher pin (8, 17, 21 or 25). Without it the existing Minecraft-to-Java selection and descriptor hash remain unchanged. With it the selected Java participates in the runtime identity, cache validation and actual JVM compatibility options. Pack-specific options stay in `launcher/jvm-args.txt`.
 
+Legacy Fabric installs from a profile and does not execute a Java installer. Preparation skips Mojang's auxiliary Java and installs only the pinned game Java. A cold preparation fixture in the Release profile rejects requests for Mojang's Java metadata and verifies that a repeat launch reuses the prepared runtime.
+
 The loader provider requests the official `https://meta.legacyfabric.net/v2/versions/loader/<minecraft>/<loader>/profile/json` profile through CmlLib's configurable Fabric installer. It preserves upstream libraries, including `net.legacyfabric:intermediary` and Legacy Fabric's patched LWJGL/native artifacts. Its installed ID is `legacyfabric-loader-<loader>-<minecraft>`; ordinary Fabric profiles in the shared store are separate. The inherited vanilla client is named explicitly using the same Knot game-JAR repair as Fabric and Quilt.
 
 For legacy native entries that only declare a top-level Maven repository, the provider supplies that repository as classifier download metadata. This lets CmlLib resolve the publisher's native archives on an empty cache while keeping the original classifiers and extraction rules.

@@ -87,6 +87,7 @@ public sealed record PreparedRuntime(
 public interface IPackLoaderProvider
 {
     PackLoaderKind Kind { get; }
+    bool RequiresInstallerJava => true;
 
     Task<string> InstallAsync(PackLoaderInstallationContext context, CancellationToken token);
 }

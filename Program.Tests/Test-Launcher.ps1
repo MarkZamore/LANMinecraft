@@ -16,7 +16,7 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
 if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
-$caseBudget = if ($WithAdapters) { 611 } else { 537 }
+$caseBudget = if ($WithAdapters) { 612 } else { 538 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
@@ -40,7 +40,7 @@ function Read-ReleaseSelectors([string]$ProfileName = 'Release') {
     return $selectors
 }
 
-function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget = 537) {
+function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget = 538) {
     if (-not (Test-Path -LiteralPath $TrxPath -PathType Leaf)) { throw 'The release run produced no TRX.' }
     [xml]$trx = Get-Content -LiteralPath $TrxPath -Raw
     $counters = $trx.SelectSingleNode("//*[local-name()='Counters']")
