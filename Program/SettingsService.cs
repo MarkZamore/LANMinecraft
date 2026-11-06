@@ -174,6 +174,8 @@ public sealed class SettingsService
         }
     }
 
+    internal void ForgetMemoryForPack(AppSettings settings) => settings.MemoryByPack.Remove(PackKey(settings));
+
     private static string PackKey(AppSettings settings) => settings.ClientRelativePath?.Trim() ?? "";
 
     private string DescribePack() =>

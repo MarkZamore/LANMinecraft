@@ -10,7 +10,7 @@ namespace Minecraft.Tests;
 public sealed class MemoryRecommendationTests
 {
     [Fact]
-    public void ClickingRecommendation_PersistsPackChoice_OnlyWhileMemoryIsEditableAndReady()
+    public void ClickingRecommendation_RestoresAutomaticMemory_OnlyWhileMemoryIsEditableAndReady()
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
@@ -24,6 +24,8 @@ public sealed class MemoryRecommendationTests
                 paths.Ensure();
                 var service = new SettingsService(paths);
                 var settings = new AppSettings { ClientRelativePath = "RecommendationTest", MaxHeapGb = 4 };
+                service.RememberMemoryForPack(settings, 4);
+                settings.MemoryByPack["OtherPack"] = 3;
                 // Exercise the actual handler with real controls and persistence,
                 // without starting the window's Steam/network/game services.
                 var window = (MainWindow)RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
@@ -49,10 +51,18 @@ public sealed class MemoryRecommendationTests
                 timer.Start();
                 try { Click(); Assert.Equal("4", memory.Text); }
                 finally { timer.Stop(); }
+                Assert.Equal(4, settings.MemoryByPack["RecommendationTest"]);
                 Click();
                 Assert.Equal("2", memory.Text);
                 Assert.Equal(2, settings.MaxHeapGb);
-                Assert.Equal(2, service.Load().MemoryByPack["RecommendationTest"]);
+                var reloaded = service.Load();
+                Assert.Null(service.RememberedMemoryGb(reloaded));
+                Assert.DoesNotContain("RecommendationTest", reloaded.MemoryByPack.Keys);
+                Assert.Equal(3, reloaded.MemoryByPack["OtherPack"]);
+                memory.TextChanged += (_, e) => typeof(MainWindow).GetMethod("MemoryTextBox_TextChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [memory, e]);
+                memory.Text = "3";
+                Assert.Equal(3, service.Load().MemoryByPack["RecommendationTest"]);
             }
             finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
             return true;
