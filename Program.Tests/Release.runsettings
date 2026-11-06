@@ -118,6 +118,7 @@
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterLanAutoPublishTests.Modern_and_legacy_publish_keep_native_init_settings_and_one_session|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterNamedRuntimeTests.SharedStoreMappingsAndAuthlibFromOtherVersions_AreNotUsed|
       FullyQualifiedName=Minecraft.Tests.SelectedSkinHandoffTests.ASelectedSkin_KeepsItsBytesModelAndPlayerAcrossLauncherRestarts|
+      FullyQualifiedName=Minecraft.Tests.SelectedSkinHandoffTests.PeerSkinIsAdvertisedOnlyWhenItsVerifiedBytesAreReady|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterGuestMovementHelperTests.TransformerAndPreflight_EnforceExclusiveMovementSites|
       FullyQualifiedName=Minecraft.Tests.PackRenameMigrationTests.ExistingPack_RenamesItsOwnedLocationsAndReferencesWithoutReplacingGameData|
       FullyQualifiedName=Minecraft.Tests.PackRenameMigrationTests.InterruptedMoves_AreFinishedOnRetryAndDoNotRecreateAnOldPack|

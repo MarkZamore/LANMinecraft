@@ -67,7 +67,8 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, SkinAsset> _assets = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SkinPeerDescriptor> _peers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, byte> _fetches = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<SkinPeerDescriptor, byte> _fetches = new();
+    private readonly object _registryGate = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _taskGate = new();
     private readonly HashSet<Task> _backgroundTasks = [];
@@ -257,9 +258,12 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         if (uuid.Length == 0) return;
         if (!peer.IsSkinAvailable || !IsSha256(peer.SkinSha256))
         {
-            _peers.TryRemove(uuid, out _);
-            _assets.TryRemove(uuid, out _);
-            WriteRegistry();
+            lock (_registryGate)
+            {
+                _peers.TryRemove(uuid, out _);
+                _assets.TryRemove(uuid, out _);
+                WriteRegistries();
+            }
             return;
         }
 
@@ -268,30 +272,29 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
             peer.SkinSha256.ToUpperInvariant(),
             NormalizeModel(peer.SkinModel),
             peer.SteamId);
-        var metadataChanged = !_peers.TryGetValue(uuid, out var previousDescriptor) ||
-                              previousDescriptor.Sha256 != descriptor.Sha256 ||
-                              previousDescriptor.Model != descriptor.Model ||
-                              previousDescriptor.Peer != descriptor.Peer;
-        _peers[uuid] = descriptor;
-        if (_assets.TryGetValue(uuid, out var cached) &&
-            string.Equals(cached.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
+        lock (_registryGate)
         {
-            if (metadataChanged) WriteRegistry();
-            return;
-        }
+            var metadataChanged = !_peers.TryGetValue(uuid, out var previous) || previous != descriptor;
+            _peers[uuid] = descriptor;
+            if (_assets.TryGetValue(uuid, out var cached) &&
+                string.Equals(cached.Sha256, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                if (metadataChanged) WriteRegistries();
+                return;
+            }
 
-        _assets.TryRemove(uuid, out _);
-        WriteRegistry();
+            if (_assets.TryRemove(uuid, out _) || metadataChanged) WriteRegistries();
+        }
         TryRunBackground(
             cancellationToken => FetchPeerSkinAsync(descriptor, cancellationToken),
             "Peer skin request");
     }
 
-    public string PrepareRegistry(AppSettings settings, LocalIdentityContext identity)
+    public string PrepareRegistry(AppSettings settings, LocalIdentityContext identity, bool waitForPeerBytes = false)
     {
         RefreshLocalSkin(settings, identity.MinecraftUuid);
         WriteRegistry();
-        return _paths.SkinRegistryFile;
+        return waitForPeerBytes ? _paths.LegacySkinRegistryFile : _paths.SkinRegistryFile;
     }
 
     public async Task HandleIncomingAsync(Stream stream, byte[] initialFrame, CancellationToken token)
@@ -333,8 +336,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 
     private async Task FetchPeerSkinAsync(SkinPeerDescriptor descriptor, CancellationToken token)
     {
-        var fetchKey = descriptor.PlayerUuid + ":" + descriptor.Sha256;
-        if (!_fetches.TryAdd(fetchKey, 0)) return;
+        if (!_fetches.TryAdd(descriptor, 0)) return;
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -368,14 +370,13 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
                 throw new InvalidDataException("Received skin failed integrity validation.");
             }
 
-            _assets[descriptor.PlayerUuid] = new SkinAsset(
-                bytes,
-                hash,
-                NormalizeModel(response.Model),
-                "",
-                bytes.LongLength,
-                0);
-            WriteRegistry();
+            lock (_registryGate)
+            {
+                if (!_peers.TryGetValue(descriptor.PlayerUuid, out var current) || current != descriptor)
+                    return;
+                _assets[descriptor.PlayerUuid] = new SkinAsset(bytes, hash, NormalizeModel(response.Model), "", bytes.LongLength, 0);
+                WriteRegistries();
+            }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or InvalidDataException or JsonException or InvalidOperationException)
         {
@@ -384,7 +385,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
         }
         finally
         {
-            _fetches.TryRemove(fetchKey, out _);
+            _fetches.TryRemove(descriptor, out _);
         }
     }
 
@@ -490,7 +491,7 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
                 {
                     await FetchPeerSkinAsync(descriptor, timeout.Token).ConfigureAwait(false);
                     for (var attempt = 0; attempt < 20 && !_assets.ContainsKey(key) &&
-                         _fetches.ContainsKey(key + ":" + descriptor.Sha256); attempt++)
+                         _fetches.ContainsKey(descriptor); attempt++)
                     {
                         await Task.Delay(100, timeout.Token).ConfigureAwait(false);
                     }
@@ -513,36 +514,47 @@ public sealed class SkinService : IAsyncDisposable, IPortableProtocolHandler
 
     private void WriteRegistry()
     {
+        lock (_registryGate)
+        {
+            WriteRegistries();
+        }
+    }
+
+    private void WriteRegistries()
+    {
+        var ready = _assets.ToArray().ToDictionary(pair => pair.Key,
+            pair => (pair.Value.Sha256, pair.Value.Model), StringComparer.OrdinalIgnoreCase);
+        var eager = _peers.ToArray().ToDictionary(pair => pair.Key,
+            pair => (pair.Value.Sha256, pair.Value.Model), StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in ready) eager[pair.Key] = pair.Value;
+        WriteRegistryFile(_paths.SkinRegistryFile, eager);
+        // Legacy skin loaders can load each advertised URL only once. Their registry
+        // exposes a URL only after the endpoint can return verified bytes.
+        WriteRegistryFile(_paths.LegacySkinRegistryFile, ready);
+    }
+
+    private void WriteRegistryFile(string path, Dictionary<string, (string Sha256, string Model)> entries)
+    {
         try
         {
-            var entries = new Dictionary<string, (string Hash, string Model)>(StringComparer.OrdinalIgnoreCase);
-            foreach (var pair in _peers)
-            {
-                entries[pair.Key] = (pair.Value.Sha256, pair.Value.Model);
-            }
-            foreach (var pair in _assets)
-            {
-                entries[pair.Key] = (pair.Value.Sha256, pair.Value.Model);
-            }
             var lines = entries
                 .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => string.Join('|',
                     pair.Key,
-                    pair.Value.Hash,
+                    pair.Value.Sha256,
                     pair.Value.Model,
-                    $"http://127.0.0.1:{_httpPort}/skin/{pair.Key}/{pair.Value.Hash}"));
+                    $"http://127.0.0.1:{_httpPort}/skin/{pair.Key}/{pair.Value.Sha256}"));
             var contents = string.Join(Environment.NewLine, lines);
             if (contents.Length == 0)
             {
-                if (File.Exists(_paths.SkinRegistryFile)) File.Delete(_paths.SkinRegistryFile);
+                if (File.Exists(path)) File.Delete(path);
                 return;
             }
-            if (File.Exists(_paths.SkinRegistryFile) &&
-                string.Equals(File.ReadAllText(_paths.SkinRegistryFile), contents, StringComparison.Ordinal))
+            if (File.Exists(path) && string.Equals(File.ReadAllText(path), contents, StringComparison.Ordinal))
             {
                 return;
             }
-            AtomicFile.WriteAllText(_paths.SkinRegistryFile, contents);
+            AtomicFile.WriteAllText(path, contents);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
