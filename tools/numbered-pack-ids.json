@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "allocations": [
+    { "id": "minecraft-1", "legacyId": "all-the-mods-10" },
+    { "id": "minecraft-2", "legacyId": "terrafirma-rebirth" },
+    { "id": "minecraft-3", "legacyId": "minecraft-26-2" },
+    { "id": "minecraft-4", "legacyId": "caves-and-dungeons" },
+    { "id": "minecraft-5", "legacyId": "all-the-mods-9" },
+    { "id": "minecraft-6", "legacyId": "all-the-mods-9-modified" },
+    { "id": "minecraft-7", "legacyId": "attack-on-titan" },
+    { "id": "minecraft-8", "legacyId": "better-than-wolves" },
+    { "id": "minecraft-9", "legacyId": "minecraft-rust-edition", "allowCanonicalInput": true },
+    { "id": "minecraft-10", "legacyId": "minecraft-rust-mods", "allowCanonicalInput": true }
+  ]
+}

@@ -55,8 +55,7 @@ public sealed partial class PackCatalogService
         List<CatalogSource>? entries = null;
         try
         {
-            var bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, timeout.Token).ConfigureAwait(false);
-            entries = ParseIndex(Encoding.UTF8.GetString(bytes));
+            entries = await ReadIndexAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (IsRecoverable(ex))
         {
@@ -133,8 +132,8 @@ public sealed partial class PackCatalogService
             if (source is not null)
             {
                 var known = _effectiveSources.GetValueOrDefault(relativePath);
-                entry = known is not null && known.Source == source ? known :
-                    new CatalogSource(known?.Id ?? relativePath, relativePath, source);
+                entry = known is not null ? known with { Source = source } :
+                    new CatalogSource(relativePath, relativePath, source);
             }
         }
         if (entry is null)
@@ -283,7 +282,7 @@ public sealed partial class PackCatalogService
                         throw new InvalidDataException("Invalid launch cache identity.");
                     var canonical = CanonicalSource(cached, SeedSources().ToArray());
                     if (canonical.Source != entry.Source ||
-                        (IsCurrentEntry(entry) && (cached.Id != entry.Id ||
+                        (IsCurrentEntry(entry) && (!entry.AcceptsIdentity(canonical) ||
                          !canonical.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase))))
                         throw new InvalidDataException("Launch cache identity mismatch.");
                 }
@@ -298,7 +297,7 @@ public sealed partial class PackCatalogService
     private string LegacyLibraryCachePath(CatalogSource entry)
     {
         var path = CachePath(entry.Source);
-        return !File.Exists(path) && entry.Id == "terrafirma-rebirth" && entry.Source == PortablePackSyncService.TerraFirmaSource
+        return !File.Exists(path) && entry.StorageId == "terrafirma-rebirth" && entry.Source == PortablePackSyncService.TerraFirmaSource
             ? CachePath(new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest")) : path;
     }
 
@@ -453,7 +452,7 @@ public sealed partial class PackCatalogService
         try
         {
             lock (_gate) if (_packs.ContainsKey(entry.RelativePath)) return;
-            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.Id + ".zip");
+            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.StorageId + ".zip");
             if (stream is null) return;
             using var bytes = new MemoryStream();
             stream.CopyTo(bytes);

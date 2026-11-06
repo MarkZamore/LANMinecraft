@@ -2,7 +2,8 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "all-the-mods-10",
+      "id": "minecraft-1",
+      "legacyId": "all-the-mods-10",
       "relativePath": "All The Mods 10",
       "source": {
         "owner": "MarkZamore",
@@ -11,7 +12,8 @@
       }
     },
     {
-      "id": "terrafirma-rebirth",
+      "id": "minecraft-2",
+      "legacyId": "terrafirma-rebirth",
       "relativePath": "TerraFirma Rebirth",
       "source": {
         "owner": "MarkZamore",
@@ -20,7 +22,8 @@
       }
     },
     {
-      "id": "minecraft-26-2",
+      "id": "minecraft-3",
+      "legacyId": "minecraft-26-2",
       "relativePath": "Minecraft 26.3",
       "installationPath": "Minecraft Java Edition",
       "source": {
@@ -43,7 +46,8 @@
       ]
     },
     {
-      "id": "caves-and-dungeons",
+      "id": "minecraft-4",
+      "legacyId": "caves-and-dungeons",
       "relativePath": "Caves and Dungeons",
       "source": {
         "owner": "MarkZamore",
@@ -52,7 +56,8 @@
       }
     },
     {
-      "id": "all-the-mods-9",
+      "id": "minecraft-5",
+      "legacyId": "all-the-mods-9",
       "relativePath": "All The Mods 9",
       "source": {
         "owner": "MarkZamore",

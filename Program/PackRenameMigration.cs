@@ -40,7 +40,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
         Action<AppSettings> save)
     {
         var pending = entry.LegacyRelativePaths
-            .Select(old => (Old: old, Path: JournalPath(journalRoot, entry.Id, old)))
+            .Select(old => (Old: old, Path: JournalPath(journalRoot, entry.StorageId, old)))
             .Where(item => File.Exists(item.Path)).ToArray();
         if (pending.Length == 0) return;
         if (pending.Length > 1) throw new IOException("Multiple unfinished renames for one pack.");
@@ -67,7 +67,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
 
     private void ApplyAlias(AppSettings settings, CatalogSource entry, string old, string journalRoot, Action<AppSettings> save)
     {
-        var journalPath = JournalPath(journalRoot, entry.Id, old);
+        var journalPath = JournalPath(journalRoot, entry.StorageId, old);
         var pending = File.Exists(journalPath);
         var oldExists = _roots.Any(root => Exists(Path.Combine(root, old)));
         if (!pending && !oldExists && !RefersTo(settings, old) && !FlatWorldsFor(old).Any()) return;
@@ -89,7 +89,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
         if (pending)
         {
             journal = ReadJournal(journalPath);
-            if (journal.SchemaVersion != 1 || journal.Id != entry.Id || journal.Old != old || journal.New != entry.RelativePath ||
+            if (journal.SchemaVersion != 1 || journal.Id != entry.StorageId || journal.Old != old || journal.New != entry.RelativePath ||
                 journal.Roots.Any(index => index < 0 || index >= _roots.Length) || journal.Roots.Distinct().Count() != journal.Roots.Count)
                 throw new InvalidDataException("Pack rename journal does not match the catalog.");
         }
@@ -98,7 +98,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
             if (oldExists && _roots.Any(root => Exists(Path.Combine(root, entry.RelativePath))))
                 throw new IOException("Переименование сборки остановлено: путь " + entry.RelativePath + " уже занят.");
             var oldSaves = Path.Combine(paths.Instances, old, "saves");
-            journal = new Journal { Id = entry.Id, Old = old, New = entry.RelativePath,
+            journal = new Journal { Id = entry.StorageId, Old = old, New = entry.RelativePath,
                 SavesJunction = Exists(oldSaves) && (File.GetAttributes(oldSaves) & FileAttributes.ReparsePoint) != 0 };
             for (var index = 0; index < _roots.Length; index++)
             {

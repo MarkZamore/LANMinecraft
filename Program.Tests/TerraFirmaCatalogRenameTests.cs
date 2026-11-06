@@ -11,6 +11,7 @@ namespace Minecraft.Tests;
 public sealed class TerraFirmaCatalogRenameTests : IDisposable
 {
     private const string StableId = "terrafirma-rebirth";
+    private const string NumberedId = "minecraft-2";
     private const string LegacyFolder = "TerraFirma Rebirth";
     private const string Folder = "TerraFirma Rebirth 2";
     private const string CachedSummary = "A verified catalogue saved before the rename.";
@@ -40,21 +41,22 @@ public sealed class TerraFirmaCatalogRenameTests : IDisposable
         var settings = new AppSettings { AddedPackRelativePaths = [Folder] };
 
         var card = Assert.Single(catalog.PacksForDisplay(settings));
-        Assert.Equal(StableId, card.Entry.Id);
+        Assert.Equal(NumberedId, card.Entry.Id);
+        Assert.Equal(StableId, card.Entry.LegacyId);
         Assert.Equal(StableId, card.Content.Id);
         Assert.Equal(Folder, card.Entry.RelativePath);
         Assert.Equal(Folder, card.Content.RelativePath);
         Assert.Equal(Folder, card.Name);
         Assert.Equal(Source, card.Entry.Source);
         Assert.Null(catalog.Find(LegacyFolder));
-        Assert.Single(catalog.Sources, entry => entry.Id == StableId);
+        Assert.Single(catalog.Sources, entry => entry.Id == NumberedId);
 
         await catalog.RefreshOnceAsync();
 
         Assert.False(catalog.HasOnlineCatalog);
         Assert.Same(card, Assert.Single(catalog.PacksForDisplay(settings)));
         Assert.Null(catalog.Find(LegacyFolder));
-        Assert.Single(catalog.Sources, entry => entry.Id == StableId);
+        Assert.Single(catalog.Sources, entry => entry.Id == NumberedId);
         Assert.Equal(Source, catalog.SourceFor(Folder));
     }
 
@@ -67,7 +69,7 @@ public sealed class TerraFirmaCatalogRenameTests : IDisposable
         var manifest = WriteLegacyCache(damageBundle);
         using var http = new HttpClient(new OfflineHandler());
         var catalog = new PackCatalogService(_paths, _logger, http);
-        var card = Assert.Single(catalog.Packs, entry => entry.Entry.Id == StableId);
+        var card = Assert.Single(catalog.Packs, entry => entry.Entry.Id == NumberedId);
 
         Assert.Equal(Folder, card.Name);
         Assert.Equal(Folder, card.Content.RelativePath);

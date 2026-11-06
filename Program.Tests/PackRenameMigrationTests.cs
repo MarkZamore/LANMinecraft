@@ -102,7 +102,7 @@ public sealed class PackRenameMigrationTests : IDisposable
             if (step == 2) throw new IOException("simulated interruption during the previous release");
         }).Apply(settings, [Entry], _ => { }));
 
-        var current = Assert.Single(PackCatalogService.SeedSources(), source => source.Id == Entry.Id);
+        var current = Assert.Single(PackCatalogService.SeedSources(), source => source.StorageId == Entry.Id);
         new PackRenameMigration(paths).Apply(settings, [current], _ => { });
 
         var worldRoot = Path.Combine(paths.Worlds, current.RelativePath);
@@ -214,7 +214,8 @@ public sealed class PackRenameMigrationTests : IDisposable
                 source = new {owner = "MarkZamore", repo = "Minecraft-26.2", tag = "pack-latest"} } }
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
-        var source = Assert.Single(catalog.Sources, source => source.Id == Entry.Id);
+        var source = Assert.Single(catalog.Sources, source => source.StorageId == Entry.Id);
+        Assert.Equal("minecraft-3", source.Id);
         Assert.Equal("Minecraft Java Edition", source.RelativePath);
         Assert.Equal(New, source.CompatibilityPath);
         Assert.Equal(new PackSyncSource("MarkZamore", "Minecraft-Java-Edition", "pack-latest"), source.Source);
@@ -244,7 +245,7 @@ public sealed class PackRenameMigrationTests : IDisposable
             }
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
-        var source = Assert.Single(catalog.Sources, source => source.Id == Entry.Id);
+        var source = Assert.Single(catalog.Sources, source => source.StorageId == Entry.Id);
         Assert.Equal("Minecraft Java Edition", source.RelativePath);
         Assert.Equal(changed, source.Source);
         Assert.Contains(Old, source.LegacyRelativePaths);
@@ -313,7 +314,7 @@ public sealed class PackRenameMigrationTests : IDisposable
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
         Assert.DoesNotContain(catalog.Sources, source => source.Id == "different-pack");
-        Assert.Equal("Minecraft Java Edition", Assert.Single(catalog.Sources, source => source.Id == Entry.Id).RelativePath);
+        Assert.Equal("Minecraft Java Edition", Assert.Single(catalog.Sources, source => source.StorageId == Entry.Id).RelativePath);
         Assert.Contains("A library path belongs to multiple packs.", File.ReadAllText(paths.LogFile), StringComparison.Ordinal);
     }
 
@@ -323,7 +324,7 @@ public sealed class PackRenameMigrationTests : IDisposable
         var (paths, settings) = Fixture();
         settings.HiddenPackRelativePaths = [Old];
         settings.AddedPackRelativePaths = [];
-        var current = Assert.Single(PackCatalogService.SeedSources(), entry => entry.Id == Entry.Id);
+        var current = Assert.Single(PackCatalogService.SeedSources(), entry => entry.StorageId == Entry.Id);
         new PackRenameMigration(paths).Apply(settings, [current], _ => { });
         Assert.Equal([current.RelativePath], settings.HiddenPackRelativePaths);
         Assert.Empty(settings.AddedPackRelativePaths!);

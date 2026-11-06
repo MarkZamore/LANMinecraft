@@ -11,14 +11,25 @@ namespace Minecraft;
 
 public sealed record CatalogSource(string Id, string RelativePath, PackSyncSource Source)
 {
+    public string? LegacyId { get; init; }
     public string? InstallationPath { get; init; }
     public string? CompatibilityPath { get; init; }
     public List<string> LegacyRelativePaths { get; init; } = [];
     public List<PackSyncSource> LegacySources { get; init; } = [];
 
+    // Old metadata, resources and durable journals retain this key.
+    internal string StorageId => LegacyId ?? Id;
+
+    internal bool AcceptsId(string id) => Id.Equals(id, StringComparison.OrdinalIgnoreCase) ||
+        LegacyId?.Equals(id, StringComparison.OrdinalIgnoreCase) == true;
+
+    internal bool AcceptsIdentity(CatalogSource other) => AcceptsId(other.Id) &&
+        (other.LegacyId is null || StorageId.Equals(other.StorageId, StringComparison.OrdinalIgnoreCase));
+
     public bool Equals(CatalogSource? other) => other is not null &&
         Id == other.Id && RelativePath == other.RelativePath && Source == other.Source &&
-        InstallationPath == other.InstallationPath && CompatibilityPath == other.CompatibilityPath &&
+        LegacyId == other.LegacyId && InstallationPath == other.InstallationPath &&
+        CompatibilityPath == other.CompatibilityPath &&
         (LegacyRelativePaths is null ? other.LegacyRelativePaths is null :
             other.LegacyRelativePaths is not null && LegacyRelativePaths.SequenceEqual(other.LegacyRelativePaths, StringComparer.Ordinal)) &&
         (LegacySources is null ? other.LegacySources is null :
@@ -28,6 +39,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
     {
         var hash = new HashCode();
         hash.Add(Id, StringComparer.Ordinal);
+        hash.Add(LegacyId, StringComparer.Ordinal);
         hash.Add(RelativePath, StringComparer.Ordinal);
         hash.Add(Source);
         hash.Add(InstallationPath, StringComparer.Ordinal);
@@ -158,7 +170,7 @@ public sealed class CatalogPack
         AllContentModIds = Content.Mods.Where(mod => !mod.IsLibrary).Select(mod => mod.Id).ToHashSet(StringComparer.Ordinal);
         var visible = Content.VisibleModIds?.ToHashSet(StringComparer.Ordinal);
         var presented = Content.Mods.Where(mod => visible is null || visible.Contains(mod.Id)).ToList();
-        var nodes = presented.ToDictionary(m => m.Id, m => new CatalogModNode(m, Content.Id), StringComparer.Ordinal);
+        var nodes = presented.ToDictionary(m => m.Id, m => new CatalogModNode(m, Entry.LegacyId ?? Content.Id), StringComparer.Ordinal);
         foreach (var mod in presented.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             var node = nodes[mod.Id];
@@ -179,6 +191,7 @@ public sealed class CatalogPack
 public sealed partial class PackCatalogService
 {
     public static readonly Uri IndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/catalog.json");
+    internal static readonly Uri NumberedIndexUri = new("https://raw.githubusercontent.com/MarkZamore/LANMinecraft/pack-catalog/v2/catalog.json");
     private const int MaximumBundleBytes = 8 * 1024 * 1024;
     private const int MaximumManifestBytes = 8 * 1024 * 1024;
     private const int MaximumSourceHistoryPerPack = 16;
@@ -223,7 +236,7 @@ public sealed partial class PackCatalogService
             _knownCatalogPaths.Add(entry.RelativePath);
             _knownCatalogPaths.UnionWith(entry.LegacyRelativePaths);
             if (IsStaged) continue;
-            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.Id + ".zip");
+            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.StorageId + ".zip");
             if (stream is null) continue;
             using var bytes = new MemoryStream();
             stream.CopyTo(bytes);
@@ -318,7 +331,7 @@ public sealed partial class PackCatalogService
         {
             var effective = RuntimeSource(relativePath);
             if (effective is null) return marker;
-            return _sourceHistory.Any(old => old.Id == effective.Id &&
+            return _sourceHistory.Any(old => effective.AcceptsIdentity(old) &&
                 old.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase) && old.Source == marker)
                     ? effective.Source : marker;
         }
@@ -354,9 +367,7 @@ public sealed partial class PackCatalogService
         {
             try
             {
-                var indexBytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, ct).ConfigureAwait(false);
-                var index = Encoding.UTF8.GetString(indexBytes);
-                var entries = ParseIndex(index);
+                var entries = await ReadIndexAsync(ct).ConfigureAwait(false);
                 lock (_gate)
                 {
                     ReplaceIndex(entries);
@@ -472,7 +483,7 @@ public sealed partial class PackCatalogService
     private CachedEntry? ReadCache(CatalogSource entry)
     {
         var path = CachePath(entry.Source);
-        if (!File.Exists(path) && entry.Id == "terrafirma-rebirth" && entry.Source == PortablePackSyncService.TerraFirmaSource)
+        if (!File.Exists(path) && entry.StorageId == "terrafirma-rebirth" && entry.Source == PortablePackSyncService.TerraFirmaSource)
             path = CachePath(new PackSyncSource("MarkZamore", "TerraFirma-Rebirth", "pack-latest"));
         if (!File.Exists(path)) return null;
         if (new FileInfo(path).Length > 3L * MaximumBundleBytes) throw new InvalidDataException("Oversized library cache.");
@@ -491,6 +502,22 @@ public sealed partial class PackCatalogService
         var query = builder.Query.TrimStart('?');
         builder.Query = (query.Length == 0 ? "" : query + "&") + "catalogRefresh=" + _metadataRefresh;
         return builder.Uri;
+    }
+
+    private async Task<List<CatalogSource>> ReadIndexAsync(CancellationToken token)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = await ReadBoundedAsync(MutableMetadataUri(NumberedIndexUri), 256 * 1024, token).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // During deployment the v1 endpoint remains authoritative until
+            // the numbered projection appears. Other failures use the cache.
+            bytes = await ReadBoundedAsync(MutableMetadataUri(IndexUri), 256 * 1024, token).ConfigureAwait(false);
+        }
+        return ParseIndex(Encoding.UTF8.GetString(bytes));
     }
 
     private async Task<byte[]> ReadBoundedAsync(Uri uri, int maximum, CancellationToken token)
@@ -525,7 +552,7 @@ public sealed partial class PackCatalogService
         using var json = jsonEntry.Open();
         var content = JsonSerializer.Deserialize<CatalogDescription>(json, JsonOptions) ?? throw new InvalidDataException("Empty library metadata.");
         // The stable pack ID keeps verified pre-rename offline bundles usable.
-        if (entry.Id == "terrafirma-rebirth" && content.Id == entry.Id &&
+        if (entry.StorageId == "terrafirma-rebirth" && (content.Id == entry.Id || content.Id == entry.StorageId) &&
             entry.RelativePath == PortablePackSyncService.TerraFirmaRelativePath &&
             content.RelativePath == PortablePackSyncService.LegacyTerraFirmaRelativePath)
         {
@@ -535,7 +562,7 @@ public sealed partial class PackCatalogService
             if (string.Equals(content.Name, PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.Ordinal))
                 content.Name = PortablePackSyncService.TerraFirmaRelativePath;
         }
-        if (content.Id == entry.Id && entry.LegacyRelativePaths.Contains(content.RelativePath, StringComparer.OrdinalIgnoreCase))
+        if ((content.Id == entry.Id || content.Id == entry.StorageId) && entry.LegacyRelativePaths.Contains(content.RelativePath, StringComparer.OrdinalIgnoreCase))
             content.RelativePath = entry.RelativePath;
         ValidateContent(entry, content, revision);
         using var preview = zip.GetEntry("preview.jpg")!.Open();
@@ -556,7 +583,7 @@ public sealed partial class PackCatalogService
 
     private static void ValidateContent(CatalogSource entry, CatalogDescription doc, string? revision)
     {
-        if (doc.SchemaVersion != 1 || doc.Id != entry.Id || doc.RelativePath != entry.RelativePath ||
+        if (doc.SchemaVersion != 1 || (doc.Id != entry.Id && doc.Id != entry.StorageId) || doc.RelativePath != entry.RelativePath ||
             (revision is not null && doc.Revision != revision) || string.IsNullOrWhiteSpace(doc.Name) || doc.Name.Length > 120 ||
             string.IsNullOrWhiteSpace(doc.MinecraftVersion) || string.IsNullOrWhiteSpace(doc.Description) ||
             doc.Description.Length > 32000 || doc.Summary is null || doc.Summary.Length > 1000 || doc.Mods is null || doc.Mods.Count > 10000)
@@ -597,7 +624,7 @@ public sealed partial class PackCatalogService
     private static List<CatalogSource> ParseIndex(string json, bool useEmbeddedAliases = true)
     {
         var index = JsonSerializer.Deserialize<CatalogIndex>(json, JsonOptions);
-        if (index is null || index.SchemaVersion != 1 || index.Packs is null || index.Packs.Count > 100)
+        if (index is null || index.SchemaVersion is not (1 or 2) || index.Packs is null || index.Packs.Count > 100)
             throw new InvalidDataException("Unsupported library index.");
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -605,8 +632,9 @@ public sealed partial class PackCatalogService
         foreach (var entry in index.Packs)
         {
             if (entry is null || !ValidFolder(entry.RelativePath) || string.IsNullOrWhiteSpace(entry.Id) ||
-                entry.Id.Length > 100 || !ids.Add(entry.Id) || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
+                entry.Id.Length > 100 || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
                 throw new InvalidDataException("Invalid/duplicate library source.");
+            AddIndexIds(ids, entry);
             if ((entry.InstallationPath is not null && !ValidFolder(entry.InstallationPath)) ||
                 (entry.CompatibilityPath is not null && !ValidFolder(entry.CompatibilityPath)))
                 throw new InvalidDataException("Invalid library installation path.");
@@ -624,8 +652,10 @@ public sealed partial class PackCatalogService
             canonical.Select(entry => Key(entry.Source)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != canonical.Count)
             throw new InvalidDataException("Invalid/duplicate library rename targets.");
         var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        ids.Clear();
         foreach (var entry in canonical)
         {
+            AddIndexIds(ids, entry);
             if (entry.LegacyRelativePaths.Count > 16 ||
                 (entry.CompatibilityPath is not null &&
                  !entry.LegacyRelativePaths.Contains(entry.CompatibilityPath, StringComparer.OrdinalIgnoreCase)))
@@ -638,6 +668,13 @@ public sealed partial class PackCatalogService
             }
         }
         return canonical;
+    }
+
+    private static void AddIndexIds(HashSet<string> ids, CatalogSource entry)
+    {
+        if (!ids.Add(entry.Id) || (entry.LegacyId is { } legacy &&
+            (string.IsNullOrWhiteSpace(legacy) || legacy.Length > 100 || legacy != legacy.Trim() || !ids.Add(legacy))))
+            throw new InvalidDataException("Invalid/duplicate library ID or legacy ID.");
     }
 
     public static bool ValidFolder(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 120 &&
@@ -655,8 +692,8 @@ public sealed partial class PackCatalogService
         {
             _knownCatalogPaths.Add(entry.RelativePath);
             _knownCatalogPaths.UnionWith(entry.LegacyRelativePaths);
-            _effectiveSources[entry.RelativePath] = previous.TryGetValue(entry.RelativePath, out var old) && old.Id == entry.Id
-                ? old : entry;
+            _effectiveSources[entry.RelativePath] = previous.TryGetValue(entry.RelativePath, out var old) && entry.AcceptsIdentity(old)
+                ? old with { Id = entry.Id, LegacyId = entry.LegacyId } : entry;
         }
         foreach (var path in _packs.Keys.ToArray())
             if (!IsCurrentEntry(_packs[path].Entry)) _packs.Remove(path);
@@ -668,20 +705,20 @@ public sealed partial class PackCatalogService
 
     private void PromoteEffectiveSource(CatalogSource entry)
     {
-        if (_effectiveSources.TryGetValue(entry.RelativePath, out var old) && old.Id == entry.Id && old.Source != entry.Source)
+        if (_effectiveSources.TryGetValue(entry.RelativePath, out var old) && entry.AcceptsIdentity(old) && old.Source != entry.Source)
             RememberSource(old);
         _effectiveSources[entry.RelativePath] = entry;
     }
 
     private void RememberSource(CatalogSource entry)
     {
-        _sourceHistory.RemoveAll(old => old.Id == entry.Id &&
+        _sourceHistory.RemoveAll(old => old.StorageId.Equals(entry.StorageId, StringComparison.OrdinalIgnoreCase) &&
             old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase) && old.Source == entry.Source);
         _sourceHistory.Add(entry);
-        while (_sourceHistory.Count(old => old.Id == entry.Id &&
+        while (_sourceHistory.Count(old => old.StorageId.Equals(entry.StorageId, StringComparison.OrdinalIgnoreCase) &&
                    old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase)) > MaximumSourceHistoryPerPack)
         {
-            var index = _sourceHistory.FindIndex(old => old.Id == entry.Id &&
+            var index = _sourceHistory.FindIndex(old => old.StorageId.Equals(entry.StorageId, StringComparison.OrdinalIgnoreCase) &&
                 old.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
             _sourceHistory.RemoveAt(index);
         }
@@ -704,7 +741,12 @@ public sealed partial class PackCatalogService
             var effective = ParseIndex(JsonSerializer.Serialize(new CatalogIndex
                 { SchemaVersion = 1, Packs = index.EffectiveSources }, JsonOptions));
             foreach (var entry in effective)
-                if (IsCurrentEntry(entry)) _effectiveSources[entry.RelativePath] = entry;
+            {
+                var active = _sources.FirstOrDefault(current => current.AcceptsIdentity(entry) &&
+                    current.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
+                if (active is not null)
+                    _effectiveSources[active.RelativePath] = entry with { Id = active.Id, LegacyId = active.LegacyId };
+            }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library effective source cache: " + ex.Message); }
     }
@@ -722,7 +764,15 @@ public sealed partial class PackCatalogService
     }
     private static CatalogSource CanonicalSource(CatalogSource entry, IReadOnlyList<CatalogSource> embeddedAliases)
     {
-        if (entry.Id == "terrafirma-rebirth" &&
+        var seed = embeddedAliases.FirstOrDefault(candidate => candidate.AcceptsId(entry.Id) ||
+            entry.LegacyId is { } legacy && candidate.AcceptsId(legacy));
+        if (seed is not null)
+        {
+            if (!seed.AcceptsIdentity(entry))
+                throw new InvalidDataException("Catalog ID conflicts with an embedded identity.");
+            entry = entry with { Id = seed.Id, LegacyId = seed.LegacyId };
+        }
+        if (entry.StorageId == "terrafirma-rebirth" &&
             entry.RelativePath.Equals(PortablePackSyncService.LegacyTerraFirmaRelativePath, StringComparison.OrdinalIgnoreCase))
             entry = entry with
             {
@@ -742,9 +792,8 @@ public sealed partial class PackCatalogService
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList()
             };
         }
-        var seed = embeddedAliases.FirstOrDefault(candidate => candidate.Id.Equals(entry.Id, StringComparison.OrdinalIgnoreCase) &&
-            candidate.LegacyRelativePaths.Contains(entry.RelativePath, StringComparer.OrdinalIgnoreCase));
-        if (seed is null) return entry;
+        if (seed is null || !seed.LegacyRelativePaths.Contains(entry.RelativePath, StringComparer.OrdinalIgnoreCase))
+            return entry;
         var paths = entry.LegacyRelativePaths.Concat(seed.LegacyRelativePaths)
             .Where(path => !path.Equals(seed.RelativePath, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();

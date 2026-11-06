@@ -525,7 +525,7 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
         var defaultPack = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
         Assert.Equal("All The Mods 10", defaultPack.Name);
-        Assert.Equal("all-the-mods-10", defaultPack.Entry.Id);
+        Assert.Equal("minecraft-1", defaultPack.Entry.Id);
         Assert.Null(service.Find("LL8 Extended"));
         Assert.DoesNotContain(service.Sources, source => source.RelativePath == "LL8 Extended");
         Assert.Equal("Other Pack", PackDisplayName.For("Other Pack", "Other Pack"));
