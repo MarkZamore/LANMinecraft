@@ -365,7 +365,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         void Check(PackCatalogService catalog)
         {
             var pack = Assert.IsType<CatalogPack>(catalog.Find(path));
-            Assert.Equal(id, pack.Entry.Id);
+            Assert.Equal(id, pack.Entry.StorageId);
             Assert.Equal(path, pack.Entry.RelativePath);
             Assert.Equal(path, pack.Content.RelativePath);
             Assert.Equal(authorName, pack.Content.Name);
@@ -374,6 +374,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
             using var names = new PackDisplayNames(paths);
             names.Publish(catalog.Packs);
             Assert.Equal(authorName, names.ResolveId(id, "Stale ID"));
+            Assert.Equal(authorName, names.ResolveId(pack.Entry.Id, "Stale numbered ID"));
             Assert.Equal(authorName, names.Resolve(path, "Stale path"));
             Assert.Equal(authorName, WindowTitleSettings.Load(Path.Combine(paths.Packs, path), Runtime(),
                 Path.Combine(paths.Instances, path)).Text);

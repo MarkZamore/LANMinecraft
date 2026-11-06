@@ -54,6 +54,8 @@ public sealed class PackDisplayNames : IDisposable
             if (!next.TryGetValue(path, out var name)) continue;
             var id = NormalizeIdentity(pack.Entry.Id);
             if (id.Length > 0) AddAlias(ids, id, name);
+            if (pack.Entry.LegacyId is { } legacy)
+                AddAlias(ids, NormalizeIdentity(legacy), name);
             foreach (var alias in pack.Entry.LegacyRelativePaths ?? [])
             {
                 var key = NormalizeIdentity(alias);

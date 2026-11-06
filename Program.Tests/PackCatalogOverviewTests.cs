@@ -250,7 +250,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
     {
         using var host = new OverviewHost();
         host.Index = PackCatalogService.SeedSources().Where(entry => typeof(PackCatalogService).Assembly
-            .GetManifestResourceInfo("Minecraft.Library." + entry.Id + ".zip") is not null).Take(2).ToArray();
+            .GetManifestResourceInfo("Minecraft.Library." + entry.StorageId + ".zip") is not null).Take(2).ToArray();
         Assert.Equal(2, host.Index.Length);
         foreach (var entry in host.Index) host.Publish(entry, "fresh");
         var gates = host.Index.Select(host.BlockManifest).ToArray();
