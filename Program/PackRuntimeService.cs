@@ -174,7 +174,8 @@ public sealed class PackRuntimeService : IDisposable
             progress,
             localOnly: false,
             subject: "Minecraft",
-            includeInstallerJava: includeInstallerJava);
+            includeInstallerJava: includeInstallerJava,
+            librarySources: RuntimeLibrarySource.Load(packDirectory));
         IVersion baseVersion;
         try
         {
@@ -322,7 +323,8 @@ public sealed class PackRuntimeService : IDisposable
         IProgress<RuntimePreparationProgress>? progress,
         bool localOnly,
         string subject,
-        bool includeInstallerJava = true)
+        bool includeInstallerJava = true,
+        IReadOnlyDictionary<string, RuntimeLibrarySource>? librarySources = null)
     {
         var minecraftPath = new MinecraftPath(runtimeRoot);
         // Everything a version is made of is the same bytes for every build
@@ -351,7 +353,7 @@ public sealed class PackRuntimeService : IDisposable
             SharedRuntimeStore.Anchor(_paths),
             temporaryRoot,
             progress,
-            subject);
+            subject) { LibrarySources = librarySources, LibrarySourceLogger = _logger };
         if (localOnly)
         {
             parameters.VersionLoader = new LocalJsonVersionLoader(minecraftPath);
@@ -942,6 +944,7 @@ internal sealed class VanillaLoaderProvider : IPackLoaderProvider
 internal sealed class FabricLoaderProvider : IPackLoaderProvider
 {
     public PackLoaderKind Kind => PackLoaderKind.Fabric;
+    public bool RequiresInstallerJava => false;
     public async Task<string> InstallAsync(PackLoaderInstallationContext context, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();

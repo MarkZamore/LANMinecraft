@@ -20,6 +20,8 @@ public sealed class PortableGameInstaller : IGameInstaller
     private readonly IProgress<RuntimePreparationProgress>? _runtimeProgress;
     private readonly string _subject;
     private long _lastRuntimeProgressTimestamp;
+    internal IReadOnlyDictionary<string, RuntimeLibrarySource>? LibrarySources { get; init; }
+    internal Logger? LibrarySourceLogger { get; init; }
 
     /// <param name="subject">
     /// What these files are, in the word the button will show: "Minecraft" for
@@ -138,15 +140,20 @@ public sealed class PortableGameInstaller : IGameInstaller
         var temporaryPath = Path.Combine(_temporaryRoot, tempName);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
+        var official = NormalizeDownloadUri(file.Url);
+        RuntimeLibrarySource? alternative = null;
+        if (official.Host == "libraries.minecraft.net" && file.Size > 0 && file.Hash is { Length: 40 })
+            LibrarySources?.TryGetValue(file.Hash, out alternative);
+
         Exception? lastError = null;
-        for (var attempt = 1; attempt <= 3; attempt++)
+        for (var attempt = alternative is null ? 1 : 0; attempt <= 3; attempt++)
         {
             token.ThrowIfCancellationRequested();
             long attemptBytes = 0;
             try
             {
                 DeleteFileIfExists(temporaryPath);
-                var uri = NormalizeDownloadUri(file.Url);
+                var uri = attempt == 0 ? alternative!.Url : official;
                 using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
                 response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentLength is > 0 and var contentLength)
@@ -167,6 +174,8 @@ public sealed class PortableGameInstaller : IGameInstaller
                     {
                         var read = await input.ReadAsync(buffer.AsMemory(), token);
                         if (read == 0) break;
+                        if (attempt == 0 && read > file.Size - attemptBytes)
+                            throw new InvalidDataException($"Runtime mirror exceeded expected size: {file.Name}");
                         await output.WriteAsync(buffer.AsMemory(0, read), token);
                         attemptBytes += read;
                         reportBytes(read);
@@ -175,20 +184,31 @@ public sealed class PortableGameInstaller : IGameInstaller
                 }
 
                 ValidateFile(temporaryPath, file);
+                if (attempt == 0)
+                {
+                    using var stream = File.OpenRead(temporaryPath);
+                    var hash = Convert.ToHexString(SHA256.HashData(stream));
+                    if (!hash.Equals(alternative!.Sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException($"Runtime mirror SHA-256 mismatch: {file.Name}");
+                }
                 File.Move(temporaryPath, destination, overwrite: true);
+                if (attempt == 0)
+                    LibrarySourceLogger?.Info($"Verified runtime library from pack delivery: {file.Name}");
                 return;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (attempt != 0 || token.IsCancellationRequested)
             {
                 DeleteFileIfExists(temporaryPath);
                 throw;
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException)
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or OperationCanceledException)
             {
                 lastError = ex;
                 if (attemptBytes > 0) reportBytes(-attemptBytes);
                 DeleteFileIfExists(temporaryPath);
-                if (attempt < 3)
+                if (attempt == 0)
+                    LibrarySourceLogger?.Warn($"Pack delivery for {file.Name} failed verification or download. Trying the official source.");
+                if (attempt is > 0 and < 3)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1 << (attempt - 1)), token);
                 }

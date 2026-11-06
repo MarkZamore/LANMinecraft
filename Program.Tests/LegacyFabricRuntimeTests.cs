@@ -94,19 +94,45 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
     }
 
     [Fact]
-    public async Task ColdPreparationUsesPinnedGameJavaWithoutRequestingMojangJava()
+    public Task ColdPreparationUsesPinnedGameJavaWithoutRequestingMojangJava() =>
+        CheckColdPreparationAsync(false, false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task ColdPreparationDownloadsOfficialClientAndValidatesLibraryMirror(bool invalidMirror) =>
+        CheckColdPreparationAsync(true, invalidMirror);
+
+    private async Task CheckColdPreparationAsync(bool officialClient, bool invalidMirror)
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
         var pack = paths.CombineUnderPacks("Legacy fixture");
         Directory.CreateDirectory(pack);
-        File.WriteAllText(Path.Combine(pack, PackManifestService.ManifestFileName), """
+        var descriptor = """
             {"schemaVersion":1,"minecraftVersion":"1.6.4","loader":{"type":"legacyfabric","version":"0.18.2"},
              "clientJar":"client.jar","javaMajorVersion":17}
-            """);
+            """;
+        if (officialClient)
+            descriptor = descriptor.Replace("\"clientJar\":\"client.jar\",", "", StringComparison.Ordinal)
+                .Replace("\"legacyfabric\"", "\"fabric\"", StringComparison.Ordinal);
+        File.WriteAllText(Path.Combine(pack, PackManifestService.ManifestFileName), descriptor);
         var clientJar = Path.Combine(pack, "client.jar");
         using (var jar = ZipFile.Open(clientJar, ZipArchiveMode.Create))
             jar.CreateEntry("net/minecraft/client/main/Main.class");
+        var clientBytes = File.ReadAllBytes(clientJar);
+        if (officialClient) File.Delete(clientJar);
+        if (officialClient)
+        {
+            var launcher = Path.Combine(pack, "launcher");
+            Directory.CreateDirectory(launcher);
+            var sha256 = invalidMirror ? new string('0', 64) : Convert.ToHexStringLower(SHA256.HashData(ColdRuntimeHandler.Library));
+            File.WriteAllText(Path.Combine(launcher, "runtime-libraries.json"), JsonSerializer.Serialize(
+                new Dictionary<string, object> { [ColdRuntimeHandler.LibrarySha1] = new
+                {
+                    url = ColdRuntimeHandler.MirrorUrl, sha256
+                } }));
+        }
 
         // A prepared portable Java install avoids running a JVM in this test.
         // The Mojang runtime and all Minecraft files start cold.
@@ -122,14 +148,17 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
         File.WriteAllText(Path.Combine(javaHome, ".portable-java.json"),
             JsonSerializer.Serialize(new { SchemaVersion = 1, pin.RuntimeId, pin.ArchiveSha256 }));
 
-        using var handler = new ColdRuntimeHandler(File.ReadAllBytes(clientJar));
+        using var handler = new ColdRuntimeHandler(clientBytes, officialClient, invalidMirror);
         using var http = new HttpClient(handler);
         using var service = new PackRuntimeService(paths, new Logger(paths.LogFile), http);
         var runtime = await service.PrepareAsync("Legacy fixture", null, CancellationToken.None);
 
         Assert.Equal(javaw, runtime.JavaPath);
-        Assert.Equal("legacyfabric-loader-0.18.2-1.6.4", runtime.ProfileId);
-        Assert.Equal(File.ReadAllBytes(clientJar), File.ReadAllBytes(runtime.ClientJarPath));
+        Assert.Equal(officialClient ? "fabric-loader-0.18.2-1.6.4" : "legacyfabric-loader-0.18.2-1.6.4", runtime.ProfileId);
+        Assert.Equal(clientBytes, File.ReadAllBytes(runtime.ClientJarPath));
+        Assert.Equal(officialClient ? 1 : 0, handler.ClientRequests);
+        Assert.Equal(officialClient ? 1 : 0, handler.MirrorRequests);
+        Assert.Equal(!officialClient || invalidMirror ? 1 : 0, handler.OfficialLibraryRequests);
         Assert.Equal("fixture library", File.ReadAllText(Path.Combine(
             SharedRuntimeStore.Libraries(paths), "fixture", "library", "1", "library-1.jar")));
         Assert.False(Directory.Exists(Path.Combine(SharedRuntimeStore.Runtime(paths), "windows-x64", "jre-legacy")));
@@ -166,14 +195,29 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
 
     public void Dispose() => TempTree.Delete(_root);
 
-    private sealed class ColdRuntimeHandler(byte[] clientJar) : HttpMessageHandler
+    private sealed class ColdRuntimeHandler(byte[] clientJar, bool officialClient, bool invalidMirror) : HttpMessageHandler
     {
         private int _requestCount;
         public int RequestCount => _requestCount;
+        public int ClientRequests;
+        public int MirrorRequests;
+        public int OfficialLibraryRequests;
+        internal const string MirrorUrl = "https://github.com/fixture/pack/releases/download/runtime-v1/library.jar";
+        internal static readonly byte[] Library = Encoding.UTF8.GetBytes("fixture library");
+        internal static readonly string LibrarySha1 = Convert.ToHexStringLower(SHA1.HashData(Library));
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Interlocked.Increment(ref _requestCount);
+            if (request.RequestUri!.AbsoluteUri == "https://piston-data.mojang.com/fixture/client.jar" && officialClient)
+            {
+                Interlocked.Increment(ref ClientRequests);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(clientJar) });
+            }
+            if (request.RequestUri.AbsoluteUri == MirrorUrl && officialClient)
+                Interlocked.Increment(ref MirrorRequests);
+            if (request.RequestUri.AbsoluteUri == "https://libraries.minecraft.net/fixture/library.jar" && (!officialClient || invalidMirror))
+                Interlocked.Increment(ref OfficialLibraryRequests);
             var response = request.RequestUri!.AbsoluteUri switch
             {
                 "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json" => """
@@ -181,12 +225,17 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
                     """,
                 "https://fixture.test/1.6.4.json" => $$$$"""
                     {"id":"1.6.4","type":"release","mainClass":"net.minecraft.client.main.Main",
-                     "downloads":{"client":{"url":"https://fixture.test/client.jar","size":{{{{clientJar.Length}}}},
+                     "downloads":{"client":{"url":"https://piston-data.mojang.com/fixture/client.jar","size":{{{{clientJar.Length}}}},
                        "sha1":"{{{{Convert.ToHexStringLower(SHA1.HashData(clientJar))}}}}"}},
-                     "libraries":[{"name":"fixture:library:1","downloads":{"artifact":{"url":"https://fixture.test/library.jar"}}}]}
+                     "libraries":[{"name":"fixture:library:1","downloads":{"artifact":{"url":"https://libraries.minecraft.net/fixture/library.jar","size":{{{{Library.Length}}}},"sha1":"{{{{LibrarySha1}}}}"}}}]}
                     """,
-                "https://fixture.test/library.jar" => "fixture library",
-                "https://meta.legacyfabric.net/v2/versions/loader/1.6.4/0.18.2/profile/json" => """
+                MirrorUrl when officialClient => "fixture library",
+                "https://libraries.minecraft.net/fixture/library.jar" when !officialClient || invalidMirror => "fixture library",
+                "https://meta.legacyfabric.net/v2/versions/loader/1.6.4/0.18.2/profile/json" when !officialClient => """
+                    {"id":"fabric-loader-0.18.2-1.6.4","inheritsFrom":"1.6.4",
+                     "mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient","libraries":[]}
+                    """,
+                "https://meta.fabricmc.net/v2/versions/loader/1.6.4/0.18.2/profile/json" when officialClient => """
                     {"id":"fabric-loader-0.18.2-1.6.4","inheritsFrom":"1.6.4",
                      "mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient","libraries":[]}
                     """,
