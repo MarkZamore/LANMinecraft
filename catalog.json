@@ -3,6 +3,7 @@
   "packs": [
     {
       "id": "all-the-mods-10",
+      "numberedId": "minecraft-1",
       "relativePath": "All The Mods 10",
       "source": {
         "owner": "MarkZamore",
@@ -12,6 +13,7 @@
     },
     {
       "id": "terrafirma-rebirth",
+      "numberedId": "minecraft-2",
       "relativePath": "TerraFirma Rebirth",
       "source": {
         "owner": "MarkZamore",
@@ -21,6 +23,7 @@
     },
     {
       "id": "minecraft-26-2",
+      "numberedId": "minecraft-3",
       "relativePath": "Minecraft 26.3",
       "installationPath": "Minecraft Java Edition",
       "source": {
@@ -46,6 +49,7 @@
     },
     {
       "id": "caves-and-dungeons",
+      "numberedId": "minecraft-4",
       "relativePath": "Caves and Dungeons",
       "source": {
         "owner": "MarkZamore",
@@ -55,6 +59,7 @@
     },
     {
       "id": "all-the-mods-9",
+      "numberedId": "minecraft-5",
       "relativePath": "All The Mods 9",
       "source": {
         "owner": "MarkZamore",
@@ -64,6 +69,7 @@
     },
     {
       "id": "all-the-mods-9-modified",
+      "numberedId": "minecraft-6",
       "relativePath": "All the Mods 9 Modified",
       "source": {
         "owner": "MarkZamore",
@@ -73,6 +79,7 @@
     },
     {
       "id": "attack-on-titan",
+      "numberedId": "minecraft-7",
       "relativePath": "Awakening Of The Titans",
       "source": {
         "owner": "MarkZamore",
@@ -82,6 +89,7 @@
     },
     {
       "id": "better-than-wolves",
+      "numberedId": "minecraft-8",
       "relativePath": "Better Than Wolves",
       "source": {
         "owner": "MarkZamore",
