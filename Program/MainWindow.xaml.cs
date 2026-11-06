@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -102,6 +103,9 @@ public partial class MainWindow : Window
     private TransferRun? _transferRun;
     private TimeSpan? _transferRemaining;
     private bool _updateBusy;
+    private DispatcherTimer? _updateDotsTimer;
+    private Run[]? _updateDots;
+    private int _visibleUpdateDots;
     private bool _isEditingPlayerName;
     private NameMarquee? _playerNameMarquee;
     private ChangelogPager? _changelogPager;
@@ -370,6 +374,7 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (_shutdownStarted) return;
         _shutdownStarted = true;
+        _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
         _preparedBackdrop?.Dispose();
@@ -2564,8 +2569,56 @@ public partial class MainWindow : Window
         UpdateProgressBar.Value = 0;
         UpdateProgressBar.IsIndeterminate = false;
         SetProgressActivity(UpdateProgressBar, active: false);
-        UpdateProgressText.Text = UpdateProgressLine.Checking();
+        SetUpdateProgressCaption(UpdateProgressLine.Checking(), pending: true);
         UpdateButton.IsEnabled = false;
+    }
+
+    private void SetUpdateProgressCaption(string text, bool pending = false)
+    {
+        if (_shutdownStarted) return;
+        _updateDotsTimer?.Stop();
+        _updateDots = null;
+        UpdateProgressText.Text = text;
+        if (!pending) return;
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            UpdateProgressText.Text = text + "...";
+            return;
+        }
+
+        // Keep the three glyphs in the line so centering and wrapping are stable.
+        _updateDots = [new Run("."), new Run(".") { Foreground = Brushes.Transparent },
+            new Run(".") { Foreground = Brushes.Transparent }];
+        foreach (var dot in _updateDots) UpdateProgressText.Inlines.Add(dot);
+        _visibleUpdateDots = 1;
+
+        if (_updateDotsTimer is null)
+        {
+            _updateDotsTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = ((Duration)FindResource("Motion.UpdateDots")).TimeSpan
+            };
+            _updateDotsTimer.Tick += AdvanceUpdateDots;
+        }
+        _updateDotsTimer.Start();
+    }
+
+    private void AdvanceUpdateDots(object? sender, EventArgs e)
+    {
+        if (_updateDots is not { } dots) return;
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            foreach (var dot in dots) dot.ClearValue(TextElement.ForegroundProperty);
+            _updateDotsTimer?.Stop();
+            return;
+        }
+        if (!UpdateProgressText.IsVisible || WindowState == WindowState.Minimized) return;
+        _visibleUpdateDots = _visibleUpdateDots % dots.Length + 1;
+        for (var i = 0; i < dots.Length; i++)
+        {
+            if (i < _visibleUpdateDots) dots[i].ClearValue(TextElement.ForegroundProperty);
+            else dots[i].Foreground = Brushes.Transparent;
+        }
     }
 
     private void InitializeRuntimeProgressUi()
@@ -2638,7 +2691,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = UpdateProgressLine.Ready(startupPrepared.Manifest.ReleaseNumber);
+                    SetUpdateProgressCaption(UpdateProgressLine.Ready(startupPrepared.Manifest.ReleaseNumber));
                     RefreshUi();
                 });
             }
@@ -2660,9 +2713,9 @@ public partial class MainWindow : Window
                         UpdateProgressBar.IsIndeterminate = false;
                         UpdateProgressBar.Value = 0;
                         SetProgressActivity(UpdateProgressBar, active: false);
-                        UpdateProgressText.Text = result.IsUnavailable
+                        SetUpdateProgressCaption(result.IsUnavailable
                             ? UpdateProgressLine.CheckFailed()
-                            : UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber);
+                            : UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
                     });
                 }
             }
@@ -2677,7 +2730,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.Value = 0;
                     SetProgressActivity(UpdateProgressBar, active: true);
                     fetching = result.Manifest.ReleaseNumber;
-                    UpdateProgressText.Text = UpdateProgressLine.Starting(result.Manifest.ReleaseNumber);
+                    SetUpdateProgressCaption(UpdateProgressLine.Starting(result.Manifest.ReleaseNumber), pending: true);
                     RefreshUi();
                 });
 
@@ -2695,17 +2748,17 @@ public partial class MainWindow : Window
                         // the second download started the line read 0 Б/с to the end.
                         var speed = _updateRate.Update(
                             value.DownloadedBytes, $"update:{value.TotalBytes}");
-                        UpdateProgressText.Text = UpdateProgressLine.Downloading(
+                        SetUpdateProgressCaption(UpdateProgressLine.Downloading(
                             result.Manifest.ReleaseNumber,
                             value.DownloadedBytes,
                             value.TotalBytes,
                             speed,
-                            UpdateProgressLine.Estimate(value.DownloadedBytes, value.TotalBytes, speed));
+                            UpdateProgressLine.Estimate(value.DownloadedBytes, value.TotalBytes, speed)));
                     }
                     else if (value.Stage == UpdatePreparationStage.ApplyingDelta)
                     {
                         _updateRate.Reset();
-                        UpdateProgressText.Text = UpdateProgressLine.Applying(result.Manifest.ReleaseNumber);
+                        SetUpdateProgressCaption(UpdateProgressLine.Applying(result.Manifest.ReleaseNumber), pending: true);
                     }
                 });
                 var readyUpdate = await _updateService.DownloadUpdateAsync(result, progress, token);
@@ -2716,7 +2769,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    UpdateProgressText.Text = UpdateProgressLine.Ready(readyUpdate.Manifest.ReleaseNumber);
+                    SetUpdateProgressCaption(UpdateProgressLine.Ready(readyUpdate.Manifest.ReleaseNumber));
                 });
             }
         }
@@ -2737,9 +2790,9 @@ public partial class MainWindow : Window
                     // Not "you are on the latest": nothing established that. The
                     // check or the download fell over, and saying otherwise turns
                     // a failure into an all-clear.
-                    UpdateProgressText.Text = fetching is { } release
+                    SetUpdateProgressCaption(fetching is { } release
                         ? UpdateProgressLine.DownloadFailed(release)
-                        : UpdateProgressLine.CheckFailed();
+                        : UpdateProgressLine.CheckFailed());
                 });
             }
         }
@@ -2749,6 +2802,7 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
+                    _updateDotsTimer?.Stop();
                     _updateBusy = false;
                     RefreshUi();
                 });
@@ -2775,14 +2829,14 @@ public partial class MainWindow : Window
             if (prepared is null)
             {
                 _preparedUpdate = null;
-                UpdateProgressText.Text = UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber);
+                SetUpdateProgressCaption(UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
                 UpdateProgressBar.Value = 0;
                 SetProgressActivity(UpdateProgressBar, active: false);
                 return;
             }
 
             _preparedUpdate = prepared;
-            UpdateProgressText.Text = UpdateProgressLine.Ready(prepared.Manifest.ReleaseNumber);
+            SetUpdateProgressCaption(UpdateProgressLine.Ready(prepared.Manifest.ReleaseNumber));
             UpdateProgressBar.Value = 100;
             SetProgressActivity(UpdateProgressBar, active: false);
             _restartAfterUpdateOnExit = true;

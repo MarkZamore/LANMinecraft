@@ -34,8 +34,8 @@ public class UpdateProgressLineTests
         {
             lines.Add(UpdateProgressLine.UpToDate(release));
             lines.Add(UpdateProgressLine.Ready(release));
-            lines.Add(UpdateProgressLine.Applying(release));
-            lines.Add(UpdateProgressLine.Starting(release));
+            lines.Add(UpdateProgressLine.Applying(release) + "...");
+            lines.Add(UpdateProgressLine.Starting(release) + "...");
             lines.Add(UpdateProgressLine.DownloadFailed(release));
             foreach (var total in totals)
             foreach (var share in shares)
@@ -46,7 +46,7 @@ public class UpdateProgressLineTests
                     release, (long)(total * share), total, rate, wait));
             }
         }
-        lines.Add(UpdateProgressLine.Checking());
+        lines.Add(UpdateProgressLine.Checking() + "...");
         lines.Add(UpdateProgressLine.CheckFailed());
         return lines.Distinct().ToList();
     }

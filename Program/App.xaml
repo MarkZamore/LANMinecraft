@@ -194,6 +194,7 @@
         <Duration x:Key="Motion.SectionExpand">0:0:0.2</Duration>
         <Duration x:Key="Motion.SectionCollapse">0:0:0.18</Duration>
         <Duration x:Key="Motion.SectionFade">0:0:0.16</Duration>
+        <Duration x:Key="Motion.UpdateDots">0:0:0.45</Duration>
         <CornerRadius x:Key="Radius.Control">8</CornerRadius>
         <CornerRadius x:Key="Radius.ChatComposer">12</CornerRadius>
         <CornerRadius x:Key="Radius.ChatAction">20</CornerRadius>
