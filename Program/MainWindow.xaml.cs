@@ -261,9 +261,17 @@ public partial class MainWindow : Window
             // This one picks it up, so the button says "Игра запущена" instead
             // of offering a second client over the first.
             _minecraft.AdoptRunningClients();
+            // Transfers and housekeeping can create or remove paths owned by
+            // the startup rename. Start them after the new paths are settled.
+            await _catalogStartup;
+            if (_shutdownStarted) return;
             _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, RequireWorldMetadata(), _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
                 runtimeOptions: null,
-                confirmation: new WpfWorldTransferConfirmation(this));
+                confirmation: new WpfWorldTransferConfirmation(this), recoverAtStartup: false)
+            {
+                CompatibilityPathFor = path => _catalog?.CompatibilityPathFor(path) ?? path,
+                InstallationPathFor = path => _catalog?.InstallationPathFor(path) ?? path
+            };
             _bugReports = new BugReportService(
                 _paths,
                 _logger,
@@ -623,7 +631,7 @@ public partial class MainWindow : Window
 
     private void RefreshWorlds()
     {
-        if (_paths is null || _settings is null || _settingsService is null) return;
+        if (_catalog?.IsIndexReady != true || _paths is null || _settings is null || _settingsService is null) return;
 
         if (!Directory.Exists(_paths.Worlds))
         {
@@ -951,10 +959,8 @@ public partial class MainWindow : Window
             PlayerName = identity.name,
             MinecraftUuid = identityContext.MinecraftUuid,
             PackHash = _localPackHash,
-            // The folder is the name: a build the launcher offers is named by
-            // its folder, and one somebody put there themselves has no other
-            // name to be known by.
-            PackName = settings.ClientRelativePath,
+            // Keep the published path on the wire across local folder renames.
+            PackName = _catalog?.CompatibilityPathFor(settings.ClientRelativePath) ?? settings.ClientRelativePath,
             Release = UpdateService.CurrentReleaseNumber,
             State = _minecraftRunning
                 ? SteamPresenceCodec.StateInGame
@@ -1688,7 +1694,7 @@ public partial class MainWindow : Window
     /// </remarks>
     private void DeleteWorldButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftRunning || _paths is null) return;
+        if (_catalog?.IsIndexReady != true || _minecraftRunning || _paths is null) return;
         if (WorldComboBox.SelectedItem is not WorldViewModel world) return;
         if (!Directory.Exists(world.Path)) return;
 
@@ -3178,7 +3184,7 @@ public partial class MainWindow : Window
         OnlinePlayerComboBox.IsEnabled = listsEnabled && _peers.Count > 0;
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        var canTransfer = interactiveEnabled && IsIdentityBound &&
+        var canTransfer = interactiveEnabled && IsIdentityBound && _transfer is not null &&
                           !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
                           WorldComboBox.SelectedItem is WorldViewModel &&
                           selectedRecipient is not null &&
@@ -3285,8 +3291,14 @@ public partial class MainWindow : Window
         var logger = _logger!;
         var catalog = await Task.Run(() =>
         {
-            new PackRenameMigration(paths, logger).Apply(_settings!, PackCatalogService.SeedSources(), _settingsService!.Save);
-            return new PackCatalogService(paths, logger, startupToken: token, stagedStartup: true);
+            WorldTransferRecoveryService.Recover(paths, logger);
+            var index = new PackCatalogService(paths, logger, startupToken: token, stagedStartup: true);
+            var migration = new PackRenameMigration(paths, logger);
+            void ApplyRenames(IReadOnlyList<CatalogSource> entries) =>
+                migration.Apply(_settings!, entries, _settingsService!.Save);
+            ApplyRenames(index.Sources);
+            index.MigrateStartupIndex = ApplyRenames;
+            return index;
         }, token);
         if (_shutdownStarted) return;
         // Only the small index is loaded here. Manifests, ZIPs and images are
@@ -3307,6 +3319,7 @@ public partial class MainWindow : Window
         // Authoritative membership can remove the previous choice. Validate
         // its replacement without waiting for the first choice or any cards.
         RefreshBuilds();
+        RefreshWorlds();
         RefreshControlsPresetStatus();
         RefreshUi();
         _preload?.Forget("build-menu");

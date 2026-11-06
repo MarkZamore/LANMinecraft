@@ -23,7 +23,7 @@ public sealed class PackRenameMigrationTests : IDisposable
     public void Dispose()
     {
         // Never let recursive fixture cleanup follow a junction into its target.
-        foreach (var name in new[] {Old, New})
+        foreach (var name in new[] {Old, New, "Minecraft Java Edition"})
         {
             var link = Path.Combine(_root, "Minecraft", "Personal", "Instances", name, "saves");
             if (new DirectoryInfo(link).LinkTarget is not null) Directory.Delete(link);
@@ -92,6 +92,28 @@ public sealed class PackRenameMigrationTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(paths.Personal, "PackRenames"), "*.json"));
     }
 
+    [Fact]
+    public void UpgradingAfterAnInterruptedHistoricalRename_ResumesBeforeMovingWorldsToTheFinalPath()
+    {
+        var (paths, settings) = Fixture();
+        SavesFolderService.CreateJunction(Path.Combine(paths.Instances, Old, "saves"), Path.Combine(paths.Worlds, Old));
+        Assert.Throws<IOException>(() => new PackRenameMigration(paths, afterMove: step =>
+        {
+            if (step == 2) throw new IOException("simulated interruption during the previous release");
+        }).Apply(settings, [Entry], _ => { }));
+
+        var current = Assert.Single(PackCatalogService.SeedSources(), source => source.Id == Entry.Id);
+        new PackRenameMigration(paths).Apply(settings, [current], _ => { });
+
+        var worldRoot = Path.Combine(paths.Worlds, current.RelativePath);
+        Assert.Equal("personal-world", File.ReadAllText(Path.Combine(worldRoot, "World", "level.dat")));
+        Assert.Equal(current.RelativePath + "/World", settings.SelectedWorldRelativePath);
+        Assert.Equal(worldRoot, new DirectoryInfo(Path.Combine(paths.Instances, current.RelativePath, "saves")).LinkTarget);
+        Assert.False(Directory.Exists(Path.Combine(paths.Worlds, Old)));
+        Assert.False(Directory.Exists(Path.Combine(paths.Worlds, New)));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(paths.Personal, "PackRenames"), "*.json"));
+    }
+
     [Theory]
     [InlineData("collision")]
     [InlineData("live")]
@@ -104,7 +126,7 @@ public sealed class PackRenameMigrationTests : IDisposable
         FileStream? held = null;
         try
         {
-            if (reason == "collision") Directory.CreateDirectory(Path.Combine(paths.Packs, New));
+            if (reason == "collision") Directory.CreateDirectory(Path.Combine(paths.Worlds, New));
             if (reason == "memory-conflict") settings.MemoryByPack[New] = 9;
             if (reason == "foreign-link")
                 SavesFolderService.CreateJunction(Path.Combine(paths.Instances, Old, "saves"), paths.Packs);
@@ -193,8 +215,9 @@ public sealed class PackRenameMigrationTests : IDisposable
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
         var source = Assert.Single(catalog.Sources, source => source.Id == Entry.Id);
-        Assert.Equal(New, source.RelativePath);
-        Assert.Equal(Entry.Source, source.Source);
+        Assert.Equal("Minecraft Java Edition", source.RelativePath);
+        Assert.Equal(New, source.CompatibilityPath);
+        Assert.Equal(new PackSyncSource("MarkZamore", "Minecraft-Java-Edition", "pack-latest"), source.Source);
         Assert.DoesNotContain(catalog.Sources, source => source.RelativePath == Old);
         Assert.DoesNotContain(catalog.Packs, pack => pack.Entry.RelativePath == Old);
     }
@@ -222,7 +245,7 @@ public sealed class PackRenameMigrationTests : IDisposable
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
         var source = Assert.Single(catalog.Sources, source => source.Id == Entry.Id);
-        Assert.Equal(New, source.RelativePath);
+        Assert.Equal("Minecraft Java Edition", source.RelativePath);
         Assert.Equal(changed, source.Source);
         Assert.Contains(Old, source.LegacyRelativePaths);
         Assert.Contains("Earlier Minecraft", source.LegacyRelativePaths);
@@ -290,8 +313,8 @@ public sealed class PackRenameMigrationTests : IDisposable
         }));
         var catalog = new PackCatalogService(paths, new Logger(paths.LogFile));
         Assert.DoesNotContain(catalog.Sources, source => source.Id == "different-pack");
-        Assert.Equal(New, Assert.Single(catalog.Sources, source => source.Id == Entry.Id).RelativePath);
-        Assert.Contains("Invalid/duplicate library rename targets", File.ReadAllText(paths.LogFile), StringComparison.Ordinal);
+        Assert.Equal("Minecraft Java Edition", Assert.Single(catalog.Sources, source => source.Id == Entry.Id).RelativePath);
+        Assert.Contains("A library path belongs to multiple packs.", File.ReadAllText(paths.LogFile), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -300,15 +323,16 @@ public sealed class PackRenameMigrationTests : IDisposable
         var (paths, settings) = Fixture();
         settings.HiddenPackRelativePaths = [Old];
         settings.AddedPackRelativePaths = [];
-        new PackRenameMigration(paths).Apply(settings, [Entry], _ => { });
-        Assert.Equal([New], settings.HiddenPackRelativePaths);
+        var current = Assert.Single(PackCatalogService.SeedSources(), entry => entry.Id == Entry.Id);
+        new PackRenameMigration(paths).Apply(settings, [current], _ => { });
+        Assert.Equal([current.RelativePath], settings.HiddenPackRelativePaths);
         Assert.Empty(settings.AddedPackRelativePaths!);
-        var marker = Path.Combine(paths.Packs, New, PortablePackSyncService.SourceMarkerFileName);
+        var marker = Path.Combine(paths.Packs, current.RelativePath, PortablePackSyncService.SourceMarkerFileName);
         File.WriteAllText(marker, """{"schemaVersion":1,"owner":"MarkZamore","repo":"Minecraft-26.2","tag":"pack-latest"}""");
         var sync = new PortablePackSyncService(paths, new Logger(paths.LogFile));
-        Assert.Equal(Entry.Source, sync.TryResolveSource(New));
+        Assert.Equal(current.Source, sync.TryResolveSource(current.RelativePath));
         File.WriteAllText(marker, """{"schemaVersion":1,"owner":"SomeoneElse","repo":"Custom","tag":"pack-latest"}""");
-        Assert.Equal("SomeoneElse", sync.TryResolveSource(New)!.Owner);
+        Assert.Equal("SomeoneElse", sync.TryResolveSource(current.RelativePath)!.Owner);
     }
 
     private sealed class ManifestOnlyHandler(byte[] manifest) : HttpMessageHandler

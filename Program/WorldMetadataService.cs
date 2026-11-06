@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Minecraft;
 
@@ -118,20 +119,17 @@ public sealed class WorldMetadataService
     {
         lock (_gate)
         {
-            var metadata = Read(worldPath);
-            if (metadata is null ||
-                !IsSameBuildPath(metadata.BuildRelativePath, legacyBuildRelativePath))
-            {
-                return false;
-            }
-
-            metadata.BuildName = buildName;
-            metadata.BuildRelativePath = buildRelativePath;
             try
             {
-                AtomicFile.WriteAllText(
-                    GetMetadataPath(worldPath),
-                    JsonSerializer.Serialize(metadata, _jsonOptions));
+                var path = GetMetadataPath(worldPath);
+                var metadata = JsonNode.Parse(File.ReadAllText(path),
+                    new JsonNodeOptions { PropertyNameCaseInsensitive = true }) as JsonObject;
+                if (metadata is null ||
+                    !IsSameBuildPath(metadata["buildRelativePath"]?.GetValue<string>(), legacyBuildRelativePath))
+                    return false;
+                metadata["buildName"] = buildName;
+                metadata["buildRelativePath"] = buildRelativePath;
+                AtomicFile.WriteAllText(path, metadata.ToJsonString(_jsonOptions));
                 return true;
             }
             catch
