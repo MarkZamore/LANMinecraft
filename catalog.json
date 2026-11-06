@@ -88,6 +88,15 @@
         "repo": "Better-Than-Wolves",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-9",
+      "relativePath": "Minecraft Rust Edition",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Minecraft-Rust-Edition",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
