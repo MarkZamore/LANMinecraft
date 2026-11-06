@@ -1,8 +1,12 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using CmlLib.Core;
+using CmlLib.Core.FileExtractors;
+using CmlLib.Core.Rules;
+using CmlLib.Core.Version;
 
 namespace Minecraft.Tests;
 
@@ -63,6 +67,16 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
         Assert.Contains("org.lwjgl.lwjgl:lwjgl:2.9.4+legacyfabric.17", libraries);
         Assert.Contains("org.lwjgl.lwjgl:lwjgl-platform:2.9.4+legacyfabric.17", libraries);
         Assert.Equal("natives-windows", saved["libraries"]![2]!["natives"]!["windows"]!.GetValue<string>());
+        using var nativeJson = JsonDocument.Parse(saved["libraries"]![2]!.ToJsonString());
+        var nativeLibrary = JsonLibraryParser.Parse(nativeJson.RootElement)!;
+        var windows = new RulesEvaluatorContext(new LauncherOSRule { Name = "windows", Arch = "64" });
+        var nativeFile = Assert.Single(LibraryFileExtractor.Extractor.ExtractTasks(
+            "https://libraries.minecraft.net/", path, nativeLibrary, windows));
+        const string nativePath = "org/lwjgl/lwjgl/lwjgl-platform/2.9.4+legacyfabric.17/" +
+            "lwjgl-platform-2.9.4+legacyfabric.17-natives-windows.jar";
+        Assert.Equal("https://maven.legacyfabric.net/" + nativePath, nativeFile.Url);
+        Assert.Equal(Path.Combine(path.Library, nativePath.Replace('/', Path.DirectorySeparatorChar)), nativeFile.Path);
+        Assert.Contains("META-INF/", nativeLibrary.ExtractExcludes);
         Assert.Equal("existing ordinary Fabric profile", File.ReadAllText(ordinaryProfile));
     }
 
