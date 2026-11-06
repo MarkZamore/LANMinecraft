@@ -110,13 +110,14 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         };
         var manifestFile = Path.Combine(ready, UpdateService.ManifestAssetName);
         File.WriteAllText(manifestFile, JsonSerializer.Serialize(manifest, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        var original = Path.Combine(fixture.Root, "updater-original.exe");
-        File.Copy(fixture.Executable, original);
-        var originalHash = NativePortableHostFixture.HashFile(original);
+        var target = Path.Combine(fixture.Installation, "updater-probe.exe");
+        fixture.AssertInsideRoot(target);
+        File.Copy(fixture.Executable, target);
+        var originalHash = NativePortableHostFixture.HashFile(target);
         var marker = Path.Combine(fixture.Installation, "audit-restarted.txt");
         File.Delete(marker);
         var journal = Path.Combine(updates, UpdateService.InstallJournalFileName);
-        using var source = fixture.Start(arguments: ["install", fixture.Installation, fixture.Executable, manifestFile, prepared,
+        using var source = fixture.Start(executable: target, arguments: ["install", fixture.Installation, target, manifestFile, prepared,
             UpdateInstallMode.InstallAndRestart.ToString(), "--probe-hold-ms=8000"], allowPowerShell: true);
         var sourceErrors = source.StandardError.ReadToEndAsync();
         Process? helper = null;
@@ -127,7 +128,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             File.WriteAllText(Path.Combine(fixture.Root, "native-update-source.json"), line);
             using var receipt = JsonDocument.Parse(line);
             Assert.Equal(source.Id, receipt.RootElement.GetProperty("processId").GetInt32());
-            NativePortableHostFixture.SamePath(fixture.Executable, receipt.RootElement.GetProperty("processPath").GetString());
+            NativePortableHostFixture.SamePath(target, receipt.RootElement.GetProperty("processPath").GetString());
             NativePortableHostFixture.SamePath(fixture.Installation, receipt.RootElement.GetProperty("applicationRoot").GetString());
             var helperId = receipt.RootElement.GetProperty("helperProcessId").GetInt32();
             helper = Process.GetProcessById(helperId);
@@ -149,7 +150,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             Assert.Equal(source.Id, applying!.SourceProcessId);
             Assert.Equal(helper.Id, applying.HelperProcessId);
             Assert.Equal(expectedHash, applying.TargetSha256);
-            Assert.Equal(originalHash, NativePortableHostFixture.HashFile(fixture.Executable));
+            Assert.Equal(originalHash, NativePortableHostFixture.HashFile(target));
             File.WriteAllText(Path.Combine(fixture.Root, "native-update-applying.json"), JsonSerializer.Serialize(applying));
             await source.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
             Assert.True(source.ExitCode == 0, await sourceErrors.WaitAsync(TimeSpan.FromSeconds(35)));
@@ -177,27 +178,27 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 using var restartedProcess = Process.GetProcessById(restartedId);
                 if (!restartedProcess.HasExited)
                 {
-                    NativePortableHostFixture.SamePath(fixture.Executable, restartedProcess.MainModule!.FileName);
+                    NativePortableHostFixture.SamePath(target, restartedProcess.MainModule!.FileName);
                     Assert.False(restartedProcess.SafeHandle.IsInvalid);
-                    fixture.TrackProcess(restartedProcess, fixture.Executable);
+                    fixture.TrackProcess(restartedProcess, target);
                     await restartedProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
                     Assert.Equal(0, restartedProcess.ExitCode);
                 }
             }
             catch (ArgumentException) { } // The identified short-lived restart already exited.
             catch (InvalidOperationException) { } // It exited while its image information was opened.
-            NativePortableHostFixture.SamePath(fixture.Executable, restarted.RootElement.GetProperty("processPath").GetString());
+            NativePortableHostFixture.SamePath(target, restarted.RootElement.GetProperty("processPath").GetString());
             NativePortableHostFixture.SamePath(fixture.Installation, restarted.RootElement.GetProperty("applicationRoot").GetString());
             NativePortableHostFixture.SamePath(fixture.Cache, restarted.RootElement.GetProperty("appBaseDirectory").GetString());
             Assert.Empty(restarted.RootElement.GetProperty("args").EnumerateArray());
             Assert.False(File.Exists(journal));
-            Assert.Equal(expectedHash, NativePortableHostFixture.HashFile(fixture.Executable));
-            Assert.Equal("1.0.65002.0", FileVersionInfo.GetVersionInfo(fixture.Executable).FileVersion);
+            Assert.Equal(expectedHash, NativePortableHostFixture.HashFile(target));
+            Assert.Equal("1.0.65002.0", FileVersionInfo.GetVersionInfo(target).FileVersion);
             Assert.False(File.Exists(Path.Combine(fixture.Cache, "audit-restarted.txt")));
             Assert.Equal(fixture.Records.Select(record => record.Path).Order(StringComparer.Ordinal),
                 Directory.EnumerateFiles(fixture.Cache, "*", SearchOption.AllDirectories)
                     .Select(path => Path.GetRelativePath(fixture.Cache, path).Replace('\\', '/')).Order(StringComparer.Ordinal));
-            fixture.AssertPortable(await fixture.Probe());
+            fixture.AssertPortable(await fixture.Probe(target), target);
         }
         catch (Exception error)
         {
@@ -212,13 +213,11 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 if (!helper.HasExited) { helper.Kill(entireProcessTree: true); await helper.WaitForExitAsync(); }
                 helper.Dispose();
             }
-            fixture.StopOwnedNativeProcesses();
-            await WaitUntil(() =>
-            {
-                try { File.Copy(original, fixture.Executable, overwrite: true); return true; }
-                catch (IOException) { return false; }
-            }, TimeSpan.FromSeconds(5));
-            File.Delete(original);
+            fixture.StopOwnedNativeProcesses(target);
+            // The installation teardown can remove this image if Windows has
+            // not released it yet.
+            try { File.Delete(target); }
+            catch (IOException) { }
         }
         Assert.Equal(originalHash, NativePortableHostFixture.HashFile(fixture.Executable));
     }
@@ -372,7 +371,9 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     public async Task MalformedPacketsAreRejectedBeforeAnyManagedCodeRuns(string mutation)
     {
         var packet = fixture.MutatePacket(mutation);
-        NativeHostResources.ReplacePacket(fixture.Executable, packet);
+        var probe = Path.Combine(fixture.Installation, $"malformed-{Guid.NewGuid():N}.exe");
+        fixture.AssertInsideRoot(probe);
+        File.Copy(fixture.Executable, probe);
         var expected = mutation switch
         {
             "body hash" => "Launcher runtime packet SHA256 mismatch",
@@ -385,8 +386,18 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             "file hash" => "Embedded runtime file SHA256 mismatch",
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };
-        try { await fixture.AssertRejected(expected); }
-        finally { NativeHostResources.ReplacePacket(fixture.Executable, fixture.Packet); }
+        try
+        {
+            NativeHostResources.ReplacePacket(probe, packet);
+            await fixture.AssertRejected(expected, probe);
+        }
+        finally
+        {
+            // The installation teardown also owns this file if Windows still
+            // holds it after the probe exits.
+            try { File.Delete(probe); }
+            catch (IOException) { }
+        }
     }
 
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -526,13 +537,6 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
                 actions.Add("Kept " + name + ": " + error.GetType().Name + ".");
             }
         }
-        var original = Path.Combine(Root, "updater-original.exe");
-        AssertInsideRoot(original);
-        if (File.Exists(original) && (File.GetAttributes(original) & FileAttributes.ReparsePoint) == 0)
-        {
-            try { File.Delete(original); actions.Add("Removed newly owned updater baseline copy."); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { actions.Add("Kept updater baseline: " + error.GetType().Name + "."); }
-        }
         File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
         Packet = [];
         Records = [];
@@ -560,16 +564,16 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
 
     public void TrackProcess(Process process, string executable) => ownedProcesses.Add((process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(executable)));
 
-    public void StopOwnedNativeProcesses()
+    public void StopOwnedNativeProcesses(string executable)
     {
-        AssertInsideRoot(Executable);
-        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Executable)))
+        AssertInsideRoot(executable);
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(executable)))
             using (process)
             {
                 try
                 {
                     if (!process.HasExited && process.StartTime.ToUniversalTime() >= createdUtc.AddSeconds(-1) &&
-                        string.Equals(NormalizePath(process.MainModule!.FileName), NormalizePath(Executable), StringComparison.OrdinalIgnoreCase))
+                        string.Equals(NormalizePath(process.MainModule!.FileName), NormalizePath(executable), StringComparison.OrdinalIgnoreCase))
                     {
                         process.Kill(entireProcessTree: true);
                         Assert.True(process.WaitForExit(10000), "The owned native restart fixture did not stop.");
@@ -624,9 +628,9 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         return new NativeHostProbe(result.ProcessId, json.RootElement.Clone());
     }
 
-    public async Task AssertRejected(string? expectedError = null)
+    public async Task AssertRejected(string? expectedError = null, string? executable = null)
     {
-        var result = await Run(timeoutSeconds: 15);
+        var result = await Run(executable, timeoutSeconds: 15);
         Assert.Equal(120, result.ExitCode);
         Assert.Contains("LANMinecraft bootstrap failed:", result.Error, StringComparison.Ordinal);
         if (expectedError is not null) Assert.Contains(expectedError, result.Error, StringComparison.Ordinal);

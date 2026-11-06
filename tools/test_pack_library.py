@@ -105,7 +105,51 @@ class LibraryPublisherTests(unittest.TestCase):
         self.assertNotIn("visibleModIds", data)
         self.assertNotIn("modsTitle", data)
         self.assertNotIn("modGroups", data)
+        self.assertNotIn("nativeProject", data)
         self.assertEqual(4, len(data["mods"]))
+
+    def write_native_inventory(self, mods):
+        executable = "native/client.exe"
+        native_runtime = {"executable": executable, "platform": "windows-x64",
+                          "adapter": "example", "version": "nightly-2026-11-05-123abcd"}
+        (self.pack / "native").mkdir(exist_ok=True)
+        (self.pack / executable).write_bytes(b"native executable")
+        runtime = {"schemaVersion": 2, "minecraftVersion": "26.3", "nativeRuntime": native_runtime}
+        (self.pack / "portable-pack.json").write_text(json.dumps(runtime))
+        self.content["nativeProject"] = {"name": "Example Engine", "version": "Nightly 2026-11-05",
+                                         "revision": "123abcd" + "0" * 33, "websiteUrl": "https://example.org/engine"}
+        self.write_content()
+        inventory = {"schemaVersion": 1, "minecraftVersion": "26.3", "nativeRuntime": native_runtime,
+                     "nativeFiles": {executable: hashlib.sha256(b"native executable").hexdigest()}, "mods": mods}
+        (self.pack / "library/loaded-mods.json").write_text(json.dumps(inventory))
+
+    def test_native_library_uses_verified_inventory_even_when_empty(self):
+        for mods in ([], [{"id": "addon", "name": "Native Addon", "version": "1.2", "source": "native/client.exe"}]):
+            with self.subTest(mods=mods):
+                self.write_native_inventory(mods)
+                with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "pack-revision"))) as archive:
+                    doc = json.loads(archive.read("library.json"))
+                self.assertEqual("native", doc["loader"])
+                self.assertEqual("26.3", doc["minecraftVersion"])
+                self.assertEqual("pack-revision", doc["revision"])
+                self.assertEqual(self.content["nativeProject"], doc["nativeProject"])
+                self.assertEqual([mod["id"] for mod in mods], [mod["id"] for mod in doc["mods"]])
+
+    def test_native_inventory_rejects_changed_payload_and_unverified_mod_sources(self):
+        self.write_native_inventory([{"id": "addon", "name": "Native Addon", "version": "1.2", "source": "../client.exe"}])
+        with self.assertRaisesRegex(ValueError, "verified source"):
+            build_library(self.pack, "r1")
+        self.write_native_inventory([])
+        (self.pack / "native/client.exe").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "does not match the shipped runtime"):
+            build_library(self.pack, "r1")
+
+    def test_native_project_link_is_required_and_uses_https(self):
+        self.write_native_inventory([])
+        self.content["nativeProject"]["websiteUrl"] = "file:///C:/client.exe"
+        self.write_content()
+        with self.assertRaisesRegex(ValueError, "official HTTPS page"):
+            build_library(self.pack, "r1")
 
     def test_groups_are_validated_after_normal_addon_and_library_decoration(self):
         self.write_inventory()

@@ -17,14 +17,23 @@ internal static class WorldProfilePathGuard
             RejectLink(current);
             if (current.Equals(root, StringComparison.OrdinalIgnoreCase)) break;
         }
-        foreach (var name in new[] { "level.dat", "level.dat_old", "session.lock",
+        foreach (var name in new[] { "level.dat", "level.dat_old", "session.lock", NbtFile.LauncherBackupFileName,
                      WorldMetadataService.MetadataFileName, WorldPlayerManifestService.ManifestFileName })
             RejectLink(Path.Combine(world, name));
         foreach (var name in new[] { "players", "stats", "playerdata", "advancements" })
+            RejectDirectoryAndEntries(Path.Combine(world, name));
+        foreach (var name in new[] { "data", "stats", "advancements" })
+            RejectDirectoryAndEntries(Path.Combine(world, "players", name));
+        RejectLink(Path.Combine(world, "data"));
+        RejectLink(Path.Combine(world, "data", "minecraft"));
+        RejectLink(WorldPlayerStorage.WorldGenSettingsPath(world));
+    }
+
+    private static void RejectDirectoryAndEntries(string directory)
+    {
+        RejectLink(directory);
+        if (Directory.Exists(directory))
         {
-            var directory = Path.Combine(world, name);
-            RejectLink(directory);
-            if (!Directory.Exists(directory)) continue;
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory)) RejectLink(entry);
         }
     }

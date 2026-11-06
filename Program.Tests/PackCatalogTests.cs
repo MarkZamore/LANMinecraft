@@ -609,6 +609,31 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(manifest, service.SessionManifest(host.Source));
     }
 
+    [Fact]
+    public async Task NativeCardUsesTheVerifiedProjectVersionAndRejectsAnUnsafeUpdate()
+    {
+        var project = new CatalogNativeProject("Example Engine", "Nightly 2026-11-05",
+            "123abcd" + new string('0', 33), "https://example.org/engine");
+        using var host = new CatalogHost(mods: [], configure: doc =>
+        {
+            doc.MinecraftVersion = "26.3";
+            doc.NativeProject = project;
+        });
+        var catalogue = new PackCatalogService(_paths, _logger, host.Client);
+        await catalogue.RefreshOnceAsync();
+        var pack = Assert.Single(catalogue.Packs);
+        Assert.Equal("Minecraft 26.3 · Example Engine Nightly 2026-11-05 · 123abcd (0 модов)", pack.VersionLabel);
+        Assert.Equal(0, pack.ModCount);
+        Assert.False(pack.ShowModSection);
+        Assert.Equal(project.WebsiteUrl, pack.WebsiteUri!.AbsoluteUri);
+
+        using var unverified = new CatalogHost(mods: [], revision: "next", configure: doc =>
+            doc.NativeProject = project with { WebsiteUrl = "file:///C:/client.exe" });
+        var reopened = new PackCatalogService(_paths, _logger, unverified.Client);
+        await reopened.RefreshOnceAsync();
+        Assert.Equal(project, Assert.Single(reopened.Packs).Content.NativeProject);
+    }
+
     [Theory]
     [InlineData(0, "модов")]
     [InlineData(1, "мод")]

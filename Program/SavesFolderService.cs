@@ -271,7 +271,7 @@ public sealed class SavesFolderService(Logger? logger = null)
         }
     }
 
-    private static bool PointsAt(string link, string world)
+    internal static bool PointsAt(string link, string world)
     {
         var target = new DirectoryInfo(link).LinkTarget;
         if (target is null) return false;

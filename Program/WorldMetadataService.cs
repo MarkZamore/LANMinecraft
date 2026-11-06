@@ -280,7 +280,8 @@ public sealed class WorldMetadataService
         {
             metadata = Read(worldPath) ?? metadata;
             var storage = WorldPlayerStorage.ForMinecraft(context.MinecraftVersion);
-            if (metadata.PlayerStorage.Length > 0 && metadata.PlayerStorage != storage)
+            if (metadata.PlayerStorage.Length > 0 && metadata.PlayerStorage != storage &&
+                !WorldPlayerStorage.CanCorrectRecordedStorage(metadata.PlayerStorage, storage))
                 throw new InvalidDataException("The played runtime does not match the world's player storage.");
             metadata.MinecraftVersion = context.MinecraftVersion;
             metadata.PlayerStorage = storage;

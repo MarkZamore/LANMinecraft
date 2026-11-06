@@ -13,7 +13,13 @@ public static class PackManifestService
     /// releases to keep portable-pack.json valid.
     /// </summary>
     public const int CurrentSchemaVersion = 1;
+    public const int NativeSchemaVersion = 2;
     public const string ManifestFileName = "portable-pack.json";
+    internal const string NativePayloadRoot = "native";
+    internal const string NativeRuntimeFeature = "native-runtime-v1";
+    internal const string NativeSteamFeature = "native-steam-v1";
+    internal const string Minecraft26WorldLayoutFeature = "minecraft-26-world-layout-v1";
+    internal const string PortableNativeAdapter = "portable-native";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -45,10 +51,10 @@ public static class PackManifestService
             throw new InvalidDataException($"Pack manifest is not valid JSON: {manifestPath}", ex);
         }
 
-        if (manifest.SchemaVersion != CurrentSchemaVersion)
+        if (manifest.SchemaVersion is not (CurrentSchemaVersion or NativeSchemaVersion))
         {
             throw new InvalidDataException(
-                $"Unsupported pack manifest schemaVersion {manifest.SchemaVersion}; expected {CurrentSchemaVersion}.");
+                $"Unsupported pack manifest schemaVersion {manifest.SchemaVersion}.");
         }
 
         var minecraftVersion = ValidateIdentifier(manifest.MinecraftVersion, "minecraftVersion", allowSpaces: false);
@@ -56,6 +62,11 @@ public static class PackManifestService
         {
             throw new InvalidDataException("minecraftVersion must be an exact version, not latest.");
         }
+        if (manifest.SchemaVersion == NativeSchemaVersion)
+            return LoadNative(manifest, minecraftVersion, packRoot);
+        if (manifest.NativeRuntime is not null)
+            throw new InvalidDataException("nativeRuntime requires portable-pack schemaVersion 2.");
+
         var loaderName = manifest.Loader?.Type?.Trim().ToLowerInvariant() ?? "";
         var loaderKind = loaderName switch
         {
@@ -102,6 +113,33 @@ public static class PackManifestService
             new PackLoaderDescriptor(loaderKind, loaderVersion),
             clientJar,
             descriptorHash) { JavaMajorVersion = manifest.JavaMajorVersion };
+    }
+
+    private static PackRuntimeDescriptor LoadNative(PackManifestDto manifest, string minecraftVersion, string packRoot)
+    {
+        if (manifest.NativeRuntime is not { } native ||
+            manifest.Loader is not null || manifest.ClientJar is not null || manifest.JavaMajorVersion is not null)
+            throw new InvalidDataException("A native pack requires nativeRuntime and cannot declare Java runtime fields.");
+        if (native.Platform != "windows-x64" || native.Adapter != PortableNativeAdapter)
+            throw new InvalidDataException("The native runtime platform or adapter is unsupported.");
+        var version = ValidateIdentifier(native.Version, "nativeRuntime.version", allowSpaces: false);
+        if (version.Equals("latest", StringComparison.OrdinalIgnoreCase) ||
+            version.Equals("nightly", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("nativeRuntime.version must identify an exact build.");
+
+        var path = PortablePackSyncService.ValidateManifestPath(native.Executable,
+            Path.TrimEndingDirectorySeparator(packRoot));
+        if (!path.StartsWith(NativePayloadRoot + "/", StringComparison.Ordinal) ||
+            !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("nativeRuntime.executable must be an .exe under native/.");
+
+        var canonical = $"{NativeSchemaVersion}\n{minecraftVersion}\n{native.Platform}\n{native.Adapter}\n{version}\n{path}";
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        return new PackRuntimeDescriptor(NativeSchemaVersion, minecraftVersion,
+            new PackLoaderDescriptor(PackLoaderKind.Native, null), "", hash)
+        {
+            NativeRuntime = new NativePackRuntimeDescriptor(path, native.Platform, native.Adapter, version)
+        };
     }
 
     public static string ResolveClientJarPath(string packDirectory, PackRuntimeDescriptor descriptor)
@@ -163,6 +201,15 @@ public static class PackManifestService
         public LoaderManifestDto? Loader { get; set; }
         public string? ClientJar { get; set; }
         public int? JavaMajorVersion { get; set; }
+        public NativeRuntimeManifestDto? NativeRuntime { get; set; }
+    }
+
+    private sealed class NativeRuntimeManifestDto
+    {
+        public string? Executable { get; set; }
+        public string? Platform { get; set; }
+        public string? Adapter { get; set; }
+        public string? Version { get; set; }
     }
 
     private sealed class LoaderManifestDto

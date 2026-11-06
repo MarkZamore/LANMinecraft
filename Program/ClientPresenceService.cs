@@ -27,17 +27,24 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
     /// <param name="ProcessId">The process the launcher started.</param>
     /// <param name="StartedUtc">When it started, to the second; ids are reused, moments are not.</param>
     /// <param name="PackRelativePath">Which pack it plays, so the window can say so.</param>
-    public sealed record ClientSession(int ProcessId, DateTime StartedUtc, string PackRelativePath);
+    public sealed record ClientSession(int ProcessId, DateTime StartedUtc, string PackRelativePath)
+    {
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? ExecutablePath { get; init; }
+    }
 
     private string Root => Path.Combine(paths.Personal, DirectoryName);
 
     /// <summary>Writes the note that says this process is playing.</summary>
-    public void Remember(Process process, string packRelativePath)
+    public void Remember(Process process, string packRelativePath, string? executablePath = null)
     {
         ArgumentNullException.ThrowIfNull(process);
         try
         {
-            var session = new ClientSession(process.Id, process.StartTime.ToUniversalTime(), packRelativePath);
+            var session = new ClientSession(process.Id, process.StartTime.ToUniversalTime(), packRelativePath)
+            {
+                ExecutablePath = executablePath
+            };
             Directory.CreateDirectory(Root);
             AtomicFile.WriteAllText(
                 PathFor(process.Id),
@@ -70,7 +77,6 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
     /// </summary>
     public IReadOnlyList<ClientSession> ReadLiveSessions(Func<int, (string Name, DateTime StartedUtc)?>? probe = null)
     {
-        probe ??= ProbeProcess;
         var live = new List<ClientSession>();
         if (!Directory.Exists(Root)) return live;
 
@@ -86,7 +92,9 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
                 session = null;
             }
 
-            if (session is not null && IsStillRunning(session, probe(session.ProcessId)))
+            if (session is not null && IsStillRunning(session, probe is null
+                    ? ProbeProcess(session.ProcessId, session.ExecutablePath is not null)
+                    : probe(session.ProcessId)))
             {
                 live.Add(session);
                 continue;
@@ -105,18 +113,22 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         if (actual is null) return false;
-        if (!actual.Value.Name.StartsWith("java", StringComparison.OrdinalIgnoreCase)) return false;
+        if (session.ExecutablePath is { } executable
+                ? !Path.IsPathFullyQualified(executable) || !executable.Equals(actual.Value.Name, StringComparison.OrdinalIgnoreCase)
+                : !actual.Value.Name.StartsWith("java", StringComparison.OrdinalIgnoreCase)) return false;
         // Process start times come back with more precision than a round trip
         // through JSON keeps, so a second of slack is the honest comparison.
         return Math.Abs((actual.Value.StartedUtc - session.StartedUtc).TotalSeconds) < 1.5;
     }
 
-    private static (string Name, DateTime StartedUtc)? ProbeProcess(int processId)
+    private static (string Name, DateTime StartedUtc)? ProbeProcess(int processId, bool native)
     {
         try
         {
             using var process = Process.GetProcessById(processId);
-            return (process.ProcessName, process.StartTime.ToUniversalTime());
+            var name = native ? process.MainModule?.FileName : process.ProcessName;
+            if (name is null) return null;
+            return (name, process.StartTime.ToUniversalTime());
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or SystemException)
         {

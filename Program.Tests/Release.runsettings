@@ -173,6 +173,12 @@
       FullyQualifiedName=Minecraft.Tests.CatalogModGroupTests.NormalModTreesKeepLinksSeparateAndSizeChevronsToTextInGroupedAndFlatCards|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.CompletePreparationIsPortableRepairsRuntimeAndReusesDownloads|
       FullyQualifiedName=Minecraft.Tests.PackLauncherFeaturesTests.KnownFeaturesAreAcceptedAndUnknownFeaturesRequireAnUpdateBeforeAnyDownload|
+      FullyQualifiedName=Minecraft.Tests.NativeRuntimeFilesTests.VerifiedPayloadRejectsUnmanagedAndModifiedFilesAndLocksTheActiveSnapshot|
+      FullyQualifiedName=Minecraft.Tests.NativeRuntimeFilesTests.InvalidExecutablesAreRejected|
+      FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeClientUsesThePortableInstanceAndOnlySteamIdentity|
+      FullyQualifiedName=Minecraft.Tests.ClientPresenceTests.NativeSessionsRequireTheOriginalExecutablePath|
+      FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.EmptyNativeDetailHidesTheModSectionAndRoutesOnlyTheProjectLink|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogTests.NativeCardUsesTheVerifiedProjectVersionAndRejectsAnUnsafeUpdate|
       FullyQualifiedName=Minecraft.Tests.DrawDistanceSettingsTests.PreparationPreservesPlayerGraphicsBytesAndTimestamps|
       FullyQualifiedName=Minecraft.Tests.DrawDistanceSettingsTests.FreshPreparationDoesNotSeedCustomGraphicsSettings|
       FullyQualifiedName=Minecraft.Tests.LocalAiProvisioningTests.FullPreparationNeverCreatesOrRewritesModConfiguration|
@@ -314,6 +320,14 @@
       FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.AStatsPrefixCannotAssignAnotherAccountsProfileThroughPathNormalization|
       FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.UnassignedLegacyFilesRequireCanonicalPaths|
       FullyQualifiedName=Minecraft.Tests.LegacyWorldPlayerTests.ProfileDirectoryJunctionsAreRejectedBeforeReadingOrChangingAnything|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.HandoverChangesOnlyHostPointerAndManifest|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.AVerifiedPlayerBackupCanBeSelectedWithoutRewritingIt|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.ManifestChecksNestedStatsAndRejectsAnAliasedPath|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.AnotherPlayersMisnamedProfileRollsBackThePointerAndItsBackup|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.APreviouslyStampedJava26WorldUsesTheSharedNewLayout|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.MissingNamespacedWorldGenSettingsDoesNotSpendBackups|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.AProfileDirectoryLinkCannotReachOutsideTheWorld|
+      FullyQualifiedName=Minecraft.Tests.NestedWorldPlayerTests.AWorldLockPreventsHandoverUntilItIsReleased|
       FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AccountAndBuildChangesDuringPlay_DoNotAttributeTheSavedHostToTheCurrentUiAccount|
       FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AnAdoptedProcessWithoutLaunchIdentity_DoesNotAssignItsHostToTheCurrentAccount|
       FullyQualifiedName=Minecraft.Tests.LegacyIdentityRegistryTests.SavedUnicodeAndDelimiterNames_AreEncodedWithoutChangingTheOrdinaryRegistry|

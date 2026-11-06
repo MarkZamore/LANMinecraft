@@ -62,12 +62,22 @@ public sealed class CatalogDescription
     public string Revision { get; set; } = "";
     public string Summary { get; set; } = "";
     public string Description { get; set; } = "";
+    public CatalogNativeProject? NativeProject { get; set; }
     public string ModsTitle { get; set; } = "Моды";
     public List<string>? VisibleModIds { get; set; }
     public List<string>? BaseModIds { get; set; }
     public List<CatalogModGroup>? ModGroups { get; set; }
     public string ModCountScope { get; set; } = "visible";
     public List<CatalogMod> Mods { get; set; } = [];
+}
+public sealed record CatalogNativeProject(string Name, string Version, string Revision, string WebsiteUrl)
+{
+    internal bool IsValid => ValidLabel(Name) && ValidLabel(Version) &&
+        Revision is { Length: 40 } && Revision.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f') &&
+        CatalogModPages.Parse(WebsiteUrl) is not null;
+
+    private static bool ValidLabel(string? value) =>
+        value is { Length: <= 80 } && !string.IsNullOrWhiteSpace(value) && !value.Any(char.IsControl);
 }
 public sealed class CatalogModNode(CatalogMod mod, string? packId = null)
 {
@@ -121,17 +131,22 @@ public sealed class CatalogPack
                 2 or 3 or 4 => "мода",
                 _ => "модов"
             };
-            return $"Minecraft {Content.MinecraftVersion} ({count} {word})";
+            var version = $"Minecraft {Content.MinecraftVersion}";
+            if (Content.NativeProject is { } project)
+                version += $" · {project.Name} {project.Version} · {project.Revision[..7]}";
+            return $"{version} ({count} {word})";
         }
     }
     public string Summary => Content.Summary;
     public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
+    public Uri? WebsiteUri => CatalogModPages.Parse(Content.NativeProject?.WebsiteUrl);
     public string ModsTitle => Content.ModsTitle;
     public List<CatalogModNode> Mods { get; } = [];
     public List<CatalogModNode> Libraries { get; } = [];
     public List<CatalogModSection> ModGroups { get; } = [];
     public bool HasModGroups => ModGroups.Count != 0;
     public bool HasLibraries => Libraries.Count != 0;
+    public bool ShowModSection => Content.NativeProject is null || Mods.Count != 0 || HasLibraries;
     internal IReadOnlySet<string> AllContentModIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
 
     public void BuildTree()
@@ -546,6 +561,8 @@ public sealed partial class PackCatalogService
             string.IsNullOrWhiteSpace(doc.MinecraftVersion) || string.IsNullOrWhiteSpace(doc.Description) ||
             doc.Description.Length > 32000 || doc.Summary is null || doc.Summary.Length > 1000 || doc.Mods is null || doc.Mods.Count > 10000)
             throw new InvalidDataException("Invalid library metadata or revision.");
+        if (doc.NativeProject is { IsValid: false })
+            throw new InvalidDataException("Invalid native library project metadata.");
         if (string.IsNullOrWhiteSpace(doc.ModsTitle) || doc.ModsTitle.Length > 120 ||
             doc.VisibleModIds is { Count: > 10000 } || doc.BaseModIds is { Count: > 10000 })
             throw new InvalidDataException("Invalid mod list presentation.");

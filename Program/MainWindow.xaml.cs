@@ -88,6 +88,7 @@ public partial class MainWindow : Window
     private DispatcherTimer? _memoryEstimateWait;
     private int _memoryEstimateWaitStep;
     private int _packMemoryGeneration;
+    private bool _selectedNativeRuntime;
     /// <summary>False on every launch: the column opens on the assistant.</summary>
     private bool _sidePanelShowsNews;
     private bool _bugReportSending;
@@ -1341,7 +1342,7 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
             ApplyPlayerName();
-            ApplyMemoryText(chosenByPlayer: false);
+            if (!_selectedNativeRuntime) ApplyMemoryText(chosenByPlayer: false);
             var settings = RequireSettings();
             if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
             {
@@ -1398,7 +1399,7 @@ public partial class MainWindow : Window
             // Before the game reads its options: a mapping written twice stops
             // NeoForge before its loading window, and the player cannot reach
             // the preset button to fix it because the preset counts as applied.
-            RepairInstanceOptions();
+            if (!_selectedNativeRuntime) RepairInstanceOptions();
             RefreshControlsPresetStatus();
             if (_localPackHash == "missing")
             {
@@ -2842,6 +2843,13 @@ public partial class MainWindow : Window
         // it is thinking, and the walk happens off this thread.
         var wanted = _settings.ClientRelativePath;
         var generation = ++_packMemoryGeneration;
+        _selectedNativeRuntime = SelectedPackUsesNativeRuntime(wanted);
+        if (_selectedNativeRuntime)
+        {
+            StopMemoryEstimateWait();
+            RefreshMemoryEstimate();
+            return Task.CompletedTask;
+        }
         StartMemoryEstimateWait();
         var service = _settingsService;
         var settings = _settings;
@@ -2874,6 +2882,20 @@ public partial class MainWindow : Window
             CancellationToken.None,
             TaskContinuationOptions.None,
             TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    private bool SelectedPackUsesNativeRuntime(string relativePath)
+    {
+        if (_paths is not null && !string.IsNullOrWhiteSpace(relativePath))
+        {
+            var pack = _paths.CombineUnderPacks(relativePath);
+            if (PackManifestService.HasManifest(pack))
+            {
+                try { return PackManifestService.Load(pack).NativeRuntime is not null; }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException) { }
+            }
+        }
+        return _catalog?.Find(relativePath)?.Content.NativeProject is not null;
     }
 
     /// <summary>
@@ -2986,6 +3008,15 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshMemoryEstimate()
     {
+        if (_selectedNativeRuntime)
+        {
+            _recommendedMemoryGb = null;
+            MemoryTextBox.ToolTip = "Памятью управляет сама игра.";
+            MemoryEstimateButton.IsEnabled = false;
+            MemoryEstimateText.Text = "Управляет игра";
+            MemoryEstimateText.ToolTip = MemoryTextBox.ToolTip;
+            return;
+        }
         var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
             PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
         _recommendedMemoryGb = estimateGb;
@@ -3197,7 +3228,7 @@ public partial class MainWindow : Window
         // quiet with the button and speaks only when a transfer is possible or
         // already running.
         TransferProgressArea.IsEnabled = _transferActive || canTransfer;
-        MemoryTextBox.IsEnabled = settingsEnabled;
+        MemoryTextBox.IsEnabled = settingsEnabled && !_selectedNativeRuntime;
         MemoryEstimateButton.IsEnabled = settingsEnabled && _recommendedMemoryGb.HasValue && _memoryEstimateWait?.IsEnabled != true;
         // Updating is the one thing in this window that does not need to know who
         // the player is: it replaces this program and touches nothing a world or a

@@ -82,9 +82,19 @@
                 <local:BackdropSurfaceBorder IsBackdropSurface="True" Style="{StaticResource LibrarySectionStyle}">
                     <StackPanel><TextBlock Text="О сборке" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
                         <TextBlock Text="{Binding Description}" TextWrapping="Wrap" LineHeight="{DynamicResource Font.LineHeightBody}"/>
+                        <TextBlock Margin="{DynamicResource Gap.Above2}" TextWrapping="Wrap">
+                            <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                                <DataTrigger Binding="{Binding WebsiteUri}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                            </Style.Triggers></Style></TextBlock.Style>
+                            <Hyperlink x:Name="PackProjectLink" Style="{StaticResource LibraryModLinkStyle}" NavigateUri="{Binding WebsiteUri}"
+                                ToolTip="{Binding WebsiteUri}" Click="PackProjectLink_Click">Официальный проект</Hyperlink>
+                        </TextBlock>
                     </StackPanel>
                 </local:BackdropSurfaceBorder>
-                <local:BackdropSurfaceBorder IsBackdropSurface="True" Style="{StaticResource LibrarySectionStyle}">
+                <local:BackdropSurfaceBorder x:Name="ModsSection" IsBackdropSurface="True">
+                    <local:BackdropSurfaceBorder.Style><Style TargetType="Border" BasedOn="{StaticResource LibrarySectionStyle}"><Style.Triggers>
+                        <DataTrigger Binding="{Binding ShowModSection}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                    </Style.Triggers></Style></local:BackdropSurfaceBorder.Style>
                     <StackPanel>
                         <TextBlock x:Name="ModsHeading" Text="{Binding ModsTitle}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" Margin="{DynamicResource Gap.Below3}"/>
                         <ItemsControl x:Name="ModsList">

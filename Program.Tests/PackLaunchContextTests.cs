@@ -220,11 +220,17 @@ public sealed class PackLaunchContextTests : IDisposable
         Assert.NotNull(directory);
         var source = File.ReadAllText(Path.Combine(directory.FullName, "Program", "MinecraftProcessService.cs"));
         var environment = source.IndexOf("localAi?.ConfigureEnvironment(", StringComparison.Ordinal);
-        var context = source.IndexOf("PackLaunchContextService.Write(", environment, StringComparison.Ordinal);
-        var start = source.IndexOf("minecraftProcess.Start()", environment, StringComparison.Ordinal);
-        Assert.True(environment >= 0 && context > environment && start > context);
-        Assert.Contains("[PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint", source[context..start]);
-        Assert.DoesNotContain("StartInfo.Environment", source[context..start]);
+        var dispatch = source.IndexOf("await RunClientAsync(minecraftProcess,", environment, StringComparison.Ordinal);
+        var context = source.IndexOf("beforeStart: () => PackLaunchContextService.Write(", dispatch, StringComparison.Ordinal);
+        var bindOverlay = source.IndexOf("afterStart: noticeOverlay.BindProcess", context, StringComparison.Ordinal);
+        Assert.True(environment >= 0 && dispatch > environment && context > dispatch && bindOverlay > context);
+        Assert.Contains("[PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint", source[context..bindOverlay]);
+        Assert.DoesNotContain("StartInfo.Environment", source[context..bindOverlay]);
+
+        var runner = source.IndexOf("private async Task RunClientAsync(", bindOverlay, StringComparison.Ordinal);
+        var invoke = source.IndexOf("beforeStart?.Invoke();", runner, StringComparison.Ordinal);
+        var start = source.IndexOf("process.Start()", runner, StringComparison.Ordinal);
+        Assert.True(runner > bindOverlay && invoke > runner && start > invoke);
     }
 
     private static string Write(string root, string relative, string text)
