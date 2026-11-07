@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "verifiedDate": "2026-11-07",
+  "launcherBaselineCommit": "79a398437c7f8987a4adc983f731063adbd9d1f6",
+  "checkoutCommit": "c7ebb077e30d919dd10605324bbff1c9032372ff",
+  "windows": "Microsoft Windows NT 10.0.26300.0",
+  "powershell": "7.6.9",
+  "sourceHashes": [
+    {
+      "path": "tools/Bedrock/Probe-WindowsClient.ps1",
+      "sha256": "70c1736b01ce9a66521236b4ef38e117950d2ecec8fbc8c131f4a7c2b6a296e5"
+    },
+    {
+      "path": "tools/Bedrock/WindowsClientProbe.psm1",
+      "sha256": "4f45d439387740f8f5c881edd852ef9644b824320b73ff0082b2ef7d00005f39"
+    },
+    {
+      "path": "tools/Bedrock/Test-WindowsClientProbe.ps1",
+      "sha256": "481c04720f264c8eb99a1dc6b2e7c969c201461a5bb6f890e81cc9319b995abc"
+    },
+    {
+      "path": "tools/test_numbered_pack_catalog.py",
+      "sha256": "32f94d2da46913018a6cdd0a72720fc778e49854e5c93069a9378eeff99cf594"
+    },
+    {
+      "path": "tools/numbered-pack-ids.json",
+      "sha256": "c4d2ee9ee04caba4dcb621db64a5589084bc22f5fa9d0dd09213249de52639c2"
+    }
+  ],
+  "commands": [
+    "python -B -m unittest discover -s tools -p test_numbered_pack_catalog.py -v",
+    "./tools/Bedrock/Test-WindowsClientProbe.ps1",
+    "pwsh -NoProfile -File ./tools/Bedrock/Probe-WindowsClient.ps1 -Launch"
+  ],
+  "numberedRegistry": {
+    "tests": 5,
+    "status": "PASS"
+  },
+  "syntheticProbeChecks": {
+    "independentReview": "No blocking findings; fixture behavior only",
+    "checks": 27,
+    "status": "PASS"
+  },
+  "clientProbeExitCode": 3,
+  "clientProbe": {
+    "schemaVersion": 1,
+    "discovery": {
+      "status": "not-installed",
+      "verifiedPackageCount": 0,
+      "rejectedCandidateCount": 0
+    },
+    "entitlement": "unknown; package registration and activation do not establish a license",
+    "activation": {
+      "status": "blocked-no-verified-client"
+    },
+    "installation": {
+      "status": "not-run",
+      "officialStoreProductId": "9NBLGGH2JHXJ"
+    },
+    "microsoftSignIn": "not-tested",
+    "nativeLan": "not-tested",
+    "steamGameConnection": "not-implemented; not-tested",
+    "worlds": {
+      "status": "read-only",
+      "candidateCount": 0,
+      "validation": "directory-shape-only; databases and player identities are not opened",
+      "locations": [
+        {
+          "layout": "gdk-users",
+          "status": "missing",
+          "candidateCount": 0,
+          "skippedReparseCount": 0
+        },
+        {
+          "layout": "uwp",
+          "status": "missing",
+          "candidateCount": 0,
+          "skippedReparseCount": 0
+        }
+      ]
+    }
+  },
+  "fullClientLaunch": "NOT RUN: no registered game and sign-in unavailable",
+  "newWorldSaveReopen": "NOT RUN",
+  "nativeLanWithoutMicrosoftSignIn": "NOT RUN",
+  "steamGameConnection": "NOT RUN; not implemented",
+  "publicBedrockCatalog": "NOT PUBLISHED",
+  "fullGameFreeForEveryone": "NO VERIFIED OFFICIAL DELIVERY PATH",
+  "launcherReleaseProfile": "NOT RUN: no launcher implementation changes",
+  "cleanup": "Synthetic fixtures removed in finally; task root removed; no temporary data retained"
+}
