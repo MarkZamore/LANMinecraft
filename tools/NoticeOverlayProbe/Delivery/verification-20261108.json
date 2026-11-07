@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-08",
+  "scope": "Real Minecraft Java Edition 26.3, NeoForge 26.3.0.99, LWJGL SDL 3.4.3, Windows fullscreen menu and isolated new world",
+  "published476": {
+    "launcherDllSha256": "a65154dd144559b9ead40f2ece16ad5827e1d22ad738905337743f83879b954e",
+    "result": "FAIL: waiting backend, no presentation transformations, notice not rendered",
+    "cause": "Client uses SDL_GL_SwapWindow(boolean wrapper), not GLFW or Display"
+  },
+  "candidate": {
+    "launcherDllSha256": "ba6380b55135127047e67c8a9d7b27cc37da6b9099f638590258407bb73ae31f",
+    "backend": "sdl3",
+    "menu": "PASS: launcher service delivery, successful heartbeat and visible notification pixels",
+    "world": "PASS: launcher service delivery, successful heartbeat and visible notification pixels",
+    "fullscreenWindowFillsMonitor": true,
+    "windowCaptionAbsent": true,
+    "foregroundUnchanged": true,
+    "renderedCountPositive": true,
+    "newModInstalled": false,
+    "userWorldsCopied": false,
+    "sharedResourcesReused": true,
+    "normalClientExit": true
+  },
+  "regressionChecks": {
+    "release": {"passed": 570, "failed": 0, "skipped": 0, "methods": 350},
+    "bytecodeAudit": "PASS: Java 8 floor, isolated loader, GLFW/Display/SDL signatures, invalid and near-future snapshots, repeatable packaging",
+    "nativeIpc": "PASS: owned foreground child, root start-time reuse, backend, freshness, DPI, restart and UTF-16 boundaries"
+  },
+  "limits": [
+    "Actual native Rust frontend GPU acceptance belongs to each pack and is not claimed by the C# IPC tests",
+    "No repeat of the completed full QA audit",
+    "No claim of support for every future rendering API"
+  ]
+}

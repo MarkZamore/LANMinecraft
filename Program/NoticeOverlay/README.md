@@ -7,7 +7,9 @@ mappings, mod loader APIs, resource pack, or game-specific render event.
 
 The agent instruments the Java wrappers for LWJGL 3
 `org.lwjgl.glfw.GLFW.glfwSwapBuffers(long)` and LWJGL 2
-`org.lwjgl.opengl.Display.swapBuffers()`. Immediately before presentation it
+`org.lwjgl.opengl.Display.swapBuffers()` and SDL 3
+`org.lwjgl.sdl.SDLVideo.SDL_GL_SwapWindow(long)` (the boolean-returning wrapper).
+Immediately before presentation it
 draws the notice into the game's own default back buffer. That makes the notice
 part of the fullscreen frame rather than a desktop window competing with
 exclusive presentation. The hook has no keyboard, mouse, focus, activation, or
@@ -46,7 +48,8 @@ identity. It does not modify game JARs or pack files.
 
 The launcher atomically replaces UTF-8 `notices.properties` with `count` (0–3)
 and zero-based `<n>.title`, `<n>.body`, `<n>.createdUnixMs` fields. Reader limits
-are 32 KiB, 160 title characters, 320 body characters, and three notices.
+are 32 KiB, 160 title UTF-16 units, 320 body UTF-16 units, and three notices.
+The producer truncates longer text without splitting a surrogate pair.
 Messages expire after seven seconds. Malformed or incomplete replacements keep
 the last valid snapshot until its own expiry.
 
@@ -56,6 +59,27 @@ the missing window scale and refreshes it every 500 ms while notices are active.
 The agent reads it off the render thread and uses the greater of the native API
 scale and this value, so GLFW scaling is not multiplied twice. Old snapshots and
 invalid values use 1. A background or reused process cannot supply another DPI.
+
+SDL reads its own current window/context, pixel dimensions and display scale.
+It uses the same OpenGL state preservation and rendering code as GLFW, with no
+Minecraft names or loader rules. Backend `sdl3` is accepted only after a fresh
+successful presentation heartbeat. Near-future notice timestamps within two
+seconds are retained until the render clock reaches them, so a clock tick of
+cross-process skew cannot permanently discard a valid notice.
+
+## Native client frontend contract
+
+Native launches receive `LANMINECRAFT_NOTICE_DIRECTORY` for the same launcher-owned
+session, styles, message queue, DPI and lifetime. They require launcher capability
+`native-launcher-notices-v1`. Their existing engine frontend displays the queue,
+without a separate content mod or replacement of game settings. It writes
+`backend=native-ui-v1` and its actual rendering PID in the normal heartbeat.
+The launcher verifies the root process start time and that the foreground renderer
+belongs to that still-running launcher's native process tree. An unrelated PID,
+reused root PID, stale heartbeat, unknown backend or rendering error keeps the
+desktop fallback. Restart adoption retains this process-tree distinction.
+Monitor choice follows the verified native child window rather than its hidden
+preparation bootstrap. Ordinary Java sessions never accept a child's heartbeat.
 
 Optional UTF-8 `style.properties` supplies `bgArgb`, `borderArgb`, `textArgb`,
 `mutedArgb` (eight-digit ARGB hex), `fontFamily`, `fontSize`, `width`, `gap`,
@@ -83,7 +107,7 @@ separately from the identity agent and the loader's public ASM. Strict Fabric
 classpath validation therefore sees only the loader's `org.objectweb.asm`.
 The build-only Java 17 relocator is not packaged. Only the small hooks/render
 JAR is appended to the bootstrap search path. The audit checks Java 8 class versions, package boundaries, real
-transformation of both presentation signatures, rejection of native methods,
+transformation of all three presentation signatures, rejection of native methods,
 Unicode/expiry/bounds, and stable output on an unchanged build. Native OpenGL
 smoke tests additionally exercise actual installed LWJGL libraries, fullscreen
 buffer pixels, GL-state restoration, and unchanged foreground window.

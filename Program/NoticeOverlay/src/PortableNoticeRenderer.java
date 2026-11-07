@@ -23,6 +23,7 @@ final class PortableNoticeRenderer {
     private final long window;
     private final Gl gl;
     private final boolean modern;
+    private final boolean sdl;
     private long retryAfter;
     private boolean initialized;
     private boolean vaoSupported;
@@ -39,6 +40,7 @@ final class PortableNoticeRenderer {
         this.api = api;
         this.window = window;
         this.modern = window != 0;
+        this.sdl = "org.lwjgl.sdl.SDLVideo".equals(api.getName());
         this.gl = new Gl(api.getClassLoader(), modern);
     }
 
@@ -54,7 +56,19 @@ final class PortableNoticeRenderer {
         if (initialized && active == 0) return 0;
         int width, height;
         double scale = 1;
-        if (modern) {
+        if (sdl) {
+            if (((Long)gl.call(api, "SDL_GL_GetCurrentWindow", new Class<?>[0])).longValue() != window ||
+                ((Long)gl.call(api, "SDL_GL_GetCurrentContext", new Class<?>[0])).longValue() == 0) return -1;
+            dimensionsX.clear(); dimensionsY.clear();
+            if (!((Boolean)gl.call(api, "SDL_GetWindowSizeInPixels", new Class<?>[] {long.class, IntBuffer.class, IntBuffer.class},
+                    window, dimensionsX, dimensionsY)).booleanValue()) return -1;
+            width = dimensionsX.get(0); height = dimensionsY.get(0);
+            dimensionsX.clear(); dimensionsY.clear();
+            if (((Boolean)gl.call(api, "SDL_GetWindowSize", new Class<?>[] {long.class, IntBuffer.class, IntBuffer.class},
+                    window, dimensionsX, dimensionsY)).booleanValue() && dimensionsX.get(0) > 0)
+                scale = (double)width / dimensionsX.get(0);
+            scale = Math.max(scale, ((Float)gl.call(api, "SDL_GetWindowDisplayScale", new Class<?>[] {long.class}, window)).floatValue());
+        } else if (modern) {
             if (((Long)gl.call(api, "glfwGetCurrentContext", new Class<?>[0])).longValue() != window) return -1;
             dimensionsX.clear(); dimensionsY.clear();
             gl.call(api, "glfwGetFramebufferSize", new Class<?>[] { long.class, IntBuffer.class, IntBuffer.class }, window, dimensionsX, dimensionsY);

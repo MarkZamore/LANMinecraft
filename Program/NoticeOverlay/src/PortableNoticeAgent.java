@@ -31,7 +31,7 @@ public final class PortableNoticeAgent {
             PortableNoticeHooks.start();
             instrumentation.addTransformer(new PortableNoticeWindowTransformer(), false);
             instrumentation.addTransformer(new PortableNoticeTransformer(), false);
-            System.out.println("[LauncherNotice] Fullscreen renderer armed for LWJGL 2 and 3.");
+            System.out.println("[LauncherNotice] Fullscreen renderer armed for LWJGL 2, GLFW and SDL.");
         } catch (Throwable failure) {
             System.err.println("[LauncherNotice] Agent initialization failed: " + failure);
         }

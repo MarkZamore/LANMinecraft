@@ -57,6 +57,75 @@ public sealed class GameNoticeOverlayServiceTests
         service.ProcessExited(Fixture.ProcessId);
     }
 
+    [Fact]
+    public void LongTextCannotInvalidateTheSharedSnapshotOrSplitAnEmoji()
+    {
+        using var fixture = new Fixture();
+        var service = fixture.CreateService();
+        using var session = service.PrepareSession(native: true);
+        session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
+        fixture.Heartbeat(session.Directory, backend: "native-ui-v1");
+        Assert.True(service.TryShow(new PeerNotice(new string('Я', 159) + "😀tail", new string('Б', 319) + "😀tail")));
+        Assert.True(service.TryShow(new PeerNotice(new string('A', 160) + "tail", new string('B', 320) + "tail")));
+        var values = File.ReadAllLines(Path.Combine(session.Directory, "notices.properties"), Encoding.UTF8)
+            .Select(line => line.Split('=', 2)).ToDictionary(pair => pair[0], pair => pair[1]);
+        Assert.Equal(new string('Я', 159), values["0.title"]);
+        Assert.Equal(new string('Б', 319), values["0.body"]);
+        Assert.Equal(new string('A', 160), values["1.title"]);
+        Assert.Equal(new string('B', 320), values["1.body"]);
+        Assert.Equal("2", values["count"]);
+        service.ProcessExited(Fixture.ProcessId);
+    }
+
+    [Fact]
+    public void NativeSession_RequiresOwnedForegroundChildAndFreshRendererAcrossRestart()
+    {
+        using var fixture = new Fixture();
+        var service = fixture.CreateService();
+        using var session = service.PrepareSession(native: true);
+        Assert.Empty(session.JvmArguments);
+        session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
+        fixture.ForegroundId = Fixture.ProcessId + 10;
+        fixture.Heartbeat(session.Directory, processId: fixture.ForegroundId, backend: "native-ui-v1");
+        Assert.True(service.TryShow(new PeerNotice("Друг", "В игре")));
+        fixture.DisplayScale = 2;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("dpiScale=2\n", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")), StringComparison.Ordinal);
+        // An unrelated foreground window may not claim the launcher's native session.
+        fixture.ForegroundId++;
+        fixture.Heartbeat(session.Directory, processId: fixture.ForegroundId, backend: "native-ui-v1");
+        Assert.False(service.TryShow(new PeerNotice("Чужой", "В игре")));
+        fixture.ForegroundId--;
+        foreach (var backend in new[] { "waiting", "unknown", "lwjgl3" })
+        {
+            fixture.Heartbeat(session.Directory, processId: fixture.ForegroundId, backend: backend);
+            Assert.False(service.TryShow(new PeerNotice("Друг", "В игре")));
+        }
+        fixture.Heartbeat(session.Directory, processId: fixture.ForegroundId, backend: "native-ui-v1", stamp: fixture.Now.AddSeconds(-3));
+        Assert.False(service.TryShow(new PeerNotice("Друг", "В игре")));
+        var restarted = fixture.CreateService();
+        fixture.Heartbeat(session.Directory, processId: fixture.ForegroundId, backend: "native-ui-v1");
+        Assert.True(restarted.TryShow(new PeerNotice("После перезапуска", "В игре")));
+        fixture.ActualStartTicks++;
+        Assert.False(restarted.TryShow(new PeerNotice("PID повторно использован", "В игре")));
+        service.ProcessExited(Fixture.ProcessId);
+        restarted.ProcessExited(Fixture.ProcessId);
+    }
+
+    [Fact]
+    public void SdlRendererUsesTheSameDeliveryContractAndRejectsUnknownBackend()
+    {
+        using var fixture = new Fixture();
+        var service = fixture.CreateService();
+        using var session = service.PrepareSession();
+        session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
+        fixture.Heartbeat(session.Directory, backend: "sdl3");
+        Assert.True(service.TryShow(new PeerNotice("Друг", "Полный экран")));
+        fixture.Heartbeat(session.Directory, backend: "native-ui-v1");
+        Assert.False(service.TryShow(new PeerNotice("Друг", "Полный экран")));
+        service.ProcessExited(Fixture.ProcessId);
+    }
+
     [Theory]
     [InlineData("background")]
     [InlineData("stale")]
@@ -163,12 +232,12 @@ public sealed class GameNoticeOverlayServiceTests
             new Logger(Path.Combine(Paths.Personal, "notices.log")), () => Now, () => ForegroundId,
             processId => processId == ProcessId ? ActualStartTicks : null,
             () => new MemoryStream(Encoding.UTF8.GetBytes("launcher-owned fixture agent bytes"), writable: false),
-            _ => DisplayScale);
-        internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "") =>
+            _ => DisplayScale, (root, candidate) => root == ProcessId && candidate == ProcessId + 10);
+        internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "", string backend = "lwjgl3") =>
             GameNoticeOverlayService.WriteProperties(Path.Combine(directory, "heartbeat.properties"), new Dictionary<string, string>
             {
                 ["timestampUnixMs"] = (stamp ?? Now).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
-                ["backend"] = "lwjgl3", ["renderedCount"] = "0", ["pid"] = processId.ToString(CultureInfo.InvariantCulture), ["error"] = error
+                ["backend"] = backend, ["renderedCount"] = "0", ["pid"] = processId.ToString(CultureInfo.InvariantCulture), ["error"] = error
             });
         public void Dispose() => TempTree.Delete(_root);
 

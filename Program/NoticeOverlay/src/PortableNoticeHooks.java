@@ -23,6 +23,7 @@ public final class PortableNoticeHooks {
     private static volatile int renderedCount;
     private static volatile String failure = "";
     private static volatile int transformations;
+    private static volatile String snapshotFailure = "";
     private static boolean started;
     private static final ThreadLocal<PortableNoticeRenderer> RENDERERS = new ThreadLocal<PortableNoticeRenderer>();
 
@@ -63,7 +64,7 @@ public final class PortableNoticeHooks {
             renderedCount = count;
             failure = "";
             lastFrame = System.currentTimeMillis();
-            backend = window == 0 ? "lwjgl2" : "lwjgl3";
+            backend = "org.lwjgl.sdl.SDLVideo".equals(api.getName()) ? "sdl3" : window == 0 ? "lwjgl2" : "lwjgl3";
         } catch (Throwable error) {
             // Throttle retries: a renderer with an unsupported context is retried on
             // the next context, rather than reporting an error on every game frame.
@@ -93,6 +94,7 @@ public final class PortableNoticeHooks {
                         Notice[] candidate = parse(values, System.currentTimeMillis());
                         displayScale = parseScale(values);
                         notices = candidate;
+                        snapshotFailure = "";
                         previousStamp = stamp;
                         previousLength = length;
                     }
@@ -106,10 +108,15 @@ public final class PortableNoticeHooks {
                     health.setProperty("pid", processId());
                     health.setProperty("transformations", Integer.toString(transformations));
                     health.setProperty("error", failure);
+                    health.setProperty("queuedCount", Integer.toString(notices.length));
+                    health.setProperty("snapshotError", snapshotFailure);
+                    health.setProperty("snapshotStamp", Long.toString(previousStamp));
+                    health.setProperty("snapshotLength", Long.toString(previousLength));
                     writeProperties(directory.resolve("heartbeat.properties"), health);
                     lastHeartbeat = now;
                 }
             } catch (Exception error) {
+                snapshotFailure = error.getClass().getSimpleName();
                 // A torn/replaced or invalid snapshot does not destroy the last good
                 // message; its timestamp still expires it after seven seconds.
             }
@@ -128,7 +135,9 @@ public final class PortableNoticeHooks {
             long created = Long.parseLong(properties.getProperty(prefix + "createdUnixMs", "0"));
             if (title.length() > 160 || body.length() > 320 || title.length() == 0 || created > now + 2000)
                 throw new IllegalArgumentException("Invalid notification payload");
-            if (created <= now && now - created <= LIFE_MS) result.add(new Notice(title, body, created));
+            // Process clocks can differ by a timer tick. Keep accepted near-future
+            // notices; present() waits for their timestamp without another IPC write.
+            if (now - created <= LIFE_MS) result.add(new Notice(title, body, created));
         }
         return result.toArray(new Notice[result.size()]);
     }

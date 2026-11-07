@@ -299,7 +299,13 @@ public sealed class MinecraftProcessService
     private string _lastProfileId = "";
 
     public bool IsClientRunning => !_activeClientProcesses.IsEmpty;
-    internal IntPtr GetNoticeWindow() => PeerNoticeNative.FindGameWindow(_activeClientProcesses.Keys);
+    internal IntPtr GetNoticeWindow()
+    {
+        var renderer = NoticeOverlay.GetGameWindow();
+        // An adopted game or failed session metadata write must still retain
+        // the ordinary game-monitor placement of desktop notifications.
+        return renderer != IntPtr.Zero ? renderer : PeerNoticeNative.FindGameWindow(_activeClientProcesses.Keys);
+    }
     public bool IsClientPreparing => Volatile.Read(ref _clientPreparing) != 0;
     public string DiagnosticJavaPath => Volatile.Read(ref _lastJavaPath);
     public string DiagnosticGameVersion => Volatile.Read(ref _lastGameVersion);
@@ -711,11 +717,13 @@ public sealed class MinecraftProcessService
                 StartInfo = NativeClientLaunch.CreateStartInfo(_paths, identityContext, packRelativePath,
                     gameDir, executable, runtime.Version, skinRegistryPath, identityRegistryPath)
             };
+            using var noticeOverlay = NoticeOverlay.PrepareSession(native: true);
+            process.StartInfo.Environment["LANMINECRAFT_NOTICE_DIRECTORY"] = noticeOverlay.Directory;
             progress?.Report(new(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
             var lifetime = files;
             files = null;
             await RunClientAsync(process, packRelativePath, gameDir, worldSession, token,
-                nativeExecutable: executable, nativeFiles: lifetime).ConfigureAwait(false);
+                nativeExecutable: executable, nativeFiles: lifetime, afterStart: noticeOverlay.BindProcess).ConfigureAwait(false);
             _logger.Info($"Native client started with profile {runtime.Adapter}/{runtime.Version}.");
         }
         finally
