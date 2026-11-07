@@ -143,7 +143,7 @@ try {
     $hookPackage = Join-Path $hooks $package
     New-Item -ItemType Directory -Path $hookPackage -Force | Out-Null
     foreach ($file in Get-ChildItem -LiteralPath $compiledPackage -File -Filter '*.class') {
-        if ($file.BaseName -match '^PortableNotice(Agent|Transformer)(\$|$)') { continue }
+        if ($file.BaseName -match '^PortableNotice(Agent|Transformer|WindowTransformer)(\$|$)') { continue }
         Move-Item -LiteralPath $file.FullName -Destination (Join-Path $hookPackage $file.Name)
     }
     if (-not (Test-Path -LiteralPath (Join-Path $hookPackage 'PortableNoticeHooks.class') -PathType Leaf)) {

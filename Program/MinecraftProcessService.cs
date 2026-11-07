@@ -606,6 +606,7 @@ public sealed class MinecraftProcessService
         // loaders and the optional identity adapter. It is never installed in mods.
         using var noticeOverlay = NoticeOverlay.PrepareSession();
         extraJvmArguments.AddRange(noticeOverlay.JvmArguments);
+        extraJvmArguments.AddRange(GameWindowPresentation.Prepare(_paths, runtime, profile, packDir, gameDir));
         // What the game is actually started with. A release once went out with
         // an option the JVM refuses, and the reports that came back could not
         // say which options had been applied at all - none of the five logs a

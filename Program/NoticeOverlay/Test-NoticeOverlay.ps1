@@ -61,7 +61,7 @@ try {
     foreach ($entry in $archive.Entries) {
         if ($entry.FullName -like 'org/objectweb/asm/*') { throw 'ASM leaked onto bootstrap class path.' }
         if ($entry.FullName -like 'minecraft/portable/notice/internal/asm/*') { throw 'Private ASM leaked onto bootstrap class path.' }
-        if ($entry.FullName -match '/PortableNotice(Agent|Transformer)(\$|\.)') { throw 'Agent leaked onto bootstrap class path.' }
+        if ($entry.FullName -match '/PortableNotice(Agent|Transformer|WindowTransformer)(\$|\.)') { throw 'Agent leaked onto bootstrap class path.' }
     }
 } finally { $archive.Dispose() }
 if ([string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { throw 'JAVA_HOME must point at a JDK for the bytecode audit.' }

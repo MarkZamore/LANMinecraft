@@ -29,6 +29,7 @@ public final class PortableNoticeAgent {
             bootstrap = new JarFile(hooks.toFile());
             instrumentation.appendToBootstrapClassLoaderSearch(bootstrap);
             PortableNoticeHooks.start();
+            instrumentation.addTransformer(new PortableNoticeWindowTransformer(), false);
             instrumentation.addTransformer(new PortableNoticeTransformer(), false);
             System.out.println("[LauncherNotice] Fullscreen renderer armed for LWJGL 2 and 3.");
         } catch (Throwable failure) {
