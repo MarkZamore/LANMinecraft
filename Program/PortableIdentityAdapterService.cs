@@ -333,15 +333,20 @@ public sealed class PortableIdentityAdapterService : IDisposable
         properties.TryGetValue(name, out var value) &&
         string.Equals(value, "true", StringComparison.Ordinal);
 
-    private string ExtractAdapter(string directory)
+    internal string ExtractAdapter(string directory)
     {
-        var destination = Path.Combine(directory, AdapterFileName);
         using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName)
             ?? throw new InvalidOperationException("Embedded portable identity adapter is missing.");
         using var memory = new MemoryStream();
         resource.CopyTo(memory);
         var bytes = memory.ToArray();
         var expectedHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        // Java keeps agent JARs open for its lifetime. A launcher update must
+        // not replace the image still used by an earlier process/session.
+        var versionDirectory = Path.Combine(directory, expectedHash);
+        _paths.EnsureUnderRoot(versionDirectory);
+        Directory.CreateDirectory(versionDirectory);
+        var destination = Path.Combine(versionDirectory, AdapterFileName);
         if (File.Exists(destination) && string.Equals(HashFile(destination), expectedHash, StringComparison.Ordinal))
         {
             return destination;
