@@ -37,3 +37,19 @@ $env:JAVA_HOME = 'C:\Tools\jdk-25.0.2'
 Параметры `-Repository`, `-JavaHome` и `-Agent` позволяют проверить другой checkout/JDK/собранный агент. `-CompileOnly` проверяет компиляцию стенда; `-WithoutAgent` является отрицательным контролем и должен завершиться ошибкой из-за отсутствующего изображения уведомления/heartbeat. Старые LWJGL 2.9.3 загружаются только с `-DownloadLegacy` из Maven Central и проверяются по закреплённым SHA-256. Нативные библиотеки и JAR не добавляются в Git.
 
 Это проверка механизма презентации, а не доказательство совместимости с любым будущим графическим движком. В частности, она не запускает модифицированные рендереры Minecraft и не проверяет Vulkan.
+# DPI and audio diagnosis
+
+`Run-Probe.ps1 -Version '2.9.4+legacyfabric.17' -HiddenLegacyWindow -TestDpiChange`
+uses exact pinned cached Legacy Fabric binaries, an unshown AWT parent, and a
+100% to 150% notification snapshot change. It checks pixel growth, full GL-state
+restoration and unchanged foreground HWND without interacting with the game.
+Use `-OutputDirectory` under the assigned `artifacts/agent-runs` directory and
+`-LibrariesRoot` to reuse a verified shared library cache.
+
+`Run-LegacyAudioProbe.ps1` accepts actual LWJGL/native JARs, Java home and output
+directory. It extracts only those native bytes and checks that a silent PCM
+source advances. ASCII, Cyrillic, spaces and a long-path negative control have
+separate logs. Loading failure in the long-path control is diagnostic evidence,
+not proof of the cause on another PC. It never edits the installed game or
+Windows audio settings and does not demonstrate audible guest playback.
+

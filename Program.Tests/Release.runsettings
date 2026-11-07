@@ -92,6 +92,7 @@
       FullyQualifiedName=Minecraft.Tests.DialogLayoutTests.ACrampedWorkArea_ReflowsActionsAndLetsThePlayerScrollToThem|
       FullyQualifiedName=Minecraft.Tests.PeerNoticeOverlayTests.Toasts_StayVisibleAboveAMockWhenLauncherMinimizesWithoutTakingFocus|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.ReadyForegroundGame_ReceivesThreeNoticesWithoutDesktopPresentation|
+      FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.ForegroundDpiIsPublishedAndRefreshesForTheNextNotice|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.UnavailableRenderer_DoesNotSuppressDesktopNotice|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.LauncherRestart_AdoptsOnlyTheSameGameProcess|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.AgentLaunchArguments_AreIndependentOfMinecraftAndLiveOutsideMods|

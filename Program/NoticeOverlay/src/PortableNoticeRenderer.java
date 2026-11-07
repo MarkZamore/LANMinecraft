@@ -79,6 +79,7 @@ final class PortableNoticeRenderer {
         }
         if (width <= 0 || height <= 0) return -1;
         if (Double.isNaN(scale) || Double.isInfinite(scale)) scale = 1;
+        scale = Math.max(scale, PortableNoticeHooks.displayScale);
         scale = Math.max(0.5, Math.min(4, scale));
         if (!initialized) {
             Object capabilities = gl.capabilities();

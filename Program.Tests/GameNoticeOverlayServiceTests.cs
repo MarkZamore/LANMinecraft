@@ -5,6 +5,35 @@ namespace Minecraft.Tests;
 
 public sealed class GameNoticeOverlayServiceTests
 {
+    [Theory]
+    [InlineData(1.25, "1.25")]
+    [InlineData(2, "2")]
+    [InlineData(double.NaN, "1")]
+    public void ForegroundDpiIsPublishedAndRefreshesForTheNextNotice(double scale, string expected)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.CreateService();
+        using var session = service.PrepareSession();
+        session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
+        fixture.Heartbeat(session.Directory);
+        fixture.DisplayScale = scale;
+        Assert.True(service.TryShow(new PeerNotice("Друг", "В игре")));
+        var path = Path.Combine(session.Directory, "notices.properties");
+        Assert.Contains("dpiScale=" + expected + "\n", File.ReadAllText(path), StringComparison.Ordinal);
+        fixture.DisplayScale = 1.5;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("dpiScale=1.5\n", File.ReadAllText(path), StringComparison.Ordinal);
+        fixture.ForegroundId++;
+        fixture.DisplayScale = 2;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("dpiScale=1.5\n", File.ReadAllText(path), StringComparison.Ordinal);
+        fixture.ForegroundId--;
+        fixture.ActualStartTicks++;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("dpiScale=1.5\n", File.ReadAllText(path), StringComparison.Ordinal);
+        service.ProcessExited(Fixture.ProcessId);
+    }
+
     [Fact]
     public void ReadyForegroundGame_ReceivesThreeNoticesWithoutDesktopPresentation()
     {
@@ -128,11 +157,13 @@ public sealed class GameNoticeOverlayServiceTests
         internal DateTimeOffset Now { get; set; } = DateTimeOffset.FromUnixTimeMilliseconds(1800000000000);
         internal int ForegroundId { get; set; } = ProcessId;
         internal long ActualStartTicks { get; set; } = StartedTicks;
+        internal double DisplayScale { get; set; } = 1;
         internal Fixture() { Paths = new AppPaths(_root); Paths.Ensure(); }
         internal GameNoticeOverlayService CreateService(AppPaths? paths = null) => new(paths ?? Paths,
             new Logger(Path.Combine(Paths.Personal, "notices.log")), () => Now, () => ForegroundId,
             processId => processId == ProcessId ? ActualStartTicks : null,
-            () => new MemoryStream(Encoding.UTF8.GetBytes("launcher-owned fixture agent bytes"), writable: false));
+            () => new MemoryStream(Encoding.UTF8.GetBytes("launcher-owned fixture agent bytes"), writable: false),
+            _ => DisplayScale);
         internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "") =>
             GameNoticeOverlayService.WriteProperties(Path.Combine(directory, "heartbeat.properties"), new Dictionary<string, string>
             {
