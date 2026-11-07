@@ -7,13 +7,13 @@ using System.Windows.Threading;
 
 namespace Minecraft;
 
-/// <summary>Shows independent toasts on the foreground application's monitor without activating a window.</summary>
+/// <summary>Shows independent toasts on the game's or launcher's monitor without activating a window.</summary>
 public sealed class PeerNoticeService : IDisposable
 {
     private const int MostAtOnce = 3;
     private readonly Window _owner;
     private readonly Logger? _logger;
-    private readonly Func<IntPtr> _foregroundWindow;
+    private readonly Func<IntPtr> _gameWindow;
     private readonly List<PeerNoticeWindow> _open = [];
     private readonly HashSet<PeerNoticeWindow> _retiring = [];
     private readonly DispatcherTimer _raiseTimer;
@@ -50,15 +50,15 @@ public sealed class PeerNoticeService : IDisposable
     }
 
     public PeerNoticeService(Window owner, Logger? logger = null)
-        : this(owner, logger, PeerNoticeNative.GetForegroundWindow) { }
+        : this(owner, logger, () => IntPtr.Zero) { }
 
-    internal PeerNoticeService(Window owner, Logger? logger, Func<IntPtr> foregroundWindow)
+    internal PeerNoticeService(Window owner, Logger? logger, Func<IntPtr> gameWindow)
     {
         ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(foregroundWindow);
+        ArgumentNullException.ThrowIfNull(gameWindow);
         _owner = owner;
         _logger = logger;
-        _foregroundWindow = foregroundWindow;
+        _gameWindow = gameWindow;
         _raiseTimer = new DispatcherTimer(DispatcherPriority.Background, owner.Dispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(250)
@@ -74,7 +74,6 @@ public sealed class PeerNoticeService : IDisposable
         PeerNoticeWindow? window = null;
         try
         {
-            _monitor = PeerNoticeNative.SelectMonitor(_foregroundWindow(), new WindowInteropHelper(_owner).Handle);
             while (_open.Count >= MostAtOnce)
             {
                 var oldest = _open[0];
@@ -128,9 +127,12 @@ public sealed class PeerNoticeService : IDisposable
 
     private void RaiseVisibleNotices(object? sender, EventArgs e)
     {
+        if (_open.Count > 0 && TargetMonitor() != _monitor) Restack();
         foreach (var window in _open.Concat(_retiring).ToArray())
             if (window.IsVisible) PeerNoticeNative.Raise(new WindowInteropHelper(window).Handle);
     }
+
+    private IntPtr TargetMonitor() => PeerNoticeNative.SelectMonitor(_gameWindow(), new WindowInteropHelper(_owner).Handle);
 
     private void NoticeSizeChanged(object sender, SizeChangedEventArgs e) => QueueRestack();
     private void NoticeDpiChanged(object sender, DpiChangedEventArgs e) => QueueRestack();
@@ -152,6 +154,7 @@ public sealed class PeerNoticeService : IDisposable
         _restacking = true;
         try
         {
+            _monitor = TargetMonitor();
             if (!PeerNoticeNative.TryWorkArea(_monitor, out var area))
             {
                 _monitor = PeerNoticeNative.SelectMonitor(IntPtr.Zero, new WindowInteropHelper(_owner).Handle);
@@ -199,8 +202,28 @@ internal static class PeerNoticeNative
         _ = SetWindowPos(handle, Topmost, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0020);
     }
 
-    internal static IntPtr SelectMonitor(IntPtr foreground, IntPtr owner) =>
-        MonitorFromWindow(foreground != IntPtr.Zero ? foreground : owner, 2);
+    internal static IntPtr SelectMonitor(IntPtr game, IntPtr owner) =>
+        MonitorFromWindow(game != IntPtr.Zero && IsWindow(game) ? game : owner, 2);
+
+    internal static IntPtr FindGameWindow(IEnumerable<int> processIds)
+    {
+        var ids = processIds.ToHashSet();
+        if (ids.Count == 0) return IntPtr.Zero;
+        var foreground = GetForegroundWindow();
+        _ = GetWindowThreadProcessId(foreground, out var foregroundId);
+        if (ids.Contains(unchecked((int)foregroundId)) && IsWindowVisible(foreground)) return foreground;
+        var selected = IntPtr.Zero;
+        double largestArea = 0;
+        _ = EnumWindows((window, parameter) =>
+        {
+            _ = GetWindowThreadProcessId(window, out var id);
+            if (!ids.Contains(unchecked((int)id)) || !IsWindowVisible(window) || !TryBounds(window, out var bounds)) return true;
+            var area = bounds.Width * bounds.Height;
+            if (area > largestArea) { selected = window; largestArea = area; }
+            return true;
+        }, IntPtr.Zero);
+        return selected;
+    }
 
     internal static bool TryWorkArea(IntPtr monitor, out Rect area)
     {
@@ -257,6 +280,11 @@ internal static class PeerNoticeNative
     }
 
     [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(IntPtr window);
+    private delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr handle, int index, IntPtr value);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr handle);

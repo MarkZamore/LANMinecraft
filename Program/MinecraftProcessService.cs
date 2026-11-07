@@ -299,6 +299,7 @@ public sealed class MinecraftProcessService
     private string _lastProfileId = "";
 
     public bool IsClientRunning => !_activeClientProcesses.IsEmpty;
+    internal IntPtr GetNoticeWindow() => PeerNoticeNative.FindGameWindow(_activeClientProcesses.Keys);
     public bool IsClientPreparing => Volatile.Read(ref _clientPreparing) != 0;
     public string DiagnosticJavaPath => Volatile.Read(ref _lastJavaPath);
     public string DiagnosticGameVersion => Volatile.Read(ref _lastGameVersion);
