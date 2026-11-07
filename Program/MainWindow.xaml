@@ -625,7 +625,7 @@
                 x:Name="FooterMotto">
                 <TextBlock Text="Лучше TLauncher" />
             </StackPanel>
-            <Grid Grid.Row="0" Grid.Column="1" Margin="{StaticResource Gap.None}" x:Name="FooterActions" Grid.ColumnSpan="2">
+            <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -646,8 +646,8 @@
                     Content="Новости"
                     Click="SidePanelToggleButton_Click"
                     HorizontalAlignment="Right"
-                    MinWidth="{StaticResource Size.ButtonMin}"
-                    Width="{StaticResource Size.ButtonMax}" />
+                    MinWidth="{StaticResource Size.Small}"
+                    Padding="{StaticResource Pad.Small}" />
             </Grid>
         </Grid>
         <Grid Visibility="Collapsed">

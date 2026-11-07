@@ -760,6 +760,9 @@ public sealed class WindowCanvasTests
             Assert.True(status.ActualWidth >= fullStatus.DesiredSize.Width - 0.5, "The disconnected status must remain fully readable.");
             Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 7.5, 8.5);
             var footer = Element<Grid>(window, "FooterActions");
+            var root = Element<Grid>(window, "RootGrid");
+            AssertWidthWithinOnePhysicalPixel(Bounds(Element<Border>(window, "SidePanelCard"), root).Left,
+                Bounds(label, root).Left, label);
             var toggle = Element<Button>(window, "SidePanelToggleButton");
             AssertWidthWithinOnePhysicalPixel(footer.ActualWidth, Bounds(toggle, footer).Right, toggle);
             return true;
