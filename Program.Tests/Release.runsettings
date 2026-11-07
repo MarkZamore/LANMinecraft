@@ -10,6 +10,11 @@
       FullyQualifiedName=Minecraft.Tests.ProfileFileTransactionRecoveryTests.ATransactionOwnedByARunningLauncher_IsLeftAlone|
       FullyQualifiedName=Minecraft.Tests.ProfileFileTransactionRecoveryTests.AJournalFromAnotherSchema_IsNeverReplayed|
       FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.WhatAnotherBuildStillNeeds_Stays|
+      FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.FlatSoundFilesRepairOfflineAndSurviveTheSharedStoreSweep|
+      FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.DeclaredPathsCannotEscapeTheAssetLayout|
+      FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.ModernIndexDoesNotCreateFlatAssets|
+      FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.DamagedObjectCannotReplaceAnExistingFlatFile|
+      FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.ALinkedDestinationCannotWriteIntoAnUnrelatedDirectory|
       FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.ADamagedStateStopsTheSweepEntirely|
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.SwitchingBuilds_PointsTheLinkSomewhereElse_WithoutMovingAnything|
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.AWorldTheGameStillHasOpen_IsNotMovedYet|
