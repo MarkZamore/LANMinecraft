@@ -63,6 +63,22 @@ public sealed class SteamBootstrapTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedNativeHandshake_AllowsTheNextAutomaticCheckToConnect()
+    {
+        var api = new FakeSteamApi { InitializeFailure = new InvalidOperationException("Steam is exiting") };
+        await using var service = new SteamClientService(api);
+        var status = await service.StartAsync();
+        Assert.Equal(SteamAvailability.Failed, status.Availability);
+        Assert.True(SteamRecoveryPolicy.ShouldConnect(status, identityBound: false));
+
+        api.InitializeFailure = null;
+        api.SteamRunning = true;
+        api.LoggedOn = true;
+        api.SteamId = 76561198000000001;
+        Assert.True((await service.StartAsync()).IsReady);
+    }
+
+    [Fact]
     public async Task StartAsync_WithoutSteamRunning_ReportsItAndKeepsWorking()
     {
         var api = new FakeSteamApi { SteamRunning = false, InitializeSucceeds = false };
@@ -590,6 +606,7 @@ public sealed class SteamBootstrapTests : IDisposable
 /// <summary>In-memory Steam client for tests: no Steamworks, no native library.</summary>
 internal sealed class FakeSteamApi : ISteamApiFacade
 {
+    public Exception? InitializeFailure { get; set; }
     public bool SteamRunning { get; set; }
     public bool InitializeSucceeds { get; set; } = true;
     public bool LoggedOn { get; set; }
@@ -605,6 +622,7 @@ internal sealed class FakeSteamApi : ISteamApiFacade
     public bool Initialize(out string failureReason)
     {
         InitializeCount++;
+        if (InitializeFailure is { } failure) throw failure;
         if (!InitializeSucceeds)
         {
             failureReason = "Steam API initialization is unavailable";

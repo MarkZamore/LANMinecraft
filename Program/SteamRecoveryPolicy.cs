@@ -14,6 +14,16 @@ namespace Minecraft;
 /// </remarks>
 public static class SteamRecoveryPolicy
 {
+    public static bool HasMatchingIdentity(SteamClientStatus? status, SteamIdentityBinding? binding) =>
+        status is { IsReady: true } && binding is not null && binding.SteamId64.Value == status.SteamId64;
+
+    // The live callback pump owns a temporary server disconnect. Every ended
+    // session needs a fresh handshake, including Steam starting after us.
+    public static bool ShouldConnect(SteamClientStatus status, bool identityBound) =>
+        status.Availability != SteamAvailability.Starting &&
+        status.Availability != SteamAvailability.Reconnecting &&
+        (!status.IsReady || !identityBound);
+
     public static bool ShouldRestartNetworking(SteamAvailability previous, SteamAvailability current) =>
         previous == SteamAvailability.Reconnecting && current == SteamAvailability.Ready;
 }

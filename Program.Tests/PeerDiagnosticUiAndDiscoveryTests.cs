@@ -346,15 +346,15 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.DoesNotContain(
             document.Descendants(),
             element => (string?)element.Attribute(x + "Name") is "SteamProblemPanel" or "SteamStatusText");
-        // Steam is one spot in the footer: the name, or the button that retries.
+        // Steam is one spot in the footer: the name or a disconnected status.
         Assert.Contains(
             document.Descendants(presentation + "TextBlock"),
-            element => (string?)element.Attribute(x + "Name") == "SteamPersonaText");
-        Assert.Contains(
+            element => (string?)element.Attribute(x + "Name") == "SteamPersonaText" &&
+                (string?)element.Attribute("Text") == "нет подключения");
+        Assert.DoesNotContain(
             document.Descendants(presentation + "Button"),
             element =>
-                (string?)element.Attribute(x + "Name") == "RetrySteamButton" &&
-                (string?)element.Attribute("Content") == "Повторить");
+                (string?)element.Attribute(x + "Name") == "RetrySteamButton");
     }
 
     /// <summary>
@@ -544,7 +544,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         var xaml = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
 
         Assert.DoesNotContain("NetworkAddress", xaml, StringComparison.Ordinal);
-        Assert.Contains("RetrySteamButton", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("RetrySteamButton", xaml, StringComparison.Ordinal);
     }
 
     private static PeerViewModel NewPeer()

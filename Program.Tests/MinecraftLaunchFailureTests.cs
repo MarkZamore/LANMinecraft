@@ -14,6 +14,30 @@ public sealed class MinecraftLaunchFailureTests : IDisposable
     private const string Detail = "Возможно, предыдущий сеанс игры ещё не завершился или память занята другими приложениями. Попробуйте запустить игру ещё раз.";
     public void Dispose() => TempTree.Delete(_root);
 
+    [Fact]
+    public void FileAccessFailureRetainsNestedPathAndStackInLogButShowsShortMessage()
+    {
+        var deniedPath = Path.Combine(_root, "instance", "config", "log4j2.xml");
+        Exception error;
+        try
+        {
+            throw new UnauthorizedAccessException("Access to the path is denied.",
+                new IOException($"Cannot replace {deniedPath}"));
+        }
+        catch (UnauthorizedAccessException failure) { error = failure; }
+        var logPath = Path.Combine(_root, "launcher.log");
+        var logger = new Logger(logPath);
+        MinecraftLaunchFailure.Present(error, logger.Warn, (heading, detail) =>
+        {
+            var diagnostics = File.ReadAllText(logPath);
+            Assert.Contains(deniedPath, diagnostics, StringComparison.Ordinal);
+            Assert.Contains(nameof(UnauthorizedAccessException), diagnostics, StringComparison.Ordinal);
+            Assert.Contains(nameof(FileAccessFailureRetainsNestedPathAndStackInLogButShowsShortMessage), diagnostics, StringComparison.Ordinal);
+            Assert.Equal("Игра не запустилась", heading);
+            Assert.Equal(error.Message, detail);
+        });
+    }
+
     [Theory]
     [InlineData("OpenJDK warning: os::commit_memory(0x400000000, 17179869184, 0) failed; error=���� (DOS error/errno=1455)")]
     [InlineData("# Native memory allocation (mmap) failed to map 17179869184 bytes. Error detail: G1 virtual space")]

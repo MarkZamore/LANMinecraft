@@ -625,7 +625,7 @@
                 x:Name="FooterMotto">
                 <TextBlock Text="Лучше TLauncher" />
             </StackPanel>
-            <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions" Grid.ColumnSpan="1">
+            <Grid Grid.Row="0" Grid.Column="1" Margin="{StaticResource Gap.None}" x:Name="FooterActions" Grid.ColumnSpan="2">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -634,20 +634,12 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right2}" Grid.Column="0" />
                     <TextBlock x:Name="SteamPersonaText"
-                        Visibility="Collapsed"
+                        Text="нет подключения"
                         Grid.Column="1"
                         TextTrimming="CharacterEllipsis" />
-                    <Button Grid.Column="2"
-                        x:Name="RetrySteamButton"
-                        Content="Повторить"
-                        Margin="{StaticResource Gap.None}"
-                        MinWidth="{StaticResource Size.ButtonMin}"
-                        Click="RetrySteamButton_Click"
-                        Width="{StaticResource Size.ButtonMax}" />
                 </Grid>
                 <Button Grid.Column="1"
                     x:Name="SidePanelToggleButton"

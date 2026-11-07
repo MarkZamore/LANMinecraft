@@ -61,6 +61,7 @@ public partial class MainWindow : Window
     private WorldPlayerProfileService? _worldPlayerProfiles;
     private SteamClientService? _steamClient;
     private SteamIdentityService? _identityService;
+    private Task _steamConnectionTask = Task.CompletedTask;
     private PortableIdentityAdapterService? _identityAdapter;
     private PackInstanceService? _packInstances;
     private PackRuntimeService? _packRuntimes;
@@ -162,6 +163,11 @@ public partial class MainWindow : Window
             // instead of waiting for the next launch to notice.
             RefreshControlsPresetStatus();
             RefreshUi();
+            if (!_shutdownStarted && _steamClient is { } steam && _steamConnectionTask.IsCompleted &&
+                SteamRecoveryPolicy.ShouldConnect(steam.Status, IsIdentityBound))
+            {
+                _steamConnectionTask = ConnectSteamAndBindIdentityAsync();
+            }
         };
     }
 
@@ -242,7 +248,8 @@ public partial class MainWindow : Window
             _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
             _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             StartupTrace.Mark("сервисы");
-            await ConnectSteamAndBindIdentityAsync();
+            await (_steamConnectionTask = ConnectSteamAndBindIdentityAsync());
+            if (_shutdownStarted) return;
             StartupTrace.Mark("steam");
             _peerTransport = new SteamPeerTransport(_steamClient, _logger);
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
@@ -410,6 +417,7 @@ public partial class MainWindow : Window
         _lifetimeCts.Cancel();
         try
         {
+            await _steamConnectionTask;
             try { await Task.WhenAll(_launcherDataByPack.Values.ToArray()).WaitAsync(TimeSpan.FromSeconds(1)); }
             catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
@@ -1988,20 +1996,23 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Connects to Steam and binds this machine's account to the profile its
-    /// progress lives under. A closed or signed-out Steam is a status with a
-    /// "Повторить" button, never a startup failure - but nothing that needs an
+    /// progress lives under. A closed or signed-out Steam is retried by the
+    /// window timer, never a startup failure - but nothing that needs an
     /// identity (playing, transferring, diagnostics) runs until it succeeds.
     /// </summary>
     private async Task ConnectSteamAndBindIdentityAsync()
     {
-        if (_steamClient is null || _identityService is null) return;
-
-        var status = await _steamClient.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
-        ApplySteamStatus(status);
-        if (!status.IsReady) return;
+        if (_shutdownStarted || _steamClient is null || _identityService is null) return;
 
         try
         {
+            // Native initialization and joining the old callback pump can wait.
+            // Keep input and the first window responsive during every attempt.
+            var status = await Task.Run(() => _steamClient.StartAsync(_lifetimeCts.Token), _lifetimeCts.Token);
+            if (_shutdownStarted) return;
+            ApplySteamStatus(status);
+            if (!status.IsReady) return;
+
             var binding = _identityService.Bind();
             if (!binding.Bound)
             {
@@ -2012,7 +2023,7 @@ public partial class MainWindow : Window
             }
 
             ResolveAndPersistLocalIdentity(status.PersonaName);
-            // A retry after Steam was fixed has to bring the network up too;
+            // A recovered Steam session has to bring the network up too;
             // during startup this runs once more, and starting is idempotent.
             if (_startupComplete) await StartNetworkingAsync().ConfigureAwait(true);
         }
@@ -2021,17 +2032,22 @@ public partial class MainWindow : Window
             _logger?.Warn($"Identity binding failed: {ex.Message}");
             SetSteamMessage(ex.Message);
         }
+        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            _logger?.Warn($"Steam connection failed: {ex}");
+            SetSteamMessage("Не удалось подключиться к Steam. Лаунчер подключится автоматически, когда Steam будет доступен.");
+        }
         finally
         {
-            RefreshUi();
+            if (!_shutdownStarted) ApplySteamStatus(_steamClient.Status);
         }
     }
 
     private SteamAvailability _lastSteamAvailability = SteamAvailability.NotStarted;
 
     /// <summary>
-    /// Every change the Steam session makes on its own, including the ones no
-    /// button caused: a blip that takes Steam off its servers and back.
+    /// Every change the Steam session makes on its own, including server blips.
     /// </summary>
     private void OnSteamStatusChanged(SteamClientStatus status)
     {
@@ -2057,24 +2073,9 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Re-runs the whole Steam handshake after the player fixes Steam.</summary>
-    private async void RetrySteamButton_Click(object sender, RoutedEventArgs e)
-    {
-        RetrySteamButton.IsEnabled = false;
-        try
-        {
-            await ConnectSteamAndBindIdentityAsync();
-        }
-        finally
-        {
-            RetrySteamButton.IsEnabled = true;
-        }
-    }
-
     /// <summary>
-    /// Steam takes one spot in the footer: the name it signed in as, or - when
-    /// it could not - the button that tries again. The account number behind
-    /// the name is nothing a player has any use for.
+    /// Steam takes one spot in the footer: the connected name or an unavailable
+    /// status. Reconnection never requires an action in the launcher.
     /// </summary>
     private void ApplySteamStatus(SteamClientStatus status)
     {
@@ -2084,18 +2085,6 @@ public partial class MainWindow : Window
             SteamPersonaText.Text = status.PersonaName;
             SteamPersonaText.ToolTip = status.PersonaName;
             SteamPersonaText.Visibility = Visibility.Visible;
-            RetrySteamButton.Visibility = Visibility.Collapsed;
-        }
-        else if (status.Availability == SteamAvailability.Reconnecting && IsIdentityBound)
-        {
-            // Nothing to press: Steam is retrying by itself, and the launcher
-            // comes back with it. The name stays, the reason is on hover.
-            SteamPersonaText.Text = status.PersonaName;
-            SteamPersonaText.ToolTip = status.Message == SteamClientService.LoggedInElsewhereMessage
-                ? "Войдите в Steam снова: аккаунт открыт на другом компьютере."
-                : "Связь потеряна; подключение восстановится автоматически.";
-            SteamPersonaText.Visibility = Visibility.Visible;
-            RetrySteamButton.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -2105,23 +2094,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Puts the retry button in the footer with the reason as its tooltip. The
-    /// reason is also in the log; the window only shows what can be acted on.
+    /// Shows the same short disconnected status for every unavailable session.
     /// </summary>
     private void SetSteamMessage(string message)
     {
-        RetrySteamButton.ToolTip = string.IsNullOrWhiteSpace(message) ? null : _steamClient?.Status.Availability switch
-        {
-            SteamAvailability.SteamNotRunning => "Запустите Steam и повторите подключение.",
-            SteamAvailability.NotLoggedIn => "Войдите в Steam и повторите подключение.",
-            SteamAvailability.Starting => "Выполняется подключение к Steam.",
-            _ => "Проверьте Steam и повторите подключение."
-        };
-        RetrySteamButton.Visibility = Visibility.Visible;
-        SteamPersonaText.Visibility = Visibility.Collapsed;
+        SteamPersonaText.Text = "нет подключения";
+        SteamPersonaText.ToolTip = string.IsNullOrWhiteSpace(message) ? null : message;
+        SteamPersonaText.Visibility = Visibility.Visible;
     }
 
-    private bool IsIdentityBound => _identityService?.IsBound == true;
+    private bool IsIdentityBound => SteamRecoveryPolicy.HasMatchingIdentity(_steamClient?.Status, _identityService?.Binding);
 
     /// <summary>
     /// Settles who this machine plays as, now that Steam has answered.

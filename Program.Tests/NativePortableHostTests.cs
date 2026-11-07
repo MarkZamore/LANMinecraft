@@ -134,7 +134,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             helper = Process.GetProcessById(helperId);
             Assert.Equal("powershell", helper.ProcessName, ignoreCase: true);
             var powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-            NativePortableHostFixture.SamePath(powerShell, helper.MainModule!.FileName);
+            NativePortableHostFixture.SamePath(powerShell, NativePortableHostFixture.ProcessImagePath(helper));
             Assert.Equal(receipt.RootElement.GetProperty("helperStartUtc").GetDateTime(), helper.StartTime.ToUniversalTime());
             // GetProcessById stores only a PID. Retain its handle while alive:
             // ExitCode otherwise cannot be read after the helper has vanished.
@@ -178,7 +178,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 using var restartedProcess = Process.GetProcessById(restartedId);
                 if (!restartedProcess.HasExited)
                 {
-                    NativePortableHostFixture.SamePath(target, restartedProcess.MainModule!.FileName);
+                    NativePortableHostFixture.SamePath(target, NativePortableHostFixture.ProcessImagePath(restartedProcess));
                     Assert.False(restartedProcess.SafeHandle.IsInvalid);
                     fixture.TrackProcess(restartedProcess, target);
                     await restartedProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
@@ -217,7 +217,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             // The installation teardown can remove this image if Windows has
             // not released it yet.
             try { File.Delete(target); }
-            catch (IOException) { }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
         Assert.Equal(originalHash, NativePortableHostFixture.HashFile(fixture.Executable));
     }
@@ -496,7 +496,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
             {
                 using var process = Process.GetProcessById(owned.Id);
                 if (!process.HasExited && process.StartTime.ToUniversalTime() == owned.StartUtc &&
-                    string.Equals(NormalizePath(process.MainModule!.FileName), NormalizePath(owned.Executable), StringComparison.OrdinalIgnoreCase))
+                    string.Equals(NormalizePath(ProcessImagePath(process)), NormalizePath(owned.Executable), StringComparison.OrdinalIgnoreCase))
                 {
                     actions.Add("Kept bulky fixture files because an owned process is still running.");
                     File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
@@ -562,6 +562,22 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         return true;
     }
 
+    // Reading MainModule enumerates a process's not-yet-initialized loader and
+    // can fail with ERROR_PARTIAL_COPY immediately after starting PowerShell.
+    // Query the executable directly while retaining the exact process handle.
+    public static string ProcessImagePath(Process process)
+    {
+        var buffer = new char[32768];
+        var size = buffer.Length;
+        if (!QueryFullProcessImageName(process.SafeHandle, 0, buffer, ref size))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new string(buffer, 0, size);
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryFullProcessImageName(Microsoft.Win32.SafeHandles.SafeProcessHandle process, int flags, [Out] char[] name, ref int size);
+
     public void TrackProcess(Process process, string executable) => ownedProcesses.Add((process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(executable)));
 
     public void StopOwnedNativeProcesses(string executable)
@@ -573,7 +589,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
                 try
                 {
                     if (!process.HasExited && process.StartTime.ToUniversalTime() >= createdUtc.AddSeconds(-1) &&
-                        string.Equals(NormalizePath(process.MainModule!.FileName), NormalizePath(executable), StringComparison.OrdinalIgnoreCase))
+                        string.Equals(NormalizePath(ProcessImagePath(process)), NormalizePath(executable), StringComparison.OrdinalIgnoreCase))
                     {
                         process.Kill(entireProcessTree: true);
                         Assert.True(process.WaitForExit(10000), "The owned native restart fixture did not stop.");
@@ -816,6 +832,7 @@ internal static class NativeHostResources
     }
 
     private delegate bool ResourceLanguage(IntPtr module, IntPtr type, IntPtr name, ushort language, IntPtr parameter);
+
     [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr LoadLibraryEx(string name, IntPtr file, uint flags);
     [DllImport("kernel32.dll", EntryPoint = "FindResourceW", SetLastError = true)]

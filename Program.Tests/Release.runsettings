@@ -29,6 +29,9 @@
       FullyQualifiedName=Minecraft.Tests.PeerConnectionRouterTests.AConnectionFromANonFriend_IsRefusedBeforeTheFirstFrame|
       FullyQualifiedName=Minecraft.Tests.SteamIdentityServiceTests.BindingIsDeterministic_AndFollowsTheSignedInAccount|
       FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.WhenSteamDisappears_TheSessionEndsAndRetryReconnects|
+      FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.FailedNativeHandshake_AllowsTheNextAutomaticCheckToConnect|
+      FullyQualifiedName=Minecraft.Tests.SteamRecoveryPolicyTests.AutomaticChecks_FollowLateStartSignOutAndAnotherAccount|
+      FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.SteamStatus_StaysNextToSteamWhileNewsStaysAtTheRight|
       FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.UnconfirmedFalseProcessHint_AuthenticatedApiStartsStaysReadyAndRetryIsANoop|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.MissingMod_IsDownloadedVerifiedAndInstalled|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.SupersededBuild_IsReplacedOnlyAfterVerifiedInstall|
@@ -240,6 +243,7 @@
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.UnsupportedFreshRequiredFeatureRefusesTheInstalledStartupVersion|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.ChunkedOversizeManifestKeepsTheInstalledVersionWithoutDownloadingPayloads|
       FullyQualifiedName=Minecraft.Tests.MinecraftLaunchFailureTests.NativeStartupRefusalShowsOnlyFriendlyTextAndLogsFullDiagnosticsFirst|
+      FullyQualifiedName=Minecraft.Tests.MinecraftLaunchFailureTests.FileAccessFailureRetainsNestedPathAndStackInLogButShowsShortMessage|
       FullyQualifiedName=Minecraft.Tests.MinecraftLaunchFailureTests.UnrelatedFailureIsNotReclassifiedByOldLogOrGenericVmExit|
       FullyQualifiedName=Minecraft.Tests.MinecraftLaunchFailureTests.OnlyNativeMemoryStartCodesUseTheFriendlyDialog|
       FullyQualifiedName=Minecraft.Tests.MinecraftLaunchFailureTests.ActualCmlCompositionRestoresRelease435HeapPolicy|

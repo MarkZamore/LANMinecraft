@@ -44,7 +44,7 @@ internal static class MinecraftLaunchFailure
 
     internal static void Present(Exception error, Action<string> log, Action<string, string> show)
     {
-        log(error.Message);
+        log(error.ToString());
         var message = ForUser(error);
         show(message.Heading, message.Detail);
     }
