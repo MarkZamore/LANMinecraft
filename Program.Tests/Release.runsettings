@@ -69,6 +69,8 @@
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterAsmPackagingTests.BundledAsm_IsPrivateAndWorksWithOrWithoutTheLoadersAsm|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterExtractionTests.UpdatingWhilePreviousJarIsInUse_ExtractsNewBytesWithoutReplacingTheOldJar|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterExtractionTests.CorruptedCurrentJarIsRepairedAndDoesNotTouchLegacyJar|
+      FullyQualifiedName=Minecraft.Tests.GameWindowPresentationTests.FirstVisibleWindowHasItsNameAndIcons_WithoutChangingHiddenOrFailedCreation|
+      FullyQualifiedName=Minecraft.Tests.GameWindowPresentationTests.VerifiedRuntimeAssetsTakePriority_AndSourcesAreUnchanged|
       FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterTests.Native_title_producer_keeps_only_pack_name_across_simulated_lifecycle_without_changing_connections|
       FullyQualifiedName=Minecraft.Tests.WindowTitleAdapterCacheTests.TitleOnlyDegradedState_IsRetriedEvenWhenEveryFileAndFingerprintMatches|
       FullyQualifiedName=Minecraft.Tests.PackDisplayNamesResolverTests.RenamingPublishedContentUpdatesEveryDisplayWithoutChangingProductionIdentity|
