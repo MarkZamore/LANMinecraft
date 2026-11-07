@@ -28,6 +28,7 @@ public sealed class PeerNoticeOverlayTests
     [Fact]
     public void Toasts_StayVisibleAboveAMockWhenLauncherMinimizesWithoutTakingFocus()
     {
+        foreach (var gameRunning in new[] { true, false })
         WindowCanvasTests.OnAStaThread(() =>
         {
             var owner = WindowCanvasTests.LoadWindow();
@@ -53,10 +54,15 @@ public sealed class PeerNoticeOverlayTests
                     (IntPtr handle, IntPtr _, ref NativeRect rectangle, IntPtr data) => { monitors.Add(handle); return true; }, IntPtr.Zero));
                 var target = monitors[^1];
                 Assert.True(PeerNoticeNative.TryWorkArea(target, out var area));
+                Assert.True(PeerNoticeNative.TryWorkArea(monitors[0], out var ownerArea));
+                Assert.True(SetWindowPos(new WindowInteropHelper(owner).Handle, IntPtr.Zero,
+                    (int)ownerArea.Left, (int)ownerArea.Top, 400, 300, 0x0010));
                 Assert.True(SetWindowPos(mockHandle, new IntPtr(-1), (int)area.Left, (int)area.Top,
                     (int)area.Width, (int)area.Height, 0x0010));
                 var foregroundBefore = PeerNoticeNative.GetForegroundWindow();
-                service = new PeerNoticeService(owner, null, () => mockHandle);
+                var gameHandle = gameRunning ? mockHandle : IntPtr.Zero;
+                service = new PeerNoticeService(owner, null, () => gameHandle);
+                if (!gameRunning) area = ownerArea;
                 service.Show(new PeerNotice("Друг", "Зашёл в сборку"));
                 Frame(60);
                 var first = Assert.Single(Notices());
@@ -76,6 +82,16 @@ public sealed class PeerNoticeOverlayTests
                 Assert.InRange(Math.Abs(bounds.Left - area.Left - gap), 0, 1);
                 Assert.InRange(Math.Abs(area.Bottom - bounds.Bottom - gap), 0, 1);
                 Assert.True(IsAbove(firstHandle, mockHandle));
+
+                // Already visible toasts must return to the launcher when the game closes,
+                // even while another application keeps desktop focus.
+                gameHandle = IntPtr.Zero;
+                Frame(350);
+                Assert.True(PeerNoticeNative.TryBounds(firstHandle, out var returnedBounds));
+                Assert.True(ownerArea.Contains(returnedBounds));
+                Assert.Equal(PeerNoticeNative.SelectMonitor(IntPtr.Zero, new WindowInteropHelper(owner).Handle),
+                    PeerNoticeNative.SelectMonitor(new IntPtr(-123), new WindowInteropHelper(owner).Handle));
+                Assert.Equal(IntPtr.Zero, PeerNoticeNative.FindGameWindow([]));
 
                 owner.WindowState = WindowState.Minimized;
                 Frame(30);

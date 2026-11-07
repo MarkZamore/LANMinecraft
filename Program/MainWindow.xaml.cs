@@ -255,7 +255,7 @@ public partial class MainWindow : Window
             _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
             _peerDirectory = new SteamPeerDirectory(_steamClient, _peerTransport, _logger);
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
-            _peerNotices = new PeerNoticeService(this, _logger);
+            _peerNotices = new PeerNoticeService(this, _logger, () => _minecraft?.GetNoticeWindow() ?? IntPtr.Zero);
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
             _packRuntimes = new PackRuntimeService(_paths, _logger);

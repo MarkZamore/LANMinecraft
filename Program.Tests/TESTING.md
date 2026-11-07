@@ -75,6 +75,11 @@ dotnet test Program.Tests -c Debug --filter FullyQualifiedName~MemorySizingTests
 
 ## Измерение интерфейса настоящими контролами
 
+`PeerNoticeOverlayTests` проверяет выбор дисплея окна игры или лаунчера, возврат уже
+открытых уведомлений к лаунчеру после закрытия игры, недействительный оконный
+дескриптор и сохранение фокуса. Нативная проверка использует доступные мониторы;
+на ПК с одним дисплеем она не заменяет ручную проверку двух дисплеев с разным DPI.
+
 ```powershell
 dotnet run --project tools/MeasureLayout -- . current
 dotnet run --project tools/MeasureLayout -- . library --library-only
