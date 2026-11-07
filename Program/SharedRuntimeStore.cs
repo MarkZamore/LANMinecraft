@@ -45,9 +45,8 @@ public static class SharedRuntimeStore
     /// <remarks>
     /// A measured restriction rather than a cautious one. Everything under
     /// <c>assets</c> and <c>runtime</c> is fetched by name and reported as a
-    /// file of the version, so a state lists every one of them and "unnamed"
-    /// really does mean unused - four files out of five thousand on a live
-    /// install.
+    /// file of the version. Flat legacy copies are derived from its owned
+    /// asset index as well; CmlLib reports their objects but not these outputs.
     ///
     /// <c>libraries</c> and <c>versions</c> are not like that, and this is the
     /// second time that has been proved on somebody's install. What a loader
@@ -125,7 +124,7 @@ public static class SharedRuntimeStore
             // Unreadable is not empty. A state that will not parse is a build
             // whose needs are unknown, and guessing them as "none" is how a
             // sweep deletes the game out from under a perfectly good install.
-            if (!TryReadLiveFiles(statePath, anchor, live)) return 0;
+            if (!TryReadLiveFiles(statePath, anchor, live, Assets(paths), Resources(paths))) return 0;
         }
 
         // No builds at all is a different thing entirely, and it is the case
@@ -175,7 +174,7 @@ public static class SharedRuntimeStore
     /// Adds one build's files to the live set. False when the state cannot be
     /// read at all, which stops the sweep rather than under-counting it.
     /// </summary>
-    private static bool TryReadLiveFiles(string statePath, string anchor, HashSet<string> live)
+    private static bool TryReadLiveFiles(string statePath, string anchor, HashSet<string> live, string assets, string resources)
     {
         try
         {
@@ -193,14 +192,19 @@ public static class SharedRuntimeStore
                 var full = Path.GetFullPath(
                     Path.Combine(anchor, relative.Replace('/', Path.DirectorySeparatorChar)));
                 live.Add(full);
+                var indexes = Path.GetFullPath(Path.Combine(assets, "indexes"));
+                if (string.Equals(Path.GetDirectoryName(full), indexes, StringComparison.OrdinalIgnoreCase) && File.Exists(full))
+                    foreach (var copy in DerivedAssetLayout.Read(full, assets, resources))
+                        live.Add(copy.Destination);
             }
             return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException)
         {
             return false;
         }
     }
+
 
     private static string[] EnumerateFilesSafe(string root)
     {

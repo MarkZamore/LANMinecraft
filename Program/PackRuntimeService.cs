@@ -143,6 +143,7 @@ public sealed class PackRuntimeService : IDisposable
             ValidateSourceClientJarState(sourceClientJar, state) &&
             ValidateState(runtimeRoot, state))
         {
+            RestoreDerivedAssets(state, token);
             CleanupUntrackedRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(Anchor, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
@@ -541,7 +542,11 @@ public sealed class PackRuntimeService : IDisposable
         if (!string.IsNullOrWhiteSpace(assetId))
         {
             var index = Path.Combine(launcher.MinecraftPath.Assets, "indexes", assetId + ".json");
-            if (File.Exists(index)) files.Add(Path.GetFullPath(index));
+            if (File.Exists(index))
+            {
+                DerivedAssetLayout.Restore(index, launcher.MinecraftPath.Assets, launcher.MinecraftPath.Resource, token);
+                files.Add(Path.GetFullPath(index));
+            }
         }
 
         foreach (var version in profile.EnumerateToParent())
@@ -563,6 +568,20 @@ public sealed class PackRuntimeService : IDisposable
         var localManifest = Path.Combine(launcher.MinecraftPath.Versions, "version_manifest_v2.json");
         if (File.Exists(localManifest)) files.Add(localManifest);
         return files;
+    }
+
+    private void RestoreDerivedAssets(RuntimeState state, CancellationToken token)
+    {
+        var indexes = Path.GetFullPath(Path.Combine(SharedRuntimeStore.Assets(_paths), "indexes"));
+        var repaired = 0;
+        foreach (var relative in state.Files.Keys)
+        {
+            var path = ResolveStatePath(Anchor, relative);
+            if (!string.Equals(Path.GetDirectoryName(path), indexes, StringComparison.OrdinalIgnoreCase) ||
+                !path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+            repaired += DerivedAssetLayout.Restore(path, SharedRuntimeStore.Assets(_paths), SharedRuntimeStore.Resources(_paths), token);
+        }
+        if (repaired != 0) _logger.Info($"Restored {repaired} flat asset file(s) from verified shared objects without downloads.");
     }
 
     /// <summary>
