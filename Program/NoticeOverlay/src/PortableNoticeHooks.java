@@ -17,6 +17,7 @@ public final class PortableNoticeHooks {
     static final long LIFE_MS = 7000;
     private static volatile Notice[] notices = new Notice[0];
     static volatile Properties style = new Properties();
+    static volatile double displayScale = 1;
     private static volatile long lastFrame;
     private static volatile String backend = "waiting";
     private static volatile int renderedCount;
@@ -88,7 +89,9 @@ public final class PortableNoticeHooks {
                     long stamp = Files.getLastModifiedTime(snapshot).toMillis();
                     long length = Files.size(snapshot);
                     if (stamp != previousStamp || length != previousLength) {
-                        Notice[] candidate = parse(readProperties(snapshot), System.currentTimeMillis());
+                        Properties values = readProperties(snapshot);
+                        Notice[] candidate = parse(values, System.currentTimeMillis());
+                        displayScale = parseScale(values);
                         notices = candidate;
                         previousStamp = stamp;
                         previousLength = length;
@@ -128,6 +131,13 @@ public final class PortableNoticeHooks {
             if (created <= now && now - created <= LIFE_MS) result.add(new Notice(title, body, created));
         }
         return result.toArray(new Notice[result.size()]);
+    }
+
+    static double parseScale(Properties properties) {
+        try {
+            double value = Double.parseDouble(properties.getProperty("dpiScale", "1"));
+            return !Double.isNaN(value) && !Double.isInfinite(value) && value >= 0.5 && value <= 4 ? value : 1;
+        } catch (NumberFormatException invalid) { return 1; }
     }
 
     private static Properties readProperties(Path path) throws Exception {

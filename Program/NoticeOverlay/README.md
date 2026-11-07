@@ -50,6 +50,13 @@ are 32 KiB, 160 title characters, 320 body characters, and three notices.
 Messages expire after seven seconds. Malformed or incomplete replacements keep
 the last valid snapshot until its own expiry.
 
+`dpiScale` is the effective DPI of the verified foreground game window divided
+by 96. Windows LWJGL 2 always reports a pixel scale of 1; the launcher supplies
+the missing window scale and refreshes it every 500 ms while notices are active.
+The agent reads it off the render thread and uses the greater of the native API
+scale and this value, so GLFW scaling is not multiplied twice. Old snapshots and
+invalid values use 1. A background or reused process cannot supply another DPI.
+
 Optional UTF-8 `style.properties` supplies `bgArgb`, `borderArgb`, `textArgb`,
 `mutedArgb` (eight-digit ARGB hex), `fontFamily`, `fontSize`, `width`, `gap`,
 `padding`, `radius`, `riseMs`, and `fadeMs`. The launcher derives these values

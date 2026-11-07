@@ -99,6 +99,15 @@ public class LegacyNoticeOverlayProbe {
         Files.write(directory.resolve("notices.properties"),text.getBytes(StandardCharsets.UTF_8));
         Pointer previousForeground=USER32.GetForegroundWindow();
         boolean fullscreen=Arrays.asList(args).contains("fullscreen");
+        boolean hidden=Arrays.asList(args).contains("hidden-parent");
+        boolean dpiChange=Arrays.asList(args).contains("dpi-change");
+        java.awt.Frame parent=null;
+        if(hidden) {
+            require(!fullscreen,"Hidden parent cannot be fullscreen");
+            parent=new java.awt.Frame();parent.setUndecorated(true);parent.setFocusableWindowState(false);
+            java.awt.Canvas canvas=new java.awt.Canvas();canvas.setSize(W,H);parent.add(canvas);
+            parent.setSize(W,H);parent.addNotify();parent.validate();Display.setParent(canvas);
+        }
         if(fullscreen) {Display.setDisplayMode(Display.getDesktopDisplayMode());W=Display.getDisplayMode().getWidth();H=Display.getDisplayMode().getHeight();Display.setFullscreen(true);}
         else {Display.setDisplayMode(new DisplayMode(W,H));Display.setLocation(-32000,-32000);}
         Display.setTitle("LANMinecraft legacy notification rendering test");
@@ -108,6 +117,7 @@ public class LegacyNoticeOverlayProbe {
             require(!fullscreen||Display.isFullscreen(),"Legacy fullscreen flag missing");
             Thread.sleep(100);
             String foreground=pointer(USER32.GetForegroundWindow());
+            if(hidden) require(foreground.equals(pointer(previousForeground)),"Hidden probe activated a window");
             System.out.println("fullscreen="+fullscreen+" monitor="+Display.isFullscreen()+" foregroundBefore="+pointer(previousForeground)+" foregroundAfterInit="+foreground);
             System.out.println("GL_VERSION="+GL11.glGetString(GL11.GL_VERSION));
             texture=GL11.glGenTextures(); GL11.glBindTexture(GL11.GL_TEXTURE_2D,texture);
@@ -118,11 +128,14 @@ public class LegacyNoticeOverlayProbe {
             vao=GL30.glGenVertexArrays(); array=GL15.glGenBuffers();
             unpack=GL15.glGenBuffers();GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER,unpack);GL15.glBufferData(GL21.GL_PIXEL_UNPACK_BUFFER,65536,GL15.GL_STATIC_DRAW);
             int changed=0;
+            int normalPixels=0;
             for(int frame=0;frame<80;frame++) {
                 clearDefault();awkwardState();Map<String,String> before=state();
                 Display.swapBuffers();
                 Map<String,String> after=state();require(before.equals(after),"GL state differs at frame"+frame+" before="+before+" after="+after);
                 int error=GL11.glGetError();require(error==0,"GL error "+error+" at frame "+frame);
+                if(frame==28) normalPixels=capture(directory.resolve("normal-dpi.png"));
+                if(frame==30&&dpiChange) Files.write(directory.resolve("notices.properties"),(text+"dpiScale=1.5\n").getBytes(StandardCharsets.UTF_8));
                 if(frame==60) changed=capture(directory.resolve("rendered.png"));
                 Thread.sleep(25);
             }
@@ -132,8 +145,10 @@ public class LegacyNoticeOverlayProbe {
             require(System.currentTimeMillis()-Long.parseLong(heartbeat.getProperty("timestampUnixMs"))<1500,"No recent successful frame heartbeat");
             require(Integer.parseInt(heartbeat.getProperty("renderedCount"))==1,"Heartbeat did not acknowledge the rendered notice");
             require(changed>3000 && changed<W*H/2,"Overlay missing from captured frame: changed pixels="+changed);
+            if(dpiChange) require(changed>normalPixels*1.8&&changed<normalPixels*2.7,"Monitor DPI was not applied: normal="+normalPixels+" scaled="+changed);
+            System.out.println("DPI normalPixels="+normalPixels+" scaledPixels="+changed);
             System.out.println("PASS pixels="+changed+" foreground="+foreground+" stateRestored=true");
-        } finally { Display.destroy();USER32.SetForegroundWindow(previousForeground); }
+        } finally { Display.destroy();if(parent!=null)parent.dispose();if(!hidden)USER32.SetForegroundWindow(previousForeground); }
     }
 }
 

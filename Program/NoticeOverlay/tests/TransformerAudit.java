@@ -18,7 +18,20 @@ public final class TransformerAudit {
             throw new AssertionError("Unrelated classes must be untouched");
         }
         snapshotContracts();
+        scaleContracts();
         System.out.println("Presentation transformer contracts passed (LWJGL2, LWJGL3, native refusal, unrelated class).");
+    }
+
+    private static void scaleContracts() {
+        Properties values = new Properties();
+        if (PortableNoticeHooks.parseScale(values) != 1) throw new AssertionError("Old snapshots need scale 1");
+        values.setProperty("dpiScale", "1.5");
+        if (PortableNoticeHooks.parseScale(values) != 1.5) throw new AssertionError("Monitor DPI was lost");
+        for (String invalid : new String[] { "NaN", "Infinity", "-1", "0", "5", "invalid" }) {
+            values.setProperty("dpiScale", invalid);
+            if (PortableNoticeHooks.parseScale(values) != 1) throw new AssertionError("Invalid DPI accepted: " + invalid);
+        }
+        System.out.println("Monitor DPI contracts passed (legacy default, fractional DPI, invalid input).");
     }
 
     private static void snapshotContracts() {

@@ -23,13 +23,15 @@ public sealed class GameNoticeOverlayService
     private readonly Func<int> _foregroundProcess;
     private readonly Func<int, long?> _processStartTicks;
     private readonly Func<Stream> _agentResource;
+    private readonly Func<int, double> _displayScale;
     private IReadOnlyDictionary<string, string> _style = new Dictionary<string, string>();
 
     public GameNoticeOverlayService(AppPaths paths, Logger logger)
         : this(paths, logger, () => DateTimeOffset.UtcNow, ForegroundProcessId, ProcessStartTicks) { }
 
     internal GameNoticeOverlayService(AppPaths paths, Logger logger, Func<DateTimeOffset> now,
-        Func<int> foregroundProcess, Func<int, long?> processStartTicks, Func<Stream>? agentResource = null)
+        Func<int> foregroundProcess, Func<int, long?> processStartTicks, Func<Stream>? agentResource = null,
+        Func<int, double>? displayScale = null)
     {
         _paths = paths;
         _logger = logger;
@@ -37,6 +39,7 @@ public sealed class GameNoticeOverlayService
         _foregroundProcess = foregroundProcess;
         _processStartTicks = processStartTicks;
         _agentResource = agentResource ?? OpenAgentResource;
+        _displayScale = displayScale ?? ForegroundDisplayScale;
         _paths.EnsureUnderRoot(Root);
         AdoptSessions();
     }
@@ -94,7 +97,9 @@ public sealed class GameNoticeOverlayService
                 session.Notices.Add(new QueuedNotice(notice, now));
                 try
                 {
+                    session.DisplayScale = ValidScale(_displayScale(processId));
                     WriteSnapshot(session);
+                    session.ScaleTimer ??= new System.Threading.Timer(_ => RefreshDisplayScale(session.Directory), null, 500, 500);
                     return true;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -121,7 +126,11 @@ public sealed class GameNoticeOverlayService
 
     private void WriteSnapshot(OverlaySession session)
     {
-        var values = new Dictionary<string, string> { ["count"] = session.Notices.Count.ToString(CultureInfo.InvariantCulture) };
+        var values = new Dictionary<string, string>
+        {
+            ["count"] = session.Notices.Count.ToString(CultureInfo.InvariantCulture),
+            ["dpiScale"] = session.DisplayScale.ToString(CultureInfo.InvariantCulture)
+        };
         for (var index = 0; index < session.Notices.Count; index++)
         {
             var item = session.Notices[index];
@@ -131,6 +140,47 @@ public sealed class GameNoticeOverlayService
             values[prefix + "createdUnixMs"] = item.Created.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
         }
         WriteProperties(Path.Combine(session.Directory, "notices.properties"), values);
+    }
+
+    // LWJGL 2 reports a pixel scale of 1 on Windows, including DPI-aware
+    // windows on scaled monitors. Sample the proven foreground window rather
+    // than the launcher monitor or a Minecraft GUI-scale setting.
+    private static double ForegroundDisplayScale(int processId)
+    {
+        var window = PeerNoticeNative.GetForegroundWindow();
+        _ = GetWindowThreadProcessId(window, out var actualId);
+        return actualId == processId ? PeerNoticeNative.DpiScale(window) : 1;
+    }
+
+    private static double ValidScale(double scale) => double.IsFinite(scale) && scale is >= 0.5 and <= 4 ? scale : 1;
+
+    internal void RefreshDisplayScale(string directory)
+    {
+        lock (_gate)
+        {
+            if (!_sessions.TryGetValue(directory, out var session)) return;
+            if (session.Notices.All(item => _now() - item.Created >= Lifetime))
+            {
+                session.ScaleTimer?.Dispose();
+                session.ScaleTimer = null;
+                return;
+            }
+            if (session.ProcessId != _foregroundProcess() ||
+                _processStartTicks(session.ProcessId) != session.StartedUtcTicks) return;
+            var scale = ValidScale(_displayScale(session.ProcessId));
+            if (scale == session.DisplayScale) return;
+            try
+            {
+                var previousScale = session.DisplayScale;
+                session.DisplayScale = scale;
+                try { WriteSnapshot(session); }
+                catch { session.DisplayScale = previousScale; throw; }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn($"Could not refresh the in-game notice DPI: {ex.Message}");
+            }
+        }
     }
 
     private string ExtractAgent()
@@ -180,6 +230,8 @@ public sealed class GameNoticeOverlayService
         lock (_gate)
         {
             _sessions.Remove(session.Directory);
+            session.ScaleTimer?.Dispose();
+            session.ScaleTimer = null;
             session.Notices.Clear();
             try
             {
@@ -316,6 +368,8 @@ public sealed class GameNoticeOverlayService
         internal string Directory { get; } = directory;
         internal int ProcessId { get; set; } = processId;
         internal long StartedUtcTicks { get; set; } = startedUtcTicks;
+        internal double DisplayScale { get; set; } = 1;
+        internal System.Threading.Timer? ScaleTimer { get; set; }
         internal List<QueuedNotice> Notices { get; } = [];
     }
 

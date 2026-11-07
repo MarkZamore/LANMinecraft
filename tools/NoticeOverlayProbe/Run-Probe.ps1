@@ -1,10 +1,14 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param(
-    [ValidateSet('2.9.3', '3.2.2', '3.3.3', '3.4.1')][string]$Version = '3.3.3',
+    [ValidateSet('2.9.3', '2.9.4+legacyfabric.17', '3.2.2', '3.3.3', '3.4.1')][string]$Version = '3.3.3',
     [string]$Repository = '',
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$Agent = '',
+    [string]$OutputDirectory = '',
+    [string]$LibrariesRoot = '',
+    [switch]$HiddenLegacyWindow,
+    [switch]$TestDpiChange,
     [switch]$Fullscreen,
     [switch]$DownloadLegacy,
     [switch]$CompileOnly,
@@ -23,6 +27,8 @@ if ($Agent -and -not (Test-Path -LiteralPath $Agent)) { throw "Build the notific
 
 $artifacts = Join-Path $Repository 'artifacts\NoticeOverlayProbe'
 $libraries = Join-Path $Repository 'Minecraft\Launcher\Shared\libraries'
+if ($OutputDirectory) { $artifacts = [IO.Path]::GetFullPath($OutputDirectory) }
+if ($LibrariesRoot) { $libraries = [IO.Path]::GetFullPath($LibrariesRoot) }
 $session = Join-Path $artifacts ('session-' + $Version + $(if ($Fullscreen) { '-fullscreen' } else { '' }))
 $probeTemp = Join-Path $session 'temp'
 $probeProfile = Join-Path $session 'profile'
@@ -63,6 +69,16 @@ try {
         }
         $classpath += Join-Path $downloadDirectory $dependencies[0].Name
         $nativeJars += Join-Path $downloadDirectory $dependencies[1].Name
+    } elseif ($Version -eq '2.9.4+legacyfabric.17') {
+        $main = 'LegacyNoticeOverlayProbe'
+        $classpath += Join-Path $libraries "org/lwjgl/lwjgl/lwjgl/$Version/lwjgl-$Version.jar"
+        $nativeJars += Join-Path $libraries "org/lwjgl/lwjgl/lwjgl-platform/$Version/lwjgl-platform-$Version-natives-windows.jar"
+        foreach ($dependency in @(
+            @{ File=$classpath[-1]; Hash='cce6470777f6503c8d6402f7998bd37620c06acde959cb96af2aa270ec65aff1' },
+            @{ File=$nativeJars[-1]; Hash='4fa80828f9b61aabcda9ad383eae806cfdcc9433a150c07aa963e790a269476b' }
+        )) {
+            if ((Get-FileHash -LiteralPath $dependency.File -Algorithm SHA256).Hash -ne $dependency.Hash) { throw 'Legacy Fabric probe input SHA mismatch.' }
+        }
     } else {
         foreach ($module in @('lwjgl', 'lwjgl-glfw', 'lwjgl-opengl')) {
             $name = if ($Version -eq '3.4.1' -and $module -eq 'lwjgl') { "$module-$Version-unsafe.jar" } else { "$module-$Version.jar" }
@@ -112,6 +128,8 @@ try {
     }
     $arguments += @('-cp', (($classpath + @($classes)) -join ';'), $main)
     if ($Fullscreen) { $arguments += 'fullscreen' }
+    if ($HiddenLegacyWindow) { $arguments += 'hidden-parent' }
+    if ($TestDpiChange) { $arguments += 'dpi-change' }
     & $java @arguments 2>&1 | Tee-Object -FilePath (Join-Path $session 'probe.log')
     if ($LASTEXITCODE -ne 0) { throw "Notification rendering probe failed for LWJGL $Version." }
 } finally {
