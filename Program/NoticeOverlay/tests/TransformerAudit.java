@@ -12,6 +12,7 @@ public final class TransformerAudit {
     public static void main(String[] arguments) {
         audit("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", false);
         audit("org/lwjgl/opengl/Display", "swapBuffers", "()V", false);
+        audit("org/lwjgl/sdl/SDLVideo", "SDL_GL_SwapWindow", "(J)Z", false);
         audit("org/lwjgl/glfw/GLFW", "glfwSwapBuffers", "(J)V", true);
         byte[] unrelated = fixture("example/Unrelated", "swapBuffers", "()V", false);
         if (new PortableNoticeTransformer().transform(null, "example/Unrelated", null, null, unrelated) != null) {
@@ -19,7 +20,7 @@ public final class TransformerAudit {
         }
         snapshotContracts();
         scaleContracts();
-        System.out.println("Presentation transformer contracts passed (LWJGL2, LWJGL3, native refusal, unrelated class).");
+        System.out.println("Presentation transformer contracts passed (LWJGL2, LWJGL3, SDL3, native refusal, unrelated class).");
     }
 
     private static void scaleContracts() {
@@ -46,6 +47,13 @@ public final class TransformerAudit {
             throw new AssertionError("Unicode notification was not preserved");
         }
         if (PortableNoticeHooks.parse(data, now + 7001).length != 0) throw new AssertionError("Notification did not expire");
+        data.setProperty("0.createdUnixMs", Long.toString(now + 100));
+        if (PortableNoticeHooks.parse(data, now).length != 1) throw new AssertionError("A clock tick of skew must not permanently drop the notice");
+        data.setProperty("0.createdUnixMs", Long.toString(now + 2001));
+        try {
+            PortableNoticeHooks.parse(data, now);
+            throw new AssertionError("Unbounded future timestamp accepted");
+        } catch (IllegalArgumentException expected) { }
         data.setProperty("count", "4");
         try {
             PortableNoticeHooks.parse(data, now);
@@ -89,7 +97,10 @@ public final class TransformerAudit {
             (nativeMethod ? Opcodes.ACC_NATIVE : 0), method, signature, null, null);
         if (!nativeMethod) {
             target.visitCode();
-            target.visitInsn(Opcodes.RETURN);
+            if (signature.endsWith("Z")) {
+                target.visitInsn(Opcodes.ICONST_1);
+                target.visitInsn(Opcodes.IRETURN);
+            } else target.visitInsn(Opcodes.RETURN);
             target.visitMaxs(0, 0);
         }
         target.visitEnd();

@@ -37,6 +37,7 @@ public sealed class NoticeOverlayAgentTests
     [Theory]
     [InlineData("org.lwjgl.glfw.GLFW", "glfwSwapBuffers", true)]
     [InlineData("org.lwjgl.opengl.Display", "swapBuffers", false)]
+    [InlineData("org.lwjgl.sdl.SDLVideo", "SDL_GL_SwapWindow", true)]
     public async Task SwapHook_WorksInAnIsolatedLoader_AndCannotBreakPresentationWhenGlIsUnavailable(
         string target, string method, bool hasWindow)
     {
@@ -50,12 +51,13 @@ public sealed class NoticeOverlayAgentTests
                 await input.CopyToAsync(output);
             var package = target[..target.LastIndexOf('.')];
             var name = target[(target.LastIndexOf('.') + 1)..];
+            var sdl = target == "org.lwjgl.sdl.SDLVideo";
             var source = Path.Combine(root, name + ".java");
             await File.WriteAllTextAsync(source, $$"""
                 package {{package}};
                 public class {{name}} {
                     public static int swaps;
-                    public static void {{method}}({{(hasWindow ? "long window" : "")}}) { swaps++; }
+                    public static {{(sdl ? "boolean" : "void")}} {{method}}({{(hasWindow ? "long window" : "")}}) { swaps++; {{(sdl ? "return true;" : "")}} }
                 }
                 """);
             var probe = Path.Combine(root, "OverlayProbe.java");
@@ -83,7 +85,7 @@ public sealed class NoticeOverlayAgentTests
                 "-Dlanminecraft.notice.directory=" + root, "-cp", classes, "OverlayProbe",
                 classes, target, method, hasWindow ? "true" : "false");
             Assert.Contains("Swap succeeded in isolated loader", outputText, StringComparison.Ordinal);
-            Assert.Contains("[LauncherNotice] Presentation hook installed: " + (hasWindow ? "lwjgl3" : "lwjgl2"),
+            Assert.Contains("[LauncherNotice] Presentation hook installed: " + (sdl ? "sdl3" : hasWindow ? "lwjgl3" : "lwjgl2"),
                 outputText, StringComparison.Ordinal);
             Assert.DoesNotContain("IllegalClassFormatException", outputText, StringComparison.Ordinal);
         }

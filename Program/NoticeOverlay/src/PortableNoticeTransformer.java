@@ -14,8 +14,9 @@ public final class PortableNoticeTransformer implements ClassFileTransformer {
     @Override
     public byte[] transform(ClassLoader loader, String name, Class<?> previous,
                             ProtectionDomain domain, byte[] bytes) {
-        if (!"org/lwjgl/glfw/GLFW".equals(name) && !"org/lwjgl/opengl/Display".equals(name)) return null;
-        final boolean modern = "org/lwjgl/glfw/GLFW".equals(name);
+        final boolean sdl = "org/lwjgl/sdl/SDLVideo".equals(name);
+        if (!sdl && !"org/lwjgl/glfw/GLFW".equals(name) && !"org/lwjgl/opengl/Display".equals(name)) return null;
+        final boolean modern = sdl || "org/lwjgl/glfw/GLFW".equals(name);
         final int[] changes = { 0 };
         try {
             ClassReader reader = new ClassReader(bytes);
@@ -25,7 +26,7 @@ public final class PortableNoticeTransformer implements ClassFileTransformer {
                 public MethodVisitor visitMethod(int access, String method, String descriptor,
                                                  String signature, String[] exceptions) {
                     MethodVisitor target = super.visitMethod(access, method, descriptor, signature, exceptions);
-                    boolean matches = modern
+                    boolean matches = sdl ? "SDL_GL_SwapWindow".equals(method) && "(J)Z".equals(descriptor) : modern
                         ? "glfwSwapBuffers".equals(method) && "(J)V".equals(descriptor)
                         : "swapBuffers".equals(method) && "()V".equals(descriptor);
                     if (!matches || (access & Opcodes.ACC_STATIC) == 0
@@ -44,7 +45,7 @@ public final class PortableNoticeTransformer implements ClassFileTransformer {
                 }
             }, 0);
             if (changes[0] != 1) throw new IllegalStateException("Expected one presentation method, found " + changes[0]);
-            PortableNoticeHooks.transformed(modern ? "lwjgl3" : "lwjgl2");
+            PortableNoticeHooks.transformed(sdl ? "sdl3" : modern ? "lwjgl3" : "lwjgl2");
             return writer.toByteArray();
         } catch (Throwable failure) {
             PortableNoticeHooks.failed("Presentation hook for " + name, failure);

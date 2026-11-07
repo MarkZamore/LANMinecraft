@@ -12,6 +12,7 @@ namespace Minecraft;
 /// <summary>Delivers notices to the launcher-owned renderer inside the game's swap chain.</summary>
 public sealed class GameNoticeOverlayService
 {
+    internal const string NativeFeature = "native-launcher-notices-v1";
     private const string ResourceName = "Minecraft.NoticeOverlayAgent.jar";
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(7);
     private static readonly TimeSpan HeartbeatLifetime = TimeSpan.FromSeconds(2);
@@ -24,6 +25,7 @@ public sealed class GameNoticeOverlayService
     private readonly Func<int, long?> _processStartTicks;
     private readonly Func<Stream> _agentResource;
     private readonly Func<int, double> _displayScale;
+    private readonly Func<int, int, bool> _isDescendant;
     private IReadOnlyDictionary<string, string> _style = new Dictionary<string, string>();
 
     public GameNoticeOverlayService(AppPaths paths, Logger logger)
@@ -31,7 +33,7 @@ public sealed class GameNoticeOverlayService
 
     internal GameNoticeOverlayService(AppPaths paths, Logger logger, Func<DateTimeOffset> now,
         Func<int> foregroundProcess, Func<int, long?> processStartTicks, Func<Stream>? agentResource = null,
-        Func<int, double>? displayScale = null)
+        Func<int, double>? displayScale = null, Func<int, int, bool>? isDescendant = null)
     {
         _paths = paths;
         _logger = logger;
@@ -40,6 +42,7 @@ public sealed class GameNoticeOverlayService
         _processStartTicks = processStartTicks;
         _agentResource = agentResource ?? OpenAgentResource;
         _displayScale = displayScale ?? ForegroundDisplayScale;
+        _isDescendant = isDescendant ?? GameProcessTree.Contains;
         _paths.EnsureUnderRoot(Root);
         AdoptSessions();
     }
@@ -64,12 +67,12 @@ public sealed class GameNoticeOverlayService
         }
     }
 
-    internal PreparedOverlay PrepareSession()
+    internal PreparedOverlay PrepareSession(bool native = false)
     {
-        var agent = ExtractAgent();
+        var agent = native ? null : ExtractAgent();
         var directory = Path.Combine(SessionsRoot, Guid.NewGuid().ToString("N"));
         EnsureOrdinaryDirectory(directory);
-        var session = new OverlaySession(directory, 0, 0);
+        var session = new OverlaySession(directory, 0, 0, native);
         lock (_gate)
         {
             WriteProperties(Path.Combine(directory, "style.properties"), _style);
@@ -77,7 +80,7 @@ public sealed class GameNoticeOverlayService
             _sessions.Add(directory, session);
         }
         return new PreparedOverlay(this, session,
-            [$"-javaagent:{agent}", $"-Dlanminecraft.notice.directory={directory}"]);
+            native ? [] : [$"-javaagent:{agent}", $"-Dlanminecraft.notice.directory={directory}"]);
     }
 
     /// <summary>False leaves presentation to the desktop toast. No window or input is activated here.</summary>
@@ -90,8 +93,7 @@ public sealed class GameNoticeOverlayService
             var now = _now();
             foreach (var session in _sessions.Values)
             {
-                if (session.ProcessId != processId || processId <= 0 ||
-                    _processStartTicks(processId) != session.StartedUtcTicks || !IsRendererReady(session, now)) continue;
+                if (!MatchesProcess(session, processId) || !IsRendererReady(session, processId, now)) continue;
                 session.Notices.RemoveAll(item => now - item.Created >= Lifetime);
                 while (session.Notices.Count >= 3) session.Notices.RemoveAt(0);
                 session.Notices.Add(new QueuedNotice(notice, now));
@@ -113,15 +115,32 @@ public sealed class GameNoticeOverlayService
         }
     }
 
-    private static bool IsRendererReady(OverlaySession session, DateTimeOffset now)
+    private bool MatchesProcess(OverlaySession session, int candidate) => candidate > 0 && session.ProcessId > 0 &&
+        _processStartTicks(session.ProcessId) == session.StartedUtcTicks &&
+        (candidate == session.ProcessId || (session.NativeProcessTree && _isDescendant(session.ProcessId, candidate)));
+
+    internal IntPtr GetGameWindow()
+    {
+        lock (_gate)
+        {
+            var live = _sessions.Values.Where(session => session.ProcessId > 0 &&
+                _processStartTicks(session.ProcessId) == session.StartedUtcTicks).ToArray();
+            var ids = live.Select(session => session.ProcessId).ToHashSet();
+            ids.UnionWith(GameProcessTree.Expand(live.Where(session => session.NativeProcessTree).Select(session => session.ProcessId)));
+            return PeerNoticeNative.FindGameWindow(ids);
+        }
+    }
+
+    private static bool IsRendererReady(OverlaySession session, int processId, DateTimeOffset now)
     {
         var heartbeat = ReadProperties(Path.Combine(session.Directory, "heartbeat.properties"));
         return string.IsNullOrEmpty(heartbeat.GetValueOrDefault("error")) &&
                int.TryParse(heartbeat.GetValueOrDefault("pid"), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) &&
-               pid == session.ProcessId &&
+               pid == processId &&
                long.TryParse(heartbeat.GetValueOrDefault("timestampUnixMs"), NumberStyles.None, CultureInfo.InvariantCulture, out var stamp) &&
                stamp <= now.ToUnixTimeMilliseconds() && now.ToUnixTimeMilliseconds() - stamp <= HeartbeatLifetime.TotalMilliseconds &&
-               heartbeat.GetValueOrDefault("backend") is "lwjgl2" or "lwjgl3";
+               (session.NativeProcessTree ? heartbeat.GetValueOrDefault("backend") == "native-ui-v1" :
+                   heartbeat.GetValueOrDefault("backend") is "lwjgl2" or "lwjgl3" or "sdl3");
     }
 
     private void WriteSnapshot(OverlaySession session)
@@ -135,11 +154,20 @@ public sealed class GameNoticeOverlayService
         {
             var item = session.Notices[index];
             var prefix = index.ToString(CultureInfo.InvariantCulture) + ".";
-            values[prefix + "title"] = item.Notice.Title;
-            values[prefix + "body"] = item.Notice.Body;
+            values[prefix + "title"] = LimitText(item.Notice.Title, 160);
+            values[prefix + "body"] = LimitText(item.Notice.Body, 320);
             values[prefix + "createdUnixMs"] = item.Created.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
         }
         WriteProperties(Path.Combine(session.Directory, "notices.properties"), values);
+    }
+
+    // Java and native readers share UTF-16 length limits. Never send half of
+    // a supplementary character at the boundary and invalidate the snapshot.
+    private static string LimitText(string text, int limit)
+    {
+        if (text.Length <= limit) return text;
+        if (char.IsHighSurrogate(text[limit - 1]) && char.IsLowSurrogate(text[limit])) limit--;
+        return text[..limit];
     }
 
     // LWJGL 2 reports a pixel scale of 1 on Windows, including DPI-aware
@@ -165,9 +193,9 @@ public sealed class GameNoticeOverlayService
                 session.ScaleTimer = null;
                 return;
             }
-            if (session.ProcessId != _foregroundProcess() ||
-                _processStartTicks(session.ProcessId) != session.StartedUtcTicks) return;
-            var scale = ValidScale(_displayScale(session.ProcessId));
+            var foreground = _foregroundProcess();
+            if (!MatchesProcess(session, foreground)) return;
+            var scale = ValidScale(_displayScale(foreground));
             if (scale == session.DisplayScale) return;
             try
             {
@@ -213,7 +241,7 @@ public sealed class GameNoticeOverlayService
         {
             session.ProcessId = processId;
             session.StartedUtcTicks = startedUtcTicks;
-            var metadata = JsonSerializer.SerializeToUtf8Bytes(new SessionMetadata(processId, startedUtcTicks));
+            var metadata = JsonSerializer.SerializeToUtf8Bytes(new SessionMetadata(processId, startedUtcTicks, session.NativeProcessTree));
             try { AtomicWrite(Path.Combine(session.Directory, "session.json"), metadata); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -265,7 +293,7 @@ public sealed class GameNoticeOverlayService
                 EnsureOrdinaryFile(metadataPath);
                 var metadata = JsonSerializer.Deserialize<SessionMetadata>(File.ReadAllBytes(metadataPath));
                 if (metadata is null || metadata.ProcessId <= 0 || _processStartTicks(metadata.ProcessId) != metadata.StartedUtcTicks) continue;
-                var session = new OverlaySession(directory, metadata.ProcessId, metadata.StartedUtcTicks);
+                var session = new OverlaySession(directory, metadata.ProcessId, metadata.StartedUtcTicks, metadata.NativeProcessTree);
                 // The previous launcher's messages must not reappear after a restart.
                 WriteSnapshot(session);
                 _sessions.Add(directory, session);
@@ -361,13 +389,14 @@ public sealed class GameNoticeOverlayService
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
     internal sealed record QueuedNotice(PeerNotice Notice, DateTimeOffset Created);
-    private sealed record SessionMetadata(int ProcessId, long StartedUtcTicks);
+    private sealed record SessionMetadata(int ProcessId, long StartedUtcTicks, bool NativeProcessTree = false);
 
-    internal sealed class OverlaySession(string directory, int processId, long startedUtcTicks)
+    internal sealed class OverlaySession(string directory, int processId, long startedUtcTicks, bool nativeProcessTree = false)
     {
         internal string Directory { get; } = directory;
         internal int ProcessId { get; set; } = processId;
         internal long StartedUtcTicks { get; set; } = startedUtcTicks;
+        internal bool NativeProcessTree { get; } = nativeProcessTree;
         internal double DisplayScale { get; set; } = 1;
         internal System.Threading.Timer? ScaleTimer { get; set; }
         internal List<QueuedNotice> Notices { get; } = [];
