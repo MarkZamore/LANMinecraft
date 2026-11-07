@@ -71,7 +71,7 @@ public sealed class WindowCanvasTests
             Assert.True(Bounds(body, root).Bottom <= Bounds(update, root).Top + 0.5);
             Assert.True(Bounds(update, root).Bottom <= Bounds(footer, root).Top + 0.5);
             AssertSidebarUpdateAlignment(window);
-            foreach (var name in new[] { "UpdateButton", "RetrySteamButton", "SidePanelToggleButton", "ChatSendButton" })
+            foreach (var name in new[] { "UpdateButton", "SteamPersonaText", "SidePanelToggleButton", "ChatSendButton" })
             {
                 var bounds = Bounds(Element<FrameworkElement>(window, name), root);
                 Assert.True(bounds.Left >= -0.5 && bounds.Right <= root.ActualWidth + 0.5, $"{name} is clipped");
@@ -744,17 +744,21 @@ public sealed class WindowCanvasTests
     [Theory]
     [InlineData(804)]
     [InlineData(1904)]
-    public void SteamRetry_StaysNextToSteamWhileNewsStaysAtTheRight(double width)
+    public void SteamStatus_StaysNextToSteamWhileNewsStaysAtTheRight(double width)
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
             LayoutWindow(window, new Size(width, 521));
             var group = Element<Grid>(window, "SteamConnectionPanel");
-            var retry = Element<Button>(window, "RetrySteamButton");
+            var status = Element<TextBlock>(window, "SteamPersonaText");
             var label = group.Children.OfType<TextBlock>().Single(t => t.Text == "Steam:");
-            Assert.Same(group, retry.Parent);
-            Assert.InRange(Bounds(retry, group).Left - Bounds(label, group).Right, 7.5, 8.5);
+            Assert.Same(group, status.Parent);
+            Assert.Equal("нет подключения", status.Text);
+            var fullStatus = new TextBlock { Text = status.Text, FontFamily = status.FontFamily, FontSize = status.FontSize };
+            fullStatus.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.True(status.ActualWidth >= fullStatus.DesiredSize.Width - 0.5, "The disconnected status must remain fully readable.");
+            Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 7.5, 8.5);
             var footer = Element<Grid>(window, "FooterActions");
             var toggle = Element<Button>(window, "SidePanelToggleButton");
             AssertWidthWithinOnePhysicalPixel(footer.ActualWidth, Bounds(toggle, footer).Right, toggle);

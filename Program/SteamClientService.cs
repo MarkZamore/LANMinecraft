@@ -31,15 +31,15 @@ public sealed record SteamClientStatus(
 /// <summary>
 /// Owns the launcher's Steam session: initialisation, the callback pump, the
 /// local account and the friend list. Failures never propagate to the caller -
-/// they become a status the window can show with a "Повторить" button, so a
+/// they become a status the window can show while it reconnects automatically, so a
 /// missing or signed-out Steam can never keep the launcher from opening.
 /// </summary>
 public sealed class SteamClientService : IAsyncDisposable
 {
     private const string SteamNotRunningMessage =
-        "Steam не запущен. Запустите Steam, войдите в аккаунт и нажмите «Повторить».";
+        "Steam не запущен. Запустите Steam и войдите в аккаунт; лаунчер подключится автоматически.";
     private const string NotLoggedInMessage =
-        "Steam запущен, но вход в аккаунт не выполнен. Войдите в Steam и нажмите «Повторить».";
+        "Steam запущен, но вход в аккаунт не выполнен. Войдите в Steam; лаунчер подключится автоматически.";
     private const string FailedMessagePrefix = "Не удалось подключиться к Steam: ";
 
     private static readonly TimeSpan IdlePumpInterval = TimeSpan.FromMilliseconds(50);
@@ -49,7 +49,7 @@ public sealed class SteamClientService : IAsyncDisposable
     /// <summary>
     /// How long a session waits for Steam to sign back in. A lost connection
     /// comes back within seconds to a minute; past this it is not coming back
-    /// by itself, and the player gets the button again.
+    /// through this session, so the window starts a fresh handshake.
     /// </summary>
     private static readonly TimeSpan DefaultReconnectLimit = TimeSpan.FromMinutes(2);
 
@@ -57,7 +57,7 @@ public sealed class SteamClientService : IAsyncDisposable
     private static readonly TimeSpan PumpStopTimeout = TimeSpan.FromSeconds(5);
 
     internal const string SteamLostMessage =
-        "Steam закрылся или выполнен выход из аккаунта. Запустите Steam и нажмите «Повторить».";
+        "Steam закрылся или выполнен выход из аккаунта. После входа лаунчер подключится автоматически.";
 
     internal const string ReconnectingMessage =
         "Нет связи с серверами Steam. Лаунчер ждёт, пока Steam подключится снова, и вернётся сам.";
@@ -66,10 +66,10 @@ public sealed class SteamClientService : IAsyncDisposable
         "В этот аккаунт Steam вошли на другом компьютере. Войдите в Steam снова, и лаунчер вернётся сам.";
 
     internal const string ReconnectTimedOutMessage =
-        "Steam так и не подключился снова к своим серверам. Проверьте Steam и нажмите «Повторить».";
+        "Steam пока не подключился к своим серверам. Лаунчер продолжает подключаться автоматически.";
 
     internal const string AccountChangedMessage =
-        "Steam вошёл в другой аккаунт. Нажмите «Повторить», чтобы играть под ним.";
+        "Steam вошёл в другой аккаунт. Лаунчер подключится к нему автоматически.";
 
     private static readonly TimeSpan FriendsRefreshInterval = TimeSpan.FromSeconds(5);
 
@@ -216,6 +216,14 @@ public sealed class SteamClientService : IAsyncDisposable
             StartPump();
             _logger?.Info($"Steam connected as {persona} ({steamId}).");
             return Publish(ReadyStatus(steamId, persona));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ExternalException)
+        {
+            // A native call can fail while Steam is exiting. Do not strand the
+            // automatic connector in Starting after the attempt has ended.
+            _logger?.Warn($"Steam connection failed: {ex}");
+            return Publish(new SteamClientStatus(
+                SteamAvailability.Failed, 0, string.Empty, FailedMessagePrefix + ex.Message));
         }
         finally
         {

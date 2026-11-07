@@ -16,7 +16,7 @@ public sealed class SteamIdentityService : IIdentityService
     private const string SessionTokenNamespace = "MinecraftPortableLocalSession:v2";
     internal const string SteamUnavailableMessage =
         "Steam не запущен или вход в аккаунт не выполнен. " +
-        "Запустите Steam, войдите в аккаунт и нажмите «Повторить».";
+        "Запустите Steam и войдите в аккаунт; лаунчер подключится автоматически.";
 
     private readonly ISteamUserSource _steamUser;
     private readonly Logger? _logger;
