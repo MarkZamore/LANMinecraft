@@ -86,11 +86,11 @@ public sealed class CatalogDescription
     public string ModCountScope { get; set; } = "visible";
     public List<CatalogMod> Mods { get; set; } = [];
 }
-public sealed record CatalogNativeProject(string Name, string Version, string Revision, string WebsiteUrl)
+public sealed record CatalogNativeProject(string Name, string Version, string Revision, string? WebsiteUrl = null)
 {
     internal bool IsValid => ValidLabel(Name) && ValidLabel(Version) &&
         Revision is { Length: 40 } && Revision.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f') &&
-        CatalogModPages.Parse(WebsiteUrl) is not null;
+        (WebsiteUrl is null || CatalogModPages.Parse(WebsiteUrl) is not null);
 
     private static bool ValidLabel(string? value) =>
         value is { Length: <= 80 } && !string.IsNullOrWhiteSpace(value) && !value.Any(char.IsControl);

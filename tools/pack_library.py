@@ -285,9 +285,12 @@ def native_project_metadata(authored):
                 not any(ord(c) < 32 or 127 <= ord(c) < 160 for c in label)
                 for label in (name, version)) or
             not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision) or
-            not is_https_project_page(website)):
+            (website is not None and not is_https_project_page(website))):
         raise ValueError("Invalid native project name, version, revision or official HTTPS page")
-    return {"name": name, "version": version, "revision": revision, "websiteUrl": website}
+    metadata = {"name": name, "version": version, "revision": revision}
+    if website is not None:
+        metadata["websiteUrl"] = website
+    return metadata
 
 
 def build_library(pack, revision):

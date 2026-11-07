@@ -152,6 +152,10 @@ class LibraryPublisherTests(unittest.TestCase):
             doc = json.loads(archive.read("library.json"))
         self.assertIs(doc["showNativeProject"], False)
         self.assertEqual(self.content["nativeProject"], doc["nativeProject"])
+        del self.content["nativeProject"]["websiteUrl"]
+        self.write_content()
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            self.assertNotIn("websiteUrl", json.loads(archive.read("library.json"))["nativeProject"])
         self.content["showNativeProject"] = "false"
         self.write_content()
         with self.assertRaisesRegex(ValueError, "showNativeProject must be a boolean"):

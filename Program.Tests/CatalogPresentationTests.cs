@@ -133,6 +133,7 @@ public sealed class CatalogPresentationTests
             Assert.Null(pack.WebsiteUri);
             Assert.NotNull(pack.Content.NativeProject);
             Assert.False(pack.ShowModSection);
+            pack.Content.NativeProject = pack.Content.NativeProject with { WebsiteUrl = null };
             using var hiddenPage = new PackDetailPage(pack);
             hiddenPage.Measure(new Size(1000, 800));
             hiddenPage.Arrange(new Rect(0, 0, 1000, 800));
