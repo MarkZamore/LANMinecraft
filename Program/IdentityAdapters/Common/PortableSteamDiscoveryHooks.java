@@ -9,7 +9,6 @@ import java.util.concurrent.*;
 public final class PortableSteamDiscoveryHooks {
     private static final String PREFIX = "portable-steam-";
     private static final Map<Object, Poll> POLLS = Collections.synchronizedMap(new WeakHashMap<>());
-    private static final Map<Object, Poll> MANAGED_LISTS = Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<Object, World> DISPLAY_ENTRIES = Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<Object, Boolean> PUBLICATIONS = Collections.synchronizedMap(new WeakHashMap<>());
     private static final String PLAYER_KEY = "lanminecraft_player";
@@ -40,14 +39,14 @@ public final class PortableSteamDiscoveryHooks {
         if (poll != null) {
             poll.active = false;
             poll.thread.interrupt();
-            synchronized (MANAGED_LISTS) { MANAGED_LISTS.values().removeIf(value -> value == poll); }
         }
     }
 
-    /** Only the automatic LAN collection of a verified managed Steam screen. */
+    /** The mapped UDP insertion path stays Steam-only across screen lifetimes.
+     * Saved/manual servers use the independent ServerList and never enter here.
+     */
     public static boolean nativeDiscoveryManaged(Object list) {
-        Poll poll = MANAGED_LISTS.get(list);
-        return poll != null && poll.active && poll.screen.get() != null;
+        return Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled");
     }
 
     /** Preserve native labels everywhere except the precise synthetic entry we created. */
@@ -303,10 +302,6 @@ public final class PortableSteamDiscoveryHooks {
             try {
                 Object list = field(current, aliases("steamDiscoveryLanListFields"));
                 if (list == null) return;
-                synchronized (MANAGED_LISTS) {
-                    MANAGED_LISTS.values().removeIf(value -> value == this);
-                    MANAGED_LISTS.put(list, this);
-                }
                 Class<?> entryType = loadAliases("steamDiscoveryLanServerClasses");
                 Constructor<?> entry = entryType.getDeclaredConstructor(String.class, String.class);
                 synchronized (list) {
