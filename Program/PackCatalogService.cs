@@ -78,6 +78,7 @@ public sealed class CatalogDescription
     public string Summary { get; set; } = "";
     public string Description { get; set; } = "";
     public CatalogNativeProject? NativeProject { get; set; }
+    public bool ShowNativeProject { get; set; } = true;
     public string ModsTitle { get; set; } = "Моды";
     public List<string>? VisibleModIds { get; set; }
     public List<string>? BaseModIds { get; set; }
@@ -147,14 +148,14 @@ public sealed class CatalogPack
                 _ => "модов"
             };
             var version = $"Minecraft {Content.MinecraftVersion}";
-            if (Content.NativeProject is { } project)
+            if (Content.ShowNativeProject && Content.NativeProject is { } project)
                 version += $" · {project.Name} {project.Version} · {project.Revision[..7]}";
             return $"{version} ({count} {word})";
         }
     }
     public string Summary => Content.Summary;
     public string Description => string.Join(" ", Content.Description.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()));
-    public Uri? WebsiteUri => CatalogModPages.Parse(Content.NativeProject?.WebsiteUrl);
+    public Uri? WebsiteUri => Content.ShowNativeProject ? CatalogModPages.Parse(Content.NativeProject?.WebsiteUrl) : null;
     public string ModsTitle => Content.ModsTitle;
     public List<CatalogModNode> Mods { get; } = [];
     public List<CatalogModNode> Libraries { get; } = [];

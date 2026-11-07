@@ -126,6 +126,19 @@ public sealed class CatalogPresentationTests
             library.MembershipRequested += _ => throw new InvalidOperationException("Link changed pack membership.");
             link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
             Assert.Equal(pack.WebsiteUri, Assert.Single(opened));
+            Assert.Contains("Example Engine", pack.VersionLabel);
+
+            pack.Content.ShowNativeProject = false;
+            Assert.Equal("Minecraft 1.20.1 (0 модов)", pack.VersionLabel);
+            Assert.Null(pack.WebsiteUri);
+            Assert.NotNull(pack.Content.NativeProject);
+            Assert.False(pack.ShowModSection);
+            using var hiddenPage = new PackDetailPage(pack);
+            hiddenPage.Measure(new Size(1000, 800));
+            hiddenPage.Arrange(new Rect(0, 0, 1000, 800));
+            var hiddenLink = (Hyperlink)hiddenPage.FindName("PackProjectLink");
+            Assert.Null(hiddenLink.NavigateUri);
+            Assert.Equal(Visibility.Collapsed, ((TextBlock)hiddenLink.Parent).Visibility);
             return true;
         });
     }

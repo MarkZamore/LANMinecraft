@@ -1,5 +1,11 @@
 # Curated mod lists in a pack card
 
+Native packs may set `"showNativeProject": false` in `library/content.json` to
+show the standard Minecraft version and mod count and hide the official project
+link in the detail view. The verified `nativeProject` provenance remains required.
+The default is `true` for existing cards. The summary and description are authored
+by the pack as before.
+
 `library/content.json` may select a presentation list without changing the full
 installed inventory or the pack's loaded-mod counter:
 
