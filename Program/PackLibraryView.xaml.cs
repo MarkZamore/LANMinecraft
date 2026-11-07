@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Collections;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace Minecraft;
 
@@ -21,6 +22,9 @@ public partial class PackLibraryView : UserControl
     private bool overviewPrepared;
     private bool overviewPreparing;
     private bool disposed;
+    private DispatcherTimer? loadingDotsTimer;
+    private Run[]? loadingDots;
+    private int visibleLoadingDots;
     private int overviewGeneration;
     private double preparedWidth;
     private DpiScale preparedDpi;
@@ -45,6 +49,9 @@ public partial class PackLibraryView : UserControl
     {
         InitializeComponent();
         SmoothScrollingController.Attach(CatalogScroll);
+        CatalogLoadingText.IsVisibleChanged += (_, _) => RefreshLoadingDots();
+        Loaded += (_, _) => RefreshLoadingDots();
+        Unloaded += (_, _) => loadingDotsTimer?.Stop();
         SizeChanged += (_, _) => InvalidateMeasurements();
         IsVisibleChanged += (_, _) =>
         {
@@ -195,12 +202,57 @@ public partial class PackLibraryView : UserControl
     }
     private void UpdateOverviewVisibility()
     {
-        if (DetailHost.Visibility == Visibility.Visible) { CatalogLoadingText.Visibility = Visibility.Collapsed; return; }
+        if (DetailHost.Visibility == Visibility.Visible) { CatalogLoadingText.Visibility = Visibility.Collapsed; RefreshLoadingDots(); return; }
         var ready = IsOverviewReady;
         CatalogScroll.Visibility = ready ? Visibility.Visible : Visibility.Hidden;
         CatalogCards.Visibility = ready ? Visibility.Visible : Visibility.Hidden;
-        CatalogLoadingText.Text = ready && packs.Length == 0 ? "В библиотеке пока нет сборок." : "Подготавливаем библиотеку…";
+        if (!ready && loadingDots is null)
+        {
+            CatalogLoadingText.Text = "Подготавливаем библиотеку";
+            // Reserve all three glyphs, just like the updater caption.
+            loadingDots = [new Run("."), new Run(".") { Foreground = Brushes.Transparent },
+                new Run(".") { Foreground = Brushes.Transparent }];
+            foreach (var dot in loadingDots) CatalogLoadingText.Inlines.Add(dot);
+            visibleLoadingDots = 1;
+        }
+        else if (ready)
+        {
+            loadingDots = null;
+            CatalogLoadingText.Text = packs.Length == 0 ? "В библиотеке пока нет сборок." : "Подготавливаем библиотеку…";
+        }
         CatalogLoadingText.Visibility = !ready || packs.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshLoadingDots();
+    }
+    private void RefreshLoadingDots()
+    {
+        if (disposed || loadingDots is null || !IsLoaded || !CatalogLoadingText.IsVisible)
+        {
+            loadingDotsTimer?.Stop();
+            return;
+        }
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            foreach (var dot in loadingDots) dot.ClearValue(TextElement.ForegroundProperty);
+            loadingDotsTimer?.Stop();
+            return;
+        }
+        if (loadingDotsTimer is null)
+        {
+            loadingDotsTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = ((Duration)FindResource("Motion.UpdateDots")).TimeSpan
+            };
+            loadingDotsTimer.Tick += (_, _) =>
+            {
+                if (!SystemParameters.ClientAreaAnimation) { RefreshLoadingDots(); return; }
+                if (loadingDots is null || Window.GetWindow(this)?.WindowState == WindowState.Minimized) return;
+                visibleLoadingDots = visibleLoadingDots % loadingDots.Length + 1;
+                for (var i = 0; i < loadingDots.Length; i++)
+                    if (i < visibleLoadingDots) loadingDots[i].ClearValue(TextElement.ForegroundProperty);
+                    else loadingDots[i].Foreground = Brushes.Transparent;
+            };
+        }
+        loadingDotsTimer.Start();
     }
     private double ContentWidth
     {
@@ -305,6 +357,8 @@ public partial class PackLibraryView : UserControl
     {
         if (disposed) return;
         disposed = true;
+        loadingDotsTimer?.Stop();
+        loadingDots = null;
         Preloader?.Forget("library-overview");
         foreach (var pack in pages.Keys) { Preloader?.Forget(Key(pack)); Preloader?.Forget("measure:" + pack.Entry.Id); }
         foreach (var page in pages.Values) page.Dispose();
