@@ -34,21 +34,19 @@ class NumberedPackCatalogTests(unittest.TestCase):
         self.assertEqual(wolves["id"], "better-than-wolves")
 
     def test_accepts_reserved_and_future_numbers_on_first_publication(self):
-        future_id = f"minecraft-{len(self.allocations['allocations']) + 1}"
-        self.allocations["allocations"].append({"id": future_id})
+        self.allocations["allocations"].append({"id": "minecraft-11"})
         source = {"schemaVersion": 1, "packs": [
-            {"id": "minecraft-9"}, {"id": "minecraft-rust-mods"}, {"id": future_id},
+            {"id": "minecraft-9"}, {"id": "minecraft-rust-mods"}, {"id": "minecraft-11"},
         ]}
         self.assertEqual(project_catalog(source, self.allocations)["packs"], [
             {"id": "minecraft-9"},
             {"id": "minecraft-rust-mods", "numberedId": "minecraft-10"},
-            {"id": future_id},
+            {"id": "minecraft-11"},
         ])
         self.assertEqual(project_catalog({"schemaVersion": 1, "packs": []}, self.allocations)["packs"], [])
 
     def test_rejects_unallocated_and_duplicate_entries(self):
-        unallocated_id = f"minecraft-{len(self.allocations['allocations']) + 1}"
-        for ids in ([unallocated_id], ["unknown-pack"], ["minecraft-9", "minecraft-rust-edition"],
+        for ids in (["minecraft-11"], ["unknown-pack"], ["minecraft-9", "minecraft-rust-edition"],
                     ["all-the-mods-10", "ALL-THE-MODS-10"]):
             with self.subTest(ids=ids), self.assertRaises(ValueError):
                 project_catalog({"schemaVersion": 1, "packs": [{"id": pack_id} for pack_id in ids]}, self.allocations)
@@ -62,8 +60,7 @@ class NumberedPackCatalogTests(unittest.TestCase):
             project_catalog(numbered, self.allocations)
 
     def test_rejects_reused_and_skipped_numbers(self):
-        skipped_id = f"minecraft-{len(self.allocations['allocations']) + 2}"
-        for number in ("minecraft-8", skipped_id):
+        for number in ("minecraft-8", "minecraft-12"):
             with self.subTest(number=number), self.assertRaises(ValueError):
                 invalid = {**self.allocations, "allocations": [*self.allocations["allocations"], {"id": number}]}
                 project_catalog({"schemaVersion": 1, "packs": []}, invalid)

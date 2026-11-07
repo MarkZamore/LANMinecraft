@@ -10,7 +10,6 @@
     { "id": "minecraft-7", "legacyId": "attack-on-titan" },
     { "id": "minecraft-8", "legacyId": "better-than-wolves" },
     { "id": "minecraft-9", "legacyId": "minecraft-rust-edition", "allowCanonicalInput": true },
-    { "id": "minecraft-10", "legacyId": "minecraft-rust-mods", "allowCanonicalInput": true },
-    { "id": "minecraft-11" }
+    { "id": "minecraft-10", "legacyId": "minecraft-rust-mods", "allowCanonicalInput": true }
   ]
 }
