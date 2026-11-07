@@ -301,6 +301,10 @@ def build_library(pack, revision):
     if "nativeRuntime" in runtime:
         loader = "native"
         presentation["nativeProject"] = native_project_metadata(authored)
+        if "showNativeProject" in authored:
+            if not isinstance(authored["showNativeProject"], bool):
+                raise ValueError("showNativeProject must be a boolean")
+            presentation["showNativeProject"] = authored["showNativeProject"]
     else:
         loader = runtime["loader"]["type"]
     if "modsTitle" in authored:

@@ -146,6 +146,17 @@ class LibraryPublisherTests(unittest.TestCase):
 
     def test_native_project_link_is_required_and_uses_https(self):
         self.write_native_inventory([])
+        self.content["showNativeProject"] = False
+        self.write_content()
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1"))) as archive:
+            doc = json.loads(archive.read("library.json"))
+        self.assertIs(doc["showNativeProject"], False)
+        self.assertEqual(self.content["nativeProject"], doc["nativeProject"])
+        self.content["showNativeProject"] = "false"
+        self.write_content()
+        with self.assertRaisesRegex(ValueError, "showNativeProject must be a boolean"):
+            build_library(self.pack, "r1")
+        self.content["showNativeProject"] = False
         self.content["nativeProject"]["websiteUrl"] = "file:///C:/client.exe"
         self.write_content()
         with self.assertRaisesRegex(ValueError, "official HTTPS page"):
