@@ -91,12 +91,13 @@ public final class SteamDiscoveryBehaviorProbe {
             Object list=transformedList(),unrelated=transformedList();
             add(list,"Mitochka - Новый мир","192.168.0.110:49441");
             add(unrelated,"Manual LAN fixture","192.168.0.111:49441");
+            check(servers(list).isEmpty() && servers(unrelated).isEmpty(), "UDP packets before screen initialization must be suppressed");
             var manual=new ArrayList<>(List.of(new ServerData("saved.example:25565")));
             Screen screen=new Screen(list);
             try{
                 PortableSteamDiscoveryHooks.begin(screen);
                 check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(list),"Bound list not marked managed");
-                check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated),"Unrelated list was captured");
+                check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated),"Steam-only UDP policy must cover every automatic list");
                 Object initialList=list;
                 waitFor(()->{try{synchronized(initialList){return servers(initialList).size()==1&&((LanServer)servers(initialList).get(0)).address.startsWith("portable-steam-");}}catch(Exception e){throw new AssertionError(e);}},"One trusted Steam world did not replace UDP duplicates");
                 LanServer found;synchronized(list){check(servers(list).size()==1,"Wrong owner/protocol/missing metadata was listed");found=(LanServer)servers(list).get(0);}
@@ -113,7 +114,7 @@ public final class SteamDiscoveryBehaviorProbe {
                 check(PortableSteamDiscoveryHooks.displayAddress(unregistered.getAddress(),unregistered).equals(unregistered.address),"Unregistered equal-address object received Steam display trust");
                 add(list,"duplicate UDP","192.168.0.110:49441");
                 synchronized(list){check(servers(list).size()==1,"Native UDP reappeared in a managed Steam list");}
-                check(servers(unrelated).size()==1&&manual.size()==1,"Manual/saved servers changed");
+                check(servers(unrelated).isEmpty()&&manual.size()==1,"Automatic UDP is suppressed while manual/saved servers remain");
                 check(PortableSteamDiscoveryHooks.join(screen,new ServerData("portable-steam-999.invalid")),"Stale synthetic address reached DNS");
                 check(!PortableSteamDiscoveryHooks.join(screen,new ServerData("saved.example:25565")),"Ordinary saved server was intercepted");
                 check(PortableSteamDiscoveryHooks.join(screen,new ServerData(found.address)),"Known Steam world was not consumed");
@@ -122,30 +123,34 @@ public final class SteamDiscoveryBehaviorProbe {
                 add(replacement,"pre-resize UDP","192.168.0.110:49441");
                 screen.lanServerList=replacement;
                 PortableSteamDiscoveryHooks.begin(screen);
-                check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(previous),"Resize retained the previous list's UDP guard");
+                check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(previous),"Resize must retain UDP suppression for the old detector");
                 check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(replacement),"Resize did not bind the new native list");
                 synchronized(replacement){check(servers(replacement).size()==1&&((LanServer)servers(replacement).get(0)).motd.equals("Mitochka"),"Resize lost the current Steam world or retained UDP");}
                 add(previous,"ordinary old list","192.168.0.110:49441");
-                synchronized(previous){check(servers(previous).size()==2,"Unbound pre-resize list still discarded native UDP");}
+                synchronized(previous){check(servers(previous).size()==1,"Unbound pre-resize detector reintroduced native UDP");}
                 add(replacement,"duplicate resized UDP","192.168.0.110:49441");
                 synchronized(replacement){check(servers(replacement).size()==1,"Resized managed list reintroduced UDP");}
                 list=replacement;
             }finally{PortableSteamDiscoveryHooks.end(screen);}
-            check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(list),"Removed screen retained native UDP guard");
+            check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(list),"Removed screen must retain Steam-only UDP policy");
             add(list,"ordinary after end","192.168.0.110:49441");
-            synchronized(list){check(servers(list).size()==2,"Native LAN stayed disabled after managed screen ended");}
+            synchronized(list){check(servers(list).size()==1,"Late UDP packet appeared after managed screen ended");}
             System.setProperty(PREFIX+"steamDiscoveryTransportVersion","unreviewed");
             Screen unsupported=new Screen(unrelated);
             try{
                 PortableSteamDiscoveryHooks.begin(unsupported);
-                check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated),"Unsupported transport captured native UDP discovery");
-                check(servers(unrelated).size()==1,"Unsupported transport removed a native LAN row");
+                check(PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated),"Unavailable Steam transport must not re-enable UDP duplicates");
+                check(servers(unrelated).isEmpty(),"Unsupported transport exposed a native LAN row");
             }finally{
                 PortableSteamDiscoveryHooks.end(unsupported);
                 System.setProperty(PREFIX+"steamDiscoveryTransportVersion","0.3.4");
             }
             publication(runtime);
             legacyDescriptor(runtime);
+            System.setProperty(PREFIX+"steamDiscoveryEnabled", "false");
+            check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated), "Disabled integration preserves native UDP");
+            add(unrelated,"ordinary with integration disabled","192.168.0.111:49441");
+            check(servers(unrelated).size()==1 && manual.size()==1, "Disabled integration and saved servers retain native behavior");
         }
         System.out.println("PASS: actual discovery hooks list one Steam world with launcher nickname/live world metadata, scope the UDP guard, preserve manual servers and route joins; publication uses live owner generation. No game, Steam or socket started.");
     }
