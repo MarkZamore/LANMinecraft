@@ -63,6 +63,7 @@ $catalog.packs | Select-Object id, relativePath, sourcePath, source
 | Лаунчер WPF | Windows x64, Git, PowerShell 7.2+, .NET 10 SDK по [global.json](../global.json): база 10.0.100, `latestFeature` |
 | Инструменты данных | Python 3.12+; дополнительные Node/Java и их версии брать из workflow/README выбранной сборки |
 | Java-адаптер лаунчера | JDK 25.0.2 с настоящими `java`, `javac`, `jar`; `JAVA_HOME` указывает на установленный здесь JDK |
+| Загрузка нативных Java-библиотек | [NativeInterop](../Program/NativeInterop/README.md): тот же JDK, runtime-классы Java 8, исходные игровые DLL/JAR сохраняются; собственный кеш внутри папки лаунчера |
 | Native EXE | Visual Studio Build Tools: x64 C++ toolchain и Windows SDK; discovery через `vswhere`, см. [Bootstrap](../Program/Bootstrap/README.md) |
 | Игра и pack helpers | Игровая Java из descriptor/проверенного runtime; JDK компилятора и `--release` из pack-owned build/probe, это разные требования |
 

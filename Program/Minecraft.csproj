@@ -111,6 +111,21 @@
     </ItemGroup>
   </Target>
 
+  <PropertyGroup>
+    <NativeInteropAgentJar>$(MSBuildProjectDirectory)\Build\NativeInterop\launcher-native-interop-agent.jar</NativeInteropAgentJar>
+  </PropertyGroup>
+  <Target Name="BuildNativeInteropAgent" BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\NativeInterop\Build-NativeInterop.ps1&quot; -OutputPath &quot;$(NativeInteropAgentJar)&quot;" />
+  </Target>
+  <Target Name="EmbedNativeInteropAgent" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildNativeInteropAgent"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <EmbeddedResource Include="$(NativeInteropAgentJar)" LogicalName="Minecraft.NativeInteropAgent.jar"
+                        Condition="Exists('$(NativeInteropAgentJar)')" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="UseFinalWpfAssemblyForPublish"
           BeforeTargets="ComputeResolvedFilesToPublishList"
           Condition="'$(PublishSingleFile)' == 'true'">
