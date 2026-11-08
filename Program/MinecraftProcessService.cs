@@ -650,7 +650,8 @@ public sealed class MinecraftProcessService
         IReadOnlyList<string> finalArguments;
         try
         {
-            finalArguments = CompleteJvmArguments(minecraftProcess.StartInfo, profile, packDir, _packJvmArguments);
+            var nativeInterop = LegacyOpenAlBootstrap.Prepare(_paths, launcher, profile, launchOption.NativesDirectory);
+            finalArguments = CompleteJvmArguments(minecraftProcess.StartInfo, profile, packDir, _packJvmArguments, nativeInterop);
         }
         catch
         {
@@ -1636,7 +1637,8 @@ public sealed class MinecraftProcessService
         ProcessStartInfo startInfo,
         IVersion version,
         string packDir,
-        PackJvmArgumentsService? packJvmArguments = null)
+        PackJvmArgumentsService? packJvmArguments = null,
+        IReadOnlyList<string>? launcherArguments = null)
     {
         var original = ReadProcessArguments(startInfo);
         var mainClass = version.GetInheritedProperty(item => item.MainClass);
@@ -1645,7 +1647,8 @@ public sealed class MinecraftProcessService
             .Where(item => item.argument == mainClass).Select(item => item.index).ToArray();
         if (boundaries.Length != 1)
             throw new InvalidOperationException("The native main-class boundary is missing or ambiguous; pack JVM options were not applied.");
-        var packArguments = (packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir);
+        IReadOnlyList<string> packArguments = (packJvmArguments ?? new PackJvmArgumentsService()).Load(packDir)
+            .Concat(launcherArguments ?? []).ToArray();
         if (packArguments.Count == 0) return original;
         var insertion = boundaries[0];
         // A modular/JAR launch keeps its entrypoint switch beside its operand.

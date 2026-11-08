@@ -3,7 +3,14 @@
      isolated updater host and rejects skipped, missing or empty results. -->
 <RunSettings>
   <RunConfiguration>
-    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.SourceIdentitySelectsTheApiAndVerifiesStreamingBytes|
+    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.InheritedLegacyProfileUsesItsExactNativeBytesInsideThePortableRoot|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.ChangedOrEscapingNativeDllCannotUseTheBootstrap|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.LastEligibleNativeArchiveDeterminesThePreloadedDll|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.UnsupportedOrMissingNativeRetainsTheNormalLaunch|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.BootstrapArgumentsPreserveUtf8UnicodeAndTheApplicationBoundary|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.EmbeddedBootstrapUsesJava8WithoutGameOrLoaderDependencies|
+      FullyQualifiedName=Minecraft.Tests.LegacyOpenAlBootstrapTests.RejectedPreloadCannotSuppressMainOrChangeItsEncoding|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.SourceIdentitySelectsTheApiAndVerifiesStreamingBytes|
       FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.UnusableMetadataIsRejected|
       FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.CorruptBodyCannotPassTheVerifiedStream|
       FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.ApiCannotRedirectOutsideTheApprovedEndpoints|
