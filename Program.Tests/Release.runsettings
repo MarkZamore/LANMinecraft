@@ -336,6 +336,9 @@
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.HistoricalV2CacheIsPreservedButCannotRemoveLegacySupportWhenOffline|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.NetworkV2DowngradeCannotReplaceACheckedV3Cache|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.ExplicitJavaIsPinnedAndPartOfTheRuntimeIdentityWhileOldDescriptorsKeepTheirHash|
+      FullyQualifiedName=Minecraft.Tests.InheritedGameArgumentsTests.ActualLegacyFabricAndVanillaProfilesReachTheProductionBuilderWithIdentityAndAssets|
+      FullyQualifiedName=Minecraft.Tests.InheritedGameArgumentsTests.ExplicitLoaderArgumentsKeepTheirOwnPrecedence|
+      FullyQualifiedName=Minecraft.Tests.InheritedGameArgumentsTests.ARequiredAssetIndexMustExistBeforeLaunchingWithInheritedLegacyArguments|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.UnpinnedJavaIsRejectedBeforeRuntimePreparation|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.OfficialProfileUsesItsOwnNamespaceAndRetainsLegacyMappingsAndLwjgl|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.AProfileForAnotherMinecraftIsRejectedBeforeWritingAProfile|

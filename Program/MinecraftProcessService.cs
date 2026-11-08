@@ -646,7 +646,7 @@ public sealed class MinecraftProcessService
             ScreenHeight = startupSize?.Height ?? 0,
             ExtraJvmArguments = extraJvmArguments.Select(argument => new MArgument(argument)).ToList()
         };
-        var minecraftProcess = launcher.BuildProcess(profile, launchOption);
+        var minecraftProcess = MinecraftLaunchArguments.BuildProcess(launcher, profile, launchOption);
         IReadOnlyList<string> finalArguments;
         try
         {
