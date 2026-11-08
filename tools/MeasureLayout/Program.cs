@@ -33,15 +33,18 @@ internal static class Program
         // its real startup handlers or initializing Steam/network services.
         RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
         Repository = FindRepository(args);
-        var artifactRoot = Path.GetFullPath(Path.Combine(Repository, "artifacts", "MeasureLayout"));
-        var output = Path.GetFullPath(Path.Combine(artifactRoot, args.Length > 1 ? args[1] : "current"));
+        var artifactRoot = Path.GetFullPath(Path.Combine(Repository, "artifacts"));
+        var requestedOutput = args.FirstOrDefault(arg => arg.StartsWith("--output=", StringComparison.Ordinal));
+        var output = Path.GetFullPath(requestedOutput is null
+            ? Path.Combine(artifactRoot, "MeasureLayout", args.Length > 1 ? args[1] : "current")
+            : requestedOutput["--output=".Length..]);
         if (!output.StartsWith(artifactRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Measurements must remain inside artifacts/MeasureLayout.");
+            throw new ArgumentException("Measurements must remain inside repository artifacts.");
         Directory.CreateDirectory(output);
         var all = new List<object>();
         var scales = new[] { 1d, 1.25d, 1.5d, 2d };
         foreach (var viewport in new[] { ("minimum", 804d, 521d), ("initial", 820d, 549d), ("maximized", 1424d, 861d) })
-        foreach (var mode in new[] { "collapsed", "expanded", "long-chat", "library", "pack-detail", "pack-mods" })
+        foreach (var mode in new[] { "collapsed", "expanded", "library", "pack-detail", "pack-mods" })
         foreach (var dpi in scales)
         {
             var expanded = mode == "expanded";
@@ -77,7 +80,6 @@ internal static class Program
                 expander.IsExpanded = expanded;
                 if (args.Contains("--force-top")) expander.VerticalAlignment = VerticalAlignment.Top;
             }
-            if (expanded) ShowNews(window);
             LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
             DrainDispatcher();
             LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
@@ -85,20 +87,6 @@ internal static class Program
             {
                 var library = (PackLibraryView)window.FindName("LibraryView");
                 ((ScrollViewer)library.FindName("DetailScroll")).ScrollToVerticalOffset(900);
-                LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
-                DrainDispatcher();
-                LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
-            }
-            ChatBaseline? chatBaseline = null;
-            double? chatEndOffset = null;
-            if (mode == "long-chat" && window.FindName("ChatMessageTextBox") is TextBox chatInput)
-            {
-                chatBaseline = new ChatBaseline(((FrameworkElement)window.FindName("SidePanelCard")).ActualHeight,
-                    ((ScrollViewer)window.FindName("BodyScroll")).ExtentHeight, chatInput.ActualHeight);
-                var draft = string.Concat(Enumerable.Range(1, 160).Select(line => $"Тестовый вопрос {line}: поясни настройку сборки Minecraft.\n"));
-                if (window.FindName("ChatComposerControl") is { } composer && composer.GetType().GetProperty("Prompt") is { } prompt)
-                    prompt.SetValue(composer, draft);
-                else chatInput.Text = draft;
                 LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
                 DrainDispatcher();
                 LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
@@ -120,21 +108,7 @@ internal static class Program
                 DrainDispatcher();
                 LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
             }
-            if (chatBaseline is not null && window.FindName("ChatMessageTextBox") is TextBox longInput)
-            {
-                // TextBox lazily formats long text. Repeat against the updated extent
-                // instead of assuming the first ScrollToEnd used its final height.
-                for (var attempt = 0; attempt < 8; attempt++)
-                {
-                    longInput.ScrollToEnd();
-                    DrainDispatcher();
-                    LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
-                    if (Math.Abs(longInput.VerticalOffset - Math.Max(0, longInput.ExtentHeight - longInput.ViewportHeight)) <= 1) break;
-                }
-                chatEndOffset = longInput.VerticalOffset;
-                Render(window, Path.Combine(output, id + "-input-bottom.png"), viewport.Item2, viewport.Item3, dpi);
-            }
-            var report = MakeReport(window, id, viewport.Item2, viewport.Item3, dpi, expanders, chatBaseline, chatEndOffset, scrolledBody);
+            var report = MakeReport(window, id, viewport.Item2, viewport.Item3, dpi, expanders, scrolledBody);
             File.WriteAllText(Path.Combine(output, id + ".json"), JsonSerializer.Serialize(report, JsonOptions));
             all.Add(report);
             Console.WriteLine($"Rendered {id}: {content.ActualWidth:0.##} × {content.ActualHeight:0.##}, {expanders.Length} expanders");
@@ -144,7 +118,7 @@ internal static class Program
         var assembly = typeof(CenteredDropDown).Assembly;
         var publishedExecutable = args.FirstOrDefault(arg => arg.StartsWith("--exe=", StringComparison.Ordinal))?[6..]
             ?? Path.Combine(Repository, "Program.Tests", "PortabilityAudit", "Artifacts", "recheck-build", "LANMinecraft.exe");
-        var inputs = new[] { assembly.Location, Path.Combine(Repository, "Program", "Minecraft.csproj"), Path.Combine(Repository, "Program", "App.xaml.cs"), Path.Combine(Repository, "Program", "App.xaml"), Path.Combine(Repository, "Program", "MainWindow.xaml"), Path.Combine(Repository, "Program", "AdaptiveLauncherLayout.cs"), Path.Combine(Repository, "Program", "CenteredDropDown.xaml"), Path.Combine(Repository, "Program", "ControlMotion.cs"), Path.Combine(Repository, "Program", "WindowsThemeService.cs"), Path.Combine(Repository, "Program", "MainWindow.xaml.cs"), Path.Combine(Repository, "Program", "ChatComposer.cs"), publishedExecutable };
+        var inputs = new[] { assembly.Location, Path.Combine(Repository, "Program", "Minecraft.csproj"), Path.Combine(Repository, "Program", "App.xaml.cs"), Path.Combine(Repository, "Program", "App.xaml"), Path.Combine(Repository, "Program", "MainWindow.xaml"), Path.Combine(Repository, "Program", "AdaptiveLauncherLayout.cs"), Path.Combine(Repository, "Program", "CenteredDropDown.xaml"), Path.Combine(Repository, "Program", "ControlMotion.cs"), Path.Combine(Repository, "Program", "WindowsThemeService.cs"), Path.Combine(Repository, "Program", "MainWindow.xaml.cs"), publishedExecutable };
         inputs = inputs.Concat(new[] { Assembly.GetExecutingAssembly().Location, Path.Combine(AppContext.BaseDirectory, "MeasureLayout.runtimeconfig.json"), Path.Combine(Repository, "tools", "MeasureLayout", "Program.cs"), Path.Combine(Repository, "tools", "MeasureLayout", "MeasureLayout.csproj") }).ToArray();
         var hashes = inputs.Where(File.Exists).Select(path => new { Path = path, SHA256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) }).ToArray();
         var dirtyRectangleSwitchPresent = AppContext.TryGetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", out var dirtyRectanglesDisabled);
@@ -278,15 +252,8 @@ internal static class Program
             changes.ItemsSource = ChangelogService.Load().Take(12).Select(entry => new { Title = $"Версия {entry.Version}", entry.Text }).ToArray();
     }
 
-    private static void ShowNews(Window window)
-    {
-        if (window.FindName("ChangelogPanel") is Grid changelog) changelog.Visibility = Visibility.Visible;
-        if (window.FindName("ChatPanel") is Grid chat) chat.Visibility = Visibility.Collapsed;
-        if (window.FindName("SidePanelTitle") is TextBlock title) title.Text = "Что нового";
-        if (window.FindName("SidePanelToggleButton") is Button toggle) toggle.Content = "Чат";
-    }
     private static object MakeReport(Window window, string id, double width, double height, double dpi, Expander[] expanders,
-        ChatBaseline? chatBaseline, double? chatEndOffset, object? scrolledBody)
+        object? scrolledBody)
     {
         var root = (Grid)window.FindName("RootGrid");
         var names = Regex.Matches(File.ReadAllText(Path.Combine(Repository, "Program", "MainWindow.xaml")), @"x:Name=""([^""]+)""").Select(m => m.Groups[1].Value).Distinct();
@@ -312,17 +279,7 @@ internal static class Program
             return element.TransformToAncestor(root).TransformBounds(new Rect(new Point(), element.RenderSize)).Bottom;
         }
         var anchors = new { SidebarBottom = Bottom("SidePanelCard"), UpdateBarBottom = Bottom("UpdateProgressBar"), Difference = Bottom("SidePanelCard") - Bottom("UpdateProgressBar") };
-        var input = window.FindName("ChatMessageTextBox") as TextBox;
-        var longChat = chatBaseline is null || input is null ? null : new
-        {
-            Baseline = chatBaseline, InputHeight = input.ActualHeight, input.ExtentHeight,
-            input.ViewportHeight, input.VerticalOffset, EndOffset = chatEndOffset,
-            ReachedActualEnd = chatEndOffset is not null && Math.Abs(chatEndOffset.Value - Math.Max(0, input.ExtentHeight - input.ViewportHeight)) <= 1,
-            CardHeight = ((FrameworkElement)window.FindName("SidePanelCard")).ActualHeight,
-            BodyExtentHeight = ((ScrollViewer)window.FindName("BodyScroll")).ExtentHeight,
-            VerticalScrollBar = input.VerticalScrollBarVisibility.ToString()
-        };
-        return new { id, WindowDefaults = new { window.Width, window.Height, window.MinWidth, window.MinHeight, ResizeMode = window.ResizeMode.ToString(), WindowStyle = window.WindowStyle.ToString() }, ClientWidth = width, ClientHeight = height, DpiScale = dpi, ActualRootDpiScale = VisualTreeHelper.GetDpi(root).DpiScaleX, RootWidth = root.ActualWidth, RootHeight = root.ActualHeight, RootMargin = new { root.Margin.Left, root.Margin.Top, root.Margin.Right, root.Margin.Bottom }, RootMaxWidth = double.IsInfinity(root.MaxWidth) ? (double?)null : root.MaxWidth, RootHorizontalAlignment = root.HorizontalAlignment.ToString(), Columns = root.ColumnDefinitions.Select(c => new { Width = c.Width.ToString(), c.ActualWidth, c.MinWidth, MaxWidth = double.IsInfinity(c.MaxWidth) ? (double?)null : c.MaxWidth }).ToArray(), Font = window.FindResource("Font.Family").ToString(), Expanders = expanders.Select(e => new { e.Name, e.IsExpanded, Header = e.Header?.ToString() }).ToArray(), Controls = controls, Headers = headerMetrics, Text = texts, Scrolls = scrolls, Anchors = anchors, LongChat = longChat, ScrolledBody = scrolledBody };
+        return new { id, WindowDefaults = new { window.Width, window.Height, window.MinWidth, window.MinHeight, ResizeMode = window.ResizeMode.ToString(), WindowStyle = window.WindowStyle.ToString() }, ClientWidth = width, ClientHeight = height, DpiScale = dpi, ActualRootDpiScale = VisualTreeHelper.GetDpi(root).DpiScaleX, RootWidth = root.ActualWidth, RootHeight = root.ActualHeight, RootMargin = new { root.Margin.Left, root.Margin.Top, root.Margin.Right, root.Margin.Bottom }, RootMaxWidth = double.IsInfinity(root.MaxWidth) ? (double?)null : root.MaxWidth, RootHorizontalAlignment = root.HorizontalAlignment.ToString(), Columns = root.ColumnDefinitions.Select(c => new { Width = c.Width.ToString(), c.ActualWidth, c.MinWidth, MaxWidth = double.IsInfinity(c.MaxWidth) ? (double?)null : c.MaxWidth }).ToArray(), Font = window.FindResource("Font.Family").ToString(), Expanders = expanders.Select(e => new { e.Name, e.IsExpanded, Header = e.Header?.ToString() }).ToArray(), Controls = controls, Headers = headerMetrics, Text = texts, Scrolls = scrolls, Anchors = anchors, ScrolledBody = scrolledBody };
     }
 
     private static IEnumerable<DependencyObject> LogicalAncestors(DependencyObject child)
@@ -363,7 +320,6 @@ internal static class Program
         Dispatcher.PushFrame(frame);
     }
     public sealed record SampleItem(string Name, string DisplayName);
-    private sealed record ChatBaseline(double CardHeight, double BodyExtentHeight, double InputHeight);
 }
 
 

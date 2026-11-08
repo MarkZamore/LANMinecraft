@@ -71,7 +71,7 @@ public sealed class WindowCanvasTests
             Assert.True(Bounds(body, root).Bottom <= Bounds(update, root).Top + 0.5);
             Assert.True(Bounds(update, root).Bottom <= Bounds(footer, root).Top + 0.5);
             AssertSidebarUpdateAlignment(window);
-            foreach (var name in new[] { "UpdateButton", "SteamPersonaText", "SidePanelToggleButton", "ChatSendButton" })
+            foreach (var name in new[] { "UpdateButton", "SteamPersonaText", "ChangelogList" })
             {
                 var bounds = Bounds(Element<FrameworkElement>(window, name), root);
                 Assert.True(bounds.Left >= -0.5 && bounds.Right <= root.ActualWidth + 0.5, $"{name} is clipped");
@@ -202,7 +202,7 @@ public sealed class WindowCanvasTests
     }
 
     [Fact]
-    public void TheSidebar_RemainsVisibleWhileLeftSectionsCollapseAndItsFaceChanges()
+    public void TheChangelog_RemainsVisibleWhileLeftSectionsCollapse()
     {
         OnAStaThread(() =>
         {
@@ -210,26 +210,21 @@ public sealed class WindowCanvasTests
             var size = new Size(804, 521);
             var card = Element<Border>(window, "SidePanelCard");
             var title = Element<TextBlock>(window, "SidePanelTitle");
-            var chat = Element<Grid>(window, "ChatPanel");
             var news = Element<Grid>(window, "ChangelogPanel");
             LayoutWindow(window, size);
             var height = card.ActualHeight;
             foreach (var expanded in new[] { true, false })
             {
                 foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = expanded;
-                foreach (var showNews in new[] { true, false })
-                {
-                    chat.Visibility = showNews ? Visibility.Collapsed : Visibility.Visible;
-                    news.Visibility = showNews ? Visibility.Visible : Visibility.Collapsed;
-                    title.Text = showNews ? "Что нового" : "AI-помощник";
-                    LayoutWindow(window, size);
-                    Assert.Same(card, window.FindName("SidePanelCard"));
-                    Assert.Equal(height, card.ActualHeight, 3);
-                    Assert.True(title.ActualWidth > 0 && title.ActualHeight >= 31.5);
-                    Assert.True((showNews ? news : chat).ActualHeight > 200);
-                    var root = Element<Grid>(window, "RootGrid");
-                    Assert.True(Bounds(card, root).Bottom <= Bounds(Element<Grid>(window, "FooterGrid"), root).Top + 0.5);
-                }
+                LayoutWindow(window, size);
+                Assert.Same(card, window.FindName("SidePanelCard"));
+                Assert.Equal(height, card.ActualHeight, 3);
+                Assert.Equal("Что нового", title.Text);
+                Assert.True(title.ActualWidth > 0 && title.ActualHeight >= 31.5);
+                Assert.Equal(Visibility.Visible, news.Visibility);
+                Assert.True(news.ActualHeight > 200);
+                var root = Element<Grid>(window, "RootGrid");
+                Assert.True(Bounds(card, root).Bottom <= Bounds(Element<Grid>(window, "FooterGrid"), root).Top + 0.5);
             }
             return true;
         });
@@ -744,7 +739,7 @@ public sealed class WindowCanvasTests
     [Theory]
     [InlineData(804)]
     [InlineData(1904)]
-    public void SteamStatus_StaysNextToSteamWhileNewsStaysAtTheRight(double width)
+    public void SteamStatus_RemainsReadableAndAlignedWithTheChangelog(double width)
     {
         OnAStaThread(() =>
         {
@@ -763,12 +758,8 @@ public sealed class WindowCanvasTests
             var root = Element<Grid>(window, "RootGrid");
             AssertWidthWithinOnePhysicalPixel(Bounds(Element<Border>(window, "SidePanelCard"), root).Left,
                 Bounds(label, root).Left, label);
-            var toggle = Element<Button>(window, "SidePanelToggleButton");
-            var caption = new TextBlock { Text = "Помощник", FontFamily = toggle.FontFamily, FontSize = toggle.FontSize };
-            caption.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            Assert.True(caption.DesiredSize.Width <= toggle.ActualWidth - toggle.Padding.Left - toggle.Padding.Right -
-                toggle.BorderThickness.Left - toggle.BorderThickness.Right, "The assistant caption must fit without clipping.");
-            AssertWidthWithinOnePhysicalPixel(footer.ActualWidth, Bounds(toggle, footer).Right, toggle);
+            Assert.Null(window.FindName("SidePanelToggleButton"));
+            Assert.True(Bounds(group, footer).Right <= footer.ActualWidth + 0.5);
             return true;
         });
     }
@@ -800,8 +791,8 @@ public sealed class WindowCanvasTests
             root.RenderSize.Height - root.Margin.Top - root.Margin.Bottom), 0, 1 / dpi.DpiScaleY + 0.000001);
         foreach (var name in new[]
         {
-            "PlayButton", "BodyScroll", "BodyScrollBar", "SidePanelCard", "ChatMessageTextBox", "ChatSendButton",
-            "UpdateArea", "UpdateButton", "FooterGrid", "SidePanelToggleButton"
+            "PlayButton", "BodyScroll", "BodyScrollBar", "SidePanelCard", "ChangelogList",
+            "UpdateArea", "UpdateButton", "FooterGrid"
         })
         {
             var element = Element<FrameworkElement>(window, name);
