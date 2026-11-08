@@ -3,7 +3,8 @@
      isolated updater host and rejects skipped, missing or empty results. -->
 <RunSettings>
   <RunConfiguration>
-    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.AWorldBehindAJunction_SurvivesTheBuildThatPointedAtIt|
+    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.LongOutageContinuesUntilAConfirmedAnswerThenStops|
+      FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.ClosingDuringTheRetryDelayCancelsWithoutAnotherRequest|FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.AWorldBehindAJunction_SurvivesTheBuildThatPointedAtIt|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.TheOtherBuildIsUntouched|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.ANameThatTriesToLeaveItsFolder_RemovesNothing|
       FullyQualifiedName=Minecraft.Tests.ProfileFileTransactionRecoveryTests.AnInterruptedTransaction_SurvivesStartupCleanupAndIsRolledBack|

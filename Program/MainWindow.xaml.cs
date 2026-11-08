@@ -2660,6 +2660,7 @@ public partial class MainWindow : Window
         // The release this pass was working on, so a failure can name it rather
         // than fall back to claiming there was nothing to fetch.
         int? fetching = null;
+        var retryingCheck = false;
         try
         {
             startupPrepared = await Task.Run(_updateService.TryGetPreparedUpdate, token);
@@ -2668,7 +2669,7 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    _updateBusy = true;
+                    _updateBusy = false;
                     _preparedUpdate = startupPrepared;
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
@@ -2678,12 +2679,9 @@ public partial class MainWindow : Window
                 });
             }
 
-            var result = startupPrepared is null
-                ? await _updateService.CheckAsync(token)
-                : await _updateService.CheckAsync(
-                    token,
-                    attempts: 1,
-                    attemptTimeout: TimeSpan.FromSeconds(5));
+            var result = await UpdateCheckRetry.UntilResolvedAsync(
+                cancellation => _updateService.CheckAsync(cancellation, attempts: 1,
+                    attemptTimeout: startupPrepared is null ? null : TimeSpan.FromSeconds(5)), token);
             token.ThrowIfCancellationRequested();
             if (!result.IsUpdateAvailable)
             {
@@ -2695,9 +2693,7 @@ public partial class MainWindow : Window
                         UpdateProgressBar.IsIndeterminate = false;
                         UpdateProgressBar.Value = 0;
                         SetProgressActivity(UpdateProgressBar, active: false);
-                        SetUpdateProgressCaption(result.IsUnavailable
-                            ? UpdateProgressLine.CheckFailed()
-                            : UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
+                        SetUpdateProgressCaption(UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
                     });
                 }
             }
@@ -2774,8 +2770,13 @@ public partial class MainWindow : Window
                     // a failure into an all-clear.
                     SetUpdateProgressCaption(fetching is { } release
                         ? UpdateProgressLine.DownloadFailed(release)
-                        : UpdateProgressLine.CheckFailed());
+                        : UpdateProgressLine.Checking(), pending: fetching is null);
                 });
+            }
+            if (fetching is null && !token.IsCancellationRequested)
+            {
+                retryingCheck = true;
+                _ = RetryUpdateCheckAsync(token);
             }
         }
         finally
@@ -2784,12 +2785,22 @@ public partial class MainWindow : Window
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    _updateDotsTimer?.Stop();
+                    if (!retryingCheck) _updateDotsTimer?.Stop();
                     _updateBusy = false;
                     RefreshUi();
                 });
             }
         }
+    }
+
+    private async Task RetryUpdateCheckAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), token);
+            await CheckForUpdatesAsync(token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
 
     private static bool ShouldReplacePreparedUpdate(UpdateManifest cached, UpdateManifest remote)
