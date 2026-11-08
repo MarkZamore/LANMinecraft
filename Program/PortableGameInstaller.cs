@@ -154,7 +154,7 @@ public sealed class PortableGameInstaller : IGameInstaller
             {
                 DeleteFileIfExists(temporaryPath);
                 var uri = attempt == 0 ? alternative!.Url : official;
-                using var response = await _httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
+                using var response = await GitHubReleaseTransport.GetAsync(_httpClient, uri, token);
                 response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentLength is > 0 and var contentLength)
                 {

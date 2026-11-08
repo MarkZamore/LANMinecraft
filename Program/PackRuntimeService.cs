@@ -475,7 +475,9 @@ public sealed class PackRuntimeService : IDisposable
                 descriptor.MinecraftVersion,
                 $"client-{descriptor.MinecraftVersion}-mappings.txt");
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            var payload = await _httpClient.GetByteArrayAsync(url, token).ConfigureAwait(false);
+            using var mappingResponse = await GitHubReleaseTransport.GetAsync(_httpClient, url, token).ConfigureAwait(false);
+            mappingResponse.EnsureSuccessStatusCode();
+            var payload = await mappingResponse.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
             var actual = Convert.ToHexString(SHA1.HashData(payload)).ToLowerInvariant();
             if (!string.Equals(actual, sha1, StringComparison.OrdinalIgnoreCase))
             {
@@ -1152,7 +1154,7 @@ internal static class OfficialLoaderInstaller
     {
         var value = await RuntimeRetry.RunAsync(async retryToken =>
         {
-            using var response = await httpClient.GetAsync(uri, retryToken);
+            using var response = await GitHubReleaseTransport.GetAsync(httpClient, uri, retryToken);
             response.EnsureSuccessStatusCode();
             return (await response.Content.ReadAsStringAsync(retryToken)).Trim()
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];

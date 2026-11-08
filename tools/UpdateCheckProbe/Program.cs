@@ -3,6 +3,8 @@ using System.Net.Http;
 using System.Text.Json;
 using Minecraft;
 
+if (args.Length > 0 && args[0] == "--release-matrix") return await ReleaseMatrix.RunAsync(args[1..]);
+
 // Read-only live probe of the production check. No launcher startup or download
 // of executable updates; output stays in the assigned task directory.
 var root = Path.GetFullPath(args[0]);

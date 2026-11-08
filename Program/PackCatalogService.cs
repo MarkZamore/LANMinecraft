@@ -517,7 +517,7 @@ public sealed partial class PackCatalogService
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true, NoStore = true };
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+        using var response = await GitHubReleaseTransport.SendAsync(_http, request, token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("Oversized library download.");
         await using var source = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);

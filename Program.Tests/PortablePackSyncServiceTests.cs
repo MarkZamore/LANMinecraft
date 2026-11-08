@@ -10,6 +10,39 @@ namespace Minecraft.Tests;
 
 public sealed class PortablePackSyncServiceTests : IDisposable
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApiFallbackInstallsTheCheckedSnapshotOrPreservesThePreviousInstallation(bool wrongPayloadPin)
+    {
+        var old = new PackFile("mods/fixture.jar", Encoding.UTF8.GetBytes("previous bytes"));
+        var descriptor = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("previous", [old, descriptor], [JarAsset(old), JarAsset(descriptor)]), DefaultPack);
+        var next = new PackFile(old.Path, Encoding.UTF8.GetBytes("replacement bytes"));
+        var payload = JarAsset(next);
+        var release = BuildRelease("next", [next, descriptor], [payload, JarAsset(descriptor)]);
+        if (wrongPayloadPin) release[payload.Name] = Enumerable.Repeat((byte)'x', next.Content.Length).ToArray();
+        var rows = release.OrderBy(pair => pair.Key).ToArray();
+        var handler = new RecordingHandler(request =>
+        {
+            if (request.RequestUri!.Host == "github.com") return new HttpResponseMessage(HttpStatusCode.GatewayTimeout);
+            Assert.Equal("api.github.com", request.RequestUri.Host);
+            if (request.RequestUri.AbsolutePath.Contains("/tags/", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    assets = rows.Select((pair, index) => new { id = index + 100, name = pair.Key, size = pair.Value.Length,
+                        digest = "sha256:" + Convert.ToHexString(SHA256.HashData(pair.Value)).ToLowerInvariant(), state = "uploaded" })
+                })) };
+            var id = int.Parse(request.RequestUri.Segments[^1]);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(rows[id - 100].Value) };
+        });
+        using var client = new HttpClient(handler);
+        var result = await CreateService(client).SyncAsync(DefaultPack, null, CancellationToken.None);
+        Assert.Equal(wrongPayloadPin ? PackSyncOutcome.OfflineFallback : PackSyncOutcome.Updated, result.Outcome);
+        AssertFileContent(PackDir(DefaultPack), wrongPayloadPin ? old : next);
+        AssertFileContent(PackDir(DefaultPack), descriptor);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(PackDir(DefaultPack), ".pack-sync-stage*"));
+    }
     private const string DefaultPack = PortablePackSyncService.DefaultPackRelativePath;
 
     private readonly string _root = Path.Combine(

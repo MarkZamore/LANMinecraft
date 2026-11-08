@@ -222,7 +222,7 @@ public sealed class LoaderVersionResolver(HttpClient httpClient, Logger? logger 
         deadline.CancelAfter(_downloadStallTimeout);
         try
         {
-            using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            using var response = await GitHubReleaseTransport.GetAsync(httpClient, uri, deadline.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("Данные загрузчика слишком большие.");
             deadline.CancelAfter(_downloadStallTimeout);

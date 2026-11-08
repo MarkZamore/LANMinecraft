@@ -1,0 +1,35 @@
+name: Verify official GitHub fallback against current packs
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  delivery:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the production transport and the addressed probe
+        shell: pwsh
+        run: |
+          dotnet build Program/Minecraft.csproj -p:SkipPortableIdentityAdapter=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tools/UpdateCheckProbe -p:BuildProjectReferences=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Real public API with simulated primary 504
+        shell: pwsh
+        run: |
+          $output = 'artifacts/agent-runs/github-release-live-matrix'
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          @{owner='github-actions/addressed-release-delivery';purpose='Current catalog manifests, sample payloads and required Steam components';createdUtc=[DateTime]::UtcNow.ToString('o');expectedBytes=536870912;deleteAfterUtc=[DateTime]::UtcNow.AddDays(1).ToString('o');requiredResults=@('release-matrix.json','catalog.json')} | ConvertTo-Json | Set-Content "$output/RUN.json"
+          dotnet run --no-build --project tools/UpdateCheckProbe -- --release-matrix . $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: addressed-github-release-proof
+          path: artifacts/agent-runs/github-release-live-matrix/*.json
+          retention-days: 7
