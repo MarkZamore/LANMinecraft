@@ -141,13 +141,18 @@ public sealed class LegacyOpenAlBootstrapTests : IDisposable
     [InlineData(true)]
     public async Task RejectedPreloadCannotSuppressMainOrChangeItsEncoding(bool missingDll)
     {
-        Directory.CreateDirectory(root);
-        var agent = Path.Combine(root, "native-interop-agent.jar");
+        // This case verifies rejection and continuation, not javac's command-line
+        // conversion through the Windows ANSI code page. Keep its tool paths
+        // representable on English CI; Unicode paths remain covered above and
+        // by the real-runtime audio probe.
+        var jvmRoot = Path.Combine(Path.GetDirectoryName(root)!, "jvm");
+        Directory.CreateDirectory(jvmRoot);
+        var agent = Path.Combine(jvmRoot, "native-interop-agent.jar");
         await using (var output = File.Create(agent))
         await using (var input = AgentResource()) await input.CopyToAsync(output);
-        var dll = Path.Combine(root, DllName);
+        var dll = Path.Combine(jvmRoot, DllName);
         if (!missingDll) await File.WriteAllBytesAsync(dll, "not a native library"u8.ToArray());
-        var source = Path.Combine(root, MainClass + ".java");
+        var source = Path.Combine(jvmRoot, MainClass + ".java");
         await File.WriteAllTextAsync(source, """
             import java.nio.charset.Charset;
             public final class NativeBootstrapProbe {
@@ -158,11 +163,11 @@ public sealed class LegacyOpenAlBootstrapTests : IDisposable
                 }
             }
             """);
-        await Run("javac", "--release", "8", "-encoding", "UTF-8", "-d", root, source);
+        await Run(jvmRoot, "javac", "--release", "8", "-encoding", "UTF-8", "-d", jvmRoot, source);
 
-        var outputText = await Run("java", "-Xverify:all", "-Dfile.encoding=UTF-8", "-javaagent:" + agent,
+        var outputText = await Run(jvmRoot, "java", "-Xverify:all", "-Dfile.encoding=UTF-8", "-javaagent:" + agent,
             "-Dlanminecraft.native.openal=" + dll, "-Dlanminecraft.native.openal.sha256=" + new string('0', 64),
-            "-cp", root, MainClass);
+            "-cp", jvmRoot, MainClass);
 
         Assert.Contains("MAIN_REACHED_UTF8", outputText, StringComparison.Ordinal);
         Assert.Contains("[LauncherNative]", outputText, StringComparison.Ordinal);
@@ -228,17 +233,17 @@ public sealed class LegacyOpenAlBootstrapTests : IDisposable
     private static Stream AgentResource() => typeof(MinecraftProcessService).Assembly.GetManifestResourceStream("Minecraft.NativeInteropAgent.jar")
         ?? throw new FileNotFoundException("The launcher must embed its native interop agent.");
 
-    private async Task<string> Run(string tool, params string[] arguments)
+    private static async Task<string> Run(string jvmRoot, string tool, params string[] arguments)
     {
         var home = Environment.GetEnvironmentVariable("JAVA_HOME");
         var start = new ProcessStartInfo(string.IsNullOrWhiteSpace(home) ? tool + ".exe" : Path.Combine(home, "bin", tool + ".exe"))
         {
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = root,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = jvmRoot,
             RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        var temporary = Path.Combine(root, "Temp");
-        var profile = Path.Combine(root, "Home");
+        var temporary = Path.Combine(jvmRoot, "Temp");
+        var profile = Path.Combine(jvmRoot, "Home");
         Directory.CreateDirectory(temporary);
         Directory.CreateDirectory(profile);
         PortableJavaEnvironment.ConfigureEnvironment(start.Environment, temporary, profile);
