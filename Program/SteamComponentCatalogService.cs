@@ -75,7 +75,7 @@ internal sealed class SteamComponentCatalogService
             var uri = new UriBuilder(IndexUri) { Query = "launcherRefresh=" + Guid.NewGuid().ToString("N") }.Uri;
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
+            using var response = await GitHubReleaseTransport.SendAsync(_http, request, budget.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             SteamComponentCatalog.Require(response.Content.Headers.ContentLength is null or <= SteamComponentCatalog.MaximumDocumentBytes,
                 "Oversized Steam component index response.");

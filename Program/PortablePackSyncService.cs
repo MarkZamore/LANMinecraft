@@ -903,10 +903,7 @@ public sealed partial class PortablePackSyncService
                     NoCache = true,
                     NoStore = true
                 };
-                using var response = await _httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    timeoutCts.Token).ConfigureAwait(false);
+                using var response = await GitHubReleaseTransport.SendAsync(_httpClient, request, timeoutCts.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentLength is > MaximumManifestBytes)
                     throw new InvalidDataException("Pack sync manifest exceeds its byte limit.");
@@ -1021,8 +1018,7 @@ public sealed partial class PortablePackSyncService
                 TryDeleteFile(destinationPath);
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, assetUri);
-                using var response = await _httpClient
-                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sourceToken)
+                using var response = await GitHubReleaseTransport.SendAsync(_httpClient, request, sourceToken)
                     .ConfigureAwait(false);
                 var effectiveUri = response.RequestMessage?.RequestUri ?? assetUri;
                 if (!IsApprovedEffectiveUri(effectiveUri))

@@ -126,7 +126,7 @@ internal sealed class QuiltFabricApiResolver(HttpClient httpClient, AppPaths? pa
         deadline.CancelAfter(_stallTimeout);
         try
         {
-            using var response = await httpClient.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            using var response = await GitHubReleaseTransport.GetAsync(httpClient, uri, deadline.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("Артефакт Quilt Loader слишком большой.");
             await using var input = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);

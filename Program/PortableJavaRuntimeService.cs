@@ -419,8 +419,7 @@ public sealed partial class PortableJavaRuntimeService
                 _logger.Info($"Downloading Java runtime {_pin.RuntimeId} from {SanitizeUri(source)}.");
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, source);
-                using var response = await _httpClient
-                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, sourceToken)
+                using var response = await GitHubReleaseTransport.SendAsync(_httpClient, request, sourceToken)
                     .ConfigureAwait(false);
                 var effectiveUri = response.RequestMessage?.RequestUri ?? source;
                 if (!IsApprovedEffectiveUri(effectiveUri))

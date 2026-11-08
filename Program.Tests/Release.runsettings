@@ -3,7 +3,20 @@
      isolated updater host and rejects skipped, missing or empty results. -->
 <RunSettings>
   <RunConfiguration>
-    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.LauncherReleaseAssetTests.GatewayFailureUsesAnIndependentOfficialAssetAndConfirmsTheVersion|
+    <TestCaseFilter>FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.SourceIdentitySelectsTheApiAndVerifiesStreamingBytes|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.UnusableMetadataIsRejected|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.CorruptBodyCannotPassTheVerifiedStream|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.ApiCannotRedirectOutsideTheApprovedEndpoints|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.JsonIsVerifiedBeforeAnyParserCanAcceptIt|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.MissingAssetPreservesNotFoundForTheExistingSessionRecovery|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.RangeFallbackRestartsWithAWholeVerifiedFile|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.PrimaryTimeoutLeavesTimeForTheApi|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.CallerCancellationStopsPrimaryOrApiWithoutAnotherRoute|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.NonReleaseSourcesRetainTheirOwnResponseAndPolicy|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.BinaryAddressesAreReusedButEveryJsonManifestIsFresh|
+      FullyQualifiedName=Minecraft.Tests.GitHubReleaseTransportTests.ManagedComponentUsesTheFallbackWithoutWeakeningItsOwnPinOrChangingOtherFiles|
+      FullyQualifiedName=Minecraft.Tests.PortablePackSyncServiceTests.ApiFallbackInstallsTheCheckedSnapshotOrPreservesThePreviousInstallation|
+      FullyQualifiedName=Minecraft.Tests.LauncherReleaseAssetTests.GatewayFailureUsesAnIndependentOfficialAssetAndConfirmsTheVersion|
       FullyQualifiedName=Minecraft.Tests.LauncherReleaseAssetTests.UnverifiedApiContentCannotClaimTheLauncherIsUpToDate|FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.LongOutageContinuesUntilAConfirmedAnswerThenStops|
       FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.ClosingDuringTheRetryDelayCancelsWithoutAnotherRequest|FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.AWorldBehindAJunction_SurvivesTheBuildThatPointedAtIt|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.TheOtherBuildIsUntouched|

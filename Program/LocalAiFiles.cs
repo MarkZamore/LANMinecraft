@@ -60,7 +60,7 @@ internal sealed class LocalAiFiles(string root, HttpClient http)
                     if (offset > 0) request.Headers.Range = new RangeHeaderValue(offset, null);
                     using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                     requestTimeout.CancelAfter(TimeSpan.FromSeconds(45));
-                    using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestTimeout.Token).ConfigureAwait(false);
+                    using var response = await GitHubReleaseTransport.SendAsync(http, request, requestTimeout.Token).ConfigureAwait(false);
                     response.EnsureSuccessStatusCode();
                     if (response.StatusCode == HttpStatusCode.OK) offset = 0;
                     else if (response.StatusCode != HttpStatusCode.PartialContent ||
