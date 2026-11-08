@@ -91,8 +91,6 @@ public partial class MainWindow : Window
     private int _memoryEstimateWaitStep;
     private int _packMemoryGeneration;
     private bool _selectedNativeRuntime;
-    /// <summary>False on every launch: the column opens on the assistant.</summary>
-    private bool _sidePanelShowsNews;
     private bool _bugReportSending;
     private long _transferBytesCurrent;
     private long _transferBytesTotal;
@@ -230,7 +228,6 @@ public partial class MainWindow : Window
             _catalogStartup = InitializeCatalogAsync();
             _ = RefreshLauncherDataAsync();
 
-            ShowSidePanel(news: false);
             _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
             _transferPacing = _transferPacingStore.Load();
@@ -2484,29 +2481,6 @@ public partial class MainWindow : Window
     /// </summary>
     private static string LatestVersionText() =>
         $"Вы на последней версии ({UpdateService.CurrentReleaseNumber})";
-
-    /// <summary>
-    /// The right column shows one of its two faces: the assistant it opens on,
-    /// or the version history. The footer button carries the name of the other
-    /// one, because that is what pressing it brings.
-    /// </summary>
-    private void ShowSidePanel(bool news)
-    {
-        _sidePanelShowsNews = news;
-        ChangelogPanel.Visibility = news ? Visibility.Visible : Visibility.Collapsed;
-        ChatPanel.Visibility = news ? Visibility.Collapsed : Visibility.Visible;
-        SidePanelTitle.Text = news ? "Что нового" : "AI-помощник";
-        SidePanelToggleButton.Content = news ? "Помощник" : "Новости";
-    }
-
-    private void SidePanelToggleButton_Click(object sender, RoutedEventArgs e)
-    {
-        // A direct request can open news while the launch catalog is still
-        // being checked; automatic hidden preparation waits for the build list.
-        if (!_sidePanelShowsNews) _preload?.Enqueue("news", 40, PrepareNews());
-        _preload?.Promote("news");
-        ShowSidePanel(!_sidePanelShowsNews);
-    }
 
     /// <summary>
     /// Fills "Что нового" from the history embedded in the executable and marks

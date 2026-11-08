@@ -481,7 +481,7 @@
             BorderThickness="{StaticResource Border.Control}"
             CornerRadius="{StaticResource Radius.Panel}"
             Padding="{StaticResource Pad.Panel}"
-            AutomationProperties.Name="Помощник и новости">
+            AutomationProperties.Name="Что нового">
             <Grid x:Name="SidePanel">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -489,7 +489,7 @@
                 </Grid.RowDefinitions>
                 <TextBlock x:Name="SidePanelTitle"
                     Grid.Row="0"
-                    Text="AI-помощник"
+                    Text="Что нового"
                     Style="{StaticResource SectionTitleStyle}"
                     Height="{StaticResource Size.SidePanelHeader}"
                     FontSize="{StaticResource Font.SizeHeading}"
@@ -497,7 +497,7 @@
                     TextWrapping="NoWrap"
                     Margin="{StaticResource Gap.None}" />
                 <Grid Grid.Row="1" Margin="{StaticResource Gap.Above4}">
-                    <Grid x:Name="ChangelogPanel" Visibility="Collapsed">
+                    <Grid x:Name="ChangelogPanel">
                         <ScrollViewer x:Name="ChangelogScroll"
                             VerticalScrollBarVisibility="Auto"
                             HorizontalScrollBarVisibility="Disabled"
@@ -512,74 +512,6 @@
                             Style="{StaticResource CaptionTextStyle}"
                             VerticalAlignment="Top"
                             Visibility="Collapsed" />
-                    </Grid>
-                    <Grid x:Name="ChatPanel">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0"
-                            x:Name="ChatAvailabilityText"
-                            Text="Подключение помощника пока недоступно"
-                            Style="{StaticResource ParagraphTextStyle}"
-                            TextAlignment="Center"
-                            VerticalAlignment="Center"
-                            Margin="{StaticResource Gap.Right3}" />
-                        <local:ChatComposer x:Name="ChatComposerControl" Grid.Row="1" IsServiceAvailable="False">
-                            <Border x:Name="ChatComposerFrame" Style="{StaticResource ChatComposerFrameStyle}">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
-                                    <Grid Grid.Row="0">
-                                        <TextBox x:Name="ChatMessageTextBox"
-                                            Style="{StaticResource ChatPromptTextBoxStyle}"
-                                            Text="{Binding Prompt, ElementName=ChatComposerControl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                            AcceptsReturn="True"
-                                            TextWrapping="Wrap"
-                                            VerticalScrollBarVisibility="Auto"
-                                            HorizontalScrollBarVisibility="Disabled"
-                                            MaxLength="131000"
-                                            AutomationProperties.Name="Сообщение помощнику"
-                                            AutomationProperties.HelpText="Shift+Enter: новая строка" />
-                                        <TextBlock x:Name="ChatPromptPlaceholderText"
-                                            Text="Напишите сообщение"
-                                            VerticalAlignment="Top"
-                                            IsHitTestVisible="False">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
-                                                    <Setter Property="Margin" Value="{StaticResource Gap.None}" />
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <MultiDataTrigger>
-                                                            <MultiDataTrigger.Conditions>
-                                                                <Condition Binding="{Binding Text, ElementName=ChatMessageTextBox}" Value="" />
-                                                                <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=ChatMessageTextBox}" Value="False" />
-                                                            </MultiDataTrigger.Conditions>
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </MultiDataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </Grid>
-                                    <Grid Grid.Row="1" Margin="{StaticResource Gap.Above2}">
-                                        <Button x:Name="ChatSendButton"
-                                            HorizontalAlignment="Right"
-                                            Style="{StaticResource ChatActionButtonStyle}"
-                                            Content="{Binding ActionLabel, ElementName=ChatComposerControl}"
-                                            Tag="{Binding IsGenerating, ElementName=ChatComposerControl}"
-                                            Command="{x:Static local:ChatComposer.ActionCommand}"
-                                            CommandTarget="{Binding ElementName=ChatComposerControl}"
-                                            IsEnabled="{Binding IsActionEnabled, ElementName=ChatComposerControl}"
-                                            ToolTip="{Binding ActionToolTip, ElementName=ChatComposerControl}"
-                                            ToolTipService.ShowOnDisabled="True"
-                                            AutomationProperties.Name="{Binding ActionLabel, ElementName=ChatComposerControl}" />
-                                    </Grid>
-                                </Grid>
-                            </Border>
-                        </local:ChatComposer>
                     </Grid>
                 </Grid>
             </Grid>
@@ -626,10 +558,6 @@
                 <TextBlock Text="Лучше TLauncher" />
             </StackPanel>
             <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
                 <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right1}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -641,14 +569,6 @@
                         Grid.Column="1"
                         TextTrimming="CharacterEllipsis" />
                 </Grid>
-                <Button Grid.Column="1"
-                    x:Name="SidePanelToggleButton"
-                    Width="{StaticResource Size.SidePanelToggle}"
-                    Content="Новости"
-                    Click="SidePanelToggleButton_Click"
-                    HorizontalAlignment="Right"
-                    MinWidth="{StaticResource Size.Small}"
-                    Padding="{StaticResource Pad.None}" />
             </Grid>
         </Grid>
         <Grid Visibility="Collapsed">

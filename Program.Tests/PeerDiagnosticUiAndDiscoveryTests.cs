@@ -290,56 +290,19 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelCard");
         Assert.Empty(title.Ancestors(presentation + "Expander"));
         Assert.Equal("{StaticResource Font.SizeHeading}", (string?)title.Attribute("FontSize"));
-        // The launcher opens on the assistant, so that is the heading it wears.
-        Assert.Equal("AI-помощник", (string?)title.Attribute("Text"));
-
-        var list = document
-            .Descendants(presentation + "ItemsControl")
-            .SingleOrDefault(element => (string?)element.Attribute(x + "Name") == "ChangelogList");
-        Assert.NotNull(list);
+        Assert.Equal("Что нового", (string?)title.Attribute("Text"));
+        var list = document.Descendants(presentation + "ItemsControl")
+            .Single(element => (string?)element.Attribute(x + "Name") == "ChangelogList");
         Assert.NotEmpty(list.Ancestors(presentation + "ScrollViewer"));
-
-        // Two faces, and the one that is not showing says so in the markup:
-        // whatever the launcher does later, it starts on the assistant.
-        var news = document
-            .Descendants(presentation + "Grid")
+        var news = document.Descendants(presentation + "Grid")
             .Single(element => (string?)element.Attribute(x + "Name") == "ChangelogPanel");
-        var chat = document
-            .Descendants(presentation + "Grid")
-            .Single(element => (string?)element.Attribute(x + "Name") == "ChatPanel");
-        Assert.Equal("Collapsed", (string?)news.Attribute("Visibility"));
-        Assert.Null(chat.Attribute("Visibility"));
+        Assert.Null(news.Attribute("Visibility"));
         Assert.Contains(sideSection, news.Ancestors());
-        Assert.Contains(sideSection, chat.Ancestors());
+        Assert.DoesNotContain(document.Descendants(), element =>
+            ((string?)element.Attribute(x + "Name"))?.StartsWith("Chat", StringComparison.Ordinal) == true ||
+            (string?)element.Attribute(x + "Name") == "SidePanelToggleButton");
+        Assert.Null(typeof(MainWindow).Assembly.GetType("Minecraft.ChatComposer"));
 
-        // The transport is unavailable, but a draft remains editable and scrollable.
-        var field = document
-            .Descendants(presentation + "TextBox")
-            .Single(element => (string?)element.Attribute(x + "Name") == "ChatMessageTextBox");
-        Assert.Null(field.Attribute("IsEnabled"));
-        Assert.Null(field.Attribute("IsReadOnly"));
-        Assert.Equal("True", (string?)field.Attribute("AcceptsReturn"));
-        Assert.Equal("Wrap", (string?)field.Attribute("TextWrapping"));
-        Assert.Equal("Auto", (string?)field.Attribute("VerticalScrollBarVisibility"));
-        var send = document
-            .Descendants(presentation + "Button")
-            .Single(element => (string?)element.Attribute(x + "Name") == "ChatSendButton");
-        Assert.Equal("{Binding IsActionEnabled, ElementName=ChatComposerControl}", (string?)send.Attribute("IsEnabled"));
-        Assert.Equal("{StaticResource ChatActionButtonStyle}", (string?)send.Attribute("Style"));
-        var composer = document.Descendants().Single(element =>
-            (string?)element.Attribute(x + "Name") == "ChatComposerControl");
-        Assert.Equal("False", (string?)composer.Attribute("IsServiceAvailable"));
-        Assert.Contains(composer, field.Ancestors());
-        Assert.Contains(composer, send.Ancestors());
-
-        // The switch stands where the version number used to, and is named for
-        // what pressing it brings rather than for what is on screen.
-        var toggle = document
-            .Descendants(presentation + "Button")
-            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelToggleButton");
-        Assert.Equal("Новости", (string?)toggle.Attribute("Content"));
-        Assert.Equal("{StaticResource Size.SidePanelToggle}", (string?)toggle.Attribute("Width"));
-        Assert.Equal("SidePanelToggleButton_Click", (string?)toggle.Attribute("Click"));
         Assert.DoesNotContain(
             document.Descendants(),
             element => (string?)element.Attribute(x + "Name") == "VersionTextBlock");
@@ -448,7 +411,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal("3", (string?)document.Descendants(presentation + "Grid")
             .Single(element => (string?)element.Attribute(x + "Name") == "FooterGrid")
             .Attribute("Grid.Row"));
-        foreach (var name in new[] { "SidePanel", "ChatPanel", "ChangelogPanel", "ChangelogList", "ChatMessageTextBox", "ChatSendButton" })
+        foreach (var name in new[] { "SidePanel", "ChangelogPanel", "ChangelogList" })
         {
             Assert.Single(document.Descendants(), element => (string?)element.Attribute(x + "Name") == name);
         }

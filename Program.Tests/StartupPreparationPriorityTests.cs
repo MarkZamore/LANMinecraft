@@ -82,12 +82,15 @@ public sealed class StartupPreparationPriorityTests
     }
 
     [Fact]
-    public void ExplicitNewsRequestCanBypassTheAutomaticPreparationBarrier()
+    public void PermanentNewsPrepareOnceAfterTheLaunchListWithoutAssistantNavigation()
     {
-        var click = Method(ReadWindow(), "private void SidePanelToggleButton_Click(");
-        Assert.Contains("Enqueue(\"news\"", click, StringComparison.Ordinal);
-        Assert.True(click.IndexOf("Enqueue(\"news\"", StringComparison.Ordinal) <
-                    click.IndexOf("ShowSidePanel(", StringComparison.Ordinal));
+        var source = ReadWindow();
+        var prepare = Method(source, "private void StartSecondaryPreparation()");
+        Assert.Contains("_secondaryPreparationStarted", prepare, StringComparison.Ordinal);
+        Assert.Contains("Enqueue(\"news\"", prepare, StringComparison.Ordinal);
+        Assert.Contains("yield return LoadChangelog;", Method(source, "private IEnumerable<Action> PrepareNews()"), StringComparison.Ordinal);
+        Assert.DoesNotContain("SidePanelToggleButton_Click", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShowSidePanel", source, StringComparison.Ordinal);
     }
 
     private static string Method(string source, string signature)

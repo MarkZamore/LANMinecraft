@@ -123,7 +123,6 @@
         <Thickness x:Key="Pad.Small">8,0</Thickness>
         <Thickness x:Key="Pad.Wide">16,4</Thickness>
         <Thickness x:Key="Pad.FieldText">12,8</Thickness>
-        <Thickness x:Key="Pad.ChatComposer">12</Thickness>
         <Thickness x:Key="Pad.Panel">16</Thickness>
         <Thickness x:Key="Pad.LibraryCard">16,8</Thickness>
         <Thickness x:Key="Pad.CategoryHeader">16,8</Thickness>
@@ -131,11 +130,6 @@
         <Thickness x:Key="Pad.Popup">4</Thickness>
         <Thickness x:Key="Pad.DropDownText">12,4,24,4</Thickness>
         <sys:Double x:Key="Size.Control">36</sys:Double>
-        <sys:Double x:Key="Size.ChatPromptHeight">88</sys:Double>
-        <sys:Double x:Key="Size.ChatAction">40</sys:Double>
-        <sys:Double x:Key="Size.ChatActionGlyph">16</sys:Double>
-        <sys:Double x:Key="Size.ChatStopGlyph">10</sys:Double>
-        <sys:Double x:Key="Size.ChatGlyphStroke">2</sys:Double>
         <sys:Double x:Key="Size.WindowWidth">820</sys:Double>
         <sys:Double x:Key="Size.WindowHeight">560</sys:Double>
         <sys:Double x:Key="Size.WindowMinWidth">820</sys:Double>
@@ -144,7 +138,6 @@
         <sys:Double x:Key="Size.CompactNameField">64</sys:Double>
         <GridLength x:Key="Size.CompactLabelColumn">56</GridLength>
         <sys:Double x:Key="Size.ButtonMax">96</sys:Double>
-        <sys:Double x:Key="Size.SidePanelToggle">80</sys:Double>
         <sys:Double x:Key="Size.Primary">44</sys:Double>
         <sys:Double x:Key="Size.Small">24</sys:Double>
         <sys:Double x:Key="Size.ButtonMin">88</sys:Double>
@@ -197,8 +190,6 @@
         <Duration x:Key="Motion.SectionFade">0:0:0.16</Duration>
         <Duration x:Key="Motion.UpdateDots">0:0:0.45</Duration>
         <CornerRadius x:Key="Radius.Control">8</CornerRadius>
-        <CornerRadius x:Key="Radius.ChatComposer">12</CornerRadius>
-        <CornerRadius x:Key="Radius.ChatAction">20</CornerRadius>
         <CornerRadius x:Key="Radius.Primary">8</CornerRadius>
         <CornerRadius x:Key="Radius.Panel">8</CornerRadius>
         <CornerRadius x:Key="Radius.Scrollbar">3</CornerRadius>
@@ -364,53 +355,6 @@
                     </MultiTrigger>
                     <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/></Trigger>
                     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Background" Value="{DynamicResource Brush.SurfaceDisabled}"/><Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Brush.BorderDisabled}"/><Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/></Trigger>
-                </ControlTemplate.Triggers>
-            </ControlTemplate></Setter.Value></Setter>
-        </Style>
-        <Style x:Key="ChatComposerFrameStyle" TargetType="Border">
-            <Setter Property="Background" Value="{DynamicResource Brush.Surface}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/>
-            <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
-            <Setter Property="CornerRadius" Value="{StaticResource Radius.ChatComposer}"/>
-            <Setter Property="Padding" Value="{StaticResource Pad.ChatComposer}"/>
-            <Style.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}"/></Trigger></Style.Triggers>
-        </Style>
-        <Style x:Key="ChatPromptScrollViewerStyle" TargetType="ScrollViewer">
-            <Setter Property="PanningMode" Value="VerticalOnly"/>
-            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollViewer"><Grid ClipToBounds="True">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Margin="{TemplateBinding Padding}"/>
-                <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Width="{StaticResource Size.Scrollbar}" Orientation="Vertical" Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}" Value="{Binding VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
-            </Grid></ControlTemplate></Setter.Value></Setter>
-        </Style>
-        <Style x:Key="ChatPromptTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
-            <Setter Property="Height" Value="{StaticResource Size.ChatPromptHeight}"/>
-            <Setter Property="MinHeight" Value="{StaticResource Size.ChatPromptHeight}"/>
-            <Setter Property="Padding" Value="{StaticResource Pad.None}"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="{StaticResource Border.None}"/>
-            <Setter Property="VerticalContentAlignment" Value="Top"/>
-            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox">
-                <ScrollViewer x:Name="PART_ContentHost" Style="{StaticResource ChatPromptScrollViewerStyle}" Focusable="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"/>
-            </ControlTemplate></Setter.Value></Setter>
-        </Style>
-        <Style x:Key="ChatActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Width" Value="{StaticResource Size.ChatAction}"/><Setter Property="Height" Value="{StaticResource Size.ChatAction}"/>
-            <Setter Property="MinHeight" Value="{StaticResource Size.ChatAction}"/><Setter Property="Padding" Value="{StaticResource Pad.None}"/>
-            <Setter Property="Background" Value="{DynamicResource Brush.SurfaceHover}"/><Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
-            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-                <Border x:Name="ActionSurface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource Radius.ChatAction}">
-                    <Grid>
-                        <Path x:Name="SendGlyph" Width="{StaticResource Size.ChatActionGlyph}" Height="{StaticResource Size.ChatActionGlyph}" Data="M 8,15 L 8,1 M 2,7 L 8,1 L 14,7" Stroke="{TemplateBinding Foreground}" StrokeThickness="{StaticResource Size.ChatGlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        <Rectangle x:Name="StopGlyph" Width="{StaticResource Size.ChatStopGlyph}" Height="{StaticResource Size.ChatStopGlyph}" Fill="{TemplateBinding Foreground}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                    </Grid>
-                </Border>
-                <ControlTemplate.Triggers>
-                    <Trigger Property="Tag"><Trigger.Value><sys:Boolean>True</sys:Boolean></Trigger.Value><Setter TargetName="SendGlyph" Property="Visibility" Value="Collapsed"/><Setter TargetName="StopGlyph" Property="Visibility" Value="Visible"/></Trigger>
-                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ActionSurface" Property="Background" Value="{DynamicResource Brush.BorderStrong}"/></Trigger>
-                    <Trigger Property="IsPressed" Value="True"><Setter TargetName="ActionSurface" Property="Background" Value="{DynamicResource Brush.SurfacePressed}"/></Trigger>
-                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ActionSurface" Property="BorderBrush" Value="{DynamicResource Brush.Text}"/></Trigger>
-                    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ActionSurface" Property="Background" Value="{DynamicResource Brush.SurfaceDisabled}"/><Setter TargetName="ActionSurface" Property="BorderBrush" Value="{DynamicResource Brush.BorderDisabled}"/><Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/></Trigger>
                 </ControlTemplate.Triggers>
             </ControlTemplate></Setter.Value></Setter>
         </Style>
