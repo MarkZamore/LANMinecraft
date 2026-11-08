@@ -357,9 +357,11 @@ public sealed partial class UpdateService
         CancellationToken token)
     {
         DeleteFileIfExists(destinationPath);
-        using var response = await _httpClient.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead, token)
-            .ConfigureAwait(false);
+        using var asset = await LauncherReleaseAsset.OpenAsync(_httpClient, downloadUri, token).ConfigureAwait(false);
+        var response = asset.Response;
         response.EnsureSuccessStatusCode();
+        if (asset.Size is { } apiSize && (apiSize != expectedSize || asset.Sha256 != expectedSha256.ToLowerInvariant()))
+            throw new InvalidDataException("Release asset differs from the checked update manifest.");
 
         var contentLength = response.Content.Headers.ContentLength;
         if (contentLength.HasValue && contentLength.Value != expectedSize)
@@ -828,19 +830,15 @@ public sealed partial class UpdateService
     private async Task<UpdateManifest> DownloadManifestAsync(Uri manifestUri, CancellationToken token)
     {
         ValidateGitHubDownloadUri(manifestUri);
-        using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
-        request.Headers.CacheControl = new CacheControlHeaderValue
-        {
-            NoCache = true,
-            NoStore = true
-        };
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            token).ConfigureAwait(false);
+        using var asset = await LauncherReleaseAsset.OpenAsync(_httpClient, manifestUri, token).ConfigureAwait(false);
+        var response = asset.Response;
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<UpdateManifest>(stream, _jsonOptions, token) ??
+        await response.Content.LoadIntoBufferAsync(1024 * 1024, token).ConfigureAwait(false);
+        var bytes = await response.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
+        if (asset.Size is { } size && (bytes.Length != size ||
+            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant() != asset.Sha256))
+            throw new InvalidDataException("Update manifest differs from the current GitHub asset.");
+        return JsonSerializer.Deserialize<UpdateManifest>(bytes, _jsonOptions) ??
                throw new InvalidOperationException("Update manifest was empty.");
     }
 
