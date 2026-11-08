@@ -6,6 +6,33 @@ namespace Minecraft.Tests;
 public sealed class GameNoticeOverlayServiceTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WindowedNoticesUseDesktopWhileFullscreenUsesTheSameVerifiedChannel(bool native)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.CreateService();
+        using var session = service.PrepareSession(native);
+        session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
+        fixture.Heartbeat(session.Directory, backend: native ? "native-ui-v1" : "lwjgl3");
+        fixture.Fullscreen = false;
+        Assert.False(service.TryShow(new PeerNotice("Оконный режим", "На дисплее")));
+        Assert.Contains("count=0", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
+        fixture.Fullscreen = true;
+        Assert.True(service.TryShow(new PeerNotice("Полный экран", "В кадре")));
+        Assert.Contains("count=1", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
+        fixture.ForegroundId++;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("count=0", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
+        fixture.ForegroundId--;
+        Assert.True(service.TryShow(new PeerNotice("Снова полный экран", "В кадре")));
+        fixture.Fullscreen = false;
+        service.RefreshDisplayScale(session.Directory);
+        Assert.Contains("count=0", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
+        Assert.False(service.TryShow(new PeerNotice("Снова оконный", "На дисплее")));
+        service.ProcessExited(Fixture.ProcessId);
+    }
+    [Theory]
     [InlineData(1.25, "1.25")]
     [InlineData(2, "2")]
     [InlineData(double.NaN, "1")]
@@ -227,12 +254,14 @@ public sealed class GameNoticeOverlayServiceTests
         internal int ForegroundId { get; set; } = ProcessId;
         internal long ActualStartTicks { get; set; } = StartedTicks;
         internal double DisplayScale { get; set; } = 1;
+        internal bool Fullscreen { get; set; } = true;
         internal Fixture() { Paths = new AppPaths(_root); Paths.Ensure(); }
         internal GameNoticeOverlayService CreateService(AppPaths? paths = null) => new(paths ?? Paths,
             new Logger(Path.Combine(Paths.Personal, "notices.log")), () => Now, () => ForegroundId,
             processId => processId == ProcessId ? ActualStartTicks : null,
             () => new MemoryStream(Encoding.UTF8.GetBytes("launcher-owned fixture agent bytes"), writable: false),
-            _ => DisplayScale, (root, candidate) => root == ProcessId && candidate == ProcessId + 10);
+            _ => DisplayScale, (root, candidate) => root == ProcessId && candidate == ProcessId + 10,
+            _ => Fullscreen);
         internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "", string backend = "lwjgl3") =>
             GameNoticeOverlayService.WriteProperties(Path.Combine(directory, "heartbeat.properties"), new Dictionary<string, string>
             {

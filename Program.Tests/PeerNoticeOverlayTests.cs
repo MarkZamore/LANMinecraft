@@ -9,6 +9,19 @@ namespace Minecraft.Tests;
 [Collection("Native desktop focus")]
 public sealed class PeerNoticeOverlayTests
 {
+    [Fact]
+    public void PresentationChoiceUsesTheWholeDisplayRatherThanGameVersionOrWorkArea()
+    {
+        var monitor = new Rect(-2560, -240, 2560, 1440);
+        Assert.True(PeerNoticeNative.UsesFullscreenPresentation(monitor, monitor, hasCaption: false));
+        Assert.True(PeerNoticeNative.UsesFullscreenPresentation(new Rect(-2559, -240, 2559, 1440), monitor, false));
+        Assert.False(PeerNoticeNative.UsesFullscreenPresentation(monitor, monitor, hasCaption: true));
+        Assert.False(PeerNoticeNative.UsesFullscreenPresentation(new Rect(-2400, -200, 1000, 700), monitor, false));
+        Assert.False(PeerNoticeNative.UsesFullscreenPresentation(new Rect(-2560, -240, 2560, 1400), monitor, false));
+        Assert.False(PeerNoticeNative.UsesFullscreenPresentation(Rect.Empty, monitor, false));
+        Assert.False(PeerNoticeNative.UsesFullscreenPresentation(monitor, Rect.Empty, false));
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(1.5)]
@@ -29,6 +42,7 @@ public sealed class PeerNoticeOverlayTests
     public void Toasts_StayVisibleAboveAMockWhenLauncherMinimizesWithoutTakingFocus()
     {
         foreach (var gameRunning in new[] { true, false })
+        foreach (var fullscreen in new[] { true, false })
         WindowCanvasTests.OnAStaThread(() =>
         {
             var owner = WindowCanvasTests.LoadWindow();
@@ -54,11 +68,14 @@ public sealed class PeerNoticeOverlayTests
                     (IntPtr handle, IntPtr _, ref NativeRect rectangle, IntPtr data) => { monitors.Add(handle); return true; }, IntPtr.Zero));
                 var target = monitors[^1];
                 Assert.True(PeerNoticeNative.TryWorkArea(target, out var area));
+                Assert.True(PeerNoticeNative.TryDisplayArea(target, out var display));
                 Assert.True(PeerNoticeNative.TryWorkArea(monitors[0], out var ownerArea));
                 Assert.True(SetWindowPos(new WindowInteropHelper(owner).Handle, IntPtr.Zero,
                     (int)ownerArea.Left, (int)ownerArea.Top, 400, 300, 0x0010));
-                Assert.True(SetWindowPos(mockHandle, new IntPtr(-1), (int)area.Left, (int)area.Top,
-                    (int)area.Width, (int)area.Height, 0x0010));
+                Assert.True(SetWindowPos(mockHandle, new IntPtr(-1),
+                    (int)(fullscreen ? display.Left : area.Left + area.Width / 2), (int)(fullscreen ? display.Top : area.Top),
+                    (int)(fullscreen ? display.Width : area.Width / 2), (int)(fullscreen ? display.Height : area.Height), 0x0010));
+                Assert.Equal(fullscreen, PeerNoticeNative.IsFullscreenWindow(mockHandle));
                 var foregroundBefore = PeerNoticeNative.GetForegroundWindow();
                 var gameHandle = gameRunning ? mockHandle : IntPtr.Zero;
                 service = new PeerNoticeService(owner, null, () => gameHandle);
@@ -82,6 +99,22 @@ public sealed class PeerNoticeOverlayTests
                 Assert.InRange(Math.Abs(bounds.Left - area.Left - gap), 0, 1);
                 Assert.InRange(Math.Abs(area.Bottom - bounds.Bottom - gap), 0, 1);
                 Assert.True(IsAbove(firstHandle, mockHandle));
+
+                if (gameRunning)
+                {
+                    if (!fullscreen)
+                    {
+                        Assert.True(PeerNoticeNative.TryBounds(mockHandle, out var gameBounds));
+                        Assert.True(bounds.Left < gameBounds.Left); // display anchored, outside the small game window
+                    }
+                    mock.WindowState = WindowState.Minimized;
+                    Frame(40);
+                    Assert.False(PeerNoticeNative.IsFullscreenWindow(mockHandle));
+                    Assert.Equal(target, PeerNoticeNative.SelectMonitor(mockHandle, new WindowInteropHelper(owner).Handle));
+                    Assert.True(IsWindowVisible(firstHandle));
+                    mock.WindowState = WindowState.Normal;
+                    Frame(30);
+                }
 
                 // Already visible toasts must return to the launcher when the game closes,
                 // even while another application keeps desktop focus.
