@@ -51,6 +51,31 @@ public sealed class PlayButtonCaptionTests
             var moving = Assert.IsType<Border>(progress.Template.FindName("PART_GlowRect", progress));
             Assert.Equal(Visibility.Visible, moving.Visibility);
             Assert.Equal(fillColor, Assert.IsType<SolidColorBrush>(moving.Background).Color);
+            var track = Assert.IsType<RoundedClipBorder>(progress.Template.FindName("PART_Track", progress));
+            var clipped = Assert.IsType<Grid>(track.Child);
+            var clip = Assert.IsType<RectangleGeometry>(clipped.Clip);
+            Assert.Equal(((CornerRadius)window.FindResource("Radius.Primary")).TopLeft, clip.RadiusX);
+            Assert.Equal(new Rect(clipped.RenderSize), clip.Rect);
+            Assert.False(clip.FillContains(new Point(0, 0)));
+            Assert.False(clip.FillContains(new Point(clipped.ActualWidth, 0)));
+            Assert.True(clip.FillContains(new Point(clipped.ActualWidth / 2, clipped.ActualHeight / 2)));
+            // Render an overshooting animation segment at both edges. The
+            // parent's rounded geometry must clip pixels, not just its layout.
+            progress.IsIndeterminate = false;
+            fill.Background = Brushes.Transparent;
+            moving.Visibility = Visibility.Visible;
+            moving.BeginAnimation(FrameworkElement.MarginProperty, null);
+            moving.Width = track.ActualWidth * 2;
+            moving.Margin = new Thickness(-track.ActualWidth / 2, 0, 0, 0);
+            WindowCanvasTests.LayoutWindow(window, size);
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(track.ActualWidth),
+                (int)Math.Ceiling(track.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(track);
+            var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+            bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
+            Assert.Equal(0, pixels[3]);
+            Assert.Equal(0, pixels[(bitmap.PixelWidth - 1) * 4 + 3]);
+            Assert.True(pixels[((bitmap.PixelHeight / 2) * bitmap.PixelWidth + bitmap.PixelWidth / 2) * 4 + 3] > 0);
 
             button.IsHitTestVisible = true;
             button.IsEnabled = false;

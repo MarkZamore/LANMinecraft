@@ -21,6 +21,14 @@ For legacy native entries that only declare a top-level Maven repository, the pr
 
 The library's platform metadata uses `legacyfabric`; the preparation indicator says `Legacy Fabric`. Existing library cards continue to show their Minecraft version and mod count.
 
+The process builder restores inherited `minecraftArguments` only when CmlLib
+produces no game arguments for the profile chain. Explicit loader arguments keep
+their precedence. For that inherited legacy template, `game_assets` is selected
+from the verified index's `virtual` flag, rather than the instance directory.
+No assets link is created in the instance. `InheritedGameArgumentsTests` use the
+complete vanilla and loader profiles through the production BuildProcess path;
+they do not certify the selected OpenAL device or audible output.
+
 Minecraft 1.6.4 uses name-based player files and no authlib. The old UUID/authlib agent must not be applied to that runtime. Player storage, authenticated Steam identity, chosen skins and native network UI are separate compatibility contracts implemented by the legacy module and the launcher's legacy profile services. A successful runtime installation alone does not certify those features.
 
 Publication declares `legacy-fabric-runtime-v1`, `legacy-player-profiles-v1` and `legacy-steam-v1` in a schema-2 remote manifest only after all three integrations have passed their acceptance checks and the launcher supports those capability gates.
