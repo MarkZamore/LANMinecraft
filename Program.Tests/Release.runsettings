@@ -111,6 +111,8 @@
       FullyQualifiedName=Minecraft.Tests.ChatComposerTests.TheSameAction_SendsThenCancelsAControlledOperationAndRestoresItsArrow|
       FullyQualifiedName=Minecraft.Tests.DialogLayoutTests.ACrampedWorkArea_ReflowsActionsAndLetsThePlayerScrollToThem|
       FullyQualifiedName=Minecraft.Tests.PeerNoticeOverlayTests.Toasts_StayVisibleAboveAMockWhenLauncherMinimizesWithoutTakingFocus|
+      FullyQualifiedName=Minecraft.Tests.PeerNoticeOverlayTests.PresentationChoiceUsesTheWholeDisplayRatherThanGameVersionOrWorkArea|
+      FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.WindowedNoticesUseDesktopWhileFullscreenUsesTheSameVerifiedChannel|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.ReadyForegroundGame_ReceivesThreeNoticesWithoutDesktopPresentation|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.NativeSession_RequiresOwnedForegroundChildAndFreshRendererAcrossRestart|
       FullyQualifiedName=Minecraft.Tests.GameNoticeOverlayServiceTests.LongTextCannotInvalidateTheSharedSnapshotOrSplitAnEmoji|

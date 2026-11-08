@@ -26,6 +26,7 @@ public sealed class GameNoticeOverlayService
     private readonly Func<Stream> _agentResource;
     private readonly Func<int, double> _displayScale;
     private readonly Func<int, int, bool> _isDescendant;
+    private readonly Func<int, bool> _fullscreenPresentation;
     private IReadOnlyDictionary<string, string> _style = new Dictionary<string, string>();
 
     public GameNoticeOverlayService(AppPaths paths, Logger logger)
@@ -33,7 +34,8 @@ public sealed class GameNoticeOverlayService
 
     internal GameNoticeOverlayService(AppPaths paths, Logger logger, Func<DateTimeOffset> now,
         Func<int> foregroundProcess, Func<int, long?> processStartTicks, Func<Stream>? agentResource = null,
-        Func<int, double>? displayScale = null, Func<int, int, bool>? isDescendant = null)
+        Func<int, double>? displayScale = null, Func<int, int, bool>? isDescendant = null,
+        Func<int, bool>? fullscreenPresentation = null)
     {
         _paths = paths;
         _logger = logger;
@@ -43,6 +45,7 @@ public sealed class GameNoticeOverlayService
         _agentResource = agentResource ?? OpenAgentResource;
         _displayScale = displayScale ?? ForegroundDisplayScale;
         _isDescendant = isDescendant ?? GameProcessTree.Contains;
+        _fullscreenPresentation = fullscreenPresentation ?? PeerNoticeNative.IsForegroundFullscreenGame;
         _paths.EnsureUnderRoot(Root);
         AdoptSessions();
     }
@@ -93,7 +96,8 @@ public sealed class GameNoticeOverlayService
             var now = _now();
             foreach (var session in _sessions.Values)
             {
-                if (!MatchesProcess(session, processId) || !IsRendererReady(session, processId, now)) continue;
+                if (!MatchesProcess(session, processId) || !_fullscreenPresentation(processId) ||
+                    !IsRendererReady(session, processId, now)) continue;
                 session.Notices.RemoveAll(item => now - item.Created >= Lifetime);
                 while (session.Notices.Count >= 3) session.Notices.RemoveAt(0);
                 session.Notices.Add(new QueuedNotice(notice, now));
@@ -194,7 +198,18 @@ public sealed class GameNoticeOverlayService
                 return;
             }
             var foreground = _foregroundProcess();
-            if (!MatchesProcess(session, foreground)) return;
+            if (!MatchesProcess(session, foreground) || !_fullscreenPresentation(foreground))
+            {
+                session.Notices.Clear();
+                try { WriteSnapshot(session); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warn($"Could not clear an in-game notice after leaving fullscreen: {ex.Message}");
+                }
+                session.ScaleTimer?.Dispose();
+                session.ScaleTimer = null;
+                return;
+            }
             var scale = ValidScale(_displayScale(foreground));
             if (scale == session.DisplayScale) return;
             try

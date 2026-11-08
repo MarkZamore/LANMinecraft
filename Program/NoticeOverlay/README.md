@@ -1,5 +1,22 @@
 # Fullscreen notification bridge
 
+## Delivery policy
+
+The launcher selects the presentation channel for every notice using the live
+game HWND and its monitor, independently of pack names, Minecraft versions and
+loaders. A windowed game uses a nonactivating desktop toast anchored to the game
+display. An active captionless game covering its whole monitor uses this in-frame
+channel, provided its presentation heartbeat is healthy. This includes borderless
+and Windows-optimized fullscreen: an HWND alone does not identify true exclusive
+presentation reliably. A missing/failed renderer retains the desktop fallback.
+Leaving fullscreen clears an active in-game snapshot on the next 500 ms refresh.
+
+True exclusive presentation can hide a desktop HWND; this is why fullscreen
+delivery remains inside the game frame. No game fullscreen settings, system
+service, installed application identity or registry registration are introduced.
+Both channels keep their controlled files under the launcher root. Windows and
+graphics-driver caches are outside this component's control.
+
 This is a launcher-owned Java agent, not a Minecraft mod. Its JAR is extracted
 inside `Minecraft/Launcher/NoticeOverlay`, never into a pack's `mods` directory.
 It runs independently of the identity adapter and requires no Minecraft names,

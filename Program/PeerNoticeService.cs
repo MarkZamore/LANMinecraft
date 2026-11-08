@@ -205,6 +205,43 @@ internal static class PeerNoticeNative
     internal static IntPtr SelectMonitor(IntPtr game, IntPtr owner) =>
         MonitorFromWindow(game != IntPtr.Zero && IsWindow(game) ? game : owner, 2);
 
+    // A fullscreen HWND can be exclusive, optimized by Windows, or borderless.
+    // Its presentation mode cannot be inferred from the game's language/version.
+    // Use the in-frame channel conservatively for any active monitor-sized game.
+    internal static bool IsForegroundFullscreenGame(int processId)
+    {
+        var window = GetForegroundWindow();
+        _ = GetWindowThreadProcessId(window, out var id);
+        return processId > 0 && id == (uint)processId && IsFullscreenWindow(window);
+    }
+
+    internal static bool IsFullscreenWindow(IntPtr window)
+    {
+        if (!IsWindowVisible(window) || IsIconic(window) || !TryBounds(window, out var bounds) ||
+            !TryDisplayArea(MonitorFromWindow(window, 2), out var monitor)) return false;
+        var caption = (GetWindowLongPtr(window, -16).ToInt64() & 0x00C00000) != 0;
+        return UsesFullscreenPresentation(bounds, monitor, caption);
+    }
+
+    internal static bool TryDisplayArea(IntPtr monitor, out Rect area)
+    {
+        var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
+        if (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info) &&
+            info.MonitorArea.Right > info.MonitorArea.Left && info.MonitorArea.Bottom > info.MonitorArea.Top)
+        {
+            area = new Rect(info.MonitorArea.Left, info.MonitorArea.Top,
+                info.MonitorArea.Right - info.MonitorArea.Left, info.MonitorArea.Bottom - info.MonitorArea.Top);
+            return true;
+        }
+        area = Rect.Empty;
+        return false;
+    }
+
+    internal static bool UsesFullscreenPresentation(Rect window, Rect monitor, bool hasCaption) =>
+        !hasCaption && !window.IsEmpty && !monitor.IsEmpty && monitor.Width > 0 && monitor.Height > 0 &&
+        Math.Abs(window.Left - monitor.Left) <= 1 && Math.Abs(window.Top - monitor.Top) <= 1 &&
+        Math.Abs(window.Right - monitor.Right) <= 1 && Math.Abs(window.Bottom - monitor.Bottom) <= 1;
+
     internal static IntPtr FindGameWindow(IEnumerable<int> processIds)
     {
         var ids = processIds.ToHashSet();
@@ -283,6 +320,7 @@ internal static class PeerNoticeNative
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(IntPtr window);
     private delegate bool WindowCallback(IntPtr window, IntPtr parameter);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumWindows(WindowCallback callback, IntPtr parameter);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
