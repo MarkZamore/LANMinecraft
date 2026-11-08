@@ -2496,7 +2496,7 @@ public partial class MainWindow : Window
         ChangelogPanel.Visibility = news ? Visibility.Visible : Visibility.Collapsed;
         ChatPanel.Visibility = news ? Visibility.Collapsed : Visibility.Visible;
         SidePanelTitle.Text = news ? "Что нового" : "AI-помощник";
-        SidePanelToggleButton.Content = news ? "Чат" : "Новости";
+        SidePanelToggleButton.Content = news ? "Помощник" : "Новости";
     }
 
     private void SidePanelToggleButton_Click(object sender, RoutedEventArgs e)

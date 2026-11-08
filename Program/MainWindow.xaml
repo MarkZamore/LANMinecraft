@@ -630,12 +630,12 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right2}">
+                <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right1}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right2}" Grid.Column="0" />
+                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}" Grid.Column="0" />
                     <TextBlock x:Name="SteamPersonaText"
                         Text="нет подключения"
                         Grid.Column="1"
@@ -643,11 +643,12 @@
                 </Grid>
                 <Button Grid.Column="1"
                     x:Name="SidePanelToggleButton"
+                    Width="{StaticResource Size.SidePanelToggle}"
                     Content="Новости"
                     Click="SidePanelToggleButton_Click"
                     HorizontalAlignment="Right"
                     MinWidth="{StaticResource Size.Small}"
-                    Padding="{StaticResource Pad.Small}" />
+                    Padding="{StaticResource Pad.None}" />
             </Grid>
         </Grid>
         <Grid Visibility="Collapsed">

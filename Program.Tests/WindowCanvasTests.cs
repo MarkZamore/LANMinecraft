@@ -758,12 +758,16 @@ public sealed class WindowCanvasTests
             var fullStatus = new TextBlock { Text = status.Text, FontFamily = status.FontFamily, FontSize = status.FontSize };
             fullStatus.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(status.ActualWidth >= fullStatus.DesiredSize.Width - 0.5, "The disconnected status must remain fully readable.");
-            Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 7.5, 8.5);
+            Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 3.5, 4.5);
             var footer = Element<Grid>(window, "FooterActions");
             var root = Element<Grid>(window, "RootGrid");
             AssertWidthWithinOnePhysicalPixel(Bounds(Element<Border>(window, "SidePanelCard"), root).Left,
                 Bounds(label, root).Left, label);
             var toggle = Element<Button>(window, "SidePanelToggleButton");
+            var caption = new TextBlock { Text = "Помощник", FontFamily = toggle.FontFamily, FontSize = toggle.FontSize };
+            caption.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.True(caption.DesiredSize.Width <= toggle.ActualWidth - toggle.Padding.Left - toggle.Padding.Right -
+                toggle.BorderThickness.Left - toggle.BorderThickness.Right, "The assistant caption must fit without clipping.");
             AssertWidthWithinOnePhysicalPixel(footer.ActualWidth, Bounds(toggle, footer).Right, toggle);
             return true;
         });
