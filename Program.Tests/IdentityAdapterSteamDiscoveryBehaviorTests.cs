@@ -17,13 +17,23 @@ public sealed class IdentityAdapterSteamDiscoveryBehaviorTests
             var classPath = string.Join(Path.PathSeparator, Path.Combine(common, "lib", "asm-9.8.jar"),
                 Path.Combine(common, "lib", "asm-tree-9.8.jar"));
             var arguments = new List<string> { "--release", "17", "-encoding", "UTF-8", "-cp", classPath, "-d", root,
-                Path.Combine(common, "PortableSteamDiscoveryHooks.java"), Path.Combine(common, "PortableSteamDiscoveryTransformer.java") };
+                Path.Combine(common, "PortableSteamDiscoveryHooks.java"), Path.Combine(common, "PortableSteamDiscoveryTransformer.java"),
+                Path.Combine(common, "PortableSteamLanEntryTransformer.java") };
             arguments.AddRange(Directory.EnumerateFiles(fixture, "*.java").Order(StringComparer.Ordinal));
             await Run("javac", arguments.ToArray());
             File.Copy(Path.Combine(fixture, "e4steam-version.properties"), Path.Combine(root, "e4steam-version.properties"));
             var output = await Run("java", "-Xverify:all", "-Dfile.encoding=UTF-8", "-cp", root + Path.PathSeparator + classPath,
                 "SteamDiscoveryBehaviorProbe");
             Assert.Contains("PASS: actual discovery hooks list one Steam world", output, StringComparison.Ordinal);
+            var adapter = Path.Combine(root, "native-preflight-adapter.jar");
+            await using (var resource = typeof(PortableIdentityAdapterService).Assembly
+                .GetManifestResourceStream("Minecraft.PortableIdentityAdapter.jar")
+                ?? throw new InvalidOperationException("Build the actual Java adapter before native preflight behavior tests."))
+            await using (var target = File.Create(adapter)) await resource.CopyToAsync(target);
+            var hostOutput = await Run("java", "-Djava.io.tmpdir=" + root,
+                "-cp", root + Path.PathSeparator + classPath + Path.PathSeparator + adapter,
+                "SteamHostDescriptionPreflightProbe");
+            Assert.Contains("PASS: host publication preflight independently rejects each missing metadata getter", hostOutput, StringComparison.Ordinal);
         }
         finally { TempTree.Delete(root); }
     }

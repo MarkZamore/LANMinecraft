@@ -26,6 +26,19 @@ public sealed class IdentityAdapterTransportCacheTests : IDisposable
     }
 
     [Fact]
+    public void PartialClientDiscoveryFailure_IsRetriedOnTheNextLaunch()
+    {
+        using var fixture = CreateFixture();
+        Assert.True(IsReusable(fixture));
+        fixture.Properties["steamDiscoveryClientEnabled"] = "false";
+        RecordCurrentFingerprint(fixture);
+        Assert.False(IsReusable(fixture));
+        fixture.Properties.Remove("steamDiscoveryClientEnabled");
+        RecordCurrentFingerprint(fixture);
+        Assert.True(IsReusable(fixture));
+    }
+
+    [Fact]
     public void SameLengthAndMtimeTransportChange_InvalidatesNativeGuardProof()
     {
         using var fixture = CreateFixture();

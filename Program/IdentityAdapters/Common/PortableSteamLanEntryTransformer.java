@@ -18,6 +18,7 @@ public final class PortableSteamLanEntryTransformer implements ClassFileTransfor
     public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefined,
                             ProtectionDomain domain, byte[] original) {
         if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") ||
+            !Boolean.parseBoolean(System.getProperty("minecraft.portable.identity.steamDiscoveryClientEnabled", "true")) ||
             !matches("steamDiscoveryLanEntryClasses", name)) return null;
         ClassNode node = new ClassNode(Opcodes.ASM9);
         new ClassReader(original).accept(node, 0);

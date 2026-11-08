@@ -1,0 +1,130 @@
+{
+  "release": 486,
+  "parentSourceRevision": "6ef0470cf3147700d0438be4f18eb7051290e873",
+  "mandatoryValidation": {
+    "profile": "Release -WithAdapters",
+    "passed": 708,
+    "failed": 0,
+    "skipped": 0,
+    "selectedMethods": 433
+  },
+  "nativePreflight": {
+    "adapterSha256": "df26d0dcaf30d42c9ec6ad6984f104e0147b94f0e1fc9e7bc3012fa9d42fe85d",
+    "java": "openjdk version \"17.0.20.1\" 2026-08-18\nOpenJDK Runtime Environment Temurin-17.0.20.1+1 (build 17.0.20.1+1)\nOpenJDK 64-Bit Server VM Temurin-17.0.20.1+1 (build 17.0.20.1+1, mixed mode, sharing)\n",
+    "targets": [
+      {
+        "className": "net/minecraft/client/gui/screens/multiplayer/JoinMultiplayerScreen",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/client/server/LanServerDetection$LanServerList",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/server/level/ChunkMap",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/server/level/ServerPlayer",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/server/level/ChunkMap$TrackedEntity",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/server/network/ServerGamePacketListenerImpl",
+        "jarName": "forge-1.20.1-47.4.0-client.jar",
+        "jarSha256": "010adc332f19b05fb24383954ec7a88694666216e480a6824ff0cbc4740c3c66",
+        "exitCode": 0
+      },
+      {
+        "className": "com/mojang/authlib/yggdrasil/YggdrasilMinecraftSessionService",
+        "jarName": "authlib-4.0.43.jar",
+        "jarSha256": "697043d19e0b84b04f011dbec1bec3d80c04d8c468e7e4c6b221c0183bc1c0ef",
+        "exitCode": 0
+      },
+      {
+        "className": "com/mojang/authlib/yggdrasil/TextureUrlChecker",
+        "jarName": "authlib-4.0.43.jar",
+        "jarSha256": "697043d19e0b84b04f011dbec1bec3d80c04d8c468e7e4c6b221c0183bc1c0ef",
+        "exitCode": 0
+      },
+      {
+        "className": "com/mojang/authlib/GameProfile",
+        "jarName": "authlib-4.0.43.jar",
+        "jarSha256": "697043d19e0b84b04f011dbec1bec3d80c04d8c468e7e4c6b221c0183bc1c0ef",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraft/client/gui/screens/ShareToLanScreen",
+        "jarName": "client-1.20.1-20230612.114412-srg.jar",
+        "jarSha256": "e2e940fe7ca0a9fba5a5c11ad2cf3e2f7df91bbf51d12af22cdde7af18adc344",
+        "exitCode": 0
+      },
+      {
+        "className": "net/minecraftforge/network/HandshakeHandler",
+        "jarName": "forge-1.20.1-47.4.0-universal.jar",
+        "jarSha256": "2b0e97b22fd4d043dbbcc8e0a44ef0d58915689ed9224e4cd28d5c4976a16bcc",
+        "exitCode": 0
+      }
+    ],
+    "negativeMetadataChecks": [
+      {
+        "property": "steamDiscoveryGetUserMethods",
+        "exitCode": 1,
+        "rejected": true
+      },
+      {
+        "property": "steamDiscoveryUserNameMethods",
+        "exitCode": 1,
+        "rejected": true
+      },
+      {
+        "property": "steamDiscoveryLevelNameMethods",
+        "exitCode": 1,
+        "rejected": true
+      }
+    ],
+    "gameStarted": false,
+    "remoteComputerRetested": false,
+    "partialPublisherPass": true
+  },
+  "handshakeRuntimeProbe": {
+    "fixtureChecksPassed": 34,
+    "exactForgeChecksPassed": 56,
+    "runtimes": [
+      "JDK25.0.2",
+      "Java17.0.15"
+    ],
+    "heapMiB": 128,
+    "isolatedNativeBytecode": true,
+    "fullGameOrTwoClientPass": false
+  },
+  "originalHostPreflightCause": "Not reproduced; independently verified publisher is retained when only local browser verification fails. Partial client browser is retried next launch.",
+  "userRequestedRemoteRetest": false,
+  "remoteComputerRetested": false,
+  "worldsModsOrForgeJarFilesChanged": false,
+  "forgeBehaviorChangedInMemory": "Only sentMessages initializer wrapped in standard synchronizedList by preflighted general loader adapter.",
+  "publicationScope": "Shared launcher; no pack-specific content/config patches",
+  "knownLimits": [
+    "A real two-client connection after the update was not run.",
+    "No claim that all disconnects or the reported steady low FPS are fixed."
+  ]
+}

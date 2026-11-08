@@ -17,6 +17,9 @@ public final class PortableIdentityAgent {
         // A profile's verified cosmetic producer is independent of identity/LAN
         // compatibility and never needs the bootstrap hooks below.
         instrumentation.addTransformer(new PortableWindowTitleTransformer(), false);
+        // This loader-only correction needs no bootstrap/profile hooks and
+        // must not disappear when an unrelated identity family steps aside.
+        instrumentation.addTransformer(new PortableForgeHandshakeTransformer(), false);
         if (!Boolean.getBoolean("minecraft.portable.identity.enabled")) {
             return;
         }
