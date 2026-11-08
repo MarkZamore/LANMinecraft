@@ -338,6 +338,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Descendants(presentation + "Button")
             .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelToggleButton");
         Assert.Equal("Новости", (string?)toggle.Attribute("Content"));
+        Assert.Equal("{StaticResource Size.SidePanelToggle}", (string?)toggle.Attribute("Width"));
         Assert.Equal("SidePanelToggleButton_Click", (string?)toggle.Attribute("Click"));
         Assert.DoesNotContain(
             document.Descendants(),
