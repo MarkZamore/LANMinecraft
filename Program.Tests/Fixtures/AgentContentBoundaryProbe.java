@@ -33,7 +33,7 @@ public final class AgentContentBoundaryProbe {
         PortableIdentityAgent.premain(null, instrumentation);
         Set<String> names = new HashSet<>();
         for (ClassFileTransformer transformer : registered) names.add(transformer.getClass().getSimpleName());
-        Set<String> expected = Set.of("PortableWindowTitleTransformer", "PortableIdentityTransformer",
+        Set<String> expected = Set.of("PortableWindowTitleTransformer", "PortableForgeHandshakeTransformer", "PortableIdentityTransformer",
             "PortableProfileNameTransformer", "PortableXaeroWaypointTransformer", "PortableFtbTeleportTransformer",
             "PortableSolarFluxSyncTransformer", "PortableLanAutoPublishTransformer", "PortableSteamDiscoveryTransformer",
             "PortableSteamLanEntryTransformer",
@@ -50,6 +50,16 @@ public final class AgentContentBoundaryProbe {
             }
         }
         System.out.println("Agent content boundary passed: registrations=" + registered.size() + ", unchangedMenuChecks=" + untouched + ".");
+        // The general loader correction is independent of profile/content hooks.
+        registered.clear();
+        System.setProperty("minecraft.portable.identity.enabled", "false");
+        System.setProperty("minecraft.portable.identity.forgeHandshakeSyncEnabled", "true");
+        PortableIdentityAgent.premain(null, instrumentation);
+        names.clear();
+        for (ClassFileTransformer transformer : registered) names.add(transformer.getClass().getSimpleName());
+        if (!names.equals(Set.of("PortableWindowTitleTransformer", "PortableForgeHandshakeTransformer")) ||
+                registered.size() != 2 || bootstrap[0] != 1)
+            throw new AssertionError("Identity-disabled launch installed identity/content hooks or lost the loader correction: " + names);
     }
     private static byte[] menuClass(String target) {
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);

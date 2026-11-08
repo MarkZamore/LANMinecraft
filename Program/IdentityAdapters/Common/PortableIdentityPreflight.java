@@ -48,7 +48,10 @@ public final class PortableIdentityPreflight {
             byte[] original = readClassBytes(archive, className);
 
             ClassFileTransformer transformer;
-            if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
+            if (PortableForgeHandshakeTransformer.TARGET.equals(className) &&
+                    Boolean.getBoolean("minecraft.portable.identity.forgeHandshakeSyncEnabled")) {
+                transformer = new PortableForgeHandshakeTransformer();
+            } else if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
                 transformer = new PortableWindowTitleTransformer();
             } else if (PortableProfileNameTransformer.isTarget(className)) {
                 transformer = new PortableProfileNameTransformer();
@@ -88,7 +91,10 @@ public final class PortableIdentityPreflight {
                 throw new IllegalStateException("Portable identity transformer did not modify " + className + ".");
             }
             new ClassReader(transformed);
-            if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
+            if (PortableForgeHandshakeTransformer.TARGET.equals(className) &&
+                    Boolean.getBoolean("minecraft.portable.identity.forgeHandshakeSyncEnabled")) {
+                PortableForgeHandshakeTransformer.verify(original, transformed);
+            } else if (isConfigured("windowTitleClasses") && isAlias("windowTitleClasses", className)) {
                 verifyWindowTitleTarget(className, original, transformed);
             } else if (PortableProfileNameTransformer.isTarget(className)) {
                 // Exact method shape is checked by the optional transformer;
@@ -352,12 +358,7 @@ public final class PortableIdentityPreflight {
         if (lan.methods.stream().noneMatch(method -> method.name.equals("<init>") &&
             method.desc.equals("(Ljava/lang/String;Ljava/lang/String;)V")))
             throw new IllegalStateException("Unsupported LAN server entry constructor.");
-        ClassNode minecraft = readClass(archive, alias("minecraftClasses", index).replace('.', '/'));
-        requireMethod(minecraft, "steamDiscoveryGetUserMethods", 0);
-        ClassNode user = readClass(archive, alias("steamDiscoveryUserClasses", index));
-        requireMethod(user, "steamDiscoveryUserNameMethods", 0);
-        ClassNode world = readClass(archive, alias("steamDiscoveryWorldDataClasses", index));
-        requireMethod(world, "steamDiscoveryLevelNameMethods", 0);
+        verifySteamHostDescription(archive, index);
         if (isConfigured("steamDiscoveryComponentLiteralMethods")) {
             ClassNode component = readClass(archive, alias("steamDiscoveryComponentClasses", index));
             requireMethod(component, "steamDiscoveryComponentLiteralMethods", 1);
@@ -409,6 +410,8 @@ public final class PortableIdentityPreflight {
         String screenClass,
         byte[] transformed) throws Exception {
         int mappingIndex = aliasIndex("lanShareScreenClasses", screenClass);
+        if (Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled"))
+            verifySteamHostDescription(archive, mappingIndex);
         ClassNode screen = readClass(archive, screenClass);
         requireMethod(screen, "lanShareInitMethods", 0);
 
@@ -506,6 +509,23 @@ public final class PortableIdentityPreflight {
 
         readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
         readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
+    }
+
+    /** Host metadata is independently required even when local browser hooks are unavailable. */
+    private static void verifySteamHostDescription(ZipFile archive, int mappingIndex) throws Exception {
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", mappingIndex).replace('.', '/'));
+        ClassNode user = readClass(archive, alias("steamDiscoveryUserClasses", mappingIndex).replace('.', '/'));
+        ClassNode world = readClass(archive, alias("steamDiscoveryWorldDataClasses", mappingIndex).replace('.', '/'));
+        requireSteamHostGetter(minecraft, "steamDiscoveryGetUserMethods", "()L" + user.name + ";");
+        requireSteamHostGetter(user, "steamDiscoveryUserNameMethods", "()Ljava/lang/String;");
+        requireSteamHostGetter(world, "steamDiscoveryLevelNameMethods", "()Ljava/lang/String;");
+    }
+
+    private static void requireSteamHostGetter(ClassNode owner, String property, String descriptor) {
+        if (owner.methods.stream().noneMatch(method -> isAlias(property, method.name) &&
+            method.desc.equals(descriptor) && (method.access & Opcodes.ACC_STATIC) == 0))
+            throw new IllegalStateException("Required Steam host metadata getter is missing: " + owner.name +
+                " / " + property + " " + descriptor);
     }
 
     private static void verifyHookTargets(ZipFile archive, String loginClass) throws Exception {

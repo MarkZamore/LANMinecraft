@@ -109,6 +109,14 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 properties["windowTitleEnabled"] = "false";
                 properties["windowTitleText"] = titleSettings.Text;
                 properties["windowTitleConfigSha256"] = titleSettings.ContentSha256;
+                var handshakeMapping = await AddVerifiedForgeHandshakeAsync(runtime, _paths, properties, targets,
+                    async handshake =>
+                    {
+                        foreach (var target in handshake.Targets)
+                            await RunPreflightAsync(runtime.JavaPath, adapterPath, handshake.Properties, target, token)
+                                .ConfigureAwait(false);
+                    }, message => _logger.Warn(message)).ConfigureAwait(false);
+                mappingPath ??= handshakeMapping;
                 if (titleSettings.Enabled)
                 {
                     try
@@ -220,12 +228,14 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     "is the hook that settles the UUID at the door and the refusal of two players under one.");
             }
 
-            async Task<string?> PreflightAsync(IdentityAdapterConfiguration candidate)
+            async Task<(IdentityAdapterTarget? Target, string? Refusal)> VerifyAsync(IdentityAdapterConfiguration candidate)
             {
+                IdentityAdapterTarget? currentTarget = null;
                 try
                 {
                     foreach (var target in candidate.Targets)
                     {
+                        currentTarget = target;
                         await RunPreflightAsync(runtime.JavaPath, adapterPath, candidate.Properties, target, token,
                             candidate.PreflightSources)
                             .ConfigureAwait(false);
@@ -240,14 +250,18 @@ public sealed class PortableIdentityAdapterService : IDisposable
                                 .ConfigureAwait(false);
                         }
                     }
-                    return null;
+                    return (null, null);
                 }
                 catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException
                                                or TimeoutException or IOException)
                 {
-                    return ex.Message;
+                    return (currentTarget, ex.Message);
                 }
             }
+
+            Task<(IdentityAdapterConfiguration Configuration, string? Refusal)> PreflightAsync(
+                IdentityAdapterConfiguration candidate) => PreflightWithDiscoveryFallbackAsync(
+                    candidate, VerifyAsync, message => _logger.Warn(message));
 
             // The preflight is how the launcher finds out that its hooks do not
             // fit this runtime. Finding that out is not a reason to refuse to
@@ -257,7 +271,9 @@ public sealed class PortableIdentityAdapterService : IDisposable
             // 1.18.2 pack met that as a dialog it could not get past: the
             // adapter was built for Java 21 and 1.18.2 runs on 17, so the check
             // could not even load.
-            var refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+            var preflight = await PreflightAsync(configuration).ConfigureAwait(false);
+            configuration = preflight.Configuration;
+            var refusal = preflight.Refusal;
             if (refusal is not null)
             {
                 // One hook that does not fit used to cost the pack every hook,
@@ -280,7 +296,9 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 try
                 {
                     configuration = _mappings.BuildSkins(runtime, targetRoot, refusal);
-                    refusal = await PreflightAsync(configuration).ConfigureAwait(false);
+                    preflight = await PreflightAsync(configuration).ConfigureAwait(false);
+                    configuration = preflight.Configuration;
+                    refusal = preflight.Refusal;
                 }
                 catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException)
                 {
@@ -307,6 +325,68 @@ public sealed class PortableIdentityAdapterService : IDisposable
         }
     }
 
+    // A loader concurrency correction is verified independently of player identity.
+    internal static async Task<string?> AddVerifiedForgeHandshakeAsync(
+        PreparedRuntime runtime, AppPaths paths, IDictionary<string, string> properties,
+        IList<IdentityAdapterTarget> targets, Func<IdentityAdapterConfiguration, Task> verify, Action<string> warning)
+    {
+        properties["forgeHandshakeSyncEnabled"] = "false";
+        try
+        {
+            var handshake = ForgeHandshakeMappingService.Build(runtime, paths);
+            if (handshake is null) return null;
+            await verify(handshake).ConfigureAwait(false);
+            properties["forgeHandshakeSyncEnabled"] = "true";
+            foreach (var target in handshake.Targets)
+                if (!targets.Contains(target)) targets.Add(target);
+            return handshake.MappingPath;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException
+                                       or InvalidOperationException or TimeoutException)
+        {
+            warning("Forge login acknowledgement synchronization could not be verified: " + ex.Message);
+            return null;
+        }
+    }
+
+    internal static async Task<(IdentityAdapterConfiguration Configuration, string? Refusal)>
+        PreflightWithDiscoveryFallbackAsync(
+            IdentityAdapterConfiguration candidate,
+            Func<IdentityAdapterConfiguration, Task<(IdentityAdapterTarget? Target, string? Refusal)>> verify,
+            Action<string> warning)
+    {
+        var failure = await verify(candidate).ConfigureAwait(false);
+        if (failure.Refusal is null) return (candidate, null);
+        var clientKeys = new HashSet<string>(StringComparer.Ordinal)
+            { "steamDiscoveryScreenClasses", "steamDiscoveryLanListClasses", "steamDiscoveryLanEntryClasses" };
+        bool ClientTarget(IdentityAdapterTarget target) =>
+            !target.ClassName.StartsWith("com/mojang/authlib/", StringComparison.Ordinal) &&
+            clientKeys.Any(key => IsConfiguredAlias(candidate.Properties, key, target.ClassName)) &&
+            !candidate.Properties.Keys.Any(key => key.EndsWith("Classes", StringComparison.Ordinal) &&
+                !clientKeys.Contains(key) && IsConfiguredAlias(candidate.Properties, key, target.ClassName));
+        if (failure.Target is null || !ClientTarget(failure.Target) ||
+            candidate.Properties.GetValueOrDefault("steamDiscoveryEnabled") != "true" ||
+            candidate.Properties.GetValueOrDefault("steamDiscoveryClientEnabled", "true") == "false")
+            return (candidate, failure.Refusal);
+
+        // The local browser and the host publisher are independent families.
+        // Drop only failed client instrumentation, then verify every remaining
+        // native target again. Never accept an unverified login or publisher.
+        var properties = candidate.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        properties["steamDiscoveryClientEnabled"] = "false";
+        var fallback = candidate with
+        {
+            Properties = properties,
+            Targets = candidate.Targets.Where(target => !ClientTarget(target)).ToArray()
+        };
+        var remaining = await verify(fallback).ConfigureAwait(false);
+        if (remaining.Refusal is not null) return (candidate, remaining.Refusal);
+        warning("The local Minecraft Steam browser could not be verified: " + failure.Refusal +
+                " Its client hooks are disabled for this launch; the independently verified remaining hooks stay enabled, including host publication when available. " +
+                "The local browser will be checked again on the next launch.");
+        return (fallback, null);
+    }
+
     /// <summary>
     /// Which of the game-side patches this runtime actually got.
     ///
@@ -320,8 +400,11 @@ public sealed class PortableIdentityAdapterService : IDisposable
     {
         var present = new List<string>();
         if (Says(properties, "windowTitleEnabled")) present.Add("stable window title");
+        if (Says(properties, "forgeHandshakeSyncEnabled")) present.Add("serialized Forge login acknowledgements");
         if (Says(properties, "lanPublishEnabled")) present.Add("one-press LAN");
-        if (Says(properties, "steamDiscoveryEnabled")) present.Add("Steam worlds in Multiplayer");
+        if (Says(properties, "steamDiscoveryEnabled")) present.Add(
+            properties.GetValueOrDefault("steamDiscoveryClientEnabled", "true") == "false"
+                ? "Steam host world publication (local browser unavailable)" : "Steam worlds in Multiplayer");
         if (properties.ContainsKey("setChunkViewDistanceMethods")) present.Add("serve distance");
         if (Says(properties, "perPlayerChunksEnabled")) present.Add("per-player render distance");
         if (Says(properties, "chunkPacingEnabled")) present.Add("paced chunk sending");
@@ -429,11 +512,23 @@ public sealed class PortableIdentityAdapterService : IDisposable
         var error = (await standardError.ConfigureAwait(false)).Trim();
         if (process.ExitCode != 0)
         {
-            var details = string.Join(Environment.NewLine, new[] { output, error }.Where(value => value.Length > 0));
-            if (details.Length > 2000) details = details[^2000..];
-            throw new NotSupportedException(
-                $"Portable UUID bytecode preflight failed for {Path.GetFileName(target.JarPath)}::{target.ClassName}. " + details);
+            throw new NotSupportedException(FormatPreflightFailure(
+                target.JarPath, target.ClassName, process.ExitCode, output, error));
         }
+    }
+
+    internal static string FormatPreflightFailure(
+        string jarPath, string className, int exitCode, string output, string error)
+    {
+        var details = string.Join(Environment.NewLine,
+            new[] { output.Trim(), error.Trim() }.Where(value => value.Length > 0));
+        if (details.Length > 2000) details = details[^2000..];
+        if (details.Length == 0) details = "Java returned no standard output or standard error.";
+        // Native JVM failures can leave both pipes empty. Keep their Windows
+        // status as well as the signed process code instead of calling every
+        // nonzero exit an unsupported Minecraft bytecode shape.
+        return $"Portable UUID bytecode preflight failed for {Path.GetFileName(jarPath)}::{className}. " +
+               $"Exit code {exitCode} (0x{unchecked((uint)exitCode):X8}). " + details;
     }
 
     private async Task RunSkinSemanticPreflightAsync(
@@ -536,6 +631,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
         // A title-only result may follow a transient core/skin preflight failure.
         // Keep its title for this launch, but retry the core on the next one.
         if (state.Properties.GetValueOrDefault("enabled", "true") == "false") return false;
+        if (state.Properties.GetValueOrDefault("steamDiscoveryClientEnabled", "true") == "false") return false;
         if (state.Properties.GetValueOrDefault(ManagedTransportFingerprintProperty, "") !=
             ComputeManagedTransportFingerprint(_transportSelection(runtime.Descriptor), targetRoot)) return false;
         if (state.SchemaVersion != AdapterCacheGeneration ||

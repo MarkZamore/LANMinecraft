@@ -145,7 +145,24 @@ public final class SteamDiscoveryBehaviorProbe {
                 PortableSteamDiscoveryHooks.end(unsupported);
                 System.setProperty(PREFIX+"steamDiscoveryTransportVersion","0.3.4");
             }
-            publication(runtime);
+            System.setProperty(PREFIX+"steamDiscoveryClientEnabled","false");
+            try {
+                byte[] original;
+                try(var input=SteamDiscoveryBehaviorProbe.class.getResourceAsStream("/SteamDiscoveryFakeLanList.class")){original=input.readAllBytes();}
+                check(new minecraft.portable.identity.PortableSteamDiscoveryTransformer().transform(null,null,
+                    "SteamDiscoveryFakeLanList",null,null,original)==null,"Partial fallback installed a failed local list transformer");
+                System.setProperty(PREFIX+"steamDiscoveryScreenClasses","SteamDiscoveryScreenFixture");
+                System.setProperty(PREFIX+"steamDiscoveryLanEntryClasses","SteamDiscoveryEntryFixture");
+                check(new minecraft.portable.identity.PortableSteamDiscoveryTransformer().transform(null,null,
+                    "SteamDiscoveryScreenFixture",null,null,original)==null,"Partial fallback installed a failed local screen transformer");
+                check(new minecraft.portable.identity.PortableSteamLanEntryTransformer().transform(null,null,
+                    "SteamDiscoveryEntryFixture",null,null,original)==null,"Partial fallback installed a failed local entry transformer");
+                publication(runtime);
+            } finally {
+                System.clearProperty(PREFIX+"steamDiscoveryClientEnabled");
+                System.clearProperty(PREFIX+"steamDiscoveryScreenClasses");
+                System.clearProperty(PREFIX+"steamDiscoveryLanEntryClasses");
+            }
             legacyDescriptor(runtime);
             System.setProperty(PREFIX+"steamDiscoveryEnabled", "false");
             check(!PortableSteamDiscoveryHooks.nativeDiscoveryManaged(unrelated), "Disabled integration preserves native UDP");

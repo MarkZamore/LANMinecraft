@@ -25,7 +25,7 @@ public sealed class IdentityAdapterContentBoundaryTests
                 RepositoryFile("Program", "IdentityAdapters", "Common", "lib", "asm-tree-9.8.jar"));
             await Run("javac", "--release", "17", "-cp", classPath, "-d", root, fixture);
             var text = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath, "AgentContentBoundaryProbe");
-            Assert.Contains("Agent content boundary passed: registrations=11, unchangedMenuChecks=22.", text, StringComparison.Ordinal);
+            Assert.Contains("Agent content boundary passed: registrations=12, unchangedMenuChecks=24.", text, StringComparison.Ordinal);
         }
         finally { TempTree.Delete(root); }
     }

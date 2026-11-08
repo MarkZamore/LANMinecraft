@@ -14,7 +14,8 @@ public final class PortableSteamDiscoveryTransformer implements ClassFileTransfo
     @Override
     public byte[] transform(Module module, ClassLoader loader, String name, Class<?> redefined,
                             ProtectionDomain domain, byte[] original) {
-        if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled")) return null;
+        if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") ||
+            !Boolean.parseBoolean(System.getProperty("minecraft.portable.identity.steamDiscoveryClientEnabled", "true"))) return null;
         boolean listTarget = matches("steamDiscoveryLanListClasses", name);
         if (!listTarget && !matches("steamDiscoveryScreenClasses", name)) return null;
         ClassNode node = new ClassNode(Opcodes.ASM9);
