@@ -59,6 +59,12 @@ The mandatory release tests cover archive integrity, argument boundaries and
 negative bootstrap cases; they do not replace checking audible output on a
 player's audio device.
 
+The real Unicode comparison used Windows ACP1251 and Java17. This fixes the
+OpenAL ANSI/UTF-8 mismatch after Java starts. It does not change the Windows
+`java.exe` command-line conversion through CP_ACP: a path outside that code
+page, such as Cyrillic on ACP1252, can fail before any agent runs. Existing JVM
+and Windows native-loader path-length limits also remain in force.
+
 ## Build
 
 Use the actual JDK 25.0.2 specified by the repository's build instructions:
