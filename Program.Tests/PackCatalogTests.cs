@@ -35,9 +35,15 @@ public sealed class PackCatalogTests : IDisposable
         old.AddedPackRelativePaths = [];
         PackMembership.Initialize(old, _paths);
         Assert.Empty(old.AddedPackRelativePaths);
-        var defaults = new AppSettings();
-        PackMembership.Initialize(defaults, new AppPaths(Path.Combine(_root, "Fresh")), fresh: true);
-        Assert.Equal(new[] { "All The Mods 10" }, defaults.AddedPackRelativePaths);
+        var freshPaths = new AppPaths(Path.Combine(_root, "Fresh"));
+        freshPaths.Ensure();
+        var freshSettings = new SettingsService(freshPaths);
+        Assert.False(File.Exists(freshPaths.SettingsFile));
+        var defaults = freshSettings.Load();
+        Assert.Empty(defaults.AddedPackRelativePaths!);
+        Assert.Empty(defaults.ClientRelativePath);
+        Assert.True(File.Exists(freshPaths.SettingsFile));
+        Assert.Empty(freshSettings.Load().AddedPackRelativePaths!);
 
         var oldInstall = Path.Combine(_paths.Packs, "LL8 Extended", "mods", "keep.jar");
         var oldWorld = Path.Combine(_paths.Worlds, "LL8 Extended", "World", "level.dat");
@@ -66,6 +72,7 @@ public sealed class PackCatalogTests : IDisposable
         }));
         var persisted = new SettingsService(_paths);
         var restored = persisted.Load();
+        Assert.Equal(new[] { "All The Mods 10" }, restored.AddedPackRelativePaths);
         Assert.True(restored.Ll8LocalVisibilityMigrated);
         Assert.True(PackMembership.ShouldListInstalled(restored, "LL8 Extended", isCatalogPack: false));
         Assert.True(PackMembership.Remove(restored, "LL8 Extended"));

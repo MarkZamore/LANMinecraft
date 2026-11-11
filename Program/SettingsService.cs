@@ -348,7 +348,7 @@ public sealed class SettingsService
     {
         var settings = ApplyFallbacks(new AppSettings { Ll8LocalVisibilityMigrated = true },
             PackMemory, MeasuredMemory, useRecommendedMemory: true);
-        PackMembership.Initialize(settings, _paths, fresh: true);
+        PackMembership.Initialize(settings, _paths);
         return settings;
     }
 
