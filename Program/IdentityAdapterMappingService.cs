@@ -257,7 +257,7 @@ internal sealed class IdentityAdapterMappingService
         {
             wanted.Add(discoveryScreen.RuntimeName);
             wanted.Add(discoveryScreen.ObfName);
-            AddSteamDiscoveryTargets(mappings, wanted, perPlayerProperties);
+            AddSteamDiscoveryTargets(mappings, wanted, perPlayerProperties, lanProperties);
         }
         AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
         AddGuestMovementTargets(mappings, wanted, guestMovement);
@@ -603,7 +603,8 @@ internal sealed class IdentityAdapterMappingService
     }
 
     private static void AddSteamDiscoveryTargets(
-        RuntimeNames? mappings, HashSet<string> targets, Dictionary<string, string> properties)
+        RuntimeNames? mappings, HashSet<string> targets, Dictionary<string, string> properties,
+        IReadOnlyDictionary<string, string> lanProperties)
     {
         if (properties.GetValueOrDefault("steamDiscoveryEnabled") != "true") return;
         foreach (var name in new[] { "net/minecraft/client/server/LanServerDetection$LanServerList",
@@ -614,6 +615,16 @@ internal sealed class IdentityAdapterMappingService
             targets.Add(target.RuntimeName);
             targets.Add(target.ObfName);
         }
+
+        if (properties.GetValueOrDefault("steamDiscoveryMinecraftVersion") != "26.3" ||
+            !lanProperties.ContainsKey("multiplayerScopeClasses")) return;
+        var integrated = mappings?.FindClass(IntegratedServer);
+        var client = integrated?.FindField("minecraft");
+        if (integrated is null || client is null) return;
+        properties["steamNativePublicationEnabled"] = "true";
+        properties["steamNativePublicationClientFields"] = JoinAliases(client);
+        targets.Add(integrated.RuntimeName);
+        targets.Add(integrated.ObfName);
     }
 
     private static MappedClass? AddLanPublishProperties(
@@ -1414,7 +1425,7 @@ internal sealed class IdentityAdapterMappingService
         {
             requiredTargets.Add(discoveryScreen.RuntimeName);
             requiredTargets.Add(discoveryScreen.ObfName);
-            AddSteamDiscoveryTargets(mappings, requiredTargets, properties);
+            AddSteamDiscoveryTargets(mappings, requiredTargets, properties, lanProperties);
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         AddGuestMovementTargets(mappings, requiredTargets, guestMovement);

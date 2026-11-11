@@ -36,7 +36,8 @@ public sealed class PackLauncherFeaturesTests : IDisposable
                      """["private-identity-asm-v1","registry-player-skins-v1"]""",
                      """["legacy-fabric-runtime-v1"]""", """["legacy-player-profiles-v1"]""", """["legacy-steam-v1"]""",
                      """["legacy-fabric-runtime-v1","legacy-player-profiles-v1","legacy-steam-v1"]""",
-                     """["native-runtime-v1","native-steam-v1","minecraft-26-world-layout-v1"]""" })
+                     """["native-runtime-v1","native-steam-v1","minecraft-26-world-layout-v1"]""",
+                     """["steam-native-publication-metadata-v1"]""" })
             PortablePackSyncService.ValidateSnapshot(Manifest(2, features), pack);
         var privateAsmOnLegacySchema = Assert.Throws<NotSupportedException>(() =>
             PortablePackSyncService.ValidateSnapshot(Manifest(1, """["private-identity-asm-v1"]"""), pack));

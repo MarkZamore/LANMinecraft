@@ -3,7 +3,8 @@ using System.IO;
 using System.Runtime.Loader;
 using System.Text.Json;
 
-if (args.Length != 3) throw new ArgumentException("Usage: <LANMinecraft.dll> <application-root> <pack-directory-name>");
+if (args.Length is not (3 or 5)) throw new ArgumentException(
+    "Usage: <LANMinecraft.dll> <application-root> <pack-directory-name> [<pack-source-directory> <game-directory>]");
 var assemblyPath = Path.GetFullPath(args[0]);
 AssemblyLoadContext.Default.Resolving += (_, name) =>
 {
@@ -13,20 +14,27 @@ AssemblyLoadContext.Default.Resolving += (_, name) =>
 var assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
 Type Type(string name) => assembly.GetType("Minecraft." + name, throwOnError: true)!;
 var appRoot = Path.GetFullPath(args[1]);
-var packRoot = Path.Combine(appRoot, "Minecraft", "Packs", args[2]);
-var gameRoot = Path.Combine(appRoot, "Minecraft", "Personal", "Instances", args[2]);
+var packRoot = args.Length == 5 ? Path.GetFullPath(args[3]) : Path.Combine(appRoot, "Minecraft", "Packs", args[2]);
+var gameRoot = args.Length == 5 ? Path.GetFullPath(args[4]) : Path.Combine(appRoot, "Minecraft", "Personal", "Instances", args[2]);
 using var descriptorJson = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(packRoot, "portable-pack.json")));
 var doc = descriptorJson.RootElement;
 var loader = doc.GetProperty("loader");
 var loaderKind = Enum.Parse(Type("PackLoaderKind"), loader.GetProperty("type").GetString()!, ignoreCase: true);
-var loaderDescriptor = Activator.CreateInstance(Type("PackLoaderDescriptor"), loaderKind, loader.GetProperty("version").GetString());
-var descriptor = Activator.CreateInstance(Type("PackRuntimeDescriptor"), 1, doc.GetProperty("minecraftVersion").GetString(),
-    loaderDescriptor, doc.GetProperty("clientJar").GetString(), "read-only-probe");
-var libraries = Path.Combine(appRoot, "Minecraft", "Launcher", "Shared", "libraries");
+var loaderVersion = loader.GetProperty("version").GetString();
+var loaderDescriptor = Activator.CreateInstance(Type("PackLoaderDescriptor"), loaderKind, loaderVersion);
 var version = doc.GetProperty("minecraftVersion").GetString()!;
-var client = Directory.EnumerateFiles(Path.Combine(libraries, "net", "minecraft", "client"), "client-*-srg.jar", SearchOption.AllDirectories)
-    .Single(file => Path.GetFileName(file).StartsWith("client-" + version + "-", StringComparison.Ordinal));
-var runtime = Activator.CreateInstance(Type("PreparedRuntime"), packRoot, "read-only-probe", "java", client, descriptor)!;
+var descriptor = Activator.CreateInstance(Type("PackRuntimeDescriptor"), 1, version, loaderDescriptor,
+    doc.TryGetProperty("clientJar", out var overrideClient) ? overrideClient.GetString() : "", "read-only-probe");
+var shared = Path.Combine(appRoot, "Minecraft", "Launcher", "Shared");
+var libraries = Path.Combine(shared, "libraries");
+var isFabric = loaderKind.ToString() == "Fabric";
+var client = isFabric
+    ? Path.Combine(shared, "versions", version, version + ".jar")
+    : Directory.EnumerateFiles(Path.Combine(libraries, "net", "minecraft", "client"), "client-*-srg.jar", SearchOption.AllDirectories)
+        .Single(file => Path.GetFileName(file).StartsWith("client-" + version + "-", StringComparison.Ordinal));
+if (!File.Exists(client)) throw new FileNotFoundException("The runtime client JAR was not found.", client);
+var profile = isFabric ? $"fabric-loader-{loaderVersion}-{version}" : "read-only-probe";
+var runtime = Activator.CreateInstance(Type("PreparedRuntime"), packRoot, profile, "java", client, descriptor)!;
 Type("PreparedRuntime").GetProperty("LibrariesRoot")!.SetValue(runtime, libraries);
 var paths = Activator.CreateInstance(Type("AppPaths"), appRoot)!;
 var serviceType = Type("IdentityAdapterMappingService");

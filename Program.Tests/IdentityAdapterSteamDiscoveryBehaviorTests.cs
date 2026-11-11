@@ -25,6 +25,7 @@ public sealed class IdentityAdapterSteamDiscoveryBehaviorTests
             var output = await Run("java", "-Xverify:all", "-Dfile.encoding=UTF-8", "-cp", root + Path.PathSeparator + classPath,
                 "SteamDiscoveryBehaviorProbe");
             Assert.Contains("PASS: actual discovery hooks list one Steam world", output, StringComparison.Ordinal);
+            Assert.Contains("PASS: exact native publication announces a world once through both entry points", output, StringComparison.Ordinal);
             var adapter = Path.Combine(root, "native-preflight-adapter.jar");
             await using (var resource = typeof(PortableIdentityAdapterService).Assembly
                 .GetManifestResourceStream("Minecraft.PortableIdentityAdapter.jar")

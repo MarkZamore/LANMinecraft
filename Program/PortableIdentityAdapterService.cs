@@ -18,6 +18,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     internal const string ManagedTransportFingerprintProperty = "managedTransportFingerprint";
+    internal const string SteamNativePublicationMetadataFeature = "steam-native-publication-metadata-v1";
     private readonly AppPaths _paths;
     private readonly Logger _logger;
     private readonly IdentityAdapterMappingService _mappings;

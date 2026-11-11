@@ -254,7 +254,8 @@ public final class PortableLanAutoPublishHooks {
 
             // Optional managed discovery metadata is separate from publication
             // success. It observes this exact live world asynchronously.
-            if (Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled")) {
+            if (Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") &&
+                !Boolean.getBoolean("minecraft.portable.identity.steamNativePublicationEnabled")) {
                 try {
                     Class.forName("minecraft.portable.identity.PortableSteamDiscoveryHooks", true,
                         PortableLanAutoPublishHooks.class.getClassLoader())

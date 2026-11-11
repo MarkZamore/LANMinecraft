@@ -81,6 +81,18 @@ public final class PortableSteamDiscoveryHooks {
         return DISPLAY_ENTRIES.containsKey(lanServer) ? "Steam" : original;
     }
 
+    /** Preserve the native return value even if the optional announcement cannot start. */
+    public static boolean publicationResult(boolean success, Object minecraft, Object server, int port) {
+        if (success) {
+            try {
+                published(minecraft, server, port);
+            } catch (RuntimeException failure) {
+                report("could not start the live world description", failure);
+            }
+        }
+        return success;
+    }
+
     /** Capture the actual live world, never a startup folder or parsed MOTD. No UI/Steam wait. */
     public static void published(Object minecraft, Object server, int port) {
         if (!Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") ||
