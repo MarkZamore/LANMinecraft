@@ -4,7 +4,7 @@ namespace Minecraft;
 
 public static class PackMembership
 {
-    public static void Initialize(AppSettings settings, AppPaths paths, bool fresh = false)
+    public static void Initialize(AppSettings settings, AppPaths paths)
     {
         settings.HiddenPackRelativePaths = (settings.HiddenPackRelativePaths ?? [])
             .Where(PackCatalogService.ValidFolder).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -16,8 +16,6 @@ public static class PackMembership
                 .SelectMany(entry => new[] {entry.RelativePath}.Concat(entry.LegacyRelativePaths))
                 .Where(path => MinecraftProcessService.HasPackData(paths.CombineUnderPacks(path)) ||
                                path.Equals(settings.ClientRelativePath, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (fresh && settings.AddedPackRelativePaths.Count == 0)
-                settings.AddedPackRelativePaths.Add(PortablePackSyncService.DefaultPackRelativePath);
         }
         settings.AddedPackRelativePaths = settings.AddedPackRelativePaths
             .Where(PackCatalogService.ValidFolder).Where(path => !IsHidden(settings, path))

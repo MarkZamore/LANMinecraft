@@ -206,7 +206,7 @@ public sealed class TerraFirmaPackMigrationTests : IDisposable
         Write(_paths.SettingsFile, "{");
         Assert.False(Migration().Migrate());
         var defaults = new SettingsService(_paths).Load();
-        Assert.Contains(PortablePackSyncService.DefaultPackRelativePath, defaults.AddedPackRelativePaths!);
+        Assert.Empty(defaults.AddedPackRelativePaths!);
         Write(Path.Combine(_paths.Runtimes, NewName, ".portable-runtime.json"), "{");
         Write(Path.Combine(_paths.Worlds, NewName, "World", "level.dat"), "world");
         Write(Path.Combine(_paths.Worlds, NewName, "World", WorldMetadataService.MetadataFileName), "{");
