@@ -13,10 +13,12 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.FieldNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.VarInsnNode;
 
 public final class PortableIdentityPreflight {
     private static final Map<String, Path> classSources = new HashMap<>();
@@ -65,6 +67,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableLanAutoPublishTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (PortableSteamDiscoveryTransformer.isPublicationTarget(className)) {
+                transformer = new PortableSteamDiscoveryTransformer();
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
                 transformer = new PortableSteamDiscoveryTransformer();
             } else if (isConfigured("steamDiscoveryLanListClasses") && isAlias("steamDiscoveryLanListClasses", className)) {
@@ -113,6 +117,8 @@ public final class PortableIdentityPreflight {
                 verifyPauseReportingTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (PortableSteamDiscoveryTransformer.isPublicationTarget(className)) {
+                verifyNativeSteamPublication(archive, className, original, transformed);
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
                 verifySteamDiscoveryTargets(archive, className, transformed);
             } else if (isConfigured("steamDiscoveryLanListClasses") && isAlias("steamDiscoveryLanListClasses", className)) {
@@ -509,6 +515,54 @@ public final class PortableIdentityPreflight {
 
         readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));
         readClass(archive, alias("screenClasses", mappingIndex).replace('.', '/'));
+    }
+
+    /** Host metadata is independently required even when local browser hooks are unavailable. */
+    private static void verifyNativeSteamPublication(
+            ZipFile archive, String className, byte[] original, byte[] transformed) throws Exception {
+        int index = aliasIndex("integratedServerClasses", className);
+        verifySteamHostDescription(archive, index);
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", index).replace('.', '/'));
+        requireSteamHostGetter(minecraft, "getSingleplayerServerMethods", "()L" + className + ";");
+        ClassNode world = readClass(archive, alias("steamDiscoveryWorldDataClasses", index).replace('.', '/'));
+
+        ClassNode before = new ClassNode();
+        new ClassReader(original).accept(before, 0);
+        requireInheritedMethod(archive, before, "getWorldDataMethods", "()L" + world.name + ";");
+        FieldNode client = PortableSteamDiscoveryTransformer.publicationClient(before);
+        MethodNode oldPublication = PortableSteamDiscoveryTransformer.publicationMethod(before);
+        ClassNode after = new ClassNode();
+        new ClassReader(transformed).accept(after, 0);
+        MethodNode publication = PortableSteamDiscoveryTransformer.publicationMethod(after);
+        if (!before.name.equals(after.name) || before.methods.size() != after.methods.size() ||
+            !client.desc.equals("L" + minecraft.name + ";")) {
+            throw new IllegalStateException("Unexpected native Steam publication class or client field.");
+        }
+        int returns = 0;
+        for (AbstractInsnNode exit : publication.instructions.toArray()) {
+            if (exit.getOpcode() != Opcodes.IRETURN) continue;
+            if (!(exit.getPrevious() instanceof MethodInsnNode call) ||
+                call.getOpcode() != Opcodes.INVOKESTATIC || call.itf ||
+                !call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") ||
+                !call.name.equals("publicationResult") || !call.desc.equals("(ZLjava/lang/Object;Ljava/lang/Object;I)Z") ||
+                !(call.getPrevious() instanceof VarInsnNode port) || port.getOpcode() != Opcodes.ILOAD || port.var != 2 ||
+                !(port.getPrevious() instanceof VarInsnNode server) || server.getOpcode() != Opcodes.ALOAD || server.var != 0 ||
+                !(server.getPrevious() instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.GETFIELD ||
+                !field.owner.equals(className) || !field.name.equals(client.name) || !field.desc.equals(client.desc) ||
+                !(field.getPrevious() instanceof VarInsnNode self) || self.getOpcode() != Opcodes.ALOAD || self.var != 0) {
+                throw new IllegalStateException("Native Steam publication return lacks its exact result hook.");
+            }
+            for (AbstractInsnNode added : new AbstractInsnNode[] { self, field, server, port, call })
+                publication.instructions.remove(added);
+            returns++;
+        }
+        if (returns == 0) throw new IllegalStateException("Native Steam publication has no boolean return.");
+        publication.maxStack = oldPublication.maxStack;
+        for (int method = 0; method < before.methods.size(); method++) {
+            if (!Arrays.equals(methodBytes(before.methods.get(method)), methodBytes(after.methods.get(method))))
+                throw new IllegalStateException("Native Steam publication changed existing bytecode in " +
+                    before.methods.get(method).name + ".");
+        }
     }
 
     /** Host metadata is independently required even when local browser hooks are unavailable. */

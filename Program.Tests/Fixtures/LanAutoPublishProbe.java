@@ -4,6 +4,7 @@ import java.util.Queue;
 import java.util.concurrent.Executor;
 import minecraft.portable.identity.PortableLanAutoPublishHooks;
 import minecraft.portable.identity.PortableLanAutoPublishTransformer;
+import minecraft.portable.identity.PortableSteamDiscoveryHooks;
 
 /** Executes the transformed init and the real common hook, with native API shapes from both eras. */
 public final class LanAutoPublishProbe {
@@ -76,6 +77,8 @@ public final class LanAutoPublishProbe {
         check(again.widgetsReady && server.attempts == 1, "second screen republished world");
         client.drain();
         check(client.closes == 2, "second screen was left on an already-open world");
+        check(PortableSteamDiscoveryHooks.publications == (modern ? 0 : 1),
+            "The screen callback either duplicated native Steam publication or stopped announcing older worlds");
         assertNativeDistancesUntouched(server);
     }
 
@@ -96,6 +99,7 @@ public final class LanAutoPublishProbe {
         check(client.gui.current == screen && client.queue.isEmpty() && client.closes == 0,
             "failed publication hid settings");
         check(client.titles == 0 && client.gui.chat.messages == 0, "failure reported success");
+        check(PortableSteamDiscoveryHooks.publications == 0, "Failed native publication announced Steam metadata");
         screen.init();
         check(screen.nativeInitializations == 2 && client.server.attempts == 1,
             "resize retried failed publication");
@@ -115,6 +119,7 @@ public final class LanAutoPublishProbe {
 
     private static Minecraft reset() {
         RadiusPacket.created = 0;
+        PortableSteamDiscoveryHooks.publications = 0;
         Minecraft.INSTANCE = new Minecraft();
         return Minecraft.INSTANCE;
     }
@@ -126,6 +131,8 @@ public final class LanAutoPublishProbe {
     }
 
     private static void configure() {
+        property("steamDiscoveryEnabled", "true");
+        property("steamNativePublicationEnabled", Boolean.toString(modern));
         property("lanShareScreenClasses", TARGET);
         property("lanShareInitMethods", "init");
         property("minecraftClasses", Minecraft.class.getName());

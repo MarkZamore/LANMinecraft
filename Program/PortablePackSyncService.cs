@@ -123,7 +123,8 @@ public sealed partial class PortablePackSyncService
         new(["local-ai-native-v1", "local-ai-recipe-v1", "local-ai-blob-urls-v1", "curated-mod-list-v1", "launch-context-v1", "private-identity-asm-v1", "registry-player-skins-v1",
             "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1",
             PackManifestService.NativeRuntimeFeature, PackManifestService.NativeSteamFeature,
-            PackManifestService.Minecraft26WorldLayoutFeature, RuntimeLibrarySource.Feature, GameNoticeOverlayService.NativeFeature], StringComparer.Ordinal);
+            PackManifestService.Minecraft26WorldLayoutFeature, RuntimeLibrarySource.Feature, GameNoticeOverlayService.NativeFeature,
+            PortableIdentityAdapterService.SteamNativePublicationMetadataFeature], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";

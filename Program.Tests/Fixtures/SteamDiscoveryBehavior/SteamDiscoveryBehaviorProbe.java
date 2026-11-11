@@ -23,7 +23,7 @@ public final class SteamDiscoveryBehaviorProbe {
     }
     public static final class User { public String getName(){return "Mitochka";} }
     public static final class WorldData { public String getLevelName(){return "Новый мир, созданный в игре";} }
-    public static final class Server implements Executor {
+    public static class Server implements Executor {
         public WorldData getWorldData(){return new WorldData();}
         public void execute(Runnable task){task.run();}
     }
@@ -158,6 +158,7 @@ public final class SteamDiscoveryBehaviorProbe {
                 check(new minecraft.portable.identity.PortableSteamLanEntryTransformer().transform(null,null,
                     "SteamDiscoveryEntryFixture",null,null,original)==null,"Partial fallback installed a failed local entry transformer");
                 publication(runtime);
+                nativePublication(runtime);
             } finally {
                 System.clearProperty(PREFIX+"steamDiscoveryClientEnabled");
                 System.clearProperty(PREFIX+"steamDiscoveryScreenClasses");
@@ -218,5 +219,65 @@ public final class SteamDiscoveryBehaviorProbe {
             waitFor(()->tasks.get()>=3,"Owner generation race did not reach the next current-world check");
             check(runtime.lobbyManager.matchmaking.writes.size()==3,"Old server wrote into a replacement hosting generation");
         }finally{runtime.beforeSteamTask=null;}
+    }
+
+    private static void nativePublication(SteamRuntime runtime) throws Exception {
+        String name = "SteamDiscoveryFakePublisher";
+        String scope = SteamDiscoveryFakePublisher.Scope.class.getName();
+        Map.of("integratedServerClasses", name, "steamNativePublicationClientFields", "minecraft",
+            "multiplayerScopeClasses", scope, "publishServerMethods", "publishServer",
+            "publishServerDescriptors", "(L" + scope + ";I)Z")
+            .forEach((key, value) -> System.setProperty(PREFIX + key, value));
+        byte[] original;
+        try (var input = SteamDiscoveryBehaviorProbe.class.getResourceAsStream("/" + name + ".class")) {
+            original = input.readAllBytes();
+        }
+        var transformer = new PortableSteamDiscoveryTransformer();
+        check(transformer.transform(null, null, name, null, null, original) == null,
+            "Native publication modified a runtime with the target disabled");
+        System.setProperty(PREFIX + "steamNativePublicationEnabled", "true");
+        byte[] changed = transformer.transform(null, null, name, null, null, original);
+        check(changed != null, "Browser fallback disabled the independent host publisher");
+        Class<?> type = new ClassLoader(SteamDiscoveryBehaviorProbe.class.getClassLoader()) {
+            Class<?> define() { return defineClass(name, changed, 0, changed.length); }
+        }.define();
+        var client = Minecraft.INSTANCE;
+        var server = (Server) type.getConstructor(Minecraft.class).newInstance(client);
+        client.current = server;
+        Object owner = new Object();
+        runtime.hostRegistration = new SteamRuntime.HostRegistration(owner, 49441);
+        runtime.lobbyManager.hostLobbyOwner = owner;
+        runtime.lobbyManager.hostLobbyId = 501;
+        var direct = type.getMethod("publishServer", SteamDiscoveryFakePublisher.Scope.class, int.class);
+        var author = type.getMethod("publishServer", SteamDiscoveryFakePublisher.Scope.class, boolean.class, int.class);
+        int writes = runtime.lobbyManager.matchmaking.writes.size();
+        var lan = SteamDiscoveryFakePublisher.Scope.LAN;
+        check(Boolean.FALSE.equals(direct.invoke(server, lan, -1)), "Failed native bind was reported as success");
+        try {
+            direct.invoke(server, lan, -2);
+            throw new AssertionError("Native publication exception was swallowed");
+        } catch (InvocationTargetException expected) {
+            check(expected.getCause() instanceof IllegalArgumentException, "Native publication exception changed");
+        }
+        check(Boolean.TRUE.equals(author.invoke(server, lan, true, 49441)), "Delegating author overload lost its native success");
+        waitFor(() -> runtime.lobbyManager.matchmaking.writes.size() == writes + 3,
+            "The delegated native success did not announce its live metadata");
+        var metadata = runtime.lobbyManager.matchmaking.data.get(501L);
+        check(metadata.get("lanminecraft_world").equals("Новый мир, созданный в игре") &&
+            metadata.get("lanminecraft_player").equals("Mitochka"), "Native publish wrote the wrong world or host name");
+        check(Boolean.FALSE.equals(direct.invoke(server, lan, 49441)), "Second native publish changed its return value");
+
+        var next = (Server) type.getConstructor(Minecraft.class).newInstance(client);
+        client.current = next;
+        Object nextOwner = new Object();
+        runtime.hostRegistration = new SteamRuntime.HostRegistration(nextOwner, 49442);
+        runtime.lobbyManager.hostLobbyOwner = nextOwner;
+        runtime.lobbyManager.hostLobbyId = 502;
+        check(Boolean.TRUE.equals(direct.invoke(next, lan, 49442)), "Direct native invocation lost its success");
+        waitFor(() -> runtime.lobbyManager.matchmaking.writes.size() == writes + 6,
+            "Direct native publish failed or announced more than once");
+        check(runtime.lobbyManager.matchmaking.data.get(502L).get("lanminecraft_display").equals("1"),
+            "The replacement world did not get its own listing");
+        System.out.println("PASS: exact native publication announces a world once through both entry points");
     }
 }

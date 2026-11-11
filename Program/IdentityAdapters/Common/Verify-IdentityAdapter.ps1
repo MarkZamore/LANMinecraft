@@ -55,9 +55,11 @@ if (-not $StateJson -or -not (Test-Path -LiteralPath $StateJson -PathType Leaf))
         ". Launch the game once so the launcher derives the mappings, or pass -InstallRoot or -StateJson.")
 }
 
-# The install that wrote this state file, whichever of the candidates it was: the state names
-# absolute paths into it, so the Java that ran the game is found beside them rather than guessed.
-$installRoot = (Get-Item -LiteralPath $StateJson).Directory.Parent.Parent.Parent.FullName
+# A saved QA state can live outside its runtime. Use the supplied runtime root
+# when present, otherwise infer it from a normal launcher state location.
+if (-not $InstallRoot) {
+    $InstallRoot = (Get-Item -LiteralPath $StateJson).Directory.Parent.Parent.Parent.FullName
+}
 if (-not $JavaHome) {
     $JavaHome = if ($env:JAVA_HOME) { $env:JAVA_HOME }
         else { Join-Path $installRoot "Launcher\JavaRuntimes\runtime\windows-x64\java-21" }

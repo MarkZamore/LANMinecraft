@@ -22,6 +22,7 @@ public sealed class IdentityAdapterLanAutoPublishTests
                 Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishTransformer.java"),
+                RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublish", "PortableSteamDiscoveryHooks.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublishProbe.java"));
             foreach (var mode in new[] { "modern", "legacy", "queued-tell" })
             {
