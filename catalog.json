@@ -114,6 +114,15 @@
         "repo": "Minecraft-Rust-Mods",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-11",
+      "relativePath": "Hide and Hunt",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Hide-and-Hunt",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
