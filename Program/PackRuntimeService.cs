@@ -162,7 +162,7 @@ public sealed class PackRuntimeService : IDisposable
         // What the button says while each set of files comes down. The base
         // game is Minecraft's own; everything after it belongs to the loader,
         // however many rounds that takes.
-        var loaderName = LoaderDisplayName(descriptor.Loader.Type);
+        var loaderName = PackLoaderNames.DisplayName(descriptor.Loader.Type) ?? "Minecraft";
         var usePinnedInstallerJava = (descriptor.Loader.Type, descriptor.MinecraftVersion,
             descriptor.Loader.Version, requiredJava.MajorVersion) is
             (PackLoaderKind.Forge, "1.20.1", "47.3.7" or "1.20.1-47.3.7", 17) or
@@ -285,7 +285,7 @@ public sealed class PackRuntimeService : IDisposable
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
-            $"{LoaderDisplayName(descriptor.Loader.Type)} {descriptor.Loader.Version}, profile {profileId}.");
+            $"{PackLoaderNames.DisplayName(descriptor.Loader.Type) ?? "Minecraft"} {descriptor.Loader.Version}, profile {profileId}.");
         return new PreparedRuntime(runtimeRoot, profileId, gameJava.JavaWPath, clientFile.Path!, descriptor)
         {
             LibrariesRoot = SharedRuntimeStore.Libraries(_paths)
@@ -816,16 +816,6 @@ public sealed class PackRuntimeService : IDisposable
                 string.Join(Environment.NewLine, unexpected));
         }
     }
-
-    private static string LoaderDisplayName(PackLoaderKind kind) => kind switch
-    {
-        PackLoaderKind.NeoForge => "NeoForge",
-        PackLoaderKind.Forge => "Forge",
-        PackLoaderKind.Fabric => "Fabric",
-        PackLoaderKind.LegacyFabric => "Legacy Fabric",
-        PackLoaderKind.Quilt => "Quilt",
-        _ => "Minecraft"
-    };
 
     private static string SafePackName(string packRelativePath)
     {

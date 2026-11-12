@@ -21,7 +21,7 @@ public sealed class CatalogModGroupTests
             Content = new()
             {
                 SchemaVersion = 1, Id = "grouped-fixture", RelativePath = "Grouped Fixture", Name = "Grouped fixture",
-                MinecraftVersion = "1.20.1", Description = "Metadata-owned categories with normal addon trees.",
+                MinecraftVersion = "1.20.1", Loader = "forge", Description = "Metadata-owned categories with normal addon trees.",
                 ModsTitle = "Добавленные моды (Остальные в All The Mods 9)",
                 VisibleModIds = ["visual", "anime", "horror", "extra", "child"], BaseModIds = ["base"],
                 Mods = [Mod("base", "Base"), Mod("helper", "Helper", library: true),
@@ -147,11 +147,11 @@ public sealed class CatalogModGroupTests
             WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
             Assert.Equal(5, pack.DisplayModCount);
             var cards = (ItemsControl)view.FindName("CatalogCards");
-            Assert.Single(Descendants<TextBlock>(cards), text => text.Text == "Minecraft 1.20.1 (5 модов)");
+            Assert.Single(Descendants<TextBlock>(cards), text => text.Text == "Minecraft 1.20.1 Forge (5 модов)");
             view.ShowDetails(pack);
             WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
             var host = (StackPanel)view.FindName("GroupedModsHost");
-            Assert.Single(Descendants<TextBlock>((StackPanel)view.FindName("DetailContent")), text => text.Text == "Minecraft 1.20.1 (5 модов)");
+            Assert.Single(Descendants<TextBlock>((StackPanel)view.FindName("DetailContent")), text => text.Text == "Minecraft 1.20.1 Forge (5 модов)");
             Assert.Equal(grouped ? Titles : [], host.Children.OfType<TextBlock>().Select(text => text.Text));
             var helperSection = (Expander)view.FindName("LibrariesSection");
             Assert.Equal(Visibility.Collapsed, helperSection.Visibility);
