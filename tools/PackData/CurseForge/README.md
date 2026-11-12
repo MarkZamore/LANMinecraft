@@ -231,6 +231,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Native QA agent packaging failed.' }
     -PackName FTB-Inferno-Policy -Label ftb-native-steam-policy -WithSteam -NativeQaAgent $agent -MaximumSeconds 720
 ```
 
+Если длинный путь стенда приводит к ошибке Windows 206 при старте Java 9+,
+передайте те же именованные параметры в `-LocalQaArguments` скрипта
+`Start-LocalQaJavaArgFile.ps1` в виде хеш-таблицы. Он использует готовые
+аргументы лаунчера и удаляет временный файл после выхода. В `launch.json`
+появляется `javaArgumentFileUsed: true`. В стенде требуются пути в ASCII.
+
 Сценарий записывает `native-steam-qa.jsonl` рядом с `launch.json` и завершает
 свой клиент через штатный игровой метод. Статус публикации и статус получения
 адреса проверяются отдельно. Для повторного прогона задайте новую метку и
@@ -276,8 +282,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Native Java 8 QA bridge packaging failed.' }
 ```
 
 Результат записывается в `native-steam-qa-112.jsonl`. Для повторной проверки
-используйте новую метку и `-NativeQaWorldSuffix`. Реальное подключение
-второго аккаунта остаётся `NOT RUN`.
+используйте новую метку и `-NativeQaWorldSuffix`. Чтобы повторно открыть
+тот же тестовый мир, передайте тот же суффикс и SHA256 его `level.dat`
+через `-NativeQaReopenLevelSha256`. Реальное подключение второго аккаунта
+остаётся `NOT RUN`.
 
 Для All in One на Forge 36.2.34 используйте `Forge165SteamQaAgent.java` и
 `Premain-Class: lanminecraft.qa.Forge165SteamQaAgent` с отдельными именами

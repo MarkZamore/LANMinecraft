@@ -36,7 +36,7 @@ def official_project_urls(document):
         if not isinstance(url, str) or row.get("isAvailable") is False:
             continue
         parsed = urlsplit(url)
-        path = re.fullmatch(r"/minecraft/mc-mods/([a-z0-9][a-z0-9-]*)/?", parsed.path, re.IGNORECASE)
+        path = re.fullmatch(r"/minecraft/mc-mods/([a-z0-9][a-z0-9_-]*)/?", parsed.path, re.IGNORECASE)
         if (parsed.scheme == "https" and parsed.netloc == prepare.WEBSITE and not parsed.query and
                 not parsed.fragment and path and isinstance(row.get("slug"), str) and
                 row["slug"].casefold() == path[1].casefold()):

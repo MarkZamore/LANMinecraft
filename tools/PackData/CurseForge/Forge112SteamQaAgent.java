@@ -88,10 +88,16 @@ public final class Forge112SteamQaAgent {
             await(115, () -> scheduled(client, () -> player() != null && server() != null), "world join");
             event(reopen ? "world_reopened" : "world_created", "\"commands\":false,\"mode\":\"SURVIVAL\"");
             scheduled(client, () -> { publishFromNativePause(); return null; });
-            event("published", "\"oneNativeAction\":true,\"intermediateScreen\":false,\"reports\":true");
+            event("published", "\"oneNativeAction\":true,\"intermediateScreen\":false,\"reports\":true,\"reportsLabel\":"
+                    + json(translated("text.e4steam_minecraft.launcherReports")));
             checkPermissions();
             boolean chat = awaitChat();
-            event("chat", "\"portAddressInviteClose\":" + chat);
+            event("chat", "\"onePortOneAddressCopyInviteCloseAndColors\":" + chat + ",\"addressLabel\":"
+                    + json(translated("text.e4steam_minecraft.launcherDomainAssigned")));
+            require(chat, "Steam did not produce the expected local-port and sharing chat messages.");
+            scheduled(client, () -> { verifySteamMetadata(); return null; });
+            event("steam_metadata", "\"lobbyReady\":true,\"worldName\":" + json(worldName)
+                    + ",\"launcherNickname\":" + json(System.getProperty("link.e4steam.launcherPlayerName")));
             Object server = scheduled(client, this::server);
             scheduled(server, () -> {
                 call(call(server, "func_184103_al", NONE), "func_72389_g", NONE);
@@ -287,23 +293,49 @@ public final class Forge112SteamQaAgent {
 
     private boolean completeChat() throws Exception {
         Object chat = call(field(client, "field_71456_v"), "func_146158_b", NONE);
-        boolean port = false;
-        boolean sharing = false;
+        int portMessages = 0;
+        int sharingMessages = 0;
+        String portPrefix = translated("text.e4steam_minecraft.launcherLocalPort", "").replace("[]", "");
+        String addressLabel = translated("text.e4steam_minecraft.launcherDomainAssigned");
         for (Object line : (List<?>) field(chat, "field_146252_h")) {
             Object message = call(line, "func_151461_a", NONE);
             String text = String.valueOf(call(message, "func_150260_c", NONE));
-            String portPrefix = translated("text.e4steam_minecraft.launcherLocalPort", "").replace("[]", "");
-            port |= text.startsWith(portPrefix);
-            if (!text.startsWith(translated("text.e4steam_minecraft.launcherDomainAssigned"))) continue;
-            java.util.Set<String> actions = new java.util.HashSet<>();
-            for (Object component : (Iterable<?>) message) {
-                Object action = call(call(component, "func_150256_b", NONE), "func_150235_h", NONE);
-                if (action != null) actions.add(String.valueOf(call(action, "func_150668_b", NONE)));
+            if (text.startsWith(portPrefix)) {
+                require(text.substring(portPrefix.length()).matches("\\[[0-9]{1,5}\\]"), "Unexpected local port chat text.");
+                portMessages++;
             }
-            sharing |= actions.contains("/e4steam copy") && actions.contains("/e4steam invite")
-                    && actions.contains("/e4steam stop");
+            if (!text.startsWith(addressLabel)) continue;
+            java.util.Map<String, String> actions = new java.util.HashMap<>();
+            for (Object component : (Iterable<?>) message) {
+                Object style = call(component, "func_150256_b", NONE);
+                Object action = call(style, "func_150235_h", NONE);
+                if (action == null) continue;
+                Object color = call(style, "func_150215_a", NONE);
+                require(color instanceof Enum<?>, "Steam chat action has no color.");
+                actions.put(String.valueOf(call(action, "func_150668_b", NONE)), ((Enum<?>) color).name());
+            }
+            require("GREEN".equals(actions.get("/e4steam copy"))
+                    && "BLUE".equals(actions.get("/e4steam invite"))
+                    && "RED".equals(actions.get("/e4steam stop")), "Unexpected Steam chat actions or colors.");
+            sharingMessages++;
         }
-        return port && sharing;
+        return portMessages == 1 && sharingMessages == 1;
+    }
+
+    private void verifySteamMetadata() throws Exception {
+        Class<?> steamClient = type("link.e4steam.E4steamClient");
+        Object session = steamClient.getField("session").get(null);
+        require(session != null && "STARTED".equals(((Enum<?>) call(session, "state", NONE)).name()),
+                "Steam host lobby was not ready.");
+        Class<?> metadata = type("link.e4steam.steam.SteamLanMetadata");
+        Field descriptions = metadata.getDeclaredField("DESCRIPTIONS");
+        descriptions.setAccessible(true);
+        synchronized (metadata) {
+            Object description = ((java.util.Map<?, ?>) descriptions.get(null)).get(session);
+            require(description != null && worldName.equals(call(description, "worldName", NONE))
+                    && "LanMcPackQa".equals(call(description, "playerName", NONE)),
+                    "Steam lobby did not use the world title and launcher nickname.");
+        }
     }
 
     private String translated(String key, Object... arguments) throws Exception {
