@@ -175,13 +175,15 @@ public sealed class CatalogPack
         var visible = Content.VisibleModIds?.ToHashSet(StringComparer.Ordinal);
         var presented = Content.Mods.Where(mod => visible is null || visible.Contains(mod.Id)).ToList();
         var nodes = presented.ToDictionary(m => m.Id, m => new CatalogModNode(m, Entry.LegacyId ?? Content.Id), StringComparer.Ordinal);
+        var libraryNodes = new List<CatalogModNode>();
         foreach (var mod in presented.OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase))
         {
             var node = nodes[mod.Id];
-            if (mod.IsLibrary) Libraries.Add(node);
+            if (mod.IsLibrary) libraryNodes.Add(node);
             else if (mod.ParentId is { } parent && nodes.TryGetValue(parent, out var owner)) owner.Children.Add(node);
             else Mods.Add(node);
         }
+        Libraries.AddRange(CatalogLibraryTree.Build(libraryNodes));
         foreach (var group in Content.ModGroups ?? [])
         {
             var ids = group.ModIds.ToHashSet(StringComparer.Ordinal);

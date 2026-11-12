@@ -42,12 +42,14 @@ internal static class Program
             throw new ArgumentException("Measurements must remain inside repository artifacts.");
         Directory.CreateDirectory(output);
         var all = new List<object>();
+        var libraryModules = args.Contains("--library-modules");
         var scales = new[] { 1d, 1.25d, 1.5d, 2d };
         foreach (var viewport in new[] { ("minimum", 804d, 521d), ("initial", 820d, 549d), ("maximized", 1424d, 861d) })
         foreach (var mode in new[] { "collapsed", "expanded", "library", "pack-detail", "pack-mods" })
         foreach (var dpi in scales)
         {
             var expanded = mode == "expanded";
+            if (libraryModules && mode is not ("pack-detail" or "pack-mods")) continue;
             if (args.Contains("--library-only") && mode is not ("library" or "pack-detail" or "pack-mods")) continue;
             if (args.Contains("--probe-library") && (viewport.Item1 != "minimum" || mode != "library" || dpi != 1)) continue;
             if (args.Contains("--probe") && (viewport.Item1 != "minimum" || mode != "collapsed" || dpi != 1)) continue;
@@ -63,14 +65,18 @@ internal static class Program
                 var catalog = new PackCatalogService(new AppPaths(Path.Combine(output, "catalog-cache")), new Logger(Path.Combine(output, "catalog.log")));
                 if (args.Contains("--grouped-mods")) GroupedModFixture(catalog.Find(PortablePackSyncService.DefaultPackRelativePath)!);
                 view.SetCatalog(args.Contains("--six-packs") ? SixPackFixture(catalog.Packs) :
-                    catalog.PacksForDisplay(new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
+                    libraryModules ? catalog.Packs : catalog.PacksForDisplay(new AppSettings
+                    { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
                 view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
                 HideLauncherPageWithRetainedLog(window);
                 view.Visibility = Visibility.Visible;
                 if (mode is "pack-detail" or "pack-mods")
                 {
-                    var pack = catalog.Find(PortablePackSyncService.DefaultPackRelativePath)!;
-                    pack.Mods.First(m => m.HasChildren).IsExpanded = true;
+                    var pack = libraryModules
+                        ? catalog.Packs.First(card => card.Libraries.Any(library => library.HasChildren))
+                        : catalog.Find(PortablePackSyncService.DefaultPackRelativePath)!;
+                    if (libraryModules) pack.Libraries.First(library => library.HasChildren).IsExpanded = mode == "pack-mods";
+                    else pack.Mods.First(m => m.HasChildren).IsExpanded = true;
                     view.ShowDetails(pack);
                 }
             }
@@ -83,10 +89,17 @@ internal static class Program
             LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
             DrainDispatcher();
             LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
-            if (mode == "pack-mods")
+            if (mode == "pack-mods" || libraryModules)
             {
                 var library = (PackLibraryView)window.FindName("LibraryView");
-                ((ScrollViewer)library.FindName("DetailScroll")).ScrollToVerticalOffset(900);
+                var scroll = (ScrollViewer)library.FindName("DetailScroll");
+                if (libraryModules)
+                {
+                    ((Expander)library.FindName("LibrariesSection")).IsExpanded = mode == "pack-mods";
+                    LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
+                    scroll.ScrollToEnd();
+                }
+                else scroll.ScrollToVerticalOffset(900);
                 LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));
                 DrainDispatcher();
                 LayoutWindow(window, new Size(viewport.Item2, viewport.Item3));

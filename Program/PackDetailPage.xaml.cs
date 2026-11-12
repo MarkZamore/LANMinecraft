@@ -18,6 +18,8 @@ public partial class PackDetailPage : UserControl, IDisposable
     public void Activate()
     {
         active = true; restoring = true;
+        LibrariesSection.IsExpanded = false;
+        if (LibrariesSection.IsLoaded) ControlMotion.UpdateCategory(LibrariesSection, animate: false);
         DetailScroll.LayoutUpdated -= RestoreOffset;
         DetailScroll.LayoutUpdated += RestoreOffset;
         DetailScroll.ScrollToVerticalOffset(savedOffset);
@@ -67,7 +69,6 @@ public partial class PackDetailPage : UserControl, IDisposable
             }
         }
         else foreach (var step in PrepareMods(pack.Mods, () => ModsList.Items)) yield return step;
-        foreach (var node in pack.Libraries) yield return () => LibrariesList.Items.Add(node);
         yield return () => UiPreparation.Measure(this, width, dpi);
         foreach (var node in nodes)
         {
@@ -83,6 +84,9 @@ public partial class PackDetailPage : UserControl, IDisposable
                 }
             };
         }
+        // The closed section gets its first layout when the player opens it.
+        foreach (var step in PrepareMods(pack.Libraries, () => LibrariesList.Items)) yield return step;
+        nodes.Clear();
     }
     private IEnumerable<Action> PrepareMods(IEnumerable<CatalogModNode> roots, Func<ItemCollection> target)
     {

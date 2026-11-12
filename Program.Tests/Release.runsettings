@@ -230,6 +230,7 @@
       FullyQualifiedName=Minecraft.Tests.NativeRuntimeFilesTests.InvalidExecutablesAreRejected|
       FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeClientUsesThePortableInstanceAndOnlySteamIdentity|
       FullyQualifiedName=Minecraft.Tests.ClientPresenceTests.NativeSessionsRequireTheOriginalExecutablePath|
+      FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.LibraryProjectsGroupVisibleModulesWithoutAddingToTheInventory|
       FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.EmptyNativeDetailHidesTheModSectionAndRoutesOnlyTheProjectLink|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.NativeCardUsesTheVerifiedProjectVersionAndRejectsAnUnsafeUpdate|
       FullyQualifiedName=Minecraft.Tests.DrawDistanceSettingsTests.PreparationPreservesPlayerGraphicsBytesAndTimestamps|

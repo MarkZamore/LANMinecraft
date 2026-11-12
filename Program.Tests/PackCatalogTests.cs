@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using Minecraft;
@@ -565,6 +566,13 @@ public sealed class PackCatalogTests : IDisposable
             var view = (PackLibraryView)window.FindName("LibraryView");
             var catalog = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
             var pack = catalog.Find("All The Mods 10")!;
+            const string libraryPage = "https://example.org/library-project";
+            pack.Content.Mods.AddRange([
+                new() { Id = "library_project", Name = "Library Project", IsLibrary = true, WebsiteUrl = libraryPage },
+                new() { Id = "library_module", Name = "Library Module", IsLibrary = true, WebsiteUrl = libraryPage }
+            ]);
+            pack.BuildTree();
+            var project = pack.Libraries.Single(node => node.Id == "library_project");
             var unavailable = new CatalogModNode(new CatalogMod
             {
                 Id = "unavailable_project", Name = "Unavailable project",
@@ -577,25 +585,54 @@ public sealed class PackCatalogTests : IDisposable
             view.Visibility = Visibility.Visible;
             view.ShowDetails(pack);
             WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            var section = Assert.IsType<Expander>(view.FindName("LibrariesSection"));
+            var headerToggle = Assert.IsType<ToggleButton>(section.Template.FindName("HeaderToggle", section));
+            var sectionContent = Assert.IsType<Border>(section.Template.FindName("SectionContent", section));
+            Assert.False(section.IsExpanded);
+            Assert.Equal(Visibility.Collapsed, sectionContent.Visibility);
+            headerToggle.IsChecked = true;
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            Assert.True(section.IsExpanded);
+            Assert.Equal(Visibility.Visible, sectionContent.Visibility);
+            var projectItem = VisualChildren<TreeViewItem>(view).Single(item => ReferenceEquals(item.DataContext, project));
+            var projectToggle = Assert.IsType<ToggleButton>(projectItem.Template.FindName("Expander", projectItem));
             var opened = new List<Uri>();
             view.ModPageRequested += opened.Add;
-            foreach (var node in new[] { parent, parent.Children[0], pack.Libraries[0] })
+            foreach (var node in new[] { parent, parent.Children[0], project })
             {
-                var link = VisualChildren<TextBlock>(view).SelectMany(text => text.Inlines.OfType<Hyperlink>())
-                    .Single(link => ReferenceEquals(link.DataContext, node));
+                var link = LinkFor(node);
                 Assert.Equal(node.WebsiteUri, link.NavigateUri);
                 link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
                 Assert.Equal(node.WebsiteUri, opened[^1]);
                 Assert.True(parent.IsExpanded);
             }
+            Assert.False(projectItem.IsExpanded);
+            projectToggle.IsChecked = true;
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            var moduleLink = LinkFor(Assert.Single(project.Children));
+            moduleLink.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+            Assert.Equal(new Uri(libraryPage), opened[^1]);
+            Assert.True(projectItem.IsExpanded);
+            Assert.True(section.IsExpanded);
             var disabled = VisualChildren<TextBlock>(view).SelectMany(text => text.Inlines.OfType<Hyperlink>())
                 .Single(link => ReferenceEquals(link.DataContext, unavailable));
             Assert.False(disabled.IsEnabled);
             Assert.Equal(Cursors.Arrow, disabled.Cursor);
             Assert.Null(disabled.NavigateUri);
             disabled.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
-            Assert.Equal(3, opened.Count);
+            Assert.Equal(4, opened.Count);
+            view.ShowCatalog();
+            view.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            Assert.Same(section, view.FindName("LibrariesSection"));
+            Assert.False(section.IsExpanded);
+            var reopenedContent = Assert.IsType<Border>(section.Template.FindName("SectionContent", section));
+            Assert.Equal(Visibility.Collapsed, reopenedContent.Visibility);
             return true;
+
+            Hyperlink LinkFor(CatalogModNode node) => VisualChildren<TextBlock>(view)
+                .SelectMany(text => text.Inlines.OfType<Hyperlink>())
+                .Single(link => ReferenceEquals(link.DataContext, node));
         });
     }
 
