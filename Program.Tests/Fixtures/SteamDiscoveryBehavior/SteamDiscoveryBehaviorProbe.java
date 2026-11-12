@@ -2,6 +2,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntFunction;
 import java.lang.reflect.*;
 import java.net.InetAddress;
 import minecraft.portable.identity.PortableSteamDiscoveryHooks;
@@ -158,7 +159,7 @@ public final class SteamDiscoveryBehaviorProbe {
                 check(new minecraft.portable.identity.PortableSteamLanEntryTransformer().transform(null,null,
                     "SteamDiscoveryEntryFixture",null,null,original)==null,"Partial fallback installed a failed local entry transformer");
                 publication(runtime);
-                nativePublication(runtime);
+                for (String version : List.of("26.1", "26.2", "26.3")) nativePublication(runtime, version);
             } finally {
                 System.clearProperty(PREFIX+"steamDiscoveryClientEnabled");
                 System.clearProperty(PREFIX+"steamDiscoveryScreenClasses");
@@ -221,18 +222,22 @@ public final class SteamDiscoveryBehaviorProbe {
         }finally{runtime.beforeSteamTask=null;}
     }
 
-    private static void nativePublication(SteamRuntime runtime) throws Exception {
+    private static void nativePublication(SteamRuntime runtime, String version) throws Exception {
         String name = "SteamDiscoveryFakePublisher";
-        String scope = SteamDiscoveryFakePublisher.Scope.class.getName();
+        Class<?> scope = SteamDiscoveryFakePublisher.Scope.class;
+        Class<?> gameType = SteamDiscoveryFakePublisher.GameType.class;
+        boolean classic = version.equals("26.1");
+        String descriptor = classic ? "(L" + gameType.getName() + ";ZI)Z" : "(L" + scope.getName() + ";I)Z";
         Map.of("integratedServerClasses", name, "steamNativePublicationClientFields", "minecraft",
-            "multiplayerScopeClasses", scope, "publishServerMethods", "publishServer",
-            "publishServerDescriptors", "(L" + scope + ";I)Z")
+            "multiplayerScopeClasses", classic ? "" : scope.getName(), "gameTypeClasses", gameType.getName(),
+            "publishServerMethods", "publishServer", "publishServerDescriptors", descriptor)
             .forEach((key, value) -> System.setProperty(PREFIX + key, value));
         byte[] original;
         try (var input = SteamDiscoveryBehaviorProbe.class.getResourceAsStream("/" + name + ".class")) {
             original = input.readAllBytes();
         }
         var transformer = new PortableSteamDiscoveryTransformer();
+        System.setProperty(PREFIX + "steamNativePublicationEnabled", "false");
         check(transformer.transform(null, null, name, null, null, original) == null,
             "Native publication modified a runtime with the target disabled");
         System.setProperty(PREFIX + "steamNativePublicationEnabled", "true");
@@ -248,24 +253,52 @@ public final class SteamDiscoveryBehaviorProbe {
         runtime.hostRegistration = new SteamRuntime.HostRegistration(owner, 49441);
         runtime.lobbyManager.hostLobbyOwner = owner;
         runtime.lobbyManager.hostLobbyId = 501;
-        var direct = type.getMethod("publishServer", SteamDiscoveryFakePublisher.Scope.class, int.class);
-        var author = type.getMethod("publishServer", SteamDiscoveryFakePublisher.Scope.class, boolean.class, int.class);
-        int writes = runtime.lobbyManager.matchmaking.writes.size();
+        var direct = classic ? type.getMethod("publishServer", gameType, boolean.class, int.class)
+            : type.getMethod("publishServer", scope, int.class);
         var lan = SteamDiscoveryFakePublisher.Scope.LAN;
-        check(Boolean.FALSE.equals(direct.invoke(server, lan, -1)), "Failed native bind was reported as success");
+        var survival = SteamDiscoveryFakePublisher.GameType.SURVIVAL;
+        IntFunction<Object[]> directArgs = port -> classic ? new Object[] { survival, true, port } : new Object[] { lan, port };
+        int writes = runtime.lobbyManager.matchmaking.writes.size();
+        lobby(runtime, 301, 501, 301, "3", false);
+        check(Boolean.FALSE.equals(direct.invoke(server, directArgs.apply(-1))), "Failed native bind was reported as success");
         try {
-            direct.invoke(server, lan, -2);
+            direct.invoke(server, directArgs.apply(-2));
             throw new AssertionError("Native publication exception was swallowed");
         } catch (InvocationTargetException expected) {
             check(expected.getCause() instanceof IllegalArgumentException, "Native publication exception changed");
         }
-        check(Boolean.TRUE.equals(author.invoke(server, lan, true, 49441)), "Delegating author overload lost its native success");
+        var result = switch (version) {
+            case "26.1" -> direct.invoke(server, directArgs.apply(49441));
+            case "26.2" -> type.getMethod("publishServer", scope, gameType, boolean.class, int.class)
+                .invoke(server, lan, survival, true, 49441);
+            case "26.3" -> type.getMethod("publishServer", scope, boolean.class, int.class).invoke(server, lan, true, 49441);
+            default -> throw new AssertionError(version);
+        };
+        check(Boolean.TRUE.equals(result), "Opening from the mod menu lost its native success");
         waitFor(() -> runtime.lobbyManager.matchmaking.writes.size() == writes + 3,
             "The delegated native success did not announce its live metadata");
         var metadata = runtime.lobbyManager.matchmaking.data.get(501L);
         check(metadata.get("lanminecraft_world").equals("Новый мир, созданный в игре") &&
             metadata.get("lanminecraft_player").equals("Mitochka"), "Native publish wrote the wrong world or host name");
-        check(Boolean.FALSE.equals(direct.invoke(server, lan, 49441)), "Second native publish changed its return value");
+        Object list = new SteamDiscoveryFakeLanList();
+        Screen screen = new Screen(list);
+        try {
+            PortableSteamDiscoveryHooks.begin(screen);
+            waitFor(() -> {
+                try {
+                    synchronized (list) {
+                        return servers(list).stream().filter(entry -> ((LanServer) entry).address.equals("portable-steam-501.invalid"))
+                            .map(LanServer.class::cast).anyMatch(entry -> entry.motd.equals("Mitochka") &&
+                                ((Component) PortableSteamDiscoveryHooks.worldTitle(new Component("LAN"), entry)).text
+                                    .equals("Новый мир, созданный в игре"));
+                    }
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            }, "Published world was not displayed with its world name and launcher nickname");
+        } finally {
+            PortableSteamDiscoveryHooks.end(screen);
+            runtime.lobbyManager.friends.ids.remove(301L);
+        }
+        check(Boolean.FALSE.equals(direct.invoke(server, directArgs.apply(49441))), "Second native publish changed its return value");
 
         var next = (Server) type.getConstructor(Minecraft.class).newInstance(client);
         client.current = next;
@@ -273,11 +306,11 @@ public final class SteamDiscoveryBehaviorProbe {
         runtime.hostRegistration = new SteamRuntime.HostRegistration(nextOwner, 49442);
         runtime.lobbyManager.hostLobbyOwner = nextOwner;
         runtime.lobbyManager.hostLobbyId = 502;
-        check(Boolean.TRUE.equals(direct.invoke(next, lan, 49442)), "Direct native invocation lost its success");
+        check(Boolean.TRUE.equals(direct.invoke(next, directArgs.apply(49442))), "Stock native button lost its success");
         waitFor(() -> runtime.lobbyManager.matchmaking.writes.size() == writes + 6,
             "Direct native publish failed or announced more than once");
         check(runtime.lobbyManager.matchmaking.data.get(502L).get("lanminecraft_display").equals("1"),
             "The replacement world did not get its own listing");
-        System.out.println("PASS: exact native publication announces a world once through both entry points");
+        System.out.println("PASS: " + version + " native publication announces a world once through both entry points");
     }
 }

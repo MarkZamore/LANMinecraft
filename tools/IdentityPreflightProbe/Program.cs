@@ -3,8 +3,8 @@ using System.IO;
 using System.Runtime.Loader;
 using System.Text.Json;
 
-if (args.Length is not (3 or 5)) throw new ArgumentException(
-    "Usage: <LANMinecraft.dll> <application-root> <pack-directory-name> [<pack-source-directory> <game-directory>]");
+if (args.Length is not (3 or 5 or 6)) throw new ArgumentException(
+    "Usage: <LANMinecraft.dll> <application-root> <pack-directory-name> [<pack-source-directory> <game-directory> [<client-jar>]]");
 var assemblyPath = Path.GetFullPath(args[0]);
 AssemblyLoadContext.Default.Resolving += (_, name) =>
 {
@@ -14,8 +14,8 @@ AssemblyLoadContext.Default.Resolving += (_, name) =>
 var assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
 Type Type(string name) => assembly.GetType("Minecraft." + name, throwOnError: true)!;
 var appRoot = Path.GetFullPath(args[1]);
-var packRoot = args.Length == 5 ? Path.GetFullPath(args[3]) : Path.Combine(appRoot, "Minecraft", "Packs", args[2]);
-var gameRoot = args.Length == 5 ? Path.GetFullPath(args[4]) : Path.Combine(appRoot, "Minecraft", "Personal", "Instances", args[2]);
+var packRoot = args.Length >= 5 ? Path.GetFullPath(args[3]) : Path.Combine(appRoot, "Minecraft", "Packs", args[2]);
+var gameRoot = args.Length >= 5 ? Path.GetFullPath(args[4]) : Path.Combine(appRoot, "Minecraft", "Personal", "Instances", args[2]);
 using var descriptorJson = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(packRoot, "portable-pack.json")));
 var doc = descriptorJson.RootElement;
 var loader = doc.GetProperty("loader");
@@ -28,7 +28,7 @@ var descriptor = Activator.CreateInstance(Type("PackRuntimeDescriptor"), 1, vers
 var shared = Path.Combine(appRoot, "Minecraft", "Launcher", "Shared");
 var libraries = Path.Combine(shared, "libraries");
 var isFabric = loaderKind.ToString() == "Fabric";
-var client = isFabric
+var client = args.Length == 6 ? Path.GetFullPath(args[5]) : isFabric
     ? Path.Combine(shared, "versions", version, version + ".jar")
     : Directory.EnumerateFiles(Path.Combine(libraries, "net", "minecraft", "client"), "client-*-srg.jar", SearchOption.AllDirectories)
         .Single(file => Path.GetFileName(file).StartsWith("client-" + version + "-", StringComparison.Ordinal));

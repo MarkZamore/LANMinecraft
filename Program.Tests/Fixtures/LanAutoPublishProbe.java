@@ -10,11 +10,13 @@ import minecraft.portable.identity.PortableSteamDiscoveryHooks;
 public final class LanAutoPublishProbe {
     private static final String TARGET = "LanAutoPublishProbe$ShareScreen";
     private static boolean modern;
+    private static boolean nativeSteamPublication;
     private static boolean queuedTell;
     private static Class<?> patchedScreen;
 
     public static void main(String[] args) throws Exception {
         modern = args[0].equals("modern");
+        nativeSteamPublication = modern || args[0].equals("classic-native");
         queuedTell = args[0].equals("queued-tell");
         configure();
         byte[] original;
@@ -77,7 +79,7 @@ public final class LanAutoPublishProbe {
         check(again.widgetsReady && server.attempts == 1, "second screen republished world");
         client.drain();
         check(client.closes == 2, "second screen was left on an already-open world");
-        check(PortableSteamDiscoveryHooks.publications == (modern ? 0 : 1),
+        check(PortableSteamDiscoveryHooks.publications == (nativeSteamPublication ? 0 : 1),
             "The screen callback either duplicated native Steam publication or stopped announcing older worlds");
         assertNativeDistancesUntouched(server);
     }
@@ -132,7 +134,7 @@ public final class LanAutoPublishProbe {
 
     private static void configure() {
         property("steamDiscoveryEnabled", "true");
-        property("steamNativePublicationEnabled", Boolean.toString(modern));
+        property("steamNativePublicationEnabled", Boolean.toString(nativeSteamPublication));
         property("lanShareScreenClasses", TARGET);
         property("lanShareInitMethods", "init");
         property("minecraftClasses", Minecraft.class.getName());
