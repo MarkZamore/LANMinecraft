@@ -99,6 +99,7 @@ public final class PortableSteamDiscoveryTransformer implements ClassFileTransfo
         new ClassReader(original).accept(node, 0);
         FieldNode client = publicationClient(node);
         MethodNode publication = publicationMethod(node);
+        int portSlot = publicationPortSlot(publication);
         if (!name.equals(node.name)) throw new IllegalStateException("Unexpected native Steam publication class.");
         int returns = 0;
         for (AbstractInsnNode instruction : publication.instructions.toArray()) {
@@ -109,7 +110,7 @@ public final class PortableSteamDiscoveryTransformer implements ClassFileTransfo
             hook.add(new VarInsnNode(Opcodes.ALOAD, 0));
             hook.add(new FieldInsnNode(Opcodes.GETFIELD, node.name, client.name, client.desc));
             hook.add(new VarInsnNode(Opcodes.ALOAD, 0));
-            hook.add(new VarInsnNode(Opcodes.ILOAD, 2));
+            hook.add(new VarInsnNode(Opcodes.ILOAD, portSlot));
             hook.add(call("publicationResult", "(ZLjava/lang/Object;Ljava/lang/Object;I)Z"));
             publication.instructions.insertBefore(instruction, hook);
             returns++;
@@ -137,12 +138,18 @@ public final class PortableSteamDiscoveryTransformer implements ClassFileTransfo
             matches("publishServerDescriptors", method.desc)).toList();
         if (matches.size() != 1)
             throw new IllegalStateException("Expected one mapped native Steam publication method in " + node.name + ".");
-        MethodNode method = matches.get(0);
+        return matches.get(0);
+    }
+
+    static int publicationPortSlot(MethodNode method) {
         Type[] parameters = Type.getArgumentTypes(method.desc);
-        if (parameters.length != 2 || !matchesClass("multiplayerScopeClasses", parameters[0]) ||
-            !parameters[1].equals(Type.INT_TYPE) || !Type.getReturnType(method.desc).equals(Type.BOOLEAN_TYPE))
-            throw new IllegalStateException("Unexpected native Steam publication signature in " + node.name + ".");
-        return method;
+        if (Type.getReturnType(method.desc).equals(Type.BOOLEAN_TYPE)) {
+            if (parameters.length == 2 && matchesClass("multiplayerScopeClasses", parameters[0]) &&
+                parameters[1].equals(Type.INT_TYPE)) return 2;
+            if (parameters.length == 3 && matchesClass("gameTypeClasses", parameters[0]) &&
+                parameters[1].equals(Type.BOOLEAN_TYPE) && parameters[2].equals(Type.INT_TYPE)) return 3;
+        }
+        throw new IllegalStateException("Unexpected native Steam publication signature: " + method.name + method.desc);
     }
 
     private static boolean matchesClass(String property, Type type) {

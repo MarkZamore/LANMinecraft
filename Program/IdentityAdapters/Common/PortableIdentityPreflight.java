@@ -531,6 +531,7 @@ public final class PortableIdentityPreflight {
         requireInheritedMethod(archive, before, "getWorldDataMethods", "()L" + world.name + ";");
         FieldNode client = PortableSteamDiscoveryTransformer.publicationClient(before);
         MethodNode oldPublication = PortableSteamDiscoveryTransformer.publicationMethod(before);
+        int portSlot = PortableSteamDiscoveryTransformer.publicationPortSlot(oldPublication);
         ClassNode after = new ClassNode();
         new ClassReader(transformed).accept(after, 0);
         MethodNode publication = PortableSteamDiscoveryTransformer.publicationMethod(after);
@@ -545,7 +546,7 @@ public final class PortableIdentityPreflight {
                 call.getOpcode() != Opcodes.INVOKESTATIC || call.itf ||
                 !call.owner.equals("minecraft/portable/identity/PortableSteamDiscoveryHooks") ||
                 !call.name.equals("publicationResult") || !call.desc.equals("(ZLjava/lang/Object;Ljava/lang/Object;I)Z") ||
-                !(call.getPrevious() instanceof VarInsnNode port) || port.getOpcode() != Opcodes.ILOAD || port.var != 2 ||
+                !(call.getPrevious() instanceof VarInsnNode port) || port.getOpcode() != Opcodes.ILOAD || port.var != portSlot ||
                 !(port.getPrevious() instanceof VarInsnNode server) || server.getOpcode() != Opcodes.ALOAD || server.var != 0 ||
                 !(server.getPrevious() instanceof FieldInsnNode field) || field.getOpcode() != Opcodes.GETFIELD ||
                 !field.owner.equals(className) || !field.name.equals(client.name) || !field.desc.equals(client.desc) ||

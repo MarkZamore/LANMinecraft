@@ -17,7 +17,9 @@ For Forge/NeoForge the probe needs exactly one versioned `client-*-srg.jar`.
 For Fabric it uses the vanilla version JAR from the shared runtime and the
 Fabric profile ID from the pack descriptor. An isolated pack and instance can
 be provided as the optional fourth and fifth arguments while using the shared
-runtime read-only. The built DLL must match the source revision being diagnosed. A freshly
+runtime read-only. The optional sixth argument supplies the exact named or
+patched client JAR when it lives outside the standard runtime locations.
+The built DLL must match the source revision being diagnosed. A freshly
 generated configuration does not itself prove that its bytecode checks pass:
 run `PortableIdentityPreflight` with those properties, targets and support
 sources against the actual adapter and game JARs. A cached title-only state is

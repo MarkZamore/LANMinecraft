@@ -616,8 +616,8 @@ internal sealed class IdentityAdapterMappingService
             targets.Add(target.ObfName);
         }
 
-        if (properties.GetValueOrDefault("steamDiscoveryMinecraftVersion") != "26.3" ||
-            !lanProperties.ContainsKey("multiplayerScopeClasses")) return;
+        if (!Version.TryParse(properties.GetValueOrDefault("steamDiscoveryMinecraftVersion"), out var version) ||
+            version.Major != 26 || !lanProperties.ContainsKey("publishServerDescriptors")) return;
         var integrated = mappings?.FindClass(IntegratedServer);
         var client = integrated?.FindField("minecraft");
         if (integrated is null || client is null) return;
