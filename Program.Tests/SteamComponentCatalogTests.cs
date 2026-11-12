@@ -31,7 +31,8 @@ public sealed class SteamComponentCatalogTests : IDisposable
     {
         var catalog = SteamComponentCatalog.Parse(SteamComponentCatalog.EmbeddedJson());
         Assert.Equal("native-lan-ui-v3", catalog.Profile);
-        Assert.Equal(20, catalog.Builds.Count);
+        Assert.Equal(22, catalog.Builds.Count);
+        Assert.Equal(2, catalog.Builds.Count(build => build.PreservesWorldSettingsOnShare));
         Assert.Equal(13, catalog.Builds.Count(build => build.Version == "0.3.2"));
         Assert.Equal(7, catalog.Builds.Count(build => build.Version == "0.3.4"));
         Assert.All(catalog.Builds, build =>
@@ -43,14 +44,14 @@ public sealed class SteamComponentCatalogTests : IDisposable
             Assert.StartsWith("/MarkZamore/e4steam/releases/download/", uri.AbsolutePath, StringComparison.Ordinal);
             Assert.EndsWith("/" + build.FileName, Uri.UnescapeDataString(uri.AbsolutePath), StringComparison.Ordinal);
             Assert.Empty(uri.Query);
-            if (build.Loaders.Contains(PackLoaderKind.LegacyFabric))
+            if (build.Loaders.Contains(PackLoaderKind.LegacyFabric) || build.PreservesWorldSettingsOnShare)
             {
                 Assert.Null(build.AuthorFileName);
                 Assert.NotNull(build.UpstreamSourceCommit);
             }
             else Assert.NotEmpty(build.AuthorFileName!);
         });
-        Assert.Equal(20, catalog.Builds.Select(build => build.CacheFileId).Distinct().Count());
+        Assert.Equal(22, catalog.Builds.Select(build => build.CacheFileId).Distinct().Count());
         Assert.Contains(catalog.SupersededBuilds, old => old.FileName.Contains("native-ui.1", StringComparison.Ordinal));
         var current = Embedded()["builds"]!.AsArray();
         var historical = JsonNode.Parse(SteamComponentCatalog.HistoricalV2Json())!;
@@ -73,6 +74,45 @@ public sealed class SteamComponentCatalogTests : IDisposable
         var capabilities = root["capabilities"]!.AsArray();
         capabilities.RemoveAt(capabilities.Select((value, index) => (value, index))
             .Single(item => item.value!.GetValue<string>() == capability).index);
+        Assert.Throws<InvalidDataException>(() => Parse(root));
+    }
+
+    [Fact]
+    public void OptionalJava8SteamBuildIsPinnedToItsReviewedForgePatch()
+    {
+        var root = Embedded();
+        const string fileName = "e4steam-forge-mc1.12.2-world-sharing-test.jar";
+        const string sourceRevision = "0123456789abcdef0123456789abcdef01234567";
+        var row = new JsonObject
+        {
+            ["version"] = "0.3.4",
+            ["authorVersion"] = "0.3.4",
+            ["profile"] = root["profile"]!.GetValue<string>(),
+            ["fileName"] = fileName,
+            ["sizeBytes"] = 1,
+            ["sha256"] = FutureHash,
+            ["deliveryTag"] = "java8-world-sharing-test",
+            ["downloadUrl"] = $"https://github.com/MarkZamore/e4steam/releases/download/java8-world-sharing-test/{fileName}",
+            ["loaders"] = new JsonArray("Forge"),
+            ["minimumMinecraftVersion"] = new JsonArray(1, 12, 2),
+            ["exclusiveMaximumMinecraftVersion"] = new JsonArray(1, 12, 3),
+            ["metadataPath"] = "mcmod.info",
+            ["derivation"] = new JsonObject
+            {
+                ["type"] = "source-built-java8-forge-world-sharing",
+                ["sourceCommit"] = sourceRevision,
+                ["upstreamSourceCommit"] = sourceRevision,
+                ["sourceBuiltClassSha256"] = new JsonObject { ["link/e4steam/retro/Test.class"] = FutureHash }
+            }
+        };
+        root["java8Builds"] = new JsonArray(row);
+
+        var build = Assert.Single(Parse(root).Builds, value => value.PreservesWorldSettingsOnShare);
+        Assert.Equal(fileName, build.FileName);
+        Assert.Equal(sourceRevision, build.UpstreamSourceCommit);
+        Assert.Null(build.AuthorFileName);
+
+        row["exclusiveMaximumMinecraftVersion"] = new JsonArray(1, 13);
         Assert.Throws<InvalidDataException>(() => Parse(root));
     }
 
@@ -168,7 +208,7 @@ public sealed class SteamComponentCatalogTests : IDisposable
         var service = Service(client);
         var selected = await service.LoadAsync();
         Assert.Equal("native-lan-ui-v3", selected.Profile);
-        Assert.Equal(20, selected.Builds.Count);
+        Assert.Equal(22, selected.Builds.Count);
         AssertLegacyPin(selected);
         Assert.False(File.Exists(service.CachePath));
         Assert.Single(handler.Requests);
@@ -203,7 +243,7 @@ public sealed class SteamComponentCatalogTests : IDisposable
 
         var selected = await Service(client).LoadAsync();
         Assert.Equal("native-lan-ui-v3", selected.Profile);
-        Assert.Equal(20, selected.Builds.Count);
+        Assert.Equal(22, selected.Builds.Count);
         AssertLegacyPin(selected);
         Assert.DoesNotContain(selected.Builds, build => build.FileName == FutureFile);
         Assert.Equal(corruptedBytes, File.ReadAllBytes(first.CachePath));
@@ -239,6 +279,7 @@ public sealed class SteamComponentCatalogTests : IDisposable
     private static JsonObject Future()
     {
         var root = Embedded();
+        root.Remove("java8Builds");
         root["profile"] = FutureProfile;
         root["sourceCommit"] = new string('b', 40);
         foreach (var row in root["builds"]!.AsArray())
@@ -264,7 +305,8 @@ public sealed class SteamComponentCatalogTests : IDisposable
         Assert.Equal(FutureHash, changed.Sha256);
         Assert.Equal(FutureProfile, changed.DeliveryTag);
         Assert.True(changed.NativeLanUiSuppressed);
-        Assert.Equal(20, catalog.Builds.Count);
+        Assert.Equal(22, catalog.Builds.Count);
+        Assert.Equal(2, catalog.Builds.Count(build => build.PreservesWorldSettingsOnShare));
     }
 
     [Fact]

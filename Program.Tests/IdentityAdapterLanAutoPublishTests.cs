@@ -22,8 +22,11 @@ public sealed class IdentityAdapterLanAutoPublishTests
                 Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishTransformer.java"),
+                Path.Combine(common, "PortableLanWorldPolicyHooks.java"),
+                Path.Combine(common, "PortableLanWorldPolicyTransformer.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublish", "PortableSteamDiscoveryHooks.java"),
-                RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublishProbe.java"));
+                RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublishProbe.java"),
+                RepositoryFile("Program.Tests", "Fixtures", "LanWorldPolicyProbe.java"));
             foreach (var mode in new[] { "modern", "classic-native", "legacy", "queued-tell" })
             {
                 var output = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath,
@@ -33,6 +36,9 @@ public sealed class IdentityAdapterLanAutoPublishTests
                 Assert.DoesNotContain("screen cleanup failed", output, StringComparison.Ordinal);
                 Assert.DoesNotContain("screen could not be closed", output, StringComparison.Ordinal);
             }
+            var policyOutput = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath,
+                "LanWorldPolicyProbe");
+            Assert.Contains("Saved LAN world policy checks passed.", policyOutput, StringComparison.Ordinal);
         }
         finally
         {

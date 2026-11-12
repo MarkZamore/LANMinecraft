@@ -20,7 +20,7 @@ public sealed class SteamTransportModTests
     public void EveryCataloguedBuild_MatchesTheUpstreamRelease()
     {
         Assert.Equal("0.3.4", SteamTransportCatalog.Version);
-        Assert.Equal(20, SteamTransportCatalog.Builds.Count);
+        Assert.Equal(22, SteamTransportCatalog.Builds.Count);
         Assert.Equal(7, SteamTransportCatalog.Builds.Count(build => build.Version == SteamTransportCatalog.Version));
         Assert.Equal(13, SteamTransportCatalog.Builds.Count(build => build.Version == "0.3.2"));
         Assert.All(SteamTransportCatalog.Builds, build =>

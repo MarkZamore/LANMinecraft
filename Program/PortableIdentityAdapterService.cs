@@ -14,7 +14,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int AdapterCacheGeneration = 13;
+    private const int AdapterCacheGeneration = 14;
     private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
     private const string AdapterFileName = "portable-identity-adapter.jar";
     internal const string ManagedTransportFingerprintProperty = "managedTransportFingerprint";
@@ -50,6 +50,14 @@ public sealed class PortableIdentityAdapterService : IDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            if (PackManifestService.UsesJava8SteamWorldSharing(runtime.Descriptor))
+            {
+                var transport = _transportSelection(runtime.Descriptor);
+                if (transport is not { PreservesWorldSettingsOnShare: true } ||
+                    !IdentityAdapterMappingService.IsPinnedTransportJar(Path.Combine(targetRoot, "mods", transport.FileName), transport))
+                    throw new InvalidOperationException("Для этой сборки нужен проверенный Steam-адаптер для Java 8.");
+                return ["-Dlink.e4steam.launcherManagedLan=true"];
+            }
             if (runtime.Descriptor.Loader.Type == PackLoaderKind.LegacyFabric &&
                 runtime.Descriptor.MinecraftVersion == "1.6.4")
             {
@@ -106,6 +114,16 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     };
                 var targets = core?.Targets.ToList() ?? [];
                 var mappingPath = core?.MappingPath;
+                if (runtime.Descriptor.PreserveWorldSettingsOnShare &&
+                    (properties.GetValueOrDefault("lanPreserveWorldSettingsEnabled") != "true" ||
+                     properties.GetValueOrDefault("lanPublishEnabled") != "true" ||
+                     properties.GetValueOrDefault("steamDiscoveryEnabled") != "true" ||
+                     !targets.Any(target => IsConfiguredAlias(properties, "integratedServerClasses", target.ClassName)) ||
+                     !targets.Any(target => IsConfiguredAlias(properties, "playerListClasses", target.ClassName)) ||
+                     runtime.Descriptor.MinecraftVersion == "1.18.2" &&
+                     (properties.GetValueOrDefault("pauseLegacyReportingEnabled") != "true" ||
+                      !targets.Any(target => IsConfiguredAlias(properties, "pauseScreenClasses", target.ClassName)))))
+                    throw new InvalidOperationException("Не удалось подтвердить открытие мира через Steam с сохранением настроек команд.");
                 properties[ManagedTransportFingerprintProperty] = managedTransportFingerprint;
                 properties["windowTitleEnabled"] = "false";
                 properties["windowTitleText"] = titleSettings.Text;

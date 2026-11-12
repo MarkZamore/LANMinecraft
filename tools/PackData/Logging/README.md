@@ -18,6 +18,13 @@ at INFO. This records evidence and does not repair a network connection.
 This template keeps INFO, WARN and ERROR in `latest.log`, retains loader
 diagnostics, bounds rollovers and omits a separate DEBUG file. Native caller
 and Log4j proof covers Minecraft 1.20.1, 1.21.1 and 26.3; see `Verification/`.
+Forge 1.18.2–40.2.34 and 1.19.2–43.2.10 use the separately verified
+`log4j2-forge-1.18-1.19.xml` template for Log4j 2.17.0. It preserves their
+inherited Mojang console layout and uses the same four caught-exception labels.
+Forge 1.16.5–36.2.34 uses `log4j2-forge-1.16.xml` for the corresponding
+NetworkManager logger. Forge 1.12.2–14.23.5.2847 and 14.23.5.2860 use
+`log4j2-forge-1.12.xml`, which preserves localized caught-exception text and
+filters the observed non-exception DEBUG calls and packet markers.
 It does not replace a full loader/client or two-player run. Unsupported native
 versions require a reviewed proof/profile extension, rather than an invented
 legacy logger. Newer Log4j versions report the retained `packages` attribute

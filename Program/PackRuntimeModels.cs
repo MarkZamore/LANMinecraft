@@ -39,6 +39,7 @@ public sealed record PackRuntimeDescriptor(
 {
     /// <summary>An explicit Java feature release requested by the pack.</summary>
     public int? JavaMajorVersion { get; init; }
+    public bool PreserveWorldSettingsOnShare { get; init; }
     public NativePackRuntimeDescriptor? NativeRuntime { get; init; }
 }
 
@@ -121,4 +122,7 @@ public sealed record PackLoaderInstallationContext(
     HttpClient HttpClient,
     CmlLib.Core.MinecraftLauncher Launcher,
     IProgress<RuntimePreparationProgress>? Progress,
-    Logger Logger);
+    Logger Logger)
+{
+    internal string? GameJavaPath { get; init; }
+}

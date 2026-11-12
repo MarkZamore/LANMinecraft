@@ -49,8 +49,11 @@ internal static class SteamComponentCatalog
             "Steam component index lacks the reviewed native UI/authentication capabilities.");
         var rows = root.GetProperty("builds").EnumerateArray().ToArray();
         Require(rows.Length is > 0 and <= 128, "Invalid Steam build count.");
+        var java8Rows = root.TryGetProperty("java8Builds", out var java8Document)
+            ? java8Document.EnumerateArray().ToArray() : [];
+        Require(java8Rows.Length <= 2, "Invalid Java 8 Steam build count.");
         var builds = new List<SteamTransportBuild>();
-        foreach (var row in rows)
+        foreach (var (row, separateJava8) in rows.Select(row => (row, false)).Concat(java8Rows.Select(row => (row, true))))
         {
             var version = Text(row, "version");
             Require(Regex.IsMatch(version, "^[0-9]+(?:\\.[0-9]+){1,3}(?:[-.][a-zA-Z0-9.-]+)?$", RegexOptions.CultureInvariant), "Invalid Steam release version.");
@@ -77,10 +80,17 @@ internal static class SteamComponentCatalog
             var kind = Text(derivation, "type");
             string? authorFile = null;
             string? upstreamSource = null;
-            if (kind == "source-built-legacy-port")
+            var java8WorldSharing = kind == "source-built-java8-forge-world-sharing";
+            Require(!separateJava8 || java8WorldSharing, "An optional Java 8 build requires reviewed Forge provenance.");
+            if (java8WorldSharing || kind == "source-built-legacy-port")
             {
-                Require(loaders.SequenceEqual([PackLoaderKind.LegacyFabric]) && minimum.SequenceEqual([1, 6, 4]) &&
-                        maximum.SequenceEqual([1, 6, 5]) && Text(row, "metadataPath") == "fabric.mod.json" &&
+                var verifiedPlatform = java8WorldSharing
+                    ? loaders.SequenceEqual([PackLoaderKind.Forge]) &&
+                        (minimum.SequenceEqual([1, 12, 2]) && maximum.SequenceEqual([1, 12, 3]) && Text(row, "metadataPath") == "mcmod.info" ||
+                         minimum.SequenceEqual([1, 16, 5]) && maximum.SequenceEqual([1, 16, 6]) && Text(row, "metadataPath") == "META-INF/mods.toml")
+                    : loaders.SequenceEqual([PackLoaderKind.LegacyFabric]) && minimum.SequenceEqual([1, 6, 4]) &&
+                        maximum.SequenceEqual([1, 6, 5]) && Text(row, "metadataPath") == "fabric.mod.json";
+                Require(verifiedPlatform &&
                         Regex.IsMatch(Text(derivation, "sourceCommit"), "^[a-f0-9]{40}$", RegexOptions.CultureInvariant),
                     "Unreviewed legacy Steam platform/source revision.");
                 Require(!row.TryGetProperty("authorFileName", out _) && !row.TryGetProperty("authorSha256", out _) &&
@@ -107,13 +117,17 @@ internal static class SteamComponentCatalog
             }
             builds.Add(new SteamTransportBuild(version, file, size, digest, CacheId(file, size, digest),
                 Array.AsReadOnly(loaders), Array.AsReadOnly(minimum), Array.AsReadOnly(maximum), authorFile, tag,
-                NativeLanUiSuppressed: true, VerifiedDownloadUri: uri, UpstreamSourceCommit: upstreamSource));
+                NativeLanUiSuppressed: true, VerifiedDownloadUri: uri, UpstreamSourceCommit: upstreamSource,
+                PreservesWorldSettingsOnShare: java8WorldSharing));
         }
         Require(builds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count() == builds.Count,
             "Duplicate Steam delivery filename.");
         Require(builds.GroupBy(build => build.CacheFileId).All(group => group.Select(build => build.Sha256).Distinct().Count() == 1),
             "Conflicting Steam cache identities.");
-        ValidateCoverage(builds);
+        Require(builds.Where(build => build.PreservesWorldSettingsOnShare)
+            .GroupBy(build => string.Join('.', build.MinimumMinecraftVersion)).All(group => group.Count() == 1),
+            "Ambiguous Java 8 Steam world sharing build.");
+        ValidateCoverage(builds.Where(build => !build.PreservesWorldSettingsOnShare).ToArray());
         return WithHistory(new(profile, commit, builds.AsReadOnly(), []), []);
     }
 

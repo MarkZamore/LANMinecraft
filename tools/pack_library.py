@@ -61,6 +61,23 @@ PARENTS = {
 }
 
 
+def read_forge_metadata(text):
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        # Legacy Forge NightConfig accepts a raw line break in a simple quoted
+        # description. Normalize this one shape for metadata reads only.
+        normalized, count = re.subn(
+            r'(?m)^([ \t]*description[ \t]*=[ \t]*")([^"\\\r\n]*)\r?\n'
+            r'([^"\\\r\n=\[\]]+)("[ \t]*(?:#[^\r\n]*)?)(?=\r?$)',
+            lambda match: match[1] + match[2] + r"\n" + match[3] + match[4],
+            text,
+        )
+        if not count:
+            raise
+        return tomllib.loads(normalized)
+
+
 def read_mods(data, jar_name, depth=0, loader=None):
     """Read declared mod IDs, including dependencies registered with the loader.
 
@@ -80,7 +97,9 @@ def read_mods(data, jar_name, depth=0, loader=None):
             "META-INF/neoforge.mods.toml", "META-INF/mods.toml"))
         for path in metadata_paths:
             if path in names:
-                doc = tomllib.loads(archive.read(path).decode("utf-8-sig"))
+                text = archive.read(path).decode("utf-8-sig")
+                parser = read_forge_metadata if path == "META-INF/mods.toml" and loader != "neoforge" else tomllib.loads
+                doc = parser(text)
                 for mod in doc.get("mods", []):
                     mod_id = mod.get("modId")
                     if not mod_id:
@@ -220,7 +239,7 @@ def read_native_mods(pack, runtime, shipped):
     return mods
 
 
-def read_pack_mods(pack, shipped=None):
+def read_pack_mods(pack, shipped=None, *, metadata_root=None):
     """Read metadata, optionally pinned to an exact-hash actual loader inventory.
 
     JarJar can select different versions of the same dependency, including a
@@ -228,24 +247,30 @@ def read_pack_mods(pack, shipped=None):
     the tested client resolves that ambiguity without reimplementing the loader.
     """
     pack = pathlib.Path(pack)
+    metadata = pack if metadata_root is None else pathlib.Path(metadata_root)
     runtime = json.loads((pack / "portable-pack.json").read_text(encoding="utf-8-sig"))
     if "nativeRuntime" in runtime:
         return read_native_mods(pack, runtime, shipped)
+    loader = runtime["loader"]["type"].lower()
+    legacy_forge = loader == "forge" and re.fullmatch(r"1\.(?:\d|1[0-2])(?:\.\d+)?", runtime["minecraftVersion"])
     jars = (sorted((pack / "mods").glob("*.jar")) if shipped is None else
             sorted(pack / rel for rel in shipped if rel.startswith("mods/") and rel.lower().endswith(".jar")))
     mods = {}
+    auxiliary_sources = {}
     for jar in jars:
-        for mod in read_mods(jar.read_bytes(), jar.name, loader=runtime["loader"]["type"].lower()):
+        for mod in read_mods(jar.read_bytes(), jar.name, loader=loader):
             existing = mods.get(mod["id"])
             if existing is None or mod["_depth"] < existing["_depth"]:
                 mods[mod["id"]] = mod
-    provided, runtime_hashes = read_runtime_mods(pack, runtime["loader"]["type"].lower())
+                if not mod["isLoadedMod"]:
+                    auxiliary_sources[mod["id"]] = jar.relative_to(pack).as_posix()
+    provided, runtime_hashes = read_runtime_mods(metadata, loader)
     for mod_id, mod in provided.items():
         if mod_id not in mods:
             mods[mod_id] = mod
     for mod in mods.values():
         mod.pop("_depth")
-    inventory_path = pack / "library/loaded-mods.json"
+    inventory_path = metadata / "library/loaded-mods.json"
     if inventory_path.exists():
         inventory = json.loads(inventory_path.read_text(encoding="utf-8-sig"))
         actual_hashes = {jar.relative_to(pack).as_posix(): hashlib.sha256(jar.read_bytes()).hexdigest()
@@ -256,17 +281,30 @@ def read_pack_mods(pack, shipped=None):
                 inventory.get("loader") != runtime["loader"]):
             raise ValueError("Actual loader inventory does not match the shipped JAR hashes")
         actual_mods = {}
+        actual_sources = set()
         for loaded in inventory.get("mods", []):
             mod_id = loaded.get("id")
             if mod_id in ("minecraft", "forge", "neoforge") or (
-                    runtime["loader"]["type"].lower() in ("fabric", "quilt", "legacyfabric") and mod_id in ("fabricloader", "quilt_loader", "java")):
+                    loader in ("fabric", "quilt", "legacyfabric") and mod_id in ("fabricloader", "quilt_loader", "java")):
+                continue
+            if legacy_forge:
+                if mod_id in ("fml", "mcp"):
+                    continue
+                source = loaded.get("source")
+                if (not isinstance(mod_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", mod_id) or
+                        mod_id in actual_mods or not isinstance(source, str) or source not in actual_hashes or
+                        any(not isinstance(loaded.get(key), str) or not loaded[key].strip() for key in ("name", "version"))):
+                    raise ValueError("Invalid or unbound legacy Forge mod inventory entry: " + str(mod_id))
+                actual_sources.add(source)
+                actual_mods[mod_id] = {"id": mod_id, "name": loaded["name"], "version": loaded["version"], "isLoadedMod": True}
                 continue
             if mod_id not in mods or not mods[mod_id]["isLoadedMod"] or mod_id in actual_mods:
                 raise ValueError("Unexpected/duplicate actual loaded mod ID: " + str(mod_id))
             actual_mods[mod_id] = {**mods[mod_id], "name": loaded["name"], "version": loaded["version"]}
         if not actual_mods and any(mod["isLoadedMod"] for mod in mods.values()):
             raise ValueError("Actual loader inventory is empty")
-        mods = {**{key: mod for key, mod in mods.items() if not mod["isLoadedMod"]}, **actual_mods}
+        mods = {**{key: mod for key, mod in mods.items()
+                   if not mod["isLoadedMod"] and auxiliary_sources.get(key) not in actual_sources}, **actual_mods}
     return mods
 
 
@@ -293,13 +331,14 @@ def native_project_metadata(authored):
     return metadata
 
 
-def build_library(pack, revision):
+def build_library(pack, revision, *, metadata_root=None, shipped=None):
     pack = pathlib.Path(pack)
-    authored = json.loads((pack / "library/content.json").read_text(encoding="utf-8-sig"))
+    metadata = pack if metadata_root is None else pathlib.Path(metadata_root)
+    authored = json.loads((metadata / "library/content.json").read_text(encoding="utf-8-sig"))
     runtime = json.loads((pack / "portable-pack.json").read_text(encoding="utf-8-sig"))
-    pages_path = pack / "library/mod-pages.json"
+    pages_path = metadata / "library/mod-pages.json"
     pages = json.loads(pages_path.read_text(encoding="utf-8-sig")) if pages_path.exists() else {}
-    mods = read_pack_mods(pack)
+    mods = read_pack_mods(pack, shipped, metadata_root=metadata)
     presentation = {}
     if "nativeRuntime" in runtime:
         loader = "native"
@@ -326,7 +365,7 @@ def build_library(pack, revision):
     if visible is not None:
         # A manually selected list is presentation only. Its overall counter
         # must still describe the actual loader, including selected JarJar mods.
-        if not (pack / "library/loaded-mods.json").exists():
+        if not (metadata / "library/loaded-mods.json").exists():
             raise ValueError("A filtered mod list requires an exact-hash actual loader inventory")
         base_ids = set(presentation.get("baseModIds", []))
         for mod_id in visible:
@@ -361,13 +400,13 @@ def build_library(pack, revision):
             seen.add(parent)
             parent = mods[parent]["parentId"]
     presentation.update(group_presentation(authored, mods))
-    doc = {"schemaVersion": 1, "id": authored["id"], "relativePath": authored.get("relativePath", pack.name),
+    doc = {"schemaVersion": 1, "id": authored["id"], "relativePath": authored.get("relativePath", metadata.name),
            "name": authored["name"], "summary": authored["summary"], "description": authored["description"],
            "minecraftVersion": runtime["minecraftVersion"], "loader": loader,
            "revision": revision, **presentation,
            "mods": sorted(mods.values(), key=lambda m: (m["name"].casefold(), m["id"]))}
     data = json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
-    preview = (pack / "library/preview.jpg").read_bytes()
+    preview = (metadata / "library/preview.jpg").read_bytes()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, payload in (("library.json", data), ("preview.jpg", preview)):
@@ -378,8 +417,8 @@ def build_library(pack, revision):
     return buffer.getvalue()
 
 
-def stage_library(pack, out, revision):
-    payload = build_library(pack, revision)
+def stage_library(pack, out, revision, *, metadata_root=None, shipped=None):
+    payload = build_library(pack, revision, metadata_root=metadata_root, shipped=shipped)
     digest = hashlib.sha256(payload).hexdigest()
     name = "library-" + digest + ".zip"
     target = pathlib.Path(out) / "assets" / name

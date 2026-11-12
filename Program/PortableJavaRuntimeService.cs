@@ -348,7 +348,7 @@ public sealed partial class PortableJavaRuntimeService
             var java = Path.Combine(installRoot, "bin", "java.exe");
             if (!File.Exists(javaw) ||
                 !File.Exists(java) ||
-                !File.Exists(Path.Combine(installRoot, "lib", "modules")) ||
+                !File.Exists(GetRuntimeImagePath(installRoot)) ||
                 ReadReleaseJavaVersion(installRoot) != _pin.JavaVersion)
             {
                 return null;
@@ -362,6 +362,10 @@ public sealed partial class PortableJavaRuntimeService
             return null;
         }
     }
+
+    private string GetRuntimeImagePath(string installRoot) => _pin.MajorVersion == 8
+        ? Path.Combine(installRoot, "jre", "lib", "rt.jar")
+        : Path.Combine(installRoot, "lib", "modules");
 
     private static string? ReadReleaseJavaVersion(string installRoot)
     {
@@ -565,11 +569,13 @@ public sealed partial class PortableJavaRuntimeService
 
             var javaw = Path.Combine(stageRoot, "bin", "javaw.exe");
             var java = Path.Combine(stageRoot, "bin", "java.exe");
-            if (!File.Exists(javaw) ||
-                !File.Exists(java) ||
-                !File.Exists(Path.Combine(stageRoot, "lib", "modules")))
+            if (!File.Exists(javaw) || !File.Exists(java))
             {
                 throw new InvalidDataException("Java runtime archive is missing its executables.");
+            }
+            if (!File.Exists(GetRuntimeImagePath(stageRoot)))
+            {
+                throw new InvalidDataException("Java runtime archive is missing its runtime image.");
             }
             var version = ReadReleaseJavaVersion(stageRoot);
             if (version != _pin.JavaVersion)

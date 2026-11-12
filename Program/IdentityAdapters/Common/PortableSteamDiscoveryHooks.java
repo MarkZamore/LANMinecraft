@@ -162,13 +162,33 @@ public final class PortableSteamDiscoveryHooks {
         return (CompletableFuture<Object>) invoke(runtime, "submitSteamTask", action);
     }
 
+    public static CompletableFuture<Object> openRecentPlayers(ClassLoader loader) throws ReflectiveOperationException {
+        Object runtime = invokeStatic(Class.forName("link.e4steam.steam.SteamRuntime", true, loader), "get");
+        return steamTask(runtime, () -> {
+            requireTransport(runtime, "pauseLegacyTransportVersion");
+            Object utils = field(runtime, "utils");
+            Object manager = field(runtime, "lobbyManager");
+            if (utils == null || manager == null || !Boolean.TRUE.equals(invoke(utils, "isOverlayEnabled")))
+                throw new IllegalStateException("Steam overlay is disabled.");
+            Object friends = field(manager, "friends");
+            Class<?> dialog = Class.forName("com.codedisaster.steamworks.SteamFriends$OverlayDialog", true, loader);
+            Object players = dialog.getField("Players").get(null);
+            invoke(friends, "activateGameOverlay", players);
+            return null;
+        });
+    }
+
     private static void requireTransport(Object runtime) throws java.io.IOException {
+        requireTransport(runtime, "steamDiscoveryTransportVersion");
+    }
+
+    private static void requireTransport(Object runtime, String versionProperty) throws java.io.IOException {
         Properties version = new Properties();
         try (java.io.InputStream input = runtime.getClass().getResourceAsStream("/e4steam-version.properties")) {
             if (input == null) throw new IllegalStateException("Missing pinned Steam transport version.");
             version.load(input);
         }
-        if (!version.getProperty("version", "").equals(System.getProperty("minecraft.portable.identity.steamDiscoveryTransportVersion", "")))
+        if (!version.getProperty("version", "").equals(System.getProperty("minecraft.portable.identity." + versionProperty, "")))
             throw new IllegalStateException("Unsupported Steam transport discovery interface.");
     }
 

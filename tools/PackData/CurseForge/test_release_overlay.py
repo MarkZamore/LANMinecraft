@@ -1,0 +1,253 @@
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+import prepare
+import release_overlay as release
+
+
+class ReleaseOverlayTests(unittest.TestCase):
+    def setUp(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.source = root / "source"
+        self.stage = root / "stage"
+        for directory in (self.source / "tools", self.source / "launcher", self.stage / "game/config"):
+            directory.mkdir(parents=True)
+        self.base = {"schemaVersion": 1, "minecraftVersion": "1.12.2",
+                     "loader": {"type": "forge", "version": "14.23.5.2860"}, "javaMajorVersion": 8}
+        self.config_path = "config/game.cfg"
+        self.original = b"# author config\nlan = true\n"
+        self.modified = self.original.replace(b"lan = true", b"lan = false")
+        self.author = {
+            "schemaVersion": 1, "status": "client-only",
+            "client": {"projectId": 10, "fileId": 20, "sha256": "a" * 64},
+            "pack": {"minecraftVersion": self.base["minecraftVersion"], "loader": self.base["loader"]},
+            "declaredDependencies": [],
+            "overrides": [{"path": self.config_path, **prepare.fingerprint(self.original)}],
+        }
+        self.recipe_path = self.source / "tools/overlay.json"
+        descriptor = self.source / release.DESCRIPTOR
+        self.write_json(descriptor, {**self.base, "preserveWorldSettingsOnShare": True})
+        self.recipe = {
+            "schemaVersion": 1, "authorArchiveSha256": self.author["client"]["sha256"],
+            "descriptorSha256": prepare.fingerprint(descriptor.read_bytes())["sha256"],
+            "patches": [{"path": self.config_path, "before": prepare.fingerprint(self.original),
+                         "after": prepare.fingerprint(self.modified), "from": "lan = true", "to": "lan = false"}],
+        }
+        self.write_json(self.recipe_path, self.recipe)
+        (self.source / release.OWNERSHIP).write_bytes((self.config_path + "\n").encode())
+        self.stage_config = self.stage / "game" / self.config_path
+        self.stage_config.write_bytes(self.original)
+        self.receipt = {**self.author, "status": "complete", "descriptor": self.base, "files": []}
+        self.receipt["overlay"] = prepare.apply_overlay(self.stage / "game", self.source, self.receipt, {})
+        self.receipt_path = self.stage / "intake.json"
+        self.write_json(self.receipt_path, self.receipt)
+
+    @staticmethod
+    def write_json(path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_release_checks_receipt_and_exact_stage_outputs(self):
+        files, excluded = release.verify_stage(self.stage, self.source, self.receipt)
+        self.assertEqual(set(files), {release.DESCRIPTOR, release.OWNERSHIP, self.config_path})
+        self.assertEqual(excluded, [])
+
+        receipt = {**self.receipt, "overlay": {**self.receipt["overlay"], "requiredLauncherFeatures": []}}
+        self.write_json(self.receipt_path, receipt)
+        with self.assertRaisesRegex(ValueError, "required launcher feature"):
+            release.verify_stage(self.stage, self.source, self.receipt)
+
+        self.write_json(self.receipt_path, self.receipt)
+        self.stage_config.write_bytes(self.original)
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(self.stage, self.source, self.receipt)
+
+    def test_manifest_requires_feature_and_all_policy_files(self):
+        files, _ = release.verify_stage(self.stage, self.source, self.receipt)
+        manifest = {"schemaVersion": 2, **self.author["pack"],
+                    "requiredLauncherFeatures": [prepare.REQUIRED_SHARE_FEATURE],
+                    "files": [{"path": path, **pin} for path, pin in files.items()]}
+        release.verify_manifest(manifest, files, self.receipt)
+        with self.assertRaisesRegex(ValueError, "must require"):
+            release.verify_manifest({**manifest, "requiredLauncherFeatures": []}, files, self.receipt)
+        with self.assertRaisesRegex(ValueError, "missing required payload files"):
+            release.verify_manifest({**manifest, "files": manifest["files"][:-1]}, files, self.receipt)
+
+    def test_pinned_logging_survives_author_update_and_is_required_in_payload(self):
+        additions = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
+                     "launcher/jvm-args.txt": b"-Dlog4j.configurationFile=config/log4j2.xml\n"}
+        for name, data in additions.items():
+            path = self.source / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(data)
+        recipe = {**self.recipe, "additions": [{"path": name, **prepare.fingerprint(data)}
+                                                 for name, data in additions.items()]}
+        self.write_json(self.recipe_path, recipe)
+        (self.source / release.OWNERSHIP).write_bytes(
+            ("\n".join(sorted({self.config_path, prepare.LOGGING_CONFIG})) + "\n").encode())
+        next_stage = self.stage / "with-logging"
+        game = next_stage / "game"
+        (game / self.config_path).parent.mkdir(parents=True)
+        (game / self.config_path).write_bytes(self.original)
+        receipt = {**self.receipt, "overlay": prepare.apply_overlay(game, self.source, self.receipt, {})}
+        self.write_json(next_stage / "intake.json", receipt)
+        policy, _ = release.verify_stage(next_stage, self.source, receipt)
+        _, required = release.payload_inventory(receipt, policy, [])
+        self.assertLessEqual(additions.keys(), required)
+
+        next_author = {**self.author, "client": {**self.author["client"], "sha256": "b" * 64}}
+        self.assertEqual(release.review_update(self.source, self.author, next_author)["additions"], recipe["additions"])
+        next_author["overrides"] = [*next_author["overrides"], recipe["additions"][0]]
+        with self.assertRaisesRegex(ValueError, "conflicting logging path"):
+            release.review_update(self.source, self.author, next_author)
+
+    def test_release_preserves_author_overrides_and_required_and_optional_dependencies(self):
+        game = self.stage / "game"
+        content = {"structures/authored.nbt": b"structure bytes", "mods/gameplay.jar": b"required mod",
+                   "resourcepacks/optional.zip": b"optional resource pack"}
+        for path, data in content.items():
+            target = game / path
+            target.parent.mkdir(parents=True)
+            target.write_bytes(data)
+        original = {"path": "structures/authored.nbt", **prepare.fingerprint(content["structures/authored.nbt"])}
+        required = {"projectId": 111, "fileId": 222, "required": True}
+        optional = {"projectId": 333, "fileId": 444, "required": False}
+        mod = {**required, "path": "mods/gameplay.jar", **prepare.fingerprint(content["mods/gameplay.jar"])}
+        resource = {**optional, "path": "resourcepacks/optional.zip",
+                    **prepare.fingerprint(content["resourcepacks/optional.zip"])}
+        receipt = {**self.receipt, "overrides": [*self.author["overrides"], original],
+                   "declaredDependencies": [required, optional], "files": [mod, resource]}
+        self.write_json(self.receipt_path, receipt)
+        policy, excluded = release.verify_stage(self.stage, self.source, receipt)
+
+        files = [{"path": path, **pin} for path, pin in policy.items()] + [original, mod]
+        manifest = {"schemaVersion": 2, **self.author["pack"],
+                    "requiredLauncherFeatures": [prepare.REQUIRED_SHARE_FEATURE], "files": files}
+        release.verify_manifest(manifest, policy, receipt, excluded)
+        release.verify_manifest({**manifest, "files": files + [resource]}, policy, receipt, excluded)
+        for missing in (original, mod):
+            with self.assertRaisesRegex(ValueError, "missing required payload files"):
+                release.verify_manifest({**manifest, "files": [row for row in files if row != missing]},
+                                        policy, receipt, excluded)
+        for unreviewed in ({**original, "path": "saves/QA/level.dat"},
+                           {**original, "path": "STRUCTURES/authored.nbt"}, mod):
+            with self.assertRaisesRegex(ValueError, "unreviewed or repeated file"):
+                release.verify_manifest({**manifest, "files": files + [unreviewed]}, policy, receipt, excluded)
+        with self.assertRaisesRegex(ValueError, "manifest payload differs"):
+            release.verify_manifest({**manifest, "files": files + [{**resource, "sizeBytes": resource["sizeBytes"] + 1}]},
+                                    policy, receipt, excluded)
+
+        for path, data in content.items():
+            target = game / path
+            target.write_bytes(b"x" + data[1:])
+            with self.assertRaisesRegex(ValueError, "Staged author payload differs.*sha256 mismatch"):
+                release.verify_stage(self.stage, self.source, receipt)
+            target.write_bytes(data + b"x")
+            with self.assertRaisesRegex(ValueError, "Staged author payload differs.*larger"):
+                release.verify_stage(self.stage, self.source, receipt)
+            target.write_bytes(data)
+
+        for dependencies, diagnostic in (([mod, {**resource, "required": True}], "differs from its author declaration"),
+                                         ([resource], "missing a required dependency")):
+            changed = {**receipt, "files": dependencies}
+            self.write_json(self.receipt_path, changed)
+            with self.assertRaisesRegex(ValueError, diagnostic):
+                release.verify_stage(self.stage, self.source, changed)
+
+    def test_author_refresh_keeps_recipe_when_edits_are_unrelated(self):
+        new_archive = {**self.author["client"], "fileId": 21, "sha256": "b" * 64}
+        untouched = {"path": "config/unrelated.cfg", **prepare.fingerprint(b"new upstream file")}
+        candidate = {**self.author, "client": new_archive, "overrides": [*self.author["overrides"], untouched]}
+        proposed = release.review_update(self.source, self.author, candidate)
+        self.assertEqual(proposed, {**self.recipe, "authorArchiveSha256": new_archive["sha256"]})
+        self.assertEqual(json.loads(self.recipe_path.read_bytes()), self.recipe)
+
+    def test_exact_duplicate_dependency_and_override_share_one_payload_path(self):
+        path = "mods/embedded.jar"
+        data = b"identical author dependency bytes"
+        target = self.stage / "game" / path
+        target.parent.mkdir()
+        target.write_bytes(data)
+        override = {"path": path, **prepare.fingerprint(data)}
+        dependency = {"projectId": 111, "fileId": 222, "required": False}
+        file = {**dependency, **override}
+        receipt = {**self.receipt, "overrides": [*self.author["overrides"], override],
+                   "declaredDependencies": [dependency], "files": [file]}
+        self.write_json(self.receipt_path, receipt)
+        policy, excluded = release.verify_stage(self.stage, self.source, receipt)
+        inventory, required = release.payload_inventory(receipt, policy, excluded)
+        self.assertEqual(inventory[path], prepare.fingerprint(data))
+        self.assertIn(path, required)
+
+        manifest = {"schemaVersion": 2, **self.author["pack"],
+                    "requiredLauncherFeatures": [prepare.REQUIRED_SHARE_FEATURE],
+                    "files": [{"path": name, **pin} for name, pin in inventory.items()]}
+        release.verify_manifest(manifest, policy, receipt, excluded)
+        for change in ({"sha256": "0" * 64}, {"sizeBytes": len(data) + 1}):
+            mismatched = {**receipt, "files": [{**file, **change}]}
+            with self.assertRaisesRegex(ValueError, "override and dependency differ"):
+                release.payload_inventory(mismatched, policy, excluded)
+
+        second = {**dependency, "fileId": 223}
+        duplicate = {**receipt, "declaredDependencies": [dependency, second], "files": [file, {**file, **second}]}
+        with self.assertRaisesRegex(ValueError, "Duplicate or conflicting path"):
+            release.payload_inventory(duplicate, policy, excluded)
+
+    def test_author_refresh_stops_on_changed_inputs_or_platform(self):
+        changed = {"path": self.config_path, **prepare.fingerprint(self.original + b"# added comment\n")}
+        for overrides in ([], [changed]):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError, "changed or removed author input"):
+                release.review_update(self.source, self.author, {**self.author, "overrides": overrides})
+        platform = {**self.author["pack"], "minecraftVersion": "1.16.5"}
+        with self.assertRaisesRegex(ValueError, "changed author project or game platform"):
+            release.review_update(self.source, self.author, {**self.author, "pack": platform})
+
+    def test_excluded_author_mod_is_checked_and_never_shipped(self):
+        pin = {"projectId": 849519, "fileId": 8225255}
+        recipe = {**self.recipe, "excludedDependencies": [pin]}
+        self.write_json(self.recipe_path, recipe)
+        author = {**self.author, "declaredDependencies": [{**pin, "required": True}]}
+        with self.assertRaisesRegex(ValueError, "changed or removed author dependency"):
+            release.review_update(self.source, author, self.author)
+
+        stage = self.stage / "with-exclusion"
+        game = stage / "game"
+        (game / "config").mkdir(parents=True)
+        (game / self.config_path).write_bytes(self.original)
+        target = game / "mods/e4mc.jar"
+        target.parent.mkdir()
+        content = b"original author jar bytes"
+        target.write_bytes(content)
+        dependency = {**pin, "path": "mods/e4mc.jar", "required": True, **prepare.fingerprint(content)}
+        receipt = {**author, "status": "complete", "descriptor": self.base, "files": [dependency]}
+        overlay = prepare.apply_overlay(game, self.source, receipt, {})
+        keys = prepare.overlay_dependency_keys(recipe, author)
+        excluded = prepare.excluded_dependency_files(keys, receipt["files"])
+        with self.assertRaisesRegex(ValueError, "sha256 mismatch"):
+            prepare.exclude_dependencies(game, [{**excluded[0], "sha256": "0" * 64}])
+        self.assertEqual(target.read_bytes(), content)
+        prepare.exclude_dependencies(game, excluded)
+        receipt["overlay"] = {**overlay, "excludedDependencies": excluded}
+        self.write_json(stage / "intake.json", receipt)
+
+        files, excluded_from_stage = release.verify_stage(stage, self.source, receipt)
+        self.assertEqual(excluded_from_stage, excluded)
+        self.assertEqual(receipt["files"], [dependency])
+        manifest = {"schemaVersion": 2, **author["pack"],
+                    "requiredLauncherFeatures": [prepare.REQUIRED_SHARE_FEATURE],
+                    "files": [{"path": path, **data} for path, data in files.items()]}
+        release.verify_manifest(manifest, files, receipt, excluded_from_stage)
+        for extra in ({"path": "MODS/e4mc.jar"}, {"path": "mods/renamed.jar", "sha256": dependency["sha256"]}):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "includes excluded author dependency"):
+                release.verify_manifest({**manifest, "files": [*manifest["files"], extra]}, files, receipt,
+                                        excluded_from_stage)
+        target.write_bytes(content)
+        with self.assertRaisesRegex(ValueError, "remains in staged game"):
+            release.verify_stage(stage, self.source, receipt)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -285,6 +285,17 @@ class LibraryPublisherTests(unittest.TestCase):
         self.assertEqual(["real_mod"], [mod["id"] for mod in mods])
         self.assertEqual("2.4.1", mods[0]["version"])
 
+    def test_legacy_forge_metadata_reads_nightconfig_multiline_description(self):
+        carrier = io.BytesIO()
+        with zipfile.ZipFile(carrier, "w") as archive:
+            archive.writestr("META-INF/mods.toml", '[[mods]]\nmodId="legacy_mod"\nversion="1.0"\n'
+                             'displayName="Legacy Mod"\ndescription="First line.\nSecond line."\n')
+        mods = read_mods(carrier.getvalue(), "legacy.jar", loader="forge")
+        self.assertEqual([("legacy_mod", "Legacy Mod", "1.0")],
+                         [(mod["id"], mod["name"], mod["version"]) for mod in mods])
+        with self.assertRaises(ValueError):
+            read_mods(carrier.getvalue(), "legacy.jar", loader="neoforge")
+
     def test_actual_loader_inventory_resolves_selected_ids_and_versions_and_rejects_stale_jars(self):
         inventory = {"schemaVersion": 1,
                      "minecraftVersion": "1.21.1", "loader": {"type": "NeoForge"},

@@ -30,7 +30,8 @@ public sealed record SteamTransportBuild(
     string? DeliveryTag = null,
     bool NativeLanUiSuppressed = false,
     Uri? VerifiedDownloadUri = null,
-    string? UpstreamSourceCommit = null)
+    string? UpstreamSourceCommit = null,
+    bool PreservesWorldSettingsOnShare = false)
 {
     /// <summary>The original author artifact or source revision, never a delivery fallback.</summary>
     public Uri UpstreamDownloadUri { get; } = new(
@@ -403,9 +404,11 @@ public static class SteamTransportCatalog
     {
         if (descriptor is null) return null;
         if (!TryParseVersion(descriptor.MinecraftVersion, out var version)) return null;
+        var java8WorldSharing = PackManifestService.UsesJava8SteamWorldSharing(descriptor);
 
         foreach (var build in Builds)
         {
+            if (build.PreservesWorldSettingsOnShare != java8WorldSharing) continue;
             if (!build.Loaders.Contains(descriptor.Loader.Type)) continue;
             if (Compare(version, build.MinimumMinecraftVersion) < 0) continue;
             if (Compare(version, build.ExclusiveMaximumMinecraftVersion) >= 0) continue;

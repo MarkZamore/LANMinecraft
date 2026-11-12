@@ -19,6 +19,7 @@ public static class PackManifestService
     internal const string NativeRuntimeFeature = "native-runtime-v1";
     internal const string NativeSteamFeature = "native-steam-v1";
     internal const string Minecraft26WorldLayoutFeature = "minecraft-26-world-layout-v1";
+    internal const string SteamWorldSharingFeature = "preserve-steam-world-settings-v1";
     internal const string PortableNativeAdapter = "portable-native";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -106,19 +107,38 @@ public static class PackManifestService
         // Absent overrides retain the identity of every existing descriptor.
         if (manifest.JavaMajorVersion is { } selectedJava)
             canonical += "\njavaMajorVersion=" + selectedJava.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (manifest.PreserveWorldSettingsOnShare == true)
+            canonical += "\npreserveWorldSettingsOnShare=true";
         var descriptorHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
-        return new PackRuntimeDescriptor(
+        var descriptor = new PackRuntimeDescriptor(
             CurrentSchemaVersion,
             minecraftVersion,
             new PackLoaderDescriptor(loaderKind, loaderVersion),
             clientJar,
-            descriptorHash) { JavaMajorVersion = manifest.JavaMajorVersion };
+            descriptorHash)
+        {
+            JavaMajorVersion = manifest.JavaMajorVersion,
+            PreserveWorldSettingsOnShare = manifest.PreserveWorldSettingsOnShare == true
+        };
+        if (descriptor.PreserveWorldSettingsOnShare && !SupportsWorldSharingPolicy(descriptor))
+            throw new InvalidDataException("preserveWorldSettingsOnShare is unsupported for the declared Minecraft, loader and Java versions.");
+        return descriptor;
     }
+
+    internal static bool UsesJava8SteamWorldSharing(PackRuntimeDescriptor descriptor) =>
+        descriptor.PreserveWorldSettingsOnShare && descriptor.Loader.Type == PackLoaderKind.Forge &&
+        descriptor.MinecraftVersion is "1.12.2" or "1.16.5" && JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion == 8;
+
+    private static bool SupportsWorldSharingPolicy(PackRuntimeDescriptor descriptor) =>
+        UsesJava8SteamWorldSharing(descriptor) ||
+        (descriptor.Loader.Type, descriptor.MinecraftVersion, JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion) is
+            (PackLoaderKind.Forge, "1.18.2" or "1.19.2" or "1.20.1", 17) or (PackLoaderKind.NeoForge, "1.21.1", 21);
 
     private static PackRuntimeDescriptor LoadNative(PackManifestDto manifest, string minecraftVersion, string packRoot)
     {
         if (manifest.NativeRuntime is not { } native ||
-            manifest.Loader is not null || manifest.ClientJar is not null || manifest.JavaMajorVersion is not null)
+            manifest.Loader is not null || manifest.ClientJar is not null || manifest.JavaMajorVersion is not null ||
+            manifest.PreserveWorldSettingsOnShare is not null)
             throw new InvalidDataException("A native pack requires nativeRuntime and cannot declare Java runtime fields.");
         if (native.Platform != "windows-x64" || native.Adapter != PortableNativeAdapter)
             throw new InvalidDataException("The native runtime platform or adapter is unsupported.");
@@ -201,6 +221,7 @@ public static class PackManifestService
         public LoaderManifestDto? Loader { get; set; }
         public string? ClientJar { get; set; }
         public int? JavaMajorVersion { get; set; }
+        public bool? PreserveWorldSettingsOnShare { get; set; }
         public NativeRuntimeManifestDto? NativeRuntime { get; set; }
     }
 

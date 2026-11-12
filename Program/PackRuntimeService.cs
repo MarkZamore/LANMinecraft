@@ -123,7 +123,7 @@ public sealed class PackRuntimeService : IDisposable
         // A runtime prepared before the launcher knew to say which jar is the
         // game is mended where it stands: one field in one file, rather than
         // half a gigabyte downloaded again to write it.
-        if (state is not null && RepairLoaderProfile(runtimeRoot, descriptor, state))
+        if (state is not null && RepairLoaderProfile(descriptor, state))
         {
             AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(state, _jsonOptions));
         }
@@ -245,7 +245,7 @@ public sealed class PackRuntimeService : IDisposable
             _httpClient,
             launcher,
             progress,
-            _logger);
+            _logger) { GameJavaPath = gameJava.JavaPath };
         var profileId = await provider.InstallAsync(context, token).ConfigureAwait(false);
 
         launcher = CreateLauncher(
@@ -824,20 +824,37 @@ public sealed class PackRuntimeService : IDisposable
     }
 
     /// <summary>
-    /// Writes the missing <c>jar</c> field into a Fabric or Quilt profile that
-    /// was prepared without it, and brings the runtime's own record of that
-    /// file back in step. Returns true when something was written.
+    /// Repairs profiles that need the inherited Minecraft jar on their classpath
+    /// and refreshes the runtime record for the changed file.
     /// </summary>
-    private bool RepairLoaderProfile(string runtimeRoot, PackRuntimeDescriptor descriptor, RuntimeState state)
+    private bool RepairLoaderProfile(PackRuntimeDescriptor descriptor, RuntimeState state)
     {
-        if (descriptor.Loader.Type is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt or PackLoaderKind.LegacyFabric)) return false;
-        if (string.IsNullOrWhiteSpace(state.ProfileId)) return false;
+        var loader = descriptor.Loader.Type;
+        if (loader is not (PackLoaderKind.Fabric or PackLoaderKind.Quilt or PackLoaderKind.LegacyFabric or PackLoaderKind.Forge))
+            return false;
+        if (string.IsNullOrWhiteSpace(state.ProfileId) || state.ProfileId is "." or ".." ||
+            state.ProfileId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return false;
 
         var path = Path.Combine(
             SharedRuntimeStore.Versions(_paths), state.ProfileId, state.ProfileId + ".json");
-        if (!KnotGameJar.NameIt(path, descriptor.MinecraftVersion, _logger)) return false;
-
         var relative = ToRelativePath(Anchor, path);
+        if (loader == PackLoaderKind.Forge)
+        {
+            var cached = new FileInfo(path);
+            if (state.SchemaVersion != RuntimeCacheGeneration ||
+                !string.Equals(state.DescriptorHash, descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase) ||
+                !state.Files.TryGetValue(relative, out var tracked) || !cached.Exists ||
+                cached.Length != tracked.SizeBytes ||
+                !string.Equals(ComputeSha256(path), tracked.Sha256, StringComparison.OrdinalIgnoreCase) ||
+                !InheritedGameJar.NameLegacyForgeJar(path, descriptor.MinecraftVersion, _logger))
+                return false;
+        }
+        else if (!InheritedGameJar.NameKnotJar(path, descriptor.MinecraftVersion, _logger))
+        {
+            return false;
+        }
+
         var info = new FileInfo(path);
         state.Files[relative] = new RuntimeFileState
         {
@@ -966,7 +983,7 @@ internal sealed class FabricLoaderProvider : IPackLoaderProvider
                 context.Descriptor.Loader.Version!,
                 context.Launcher.MinecraftPath).WaitAsync(retryToken),
             token);
-        KnotGameJar.NameIt(
+        InheritedGameJar.NameKnotJar(
             Path.Combine(context.Launcher.MinecraftPath.Versions, profileId, profileId + ".json"),
             context.Descriptor.MinecraftVersion,
             context.Logger);
@@ -987,7 +1004,7 @@ internal sealed class QuiltLoaderProvider : IPackLoaderProvider
                 context.Descriptor.Loader.Version!,
                 context.Launcher.MinecraftPath).WaitAsync(retryToken),
             token);
-        KnotGameJar.NameIt(
+        InheritedGameJar.NameKnotJar(
             Path.Combine(context.Launcher.MinecraftPath.Versions, profileId, profileId + ".json"),
             context.Descriptor.MinecraftVersion,
             context.Logger);
@@ -996,40 +1013,33 @@ internal sealed class QuiltLoaderProvider : IPackLoaderProvider
 }
 
 /// <summary>
-/// Tells the profile which jar is the game, which Fabric and Quilt do not.
+/// Names the base Minecraft jar for loader profiles whose entry point needs it
+/// on the classpath. CmlLib otherwise uses the child profile ID as the jar name.
 /// </summary>
-/// <remarks>
-/// A loader profile has no jar of its own: it inherits the base version and
-/// runs out of the jar that version brought. The launcher format has a field
-/// for saying so - <c>jar</c> - and Forge and NeoForge write it while the
-/// Fabric and Quilt installers leave it out, because their own launcher works
-/// it out from <c>inheritsFrom</c> instead.
-///
-/// CmlLib does not. With no <c>jar</c> it takes the profile's own id, puts
-/// <c>versions/fabric-loader-0.14.10-1.18.2/fabric-loader-0.14.10-1.18.2.jar</c>
-/// on the class path, and that file has never existed. Forge and NeoForge
-/// survive the same omission because BootstrapLauncher never wanted the game
-/// on the class path anyway; Fabric's Knot finds the game by looking there and
-/// nowhere else, so it found nothing:
-///
-///   Minecraft game provider couldn't locate the game!
-///
-/// One field, written where the installer did not write it. Nothing else in
-/// the profile is touched, and a profile that already names a jar is left
-/// exactly as it is.
-/// </remarks>
-internal static class KnotGameJar
+internal static class InheritedGameJar
 {
-    /// <summary>
-    /// Writes <c>jar</c> into the profile at <paramref name="profilePath"/>
-    /// unless it already names one. True when the file was changed.
-    /// </summary>
-    public static bool NameIt(string profilePath, string minecraftVersion, Logger logger)
+    public static bool NameKnotJar(string profilePath, string minecraftVersion, Logger logger) =>
+        NameJar(profilePath, minecraftVersion, logger, requireLaunchWrapper: false);
+
+    public static bool NameLegacyForgeJar(string profilePath, string minecraftVersion, Logger logger) =>
+        NameJar(profilePath, minecraftVersion, logger, requireLaunchWrapper: true);
+
+    private static bool NameJar(string profilePath, string minecraftVersion, Logger logger, bool requireLaunchWrapper)
     {
         try
         {
             if (!File.Exists(profilePath)) return false;
             if (JsonNode.Parse(File.ReadAllText(profilePath)) is not JsonObject profile) return false;
+            // LaunchWrapper's Forge patcher reads vanilla classes from the JVM
+            // classpath. Modern Forge uses its own bootstrap and library layout.
+            if (requireLaunchWrapper &&
+                (profile["mainClass"]?.GetValue<string>() != "net.minecraft.launchwrapper.Launch" ||
+                 profile["id"]?.GetValue<string>() != Path.GetFileNameWithoutExtension(profilePath) ||
+                 profile["inheritsFrom"]?.GetValue<string>() != minecraftVersion ||
+                 profile["downloads"] is { } downloads &&
+                 (downloads is not JsonObject artifacts || artifacts.ContainsKey("client"))))
+                return false;
+
             if (profile.TryGetPropertyValue("jar", out var existing) &&
                 !string.IsNullOrWhiteSpace(existing?.GetValue<string>()))
             {
@@ -1054,7 +1064,7 @@ internal static class KnotGameJar
 internal sealed class ForgeLoaderProvider : IPackLoaderProvider
 {
     public PackLoaderKind Kind => PackLoaderKind.Forge;
-    public Task<string> InstallAsync(PackLoaderInstallationContext context, CancellationToken token)
+    public async Task<string> InstallAsync(PackLoaderInstallationContext context, CancellationToken token)
     {
         var minecraftVersion = context.Descriptor.MinecraftVersion;
         var loaderVersion = context.Descriptor.Loader.Version!;
@@ -1068,7 +1078,7 @@ internal sealed class ForgeLoaderProvider : IPackLoaderProvider
         var installerName = $"forge-{artifactVersion}-installer.jar";
         var uri = $"https://maven.minecraftforge.net/net/minecraftforge/forge/{escapedVersion}/{Uri.EscapeDataString(installerName)}";
         var expectedProfile = minecraftVersion + "-forge-" + shortLoaderVersion;
-        return OfficialLoaderInstaller.InstallAsync(
+        var profileId = await OfficialLoaderInstaller.InstallAsync(
             context,
             Path.Combine("installers", "forge", artifactVersion, installerName),
             uri,
@@ -1078,7 +1088,12 @@ internal sealed class ForgeLoaderProvider : IPackLoaderProvider
                           !id.Contains("neoforge", StringComparison.OrdinalIgnoreCase) &&
                           json.Contains(minecraftVersion, StringComparison.OrdinalIgnoreCase) &&
                           json.Contains(loaderVersion, StringComparison.OrdinalIgnoreCase),
-            token);
+            token).ConfigureAwait(false);
+        InheritedGameJar.NameLegacyForgeJar(
+            Path.Combine(context.Launcher.MinecraftPath.Versions, profileId, profileId + ".json"),
+            minecraftVersion,
+            context.Logger);
+        return profileId;
     }
 }
 
@@ -1131,13 +1146,29 @@ internal static class OfficialLoaderInstaller
             Hash = sha1
         };
         await context.Launcher.GameInstaller.Install([gameFile], null, null, token);
+        var legacyForge = context.Descriptor.Loader.Type == PackLoaderKind.Forge && UsesLegacyForgeClientAction(installerPath);
         await RuntimeRetry.RunAsync(
-            retryToken => RunInstallerAsync(context, installerPath, installArgument, retryToken),
+            retryToken => RunInstallerAsync(context, installerPath, installArgument, legacyForge, retryToken),
             token);
 
         return FindProfile(context.GameRoot, expectedProfileIds, profileMatcher)
             ?? throw new FileNotFoundException(
                 $"Loader installer completed but did not create a launch profile for {context.Descriptor.Loader.Version}.");
+    }
+
+    internal static bool UsesLegacyForgeClientAction(string installerPath)
+    {
+        using var archive = ZipFile.OpenRead(installerPath);
+        if (archive.GetEntry("net/minecraftforge/installer/InstallerAction.class") is null ||
+            archive.GetEntry("install_profile.json") is not { } metadata)
+            return false;
+
+        using var input = metadata.Open();
+        using var json = JsonDocument.Parse(input);
+        var root = json.RootElement;
+        return root.ValueKind == JsonValueKind.Object && !root.TryGetProperty("spec", out _) &&
+               root.TryGetProperty("install", out var install) && install.ValueKind == JsonValueKind.Object &&
+               root.TryGetProperty("versionInfo", out var version) && version.ValueKind == JsonValueKind.Object;
     }
 
     private static async Task<string> DownloadChecksumAsync(HttpClient httpClient, string uri, CancellationToken token)
@@ -1160,6 +1191,7 @@ internal static class OfficialLoaderInstaller
         PackLoaderInstallationContext context,
         string installerPath,
         string installArgument,
+        bool legacyForge,
         CancellationToken token)
     {
         Directory.CreateDirectory(context.TemporaryRoot);
@@ -1172,7 +1204,7 @@ internal static class OfficialLoaderInstaller
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = context.JavaPath,
+                FileName = legacyForge ? context.GameJavaPath ?? context.JavaPath : context.JavaPath,
                 WorkingDirectory = context.TemporaryRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1183,9 +1215,16 @@ internal static class OfficialLoaderInstaller
                 StandardErrorEncoding = Utf8NoBom
             };
             using var processFiles = PortableJavaEnvironment.CreateToolScope(startInfo, context.TemporaryRoot);
-            startInfo.ArgumentList.Add("-jar");
-            startInfo.ArgumentList.Add(installerPath);
-            startInfo.ArgumentList.Add(installArgument);
+            if (legacyForge)
+            {
+                await AddLegacyForgeArgumentsAsync(startInfo, installerPath, processFiles.RootDirectory, token);
+            }
+            else
+            {
+                startInfo.ArgumentList.Add("-jar");
+                startInfo.ArgumentList.Add(installerPath);
+                startInfo.ArgumentList.Add(installArgument);
+            }
             startInfo.ArgumentList.Add(context.GameRoot);
 
             var process = processFiles.Start();
@@ -1206,7 +1245,8 @@ internal static class OfficialLoaderInstaller
             var stderr = await stderrTask;
             if (process.ExitCode != 0)
             {
-                var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                var details = legacyForge ? stdout + Environment.NewLine + stderr
+                    : string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
                 if (details.Length > 3000) details = details[^3000..];
                 throw new InvalidOperationException(
                     $"Loader installer failed with exit code {process.ExitCode}." + Environment.NewLine + details.Trim());
@@ -1223,6 +1263,22 @@ internal static class OfficialLoaderInstaller
                 File.WriteAllBytes(profilesPath, profilesBackup);
             }
         }
+    }
+
+    private static async Task AddLegacyForgeArgumentsAsync(
+        ProcessStartInfo startInfo, string installerPath, string toolRoot, CancellationToken token)
+    {
+        const string className = "LegacyForgeClientInstaller";
+        using var source = typeof(OfficialLoaderInstaller).Assembly.GetManifestResourceStream($"Minecraft.{className}.class")
+            ?? throw new InvalidOperationException("The launcher is missing its legacy Forge installer bootstrap.");
+        await using (var output = File.Create(Path.Combine(toolRoot, className + ".class")))
+            await source.CopyToAsync(output, token).ConfigureAwait(false);
+
+        startInfo.ArgumentList.Add("-Djava.awt.headless=true");
+        startInfo.ArgumentList.Add("-Dfile.encoding=UTF-8");
+        startInfo.ArgumentList.Add("-cp");
+        startInfo.ArgumentList.Add(toolRoot + Path.PathSeparator + installerPath);
+        startInfo.ArgumentList.Add(className);
     }
 
     private static string? FindProfile(

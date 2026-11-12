@@ -22,6 +22,7 @@ public sealed class IdentityAdapterPauseReportingTests
                 Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishHooks.java"),
                 Path.Combine(common, "PortableLanAutoPublishTransformer.java"),
+                RepositoryFile("Program.Tests", "Fixtures", "LanAutoPublish", "PortableSteamDiscoveryHooks.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "PauseReportingProbe.java"));
             var output = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath,
                 "PauseReportingProbe");

@@ -282,6 +282,37 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Java8Runtime_InstallsReusesAndRepairsItsLegacyRuntimeImage()
+    {
+        const string javaVersion = "1.8.0_504";
+        var archive = BuildArchive(releaseVersion: javaVersion, runtimeImage: "jre/lib/rt.jar");
+        var runtimeRoot = CreateRuntimeRoot();
+        var first = new RecordingHandler(_ => Success(archive));
+        using var httpClient = new HttpClient(first);
+        var prepared = await CreateService(httpClient, archive, javaMajorVersion: 8, javaVersion: javaVersion)
+            .EnsureAsync(runtimeRoot, null, CancellationToken.None);
+
+        Assert.Equal(Path.Combine(runtimeRoot, "runtime", "windows-x64", "java-8"), prepared.JavaHome);
+        var runtimeImage = Path.Combine(prepared.JavaHome, "jre", "lib", "rt.jar");
+        Assert.True(File.Exists(runtimeImage));
+        Assert.False(File.Exists(Path.Combine(prepared.JavaHome, "lib", "modules")));
+        Assert.Single(first.RequestUris);
+
+        var reuseMarker = Path.Combine(prepared.JavaHome, "reuse-marker.txt");
+        File.WriteAllText(reuseMarker, "installed");
+        var offline = new RecordingHandler(_ => throw new InvalidOperationException("Network must not be used."));
+        using var offlineClient = new HttpClient(offline);
+        var offlineService = CreateService(offlineClient, archive, javaMajorVersion: 8, javaVersion: javaVersion);
+        await offlineService.EnsureAsync(runtimeRoot, null, CancellationToken.None);
+        Assert.True(File.Exists(reuseMarker));
+
+        File.Delete(runtimeImage);
+        await offlineService.EnsureAsync(runtimeRoot, null, CancellationToken.None);
+        Assert.True(File.Exists(runtimeImage));
+        Assert.Empty(offline.RequestUris);
+    }
+
+    [Fact]
     public async Task DeletedExecutable_IsRepairedFromTheCachedArchiveWithoutNetwork()
     {
         var archive = BuildArchive();
@@ -576,14 +607,16 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         byte[] archive,
         Func<string, long, bool>? freeSpaceProbe = null,
         IReadOnlyList<Uri>? downloadUris = null,
-        bool verifyFlags = false)
+        bool verifyFlags = false,
+        int javaMajorVersion = 25,
+        string javaVersion = TestJavaVersion)
     {
         Directory.CreateDirectory(_root);
         var pin = new JavaRuntimePin(
-            MajorVersion: 25,
+            javaMajorVersion,
             TestRuntimeId,
-            TestJavaVersion,
-            "java-25",
+            javaVersion,
+            $"java-{javaMajorVersion}",
             "jdk-test.zip",
             ArchivePrefix,
             downloadUris ?? [new Uri("https://example.test/jdk-test.zip")],
@@ -605,7 +638,8 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     private static byte[] BuildArchive(
         string releaseVersion = TestJavaVersion,
         string? extraEntry = null,
-        byte[]? javaExe = null)
+        byte[]? javaExe = null,
+        string runtimeImage = "lib/modules")
     {
         using var buffer = new MemoryStream();
         using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -613,7 +647,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
             if (javaExe is null) WriteEntry(archive, ArchivePrefix + "bin/java.exe", "java");
             else WriteEntry(archive, ArchivePrefix + "bin/java.exe", javaExe);
             WriteEntry(archive, ArchivePrefix + "bin/javaw.exe", "javaw");
-            WriteEntry(archive, ArchivePrefix + "lib/modules", "modules");
+            WriteEntry(archive, ArchivePrefix + runtimeImage, "runtime image");
             WriteEntry(
                 archive,
                 ArchivePrefix + "release",

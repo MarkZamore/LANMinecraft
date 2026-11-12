@@ -54,6 +54,8 @@ public final class PortableIdentityAgent {
         instrumentation.addTransformer(new PortableFtbTeleportTransformer(), false);
         instrumentation.addTransformer(new PortableSolarFluxSyncTransformer(), false);
         instrumentation.addTransformer(new PortableLanAutoPublishTransformer(), false);
+        if (Boolean.getBoolean("minecraft.portable.identity.lanPreserveWorldSettingsEnabled"))
+            instrumentation.addTransformer(new PortableLanWorldPolicyTransformer(), false);
         instrumentation.addTransformer(new PortableSteamDiscoveryTransformer(), false);
         instrumentation.addTransformer(new PortableSteamLanEntryTransformer(), false);
         instrumentation.addTransformer(new PortablePerPlayerChunksTransformer(), false);

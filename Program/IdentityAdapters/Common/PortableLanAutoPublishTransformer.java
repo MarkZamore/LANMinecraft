@@ -9,15 +9,20 @@ import java.util.List;
 import java.util.Set;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.FrameNode;
 import org.objectweb.asm.tree.InsnList;
 import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TypeInsnNode;
@@ -42,6 +47,10 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         // and simply does not get the one-press publish.
         if (!"true".equals(property("lanPublishEnabled", "false"))) {
             return null;
+        }
+        if ("true".equals(property("pauseLegacyReportingEnabled", "false")) &&
+            contains(property("pauseScreenClasses", ""), className)) {
+            return transformLegacyPauseMenu(className, classfileBuffer);
         }
         if (("true".equals(property("pauseReportingEnabled", "false")) ||
             "true".equals(property("pauseLanRowEnabled", "false"))) &&
@@ -103,6 +112,78 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         System.out.println("[PortableIdentity] Patched LAN share screen class " + className + ".");
+        return writer.toByteArray();
+    }
+
+    private static byte[] transformLegacyPauseMenu(String className, byte[] original) {
+        ClassNode node = new ClassNode(Opcodes.ASM9);
+        new ClassReader(original).accept(node, 0);
+        int patched = 0;
+        for (MethodNode menu : node.methods) {
+            if (!contains(property("pauseCreateMenuMethods", ""), menu.name) ||
+                !menu.desc.equals("()V") || (menu.access & Opcodes.ACC_STATIC) != 0) continue;
+            List<AbstractInsnNode> body = executable(menu);
+            for (int index = 0; index + 7 < body.size(); index++) {
+                if (!(body.get(index) instanceof LdcInsnNode label) || !"menu.shareToLan".equals(label.cst) ||
+                    !variable(body, index + 2, 0) ||
+                    !(body.get(index + 3) instanceof InvokeDynamicInsnNode press) ||
+                    !(body.get(index + 4) instanceof MethodInsnNode button) ||
+                    button.getOpcode() != Opcodes.INVOKESPECIAL || !button.name.equals("<init>") ||
+                    !className("pauseLegacyButtonClasses", button.owner) ||
+                    !(body.get(index + 6) instanceof TypeInsnNode cast) || cast.getOpcode() != Opcodes.CHECKCAST ||
+                    !cast.desc.equals(button.owner) ||
+                    !(body.get(index + 7) instanceof VarInsnNode store) || store.getOpcode() != Opcodes.ASTORE) continue;
+                Type callback = Type.getReturnType(press.desc);
+                Type[] parameters = Type.getArgumentTypes(button.desc);
+                if (parameters.length != 6 || !parameters[5].equals(callback) || press.bsmArgs.length != 3 ||
+                    !(press.bsmArgs[1] instanceof Handle target) || !target.getOwner().equals(node.name) ||
+                    !target.getDesc().equals("(L" + button.owner + ";)V")) continue;
+                List<MethodNode> matchingCallbacks = node.methods.stream().filter(method ->
+                    method.name.equals(target.getName()) && method.desc.equals(target.getDesc()) &&
+                    (method.access & Opcodes.ACC_STATIC) == 0 && executable(method).stream().anyMatch(instruction ->
+                        instruction instanceof TypeInsnNode allocation && allocation.getOpcode() == Opcodes.NEW &&
+                        className("lanShareScreenClasses", allocation.desc))).toList();
+                if (index + 8 >= body.size() || body.get(index + 8).getOpcode() != Opcodes.ALOAD ||
+                    !variable(body, index + 8, store.var)) continue;
+                List<AbstractInsnNode> activations = body.subList(index + 8, body.size()).stream().filter(instruction ->
+                    instruction instanceof FieldInsnNode active && active.getOpcode() == Opcodes.PUTFIELD &&
+                    active.desc.equals("Z") &&
+                    (active.owner.equals(button.owner) || className("pauseLegacyWidgetClasses", active.owner)) &&
+                    contains(property("pauseLegacyButtonActiveFields", ""), active.name)).toList();
+                if (matchingCallbacks.size() != 1 || activations.size() != 1) continue;
+
+                // Keep the same widget and layout so mods that reposition the
+                // native LAN button still recognize it. The button and its
+                // native active value are already on the stack at this write.
+                InsnList decorate = new InsnList();
+                decorate.add(new InsnNode(Opcodes.DUP2));
+                decorate.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                decorate.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS, "decorateLegacyPauseButton",
+                    "(Ljava/lang/Object;ZLjava/lang/Object;)Z", false));
+                decorate.add(new InsnNode(Opcodes.SWAP));
+                decorate.add(new InsnNode(Opcodes.POP));
+                menu.instructions.insertBefore(activations.get(0), decorate);
+
+                MethodNode action = matchingCallbacks.get(0);
+                LabelNode nativeAction = new LabelNode();
+                InsnList guard = new InsnList();
+                guard.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                guard.add(new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS, "legacyPauseReports",
+                    "(Ljava/lang/Object;)Z", false));
+                guard.add(new JumpInsnNode(Opcodes.IFEQ, nativeAction));
+                guard.add(new InsnNode(Opcodes.RETURN));
+                guard.add(nativeAction);
+                guard.add(new FrameNode(Opcodes.F_SAME, 0, null, 0, null));
+                action.instructions.insert(guard);
+                patched++;
+            }
+        }
+        if (patched != 1) {
+            throw unsupported("expected one native LAN button and action in " + className + ", found " + patched);
+        }
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        System.out.println("[PortableIdentity] Patched legacy reporting pause button class " + className + ".");
         return writer.toByteArray();
     }
 

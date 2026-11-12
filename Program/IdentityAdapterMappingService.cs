@@ -30,6 +30,8 @@ internal sealed class IdentityAdapterMappingService
     private const string Connection = "net/minecraft/network/Connection";
     private const string PlayerList = "net/minecraft/server/players/PlayerList";
     private const string Component = "net/minecraft/network/chat/Component";
+    private const string TextComponent = "net/minecraft/network/chat/TextComponent";
+    private const string TranslatableComponent = "net/minecraft/network/chat/TranslatableComponent";
     private const string PlayerInfo = "net/minecraft/client/multiplayer/PlayerInfo";
     private const string PlayerSkin = "net/minecraft/client/resources/PlayerSkin";
     private const string ShareToLanScreen = "net/minecraft/client/gui/screens/ShareToLanScreen";
@@ -43,6 +45,8 @@ internal sealed class IdentityAdapterMappingService
     private const string PauseRowHelper = "net/minecraft/client/gui/layouts/GridLayout$RowHelper";
     private const string LayoutElement = "net/minecraft/client/gui/layouts/LayoutElement";
     private const string AbstractWidget = "net/minecraft/client/gui/components/AbstractWidget";
+    private const string LanguageManager = "net/minecraft/client/resources/language/LanguageManager";
+    private const string LanguageInfo = "net/minecraft/client/resources/language/LanguageInfo";
     private const string Level = "net/minecraft/world/level/Level";
     private const string IntegratedServer = "net/minecraft/client/server/IntegratedServer";
     private const string MinecraftClient = "net/minecraft/client/Minecraft";
@@ -225,7 +229,7 @@ internal sealed class IdentityAdapterMappingService
     {
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
         AddLanRedirectProperties(runtime, gameDirectory, lanScreen, lanProperties);
-        var pauseScreen = AddPauseReportingProperties(mappings, lanProperties);
+        var pauseScreen = AddPauseReportingProperties(runtime, gameDirectory, mappings, lanProperties);
         var perPlayerProperties = new Dictionary<string, string>(StringComparer.Ordinal);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, perPlayerProperties);
         AddChunkPacingProperties(mappings, perPlayerProperties, perPlayerChunks);
@@ -261,6 +265,7 @@ internal sealed class IdentityAdapterMappingService
         }
         AddPerPlayerChunkTargets(mappings, wanted, perPlayerChunks);
         AddGuestMovementTargets(mappings, wanted, guestMovement);
+        AddWorldSharingPolicyTargets(runtime.Descriptor, mappings, lanProperties, wanted);
         var targets = FindRuntimeTargets(runtime, gameDirectory, wanted);
         // TextureUrlChecker is a class authlib only grew at 3.18.38, so its
         // absence is ordinary; the session service has been there throughout
@@ -431,17 +436,19 @@ internal sealed class IdentityAdapterMappingService
     /// a world. Restore the native reporting action at that one button site.
     /// Older menus already select the reporting action themselves.
     /// </summary>
-    private static MappedClass? AddPauseReportingProperties(
+    private MappedClass? AddPauseReportingProperties(PreparedRuntime runtime, string gameDirectory,
         RuntimeNames? mappings, Dictionary<string, string> properties)
     {
         properties["pauseReportingEnabled"] = "false";
         properties["pauseLanRowEnabled"] = "false";
+        properties["pauseLegacyReportingEnabled"] = "false";
         properties["pauseScreenClasses"] = PauseScreen;
         if (properties.GetValueOrDefault("lanPublishEnabled") != "true" ||
             mappings is null) return null;
         var worldOptions = mappings.FindClass(WorldOptionsScreen);
         var multiplayerOptions = mappings.FindClass(MultiplayerOptionsScreen);
-        if (worldOptions is null && multiplayerOptions is null) return null;
+        if (worldOptions is null && multiplayerOptions is null)
+            return AddLegacyPauseReportingProperties(runtime, gameDirectory, mappings, properties);
         var pause = mappings.FindClass(PauseScreen);
         var reporting = mappings.FindClass(ReportingScreen);
         var screen = mappings.FindClass(Screen);
@@ -507,6 +514,53 @@ internal sealed class IdentityAdapterMappingService
         return pause;
     }
 
+    private MappedClass? AddLegacyPauseReportingProperties(PreparedRuntime runtime, string gameDirectory,
+        RuntimeNames mappings, Dictionary<string, string> properties)
+    {
+        if (!runtime.Descriptor.PreserveWorldSettingsOnShare) return null;
+        var transport = _transportSelection(runtime.Descriptor);
+        if (transport is not { Version: "0.3.4", NativeLanUiSuppressed: true }) return null;
+        _paths.EnsureUnderRoot(Path.GetFullPath(gameDirectory));
+        if (!IsPinnedTransportJar(Path.Combine(gameDirectory, "mods", transport.FileName), transport)) return null;
+
+        var pause = mappings.FindClass(PauseScreen);
+        var component = mappings.FindClass(Component);
+        var button = mappings.FindClass(Button);
+        var widget = mappings.FindClass(AbstractWidget);
+        var minecraft = mappings.FindClass(MinecraftClient);
+        var literal = mappings.FindClass(TextComponent);
+        var manager = mappings.FindClass(LanguageManager);
+        var language = mappings.FindClass(LanguageInfo);
+        if (pause is null || component is null || button is null || widget is null || minecraft is null ||
+            literal is null || manager is null || language is null || pause.FindField("PLAYER_REPORTING") is not null)
+            return null;
+
+        var menu = pause.FindMethod("createPauseMenu", descriptor => descriptor == "()V");
+        var label = widget.FindMethod("setMessage", descriptor => descriptor == $"(L{component.ObfName};)V");
+        var active = widget.FindField("active");
+        var languages = minecraft.FindMethod("getLanguageManager", descriptor => descriptor == $"()L{manager.ObfName};");
+        var selected = manager.FindMethod("getSelected", descriptor => descriptor == $"()L{language.ObfName};");
+        var code = language.FindMethod("getCode", descriptor => descriptor == "()Ljava/lang/String;");
+        if (menu is null || label is null || active is null || languages is null || selected is null || code is null ||
+            literal.FindMethod("<init>", descriptor => descriptor == "(Ljava/lang/String;)V") is null) return null;
+
+        properties["pauseLegacyReportingEnabled"] = "true";
+        properties["pauseLegacyTransportVersion"] = transport.Version;
+        properties["pauseScreenClasses"] = JoinAliases(pause);
+        properties["pauseCreateMenuMethods"] = JoinAliases(menu);
+        properties["pauseLegacyButtonClasses"] = JoinAliases(button);
+        properties["pauseLegacyWidgetClasses"] = JoinAliases(widget);
+        properties["pauseLegacyButtonActiveFields"] = JoinAliases(active);
+        properties["pauseLegacyButtonSetMessageMethods"] = JoinAliases(label);
+        properties["pauseLegacyLanguageManagerClasses"] = JoinAliases(manager);
+        properties["pauseLegacyLanguageManagerMethods"] = JoinAliases(languages);
+        properties["pauseLegacyLanguageInfoClasses"] = JoinAliases(language);
+        properties["pauseLegacyLanguageSelectedMethods"] = JoinAliases(selected);
+        properties["pauseLegacyLanguageCodeMethods"] = JoinAliases(code);
+        properties["pauseLegacyLiteralComponentClasses"] = JoinDottedAliases(literal);
+        return pause;
+    }
+
     /// <summary>
     /// The one-press publish, and every name the hook reaches for once a world
     /// is open.
@@ -561,7 +615,7 @@ internal sealed class IdentityAdapterMappingService
             ?? user.FindMethod("name", value => value == "()Ljava/lang/String;");
         var levelName = worldData.FindMethod("getLevelName", value => value == "()Ljava/lang/String;");
         var literal = component.FindMethod("literal", value => value.StartsWith("(Ljava/lang/String;)L", StringComparison.Ordinal));
-        var literalComponent = mappings?.FindClass("net/minecraft/network/chat/TextComponent");
+        var literalComponent = mappings?.FindClass(TextComponent);
         if (init is null || removed is null || join is null || lanList is null || servers is null ||
             dirty is null || address is null || ip is null || addServer is null || entryData is null ||
             header is null || render is null || getUser is null || userName is null || levelName is null ||
@@ -717,13 +771,17 @@ internal sealed class IdentityAdapterMappingService
         var schedule = eventLoop?.FindMethod(
             "schedule", descriptor => descriptor == "(Ljava/lang/Runnable;)V")
             ?? eventLoop?.FindMethod("tell", descriptor => descriptor == "(Ljava/lang/Runnable;)V");
-        // The line the game writes in chat when a world opens is wanted, not
-        // required: PublishCommand said it inline until 1.19.4, and a world
-        // that opens without a line about it has still opened. The hook's own
-        // failure here is caught and logged on the game's side.
+        // Use the native line as built by ShareToLanScreen. Older screens
+        // construct the translated component inline, before this command
+        // exposed a reusable success-message method.
         var publishSuccess = publishCommand.FindMethod(
             "getSuccessMessage",
             descriptor => descriptor.StartsWith("(I)L", StringComparison.Ordinal));
+        var translatableFactory = component.FindMethod("translatable", descriptor =>
+            descriptor.StartsWith("(Ljava/lang/String;[Ljava/lang/Object;)L", StringComparison.Ordinal));
+        var legacyTranslatable = mappings.FindClass(TranslatableComponent);
+        var legacyTranslationConstructor = legacyTranslatable?.FindMethod("<init>", descriptor =>
+            descriptor == "(Ljava/lang/String;[Ljava/lang/Object;)V");
         if (shareInit is null || publishServer is null || defaultGameType is null ||
             getWorldData is null || isPublished is null || getPlayerList is null ||
             allowCommands is null || availablePort is null || getInstance is null ||
@@ -765,6 +823,14 @@ internal sealed class IdentityAdapterMappingService
         {
             properties["publishSuccessMethods"] = JoinAliases(publishSuccess);
         }
+        else if (translatableFactory is not null)
+        {
+            properties["componentTranslatableWithArgsMethods"] = JoinAliases(translatableFactory);
+        }
+        else if (legacyTranslationConstructor is not null && legacyTranslatable is not null)
+        {
+            properties["translatableComponentClasses"] = JoinDottedAliases(legacyTranslatable);
+        }
         properties["minecraftClasses"] = JoinDottedAliases(minecraftClient);
         properties["minecraftGetInstanceMethods"] = JoinAliases(getInstance);
         properties["getSingleplayerServerMethods"] = JoinAliases(singleplayerServer);
@@ -784,6 +850,31 @@ internal sealed class IdentityAdapterMappingService
         properties["chatComponentClasses"] = JoinAliases(chatComponent);
         properties["chatAddMessageMethods"] = JoinAliases(addMessage);
         return shareScreen;
+    }
+
+    private static void AddWorldSharingPolicyTargets(
+        PackRuntimeDescriptor descriptor, RuntimeNames? mappings, Dictionary<string, string> properties,
+        HashSet<string> targets)
+    {
+        if (!descriptor.PreserveWorldSettingsOnShare || mappings is null ||
+            properties.GetValueOrDefault("lanPublishEnabled") != "true") return;
+
+        var integrated = mappings.FindClass(IntegratedServer);
+        var playerList = mappings.FindClass(PlayerList);
+        var server = mappings.FindClass(MinecraftServer);
+        var gameType = mappings.FindClass(GameType);
+        if (integrated is null || playerList is null || server is null || gameType is null ||
+            integrated.FindMethod("publishServer", value => value == $"(L{gameType.ObfName};ZI)Z") is null) return;
+
+        var getServer = playerList.FindMethod("getServer", value => value == $"()L{server.ObfName};");
+        var setCommands = playerList.FindMethod("setAllowCheatsForAllPlayers", value => value == "(Z)V")
+            ?? playerList.FindMethod("setAllowCommandsForAllPlayers", value => value == "(Z)V");
+        if (getServer is null || setCommands is null) return;
+
+        properties["lanPreserveWorldSettingsEnabled"] = "true";
+        properties["lanPolicyPlayerListServerMethods"] = JoinAliases(getServer);
+        properties["lanPolicySetAllowCommandsMethods"] = JoinAliases(setCommands);
+        targets.UnionWith([integrated.RuntimeName, integrated.ObfName, playerList.RuntimeName, playerList.ObfName]);
     }
 
     /// <summary>
@@ -1398,7 +1489,7 @@ internal sealed class IdentityAdapterMappingService
         var lanScreen = AddLanPublishProperties(mappings, out var lanProperties);
         AddLanRedirectProperties(runtime, gameDirectory, lanScreen, lanProperties);
         foreach (var pair in lanProperties) properties[pair.Key] = pair.Value;
-        var pauseScreen = AddPauseReportingProperties(mappings, properties);
+        var pauseScreen = AddPauseReportingProperties(runtime, gameDirectory, mappings, properties);
         var perPlayerChunks = AddPerPlayerChunksProperties(mappings, properties);
         AddChunkPacingProperties(mappings, properties, perPlayerChunks);
         var guestMovement = AddGuestMovementProperties(mappings, properties);
@@ -1429,6 +1520,7 @@ internal sealed class IdentityAdapterMappingService
         }
         AddPerPlayerChunkTargets(mappings, requiredTargets, perPlayerChunks);
         AddGuestMovementTargets(mappings, requiredTargets, guestMovement);
+        AddWorldSharingPolicyTargets(runtime.Descriptor, mappings, properties, requiredTargets);
         AddModernSkinTarget(mappings, requiredTargets);
         if (pauseScreen is not null)
         {
@@ -1949,7 +2041,10 @@ internal sealed class IdentityAdapterMappingService
             "net/minecraft/client/server/LanServerDetection$LanServerList",
             "net/minecraft/client/gui/screens/multiplayer/ServerSelectionList$NetworkServerEntry",
             "net/minecraft/client/User",
-            "net/minecraft/network/chat/TextComponent",
+            TextComponent,
+            TranslatableComponent,
+            LanguageManager,
+            LanguageInfo,
             LoginListener,
             GameListener,
             CommonListener,

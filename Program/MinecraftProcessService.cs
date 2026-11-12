@@ -609,6 +609,8 @@ public sealed class MinecraftProcessService
         extraJvmArguments.AddRange(HeapTuningArgumentsFor(maximumRamMb));
         extraJvmArguments.AddRange(CompatibilityArgumentsFor(JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion));
         extraJvmArguments.AddRange(identityJvmArguments);
+        if (PackManifestService.UsesJava8SteamWorldSharing(descriptor))
+            extraJvmArguments.Add($"-Dlink.e4steam.launcherPlayerName={identityContext.IdentityName}");
         // This renderer hooks LWJGL presentation, independently of Minecraft mappings,
         // loaders and the optional identity adapter. It is never installed in mods.
         using var noticeOverlay = NoticeOverlay.PrepareSession();

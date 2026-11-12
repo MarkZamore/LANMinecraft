@@ -39,7 +39,8 @@ internal sealed class SteamComponentCatalogService
     {
         token.ThrowIfCancellationRequested();
         var fallbackJson = SteamComponentCatalog.EmbeddedJson();
-        var fallback = SteamComponentCatalog.Parse(fallbackJson);
+        var embedded = SteamComponentCatalog.Parse(fallbackJson);
+        var fallback = embedded;
         var known = new List<ManagedComponentDescriptor>();
         try
         {
@@ -54,7 +55,7 @@ internal sealed class SteamComponentCatalogService
                     "Invalid Steam catalog cache envelope.");
                 var cached = SteamComponentCatalog.Parse(saved.Catalog!);
                 var restored = saved.KnownBuilds!.Select(ValidateKnown).ToArray();
-                fallback = SteamComponentCatalog.WithHistory(cached, restored);
+                fallback = SteamComponentCatalog.WithHistory(WithEmbeddedJava8Builds(cached, embedded), restored);
                 known.AddRange(restored);
                 _logger.Info($"Steam component catalog: checked cached profile {fallback.Profile}.");
             }
@@ -91,7 +92,8 @@ internal sealed class SteamComponentCatalogService
                 bytes.Write(buffer, 0, count);
             }
             var json = new UTF8Encoding(false, true).GetString(bytes.ToArray());
-            var snapshot = SteamComponentCatalog.WithHistory(SteamComponentCatalog.Parse(json), known);
+            var parsed = SteamComponentCatalog.Parse(json);
+            var snapshot = SteamComponentCatalog.WithHistory(WithEmbeddedJava8Builds(parsed, embedded), known);
             token.ThrowIfCancellationRequested();
             Save(json, snapshot);
             _logger.Info($"Steam component catalog: verified network profile {snapshot.Profile}; {snapshot.Builds.Count} builds.");
@@ -103,6 +105,21 @@ internal sealed class SteamComponentCatalogService
             _logger.Warn("Steam component catalog network unavailable/rejected; keeping checked fallback: " + ex.Message);
             return SteamComponentCatalog.WithHistory(fallback, known);
         }
+    }
+
+    private static SteamComponentCatalogSnapshot WithEmbeddedJava8Builds(
+        SteamComponentCatalogSnapshot snapshot, SteamComponentCatalogSnapshot embedded)
+    {
+        var missing = embedded.Builds.Where(build => build.PreservesWorldSettingsOnShare &&
+            !snapshot.Builds.Any(selected => selected.PreservesWorldSettingsOnShare &&
+                selected.MinimumMinecraftVersion.SequenceEqual(build.MinimumMinecraftVersion))).ToArray();
+        SteamComponentCatalog.Require(missing.All(build => snapshot.Builds.All(selected =>
+            !string.Equals(selected.FileName, build.FileName, StringComparison.OrdinalIgnoreCase) &&
+            selected.CacheFileId != build.CacheFileId)), "Steam catalog conflicts with an embedded Java 8 component pin.");
+        return missing.Length == 0 ? snapshot : snapshot with
+        {
+            Builds = Array.AsReadOnly<SteamTransportBuild>([.. snapshot.Builds, .. missing])
+        };
     }
 
     private void Save(string json, SteamComponentCatalogSnapshot snapshot)

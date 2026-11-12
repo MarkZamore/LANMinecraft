@@ -124,7 +124,7 @@ public sealed partial class PortablePackSyncService
             "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1",
             PackManifestService.NativeRuntimeFeature, PackManifestService.NativeSteamFeature,
             PackManifestService.Minecraft26WorldLayoutFeature, RuntimeLibrarySource.Feature, GameNoticeOverlayService.NativeFeature,
-            PortableIdentityAdapterService.SteamNativePublicationMetadataFeature], StringComparer.Ordinal);
+            PortableIdentityAdapterService.SteamNativePublicationMetadataFeature, PackManifestService.SteamWorldSharingFeature], StringComparer.Ordinal);
     private const int SyncStateCacheGeneration = 1;
     private const string InstanceStateFileName = ".portable-instance.json";
     private const string StagingDirectoryName = ".pack-sync-stage";
