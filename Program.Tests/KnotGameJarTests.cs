@@ -9,10 +9,8 @@ namespace Minecraft.Tests;
 /// </summary>
 /// <remarks>
 /// A loader profile has no jar of its own; it inherits the base version and
-/// runs out of the jar that version brought. Forge and NeoForge write the
-/// launcher format's <c>jar</c> field to say so and the Fabric and Quilt
-/// installers do not, because their own launcher works it out from
-/// <c>inheritsFrom</c>. CmlLib does not: with no <c>jar</c> it takes the
+/// runs out of the jar that version brought. Fabric and Quilt infer its
+/// name from <c>inheritsFrom</c>. With no <c>jar</c> CmlLib takes the
 /// profile's own id, puts a file that has never existed on the class path,
 /// and Fabric's Knot - which looks there and nowhere else for the game -
 /// found nothing and said so.
@@ -48,7 +46,7 @@ public sealed class KnotGameJarTests : IDisposable
         }
         """);
 
-        Assert.True(KnotGameJar.NameIt(path, "1.18.2", new Logger(Path.Combine(_root, "log.txt"))));
+        Assert.True(InheritedGameJar.NameKnotJar(path, "1.18.2", new Logger(Path.Combine(_root, "log.txt"))));
 
         Assert.Equal("1.18.2", JarOf(path));
         // And everything else it said is still there.
@@ -68,7 +66,7 @@ public sealed class KnotGameJarTests : IDisposable
         """);
         var before = File.ReadAllText(path);
 
-        Assert.False(KnotGameJar.NameIt(path, "1.20.1", new Logger(Path.Combine(_root, "log.txt"))));
+        Assert.False(InheritedGameJar.NameKnotJar(path, "1.20.1", new Logger(Path.Combine(_root, "log.txt"))));
 
         Assert.Equal(before, File.ReadAllText(path));
     }
@@ -79,7 +77,7 @@ public sealed class KnotGameJarTests : IDisposable
     public void AProfileThatCannotBeRead_IsLeftAlone(string json)
     {
         var path = WriteProfile(json);
-        Assert.False(KnotGameJar.NameIt(path, "1.18.2", new Logger(Path.Combine(_root, "log.txt"))));
+        Assert.False(InheritedGameJar.NameKnotJar(path, "1.18.2", new Logger(Path.Combine(_root, "log.txt"))));
         Assert.Equal(json, File.ReadAllText(path));
     }
 
@@ -87,7 +85,7 @@ public sealed class KnotGameJarTests : IDisposable
     public void AProfileThatIsNotThere_IsLeftAlone()
     {
         Directory.CreateDirectory(_root);
-        Assert.False(KnotGameJar.NameIt(
+        Assert.False(InheritedGameJar.NameKnotJar(
             Path.Combine(_root, "absent.json"), "1.18.2", new Logger(Path.Combine(_root, "log.txt"))));
     }
 }

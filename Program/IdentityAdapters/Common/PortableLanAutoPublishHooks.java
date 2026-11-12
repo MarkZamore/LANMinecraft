@@ -3,6 +3,7 @@ package minecraft.portable.identity;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.CompletableFuture;
 
 public final class PortableLanAutoPublishHooks {
     // One publish attempt per screen instance: Screen.resize() re-runs init() on
@@ -131,9 +132,7 @@ public final class PortableLanAutoPublishHooks {
 
     private static boolean publishedIntegratedWorld(ClassLoader loader) {
         try {
-            Class<?> minecraftType = loadClass(loader, aliases("minecraftClasses"));
-            Object minecraft = PortableIdentityReflection.invokeStatic(
-                minecraftType, new Class<?>[0], new Object[0], aliases("minecraftGetInstanceMethods"));
+            Object minecraft = minecraftClient(loader);
             Object server = PortableIdentityReflection.invoke(minecraft, aliases("getSingleplayerServerMethods"));
             return server != null && Boolean.TRUE.equals(PortableIdentityReflection.invoke(
                 server, aliases("isPublishedMethods")));
@@ -142,6 +141,74 @@ public final class PortableLanAutoPublishHooks {
             // than pretend a failed or missing publication succeeded.
             return false;
         }
+    }
+
+    /** Reuse the native disabled LAN widget on builds without Minecraft player reports. */
+    public static boolean decorateLegacyPauseButton(Object button, boolean active, Object pauseScreen) {
+        ClassLoader loader = pauseScreen.getClass().getClassLoader();
+        if (!publishedIntegratedWorld(loader)) return active;
+        try {
+            Object minecraft = minecraftClient(loader);
+            Class<?> component = loadClass(loader, aliases("componentClasses"));
+            Object label = legacyReportText(loader, minecraft, "Жалобы", "Player Reporting");
+            PortableIdentityReflection.invokeDeclared(button, new Class<?>[] { component },
+                new Object[] { label }, aliases("pauseLegacyButtonSetMessageMethods"));
+            return true;
+        } catch (ReflectiveOperationException failure) {
+            System.out.println("[PortableIdentity] Legacy player reporting button unavailable: " + failure);
+            return active;
+        }
+    }
+
+    /** Uses Steam's reporting entry without opening the native LAN settings again. */
+    public static boolean legacyPauseReports(Object pauseScreen) {
+        ClassLoader loader = pauseScreen.getClass().getClassLoader();
+        if (!publishedIntegratedWorld(loader)) return false;
+        try {
+            Object minecraft = minecraftClient(loader);
+            CompletableFuture<?> overlay = (CompletableFuture<?>) Class.forName(
+                "minecraft.portable.identity.PortableSteamDiscoveryHooks", true,
+                PortableLanAutoPublishHooks.class.getClassLoader())
+                .getMethod("openRecentPlayers", ClassLoader.class).invoke(null, loader);
+            overlay.whenComplete((ignored, failure) -> {
+                if (failure == null) return;
+                ((java.util.concurrent.Executor) minecraft).execute(() -> reportOverlayUnavailable(loader, minecraft, failure));
+            });
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            try {
+                reportOverlayUnavailable(loader, minecraftClient(loader), failure);
+            } catch (ReflectiveOperationException unavailableClient) {
+                System.out.println("[PortableIdentity] Steam recent players unavailable: " + failure);
+            }
+        }
+        return true;
+    }
+
+    private static void reportOverlayUnavailable(ClassLoader loader, Object minecraft, Throwable failure) {
+        System.out.println("[PortableIdentity] Steam recent players unavailable: " + failure);
+        try {
+            Class<?> component = loadClass(loader, aliases("componentClasses"));
+            Object message = legacyReportText(loader, minecraft,
+                "Оверлей Steam недоступен.", "Steam overlay unavailable.");
+            addChatMessage(minecraft, component, message);
+        } catch (ReflectiveOperationException unavailableChat) {
+            System.out.println("[PortableIdentity] Could not display the overlay error: " + unavailableChat);
+        }
+    }
+
+    private static Object legacyReportText(ClassLoader loader, Object minecraft, String russian, String english)
+        throws ReflectiveOperationException {
+        Object languages = PortableIdentityReflection.invoke(minecraft, aliases("pauseLegacyLanguageManagerMethods"));
+        Object language = PortableIdentityReflection.invoke(languages, aliases("pauseLegacyLanguageSelectedMethods"));
+        Object code = PortableIdentityReflection.invoke(language, aliases("pauseLegacyLanguageCodeMethods"));
+        Class<?> text = loadClass(loader, aliases("pauseLegacyLiteralComponentClasses"));
+        return text.getConstructor(String.class).newInstance("ru_ru".equals(code) ? russian : english);
+    }
+
+    private static Object minecraftClient(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> minecraftType = loadClass(loader, aliases("minecraftClasses"));
+        return PortableIdentityReflection.invokeStatic(
+            minecraftType, new Class<?>[0], new Object[0], aliases("minecraftGetInstanceMethods"));
     }
 
     public static boolean autoPublish(Object screen) {
@@ -170,9 +237,6 @@ public final class PortableLanAutoPublishHooks {
             Class<?> httpUtilType = loadClass(
                 loader,
                 aliases("httpUtilClasses", "net.minecraft.util.HttpUtil", "ayf"));
-            Class<?> publishCommandType = loadClass(
-                loader,
-                aliases("publishCommandClasses", "net.minecraft.server.commands.PublishCommand", "ans"));
             Class<?> componentType = loadClass(
                 loader,
                 aliases("componentClasses", "net.minecraft.network.chat.Component", "wz"));
@@ -268,7 +332,7 @@ public final class PortableLanAutoPublishHooks {
 
             try {
                 closeScreenSoon(minecraftType, screenType);
-                sayItInChat(minecraft, publishCommandType, componentType, port);
+                sayItInChat(minecraft, loader, componentType, port);
                 PortableIdentityReflection.invoke(
                     minecraft,
                     aliases("updateTitleMethods", "updateTitle", "d"));
@@ -287,35 +351,44 @@ public final class PortableLanAutoPublishHooks {
         }
     }
 
-    /**
-     * The line vanilla writes in chat when a world is published, best effort.
-     *
-     * <p>Not every version has it under a name this can find: on 1.18.2 the
-     * lookup for getSuccessMessage throws NoSuchMethodException every single
-     * launch, and it used to take the title update down with it and print an
-     * exception into the log of a session where nothing had gone wrong. A
-     * version that cannot say the world is published has still published it,
-     * so a missing method here is silence rather than a failure.</p>
-     *
-     * <p>Anything else that goes wrong is still thrown, because that is a real
-     * fault and the caller writes it down.</p>
-     */
+    /** The native local-port line; e4steam independently posts its ready message. */
     private static void sayItInChat(
         Object minecraft,
-        Class<?> publishCommandType,
+        ClassLoader loader,
         Class<?> componentType,
         int port) throws ReflectiveOperationException {
         Object message;
-        try {
+        if (hasAll("publishSuccessMethods")) {
+            Class<?> publishCommandType = loadClass(loader, aliases("publishCommandClasses"));
             message = PortableIdentityReflection.invokeStatic(
                 publishCommandType,
                 new Class<?>[] { int.class },
                 new Object[] { port },
-                aliases("publishSuccessMethods", "getSuccessMessage", "a"));
-        } catch (NoSuchMethodException absentOnThisVersion) {
-            return;
+                aliases("publishSuccessMethods"));
+        } else {
+            message = translatedComponent(loader, componentType, "commands.publish.started", port);
         }
+        if (message != null) addChatMessage(minecraft, componentType, message);
+    }
 
+    private static Object translatedComponent(ClassLoader loader, Class<?> componentType,
+        String key, Object... arguments) throws ReflectiveOperationException {
+        if (hasAll("componentTranslatableWithArgsMethods")) {
+            return PortableIdentityReflection.invokeStatic(
+                componentType,
+                new Class<?>[] { String.class, Object[].class },
+                new Object[] { key, arguments },
+                aliases("componentTranslatableWithArgsMethods"));
+        }
+        if (hasAll("translatableComponentClasses")) {
+            Class<?> translatable = loadClass(loader, aliases("translatableComponentClasses"));
+            return translatable.getConstructor(String.class, Object[].class).newInstance(key, arguments);
+        }
+        return null;
+    }
+
+    private static void addChatMessage(Object minecraft, Class<?> componentType, Object message)
+        throws ReflectiveOperationException {
         Object gui = PortableIdentityReflection.getField(
             minecraft,
             aliases("minecraftGuiFields", "gui", "l"));

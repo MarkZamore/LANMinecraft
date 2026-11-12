@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" packages="com.mojang.patchy">
+    <Appenders>
+        <Console name="SysOut" target="SYSTEM_OUT">
+            <LegacyXMLLayout/>
+        </Console>
+        <RollingRandomAccessFile name="File" fileName="logs/latest.log" filePattern="logs/%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level] [%logger]: %msg{nolookups}%n%throwable{full}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <OnStartupTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="32 MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="5" fileIndex="min">
+                <Delete basePath="logs" maxDepth="1">
+                    <IfFileName glob="*.log.gz"/>
+                    <IfLastModified age="7d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+    </Appenders>
+    <Loggers>
+        <Logger level="DEBUG" name="net.minecraft.network.NetworkManager">
+            <Filters>
+                <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="NEUTRAL"/>
+                <RegexFilter regex="^(Failed to sent packet|Double fault|Skipping packet due to errors|Timeout)$" onMatch="NEUTRAL" onMismatch="DENY"/>
+            </Filters>
+        </Logger>
+        <Root level="INFO">
+            <AppenderRef ref="SysOut" level="INFO"/>
+            <AppenderRef ref="File"/>
+        </Root>
+    </Loggers>
+</Configuration>

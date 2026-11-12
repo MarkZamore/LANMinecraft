@@ -1,6 +1,9 @@
 import java.io.InputStream;
+import java.util.ArrayDeque;
+import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 import minecraft.portable.identity.PortableLanAutoPublishTransformer;
+import minecraft.portable.identity.PortableSteamDiscoveryHooks;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
@@ -49,7 +52,80 @@ public final class PauseReportingProbe {
         Server unavailable = new Server(true);
         unavailable.throwState = true;
         checkMenu(unavailable, false);
+        checkClassicPauseFlow();
         System.out.println("Native pause reporting checks passed.");
+    }
+
+    private static void checkClassicPauseFlow() throws Exception {
+        String pause = "PauseReportingProbe$ClassicPauseScreen";
+        String share = "PauseReportingProbe$ClassicShareScreen";
+        property("pauseReportingEnabled", "false");
+        property("pauseLegacyReportingEnabled", "true");
+        property("pauseScreenClasses", pause);
+        property("lanShareScreenClasses", share);
+        property("lanShareInitMethods", "init");
+        property("pauseLegacyButtonClasses", ClassicButton.class.getName());
+        property("pauseLegacyButtonActiveFields", "active");
+        property("pauseLegacyButtonSetMessageMethods", "setMessage");
+        property("pauseLegacyLanguageManagerMethods", "getLanguageManager");
+        property("pauseLegacyLanguageSelectedMethods", "getSelected");
+        property("pauseLegacyLanguageCodeMethods", "getCode");
+        property("pauseLegacyLiteralComponentClasses", Component.class.getName());
+        property("translatableComponentClasses", Component.class.getName());
+        property("gameTypeClasses", GameType.class.getName());
+        property("httpUtilClasses", HttpUtil.class.getName());
+        property("getWorldDataMethods", "getWorldData");
+        property("isAllowCommandsMethods", "isAllowCommands");
+        property("getDefaultGameTypeMethods", "getDefaultGameType");
+        property("getAvailablePortMethods", "getAvailablePort");
+        property("publishServerMethods", "publishServer");
+        property("setScreenMethods", "setScreen");
+        property("updateTitleMethods", "updateTitle");
+        property("minecraftGuiFields", "gui");
+        property("guiChatMethods", "getChat");
+        property("chatAddMessageMethods", "addMessage");
+
+        Loader loader = new Loader();
+        loader.define(share, transformFixture(share));
+        Class<?> menu = loader.define(pause, transformFixture(pause));
+        for (boolean success : new boolean[] { true, false }) {
+            Server server = new Server(false);
+            server.succeeds = success;
+            Minecraft client = Minecraft.INSTANCE = new Minecraft(server);
+            PortableSteamDiscoveryHooks.recentPlayers = 0;
+            ClassicPauseBase first = (ClassicPauseBase) menu.getConstructor().newInstance();
+            first.createPauseMenu();
+            check(first.widget.active && first.widget.label.key.equals("menu.shareToLan"),
+                "unpublished classic menu did not retain the native action");
+            first.widget.click();
+            check(server.publishCalls == 1 && server.published == success && !server.allowedCommands,
+                "classic click did not publish exactly once with the saved commands setting");
+            client.renderNextFrame();
+            check((client.current == null) == success, "unexpected classic settings screen at the first render");
+            check((client.gui.message != null) == success, "incorrect classic publication chat state");
+            if (success) {
+                check(client.gui.message.key.equals("commands.publish.started") &&
+                    client.gui.message.arguments.length == 1 && client.gui.message.arguments[0].equals(25565),
+                    "classic native port message lost its translation key or port");
+            }
+            ClassicPauseBase next = (ClassicPauseBase) menu.getConstructor().newInstance();
+            next.createPauseMenu();
+            check(next.widget.active && next.widget.label.key.equals(success ? "Жалобы" : "menu.shareToLan"),
+                "classic LAN label did not track publication");
+            if (success) {
+                next.widget.click();
+                check(PortableSteamDiscoveryHooks.recentPlayers == 1 && server.publishCalls == 1 && client.current == null,
+                    "classic reporting opened settings or triggered a second publication");
+            }
+        }
+    }
+
+    private static byte[] transformFixture(String name) throws Exception {
+        try (InputStream stream = PauseReportingProbe.class.getResourceAsStream("/" + name + ".class")) {
+            byte[] patched = new PortableLanAutoPublishTransformer().transform(null, null, name, null, null, stream.readAllBytes());
+            check(patched != null, "classic native target was not transformed: " + name);
+            return patched;
+        }
     }
 
     private static void checkMenu(Object server, boolean reporting) throws Exception {
@@ -212,7 +288,56 @@ public final class PauseReportingProbe {
     }
     public static final class Component {
         public final String key;
-        public Component(String key) { this.key = key; }
+        public final Object[] arguments;
+        public Component(String key) { this(key, new Object[0]); }
+        public Component(String key, Object... arguments) { this.key = key; this.arguments = arguments; }
+    }
+
+    public static class ClassicPauseBase extends Screen {
+        public ClassicButton widget;
+        public ClassicPauseBase() { super(null); }
+        public void createPauseMenu() { throw new AssertionError("base menu called"); }
+        public Object registerButton(ClassicButton button) { widget = button; return button; }
+    }
+
+    public static final class ClassicPauseScreen extends ClassicPauseBase {
+        @Override public void createPauseMenu() {
+            ClassicButton nativeButton = (ClassicButton) registerButton(new ClassicButton(
+                1, 2, 3, 4, new Component("menu.shareToLan"),
+                button -> Minecraft.INSTANCE.setScreen(new ClassicShareScreen(this))));
+            nativeButton.active = Minecraft.INSTANCE.server instanceof Server server && !server.isPublished();
+        }
+    }
+
+    public static final class ClassicButton {
+        public Component label;
+        public boolean active;
+        private final java.util.function.Consumer<ClassicButton> onPress;
+        public ClassicButton(int x, int y, int width, int height, Component label,
+            java.util.function.Consumer<ClassicButton> onPress) { this.label = label; this.onPress = onPress; }
+        public void setMessage(Component label) { this.label = label; }
+        public void click() { if (active) onPress.accept(this); }
+    }
+
+    public static class ClassicShareBase extends Screen {
+        public boolean widgetsBuilt;
+        public ClassicShareBase(Screen parent) { super(parent); }
+        public void init() { throw new AssertionError("base share screen called"); }
+    }
+
+    public static final class ClassicShareScreen extends ClassicShareBase {
+        public ClassicShareScreen(Screen parent) { super(parent); }
+        @Override public void init() { widgetsBuilt = true; }
+    }
+
+    public enum GameType { SURVIVAL }
+    public static final class HttpUtil { public static int getAvailablePort() { return 25565; } }
+    public static final class LanguageManager { public Language getSelected() { return new Language(); } }
+    public static final class Language { public String getCode() { return "ru_ru"; } }
+    public static final class Gui {
+        public Component message;
+        public Gui getChat() { return this; }
+        public void addMessage(Component component) { message = component; }
     }
     public static final class OptionsScreen extends Screen {
         public OptionsScreen(Screen parent) { super(parent); Minecraft.INSTANCE.constructed++; }
@@ -226,6 +351,8 @@ public final class PauseReportingProbe {
     public static final class Server {
         public boolean published;
         public boolean throwState;
+        public boolean succeeds = true;
+        public boolean allowedCommands;
         public int publishCalls;
         public Server(boolean published) { this.published = published; }
         public boolean isPublished() {
@@ -233,19 +360,38 @@ public final class PauseReportingProbe {
             return published;
         }
         public void publishServer() { publishCalls++; }
+        public boolean publishServer(GameType mode, boolean allowCommands, int port) {
+            publishCalls++;
+            allowedCommands = allowCommands;
+            return published = succeeds;
+        }
+        public GameType getDefaultGameType() { return GameType.SURVIVAL; }
+        public Server getWorldData() { return this; }
+        public boolean isAllowCommands() { return false; }
     }
-    public static final class Minecraft {
+    public static final class Minecraft implements Executor {
         public static Minecraft INSTANCE;
         public Object server;
         public Screen current;
         public int constructed;
         public int opened;
         public int returned;
+        public final Gui gui = new Gui();
+        private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         public Minecraft(Object server) { this.server = server; }
         public static Minecraft getInstance() { return INSTANCE; }
         public Object getSingleplayerServer() { return server; }
+        public LanguageManager getLanguageManager() { return new LanguageManager(); }
+        public void updateTitle() { }
+        public void setScreen(Screen screen) {
+            current = screen;
+            if (screen instanceof ClassicShareBase share) share.init();
+        }
+        @Override public void execute(Runnable task) { tasks.add(task); }
+        public void renderNextFrame() { while (!tasks.isEmpty()) tasks.remove().run(); }
     }
     private static final class Loader extends ClassLoader {
-        Class<?> define(byte[] bytes) { return defineClass(TARGET, bytes, 0, bytes.length); }
+        Class<?> define(byte[] bytes) { return define(TARGET, bytes); }
+        Class<?> define(String name, byte[] bytes) { return defineClass(name, bytes, 0, bytes.length); }
     }
 }

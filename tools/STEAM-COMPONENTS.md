@@ -8,6 +8,8 @@ The source index supplies exact SHA256, sizes, immutable publisher release URLs,
 
 The same snapshot drives selection, instance preservation, managed installation, identity fingerprint/mapping and current cache IDs. Native UI suppression is a capability rather than a delivery-tag spelling. The catalog does not write pack configs or change game/mod content.
 
+The optional `java8Builds` entries provide the pinned source-built Forge 1.12.2 and 1.16.5 transports for packs that declare `preserveWorldSettingsOnShare`. The regular `builds` ranges remain available to older launchers and packs. Older indexes can omit the optional rows. The launcher then uses the corresponding embedded pins while keeping the rest of the checked index. Each optional row retains the exact source revisions and class hashes for its release.
+
 A `source-built-legacy-port` row describes a new platform with no published author JAR. Its only reviewed target is `LegacyFabric`, Minecraft 1.6.4 (range `[1,6,4]` to exclusive `[1,6,5]`), using `fabric.mod.json`. It records the publisher build's source commit, exact upstream source commit and SHA256 of the source-built classes. The author JAR filename/size/hash fields must be absent; the provenance URI points to the upstream source revision. The download still uses a pinned immutable release asset in the publisher repository. Each artifact retains its actual build revision when a later catalog revision adds another platform; historical artifact source commits are not rewritten to match the index revision. This branch does not weaken the byte-identical/source-derivative requirements for existing Forge, NeoForge, Fabric and Quilt artifacts.
 
 ## Future author updates

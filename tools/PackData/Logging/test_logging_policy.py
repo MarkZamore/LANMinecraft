@@ -156,6 +156,36 @@ class LoggingPolicyTests(unittest.TestCase):
         self.assertEqual(self.template, (self.pack / policy.CONFIG).read_bytes())
         self.assertEqual(b"config/log4j2.xml\n", (self.pack / policy.OWNED).read_bytes())
 
+    def test_forge_log4j_217_requires_verified_template_and_loader(self):
+        template = HERE / "log4j2-forge-1.18-1.19.xml"
+        descriptor = {"minecraftVersion": "1.18.2", "loader": {"type": "forge", "version": "40.2.34"}}
+        self.write("portable-pack.json", json.dumps(descriptor).encode())
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "verified Forge logging template"):
+            policy.prepare(self.pack, HERE / "log4j2.xml")
+        self.assertEqual(before, self.snapshot())
+        result = policy.prepare(self.pack, template)
+        self.assertEqual(result["policy"], policy.verify(self.pack))
+        self.assertEqual(policy.FORGE_LOG4J_217_REFERENCE_SHA256, result["policy"]["config"]["sha256"])
+        self.assertEqual(template.read_bytes(), (self.pack / policy.CONFIG).read_bytes())
+        descriptor["loader"]["version"] = "40.2.33"
+        self.write("portable-pack.json", json.dumps(descriptor).encode())
+        with self.assertRaisesRegex(ValueError, "exact verified Forge loader"):
+            policy.verify(self.pack)
+
+    def test_forge_112_keeps_localized_exception_filter_and_packet_rejection(self):
+        template = HERE / "log4j2-forge-1.12.xml"
+        descriptor = {"minecraftVersion": "1.12.2", "loader": {"type": "forge", "version": "14.23.5.2860"}}
+        self.write("portable-pack.json", json.dumps(descriptor).encode())
+        result = policy.prepare(self.pack, template)
+        self.assertEqual(policy.LEGACY_LOGGER, result["policy"]["logger"])
+        self.assertEqual(policy.LOCALIZED_MESSAGE_PATTERN, result["policy"]["localizedDebugPattern"])
+        self.assertEqual(result["policy"], policy.verify(self.pack))
+        self.write(policy.CONFIG, template.read_bytes().replace(b'<MarkerFilter marker="NETWORK_PACKETS"',
+                                                                b'<MarkerFilter marker="OTHER"'))
+        with self.assertRaisesRegex(ValueError, "verified exception policy"):
+            policy.verify(self.pack)
+
     def test_author_update_reapplies_policy_then_publication_verifies_new_receipt(self):
         self.seed()
         policy.prepare(self.pack)

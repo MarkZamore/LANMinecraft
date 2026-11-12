@@ -126,6 +126,24 @@
     </ItemGroup>
   </Target>
 
+  <PropertyGroup>
+    <LegacyForgeInstallerSource>$(MSBuildProjectDirectory)\LegacyForgeInstaller\LegacyForgeClientInstaller.java</LegacyForgeInstallerSource>
+    <LegacyForgeInstallerBuild>$(MSBuildProjectDirectory)\LegacyForgeInstaller\Build-LegacyForgeInstaller.ps1</LegacyForgeInstallerBuild>
+    <LegacyForgeInstallerClass>$(MSBuildProjectDirectory)\Build\LegacyForgeInstaller\LegacyForgeClientInstaller.class</LegacyForgeInstallerClass>
+  </PropertyGroup>
+  <Target Name="BuildLegacyForgeInstaller" BeforeTargets="PrepareForBuild"
+          Inputs="$(LegacyForgeInstallerSource);$(LegacyForgeInstallerBuild)" Outputs="$(LegacyForgeInstallerClass)"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(LegacyForgeInstallerBuild)&quot; -OutputPath &quot;$(LegacyForgeInstallerClass)&quot;" />
+  </Target>
+  <Target Name="EmbedLegacyForgeInstaller" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildLegacyForgeInstaller"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <EmbeddedResource Include="$(LegacyForgeInstallerClass)" LogicalName="Minecraft.LegacyForgeClientInstaller.class"
+                        Condition="Exists('$(LegacyForgeInstallerClass)')" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="UseFinalWpfAssemblyForPublish"
           BeforeTargets="ComputeResolvedFilesToPublishList"
           Condition="'$(PublishSingleFile)' == 'true'">

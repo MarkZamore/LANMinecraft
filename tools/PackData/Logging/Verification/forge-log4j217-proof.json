@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "status": "PASS_BYTECODE_AND_LOGGING_FIXTURE",
+  "fixture": "ForgeConnectionLogProbe.java",
+  "javaVersion": "17.0.20.1",
+  "template": "../log4j2-forge-1.18-1.19.xml",
+  "templateSha256": "a16e625c201b1c483e4dc50088921c5658e7420671c4d1c06a8433ebe049cd34",
+  "inheritedLoggingXmlSha1": "bd65e7d2e3c237be76cfbef4c2405033d7f91521",
+  "nativeRows": [
+    {
+      "minecraftVersion": "1.18.2",
+      "forgeVersion": "40.2.34",
+      "jarSha256": "1e866fb05a30c5f31c8c0e58a1d7abaa869c3876cdedd64e594ef2d4c8c10e70",
+      "classSha256": "202de127b8d1b7f0a3b19475f8df472d8daa670d7789029921954615d301f4a9"
+    },
+    {
+      "minecraftVersion": "1.19.2",
+      "forgeVersion": "43.2.10",
+      "jarSha256": "b892e8328ea6b1b6939fbf5344d9b10ac14a1430a93d702f932f8fe62767c285",
+      "classSha256": "79b904c4886a8b9bce1dd166eed0c68b22ad256c76ed66505b5ee77f81767d54"
+    }
+  ],
+  "className": "net.minecraft.network.Connection",
+  "caller": "exceptionCaught(ChannelHandlerContext, Throwable)",
+  "logger": "net.minecraft.network.Connection",
+  "debugThrowableLabels": [
+    "Skipping packet due to errors",
+    "Timeout",
+    "Failed to sent packet",
+    "Double fault"
+  ],
+  "classpathSha256": {
+    "logging-1.0.0.jar": "b2f5d129244f7a90973623cb683becfccd0e23b2ac3adec028f259f27b0a5400",
+    "slf4j-api-1.8.0-beta4.jar": "602b712329c84b4a83c40464f4fdfd0fe4238c53ef397139a867064739dbf4e0",
+    "log4j-slf4j18-impl-2.17.0.jar": "40bb460ce600aabf832be01141d07ed439fe288140aafae4fdc391d682e9cf43",
+    "log4j-api-2.17.0.jar": "ab9cadc80e234580e3f3c8c18644314fccd4b3cd3f7085d4e934866cb561b95d",
+    "log4j-core-2.17.0.jar": "65c33dc9b24a5e5f6cacae62680641582894749c7bf16c951032ef92f3e12a60"
+  },
+  "fixtureResults": {
+    "exitCode": 0,
+    "nestedExceptionCauses": 4,
+    "nativeConsoleEvents": 3,
+    "fileInfoWarnErrorPreserved": true,
+    "packetAndOtherDebugAndTraceExcluded": true,
+    "logFiles": ["latest.log"],
+    "gameRun": false
+  }
+}

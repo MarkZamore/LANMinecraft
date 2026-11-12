@@ -67,6 +67,8 @@ public final class PortableIdentityPreflight {
                 transformer = new PortableLanAutoPublishTransformer();
             } else if (isAlias("lanShareScreenClasses", className)) {
                 transformer = new PortableLanAutoPublishTransformer();
+            } else if (PortableLanWorldPolicyTransformer.isTarget(className)) {
+                transformer = new PortableLanWorldPolicyTransformer();
             } else if (PortableSteamDiscoveryTransformer.isPublicationTarget(className)) {
                 transformer = new PortableSteamDiscoveryTransformer();
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
@@ -117,6 +119,8 @@ public final class PortableIdentityPreflight {
                 verifyPauseReportingTargets(archive, className, transformed);
             } else if (isAlias("lanShareScreenClasses", className)) {
                 verifyLanSharePublishTargets(archive, className, transformed);
+            } else if (PortableLanWorldPolicyTransformer.isTarget(className)) {
+                PortableLanWorldPolicyTransformer.verify(original, transformed, className);
             } else if (PortableSteamDiscoveryTransformer.isPublicationTarget(className)) {
                 verifyNativeSteamPublication(archive, className, original, transformed);
             } else if (isConfigured("steamDiscoveryScreenClasses") && isAlias("steamDiscoveryScreenClasses", className)) {
@@ -236,6 +240,10 @@ public final class PortableIdentityPreflight {
 
     private static void verifyPauseReportingTargets(
         ZipFile archive, String className, byte[] transformed) throws Exception {
+        if (Boolean.getBoolean("minecraft.portable.identity.pauseLegacyReportingEnabled")) {
+            verifyLegacyPauseReportingTargets(archive, className, transformed);
+            return;
+        }
         if ("true".equals(System.getProperty("minecraft.portable.identity.pauseLanRowEnabled"))) {
             verifyLanPauseRowTargets(archive, className, transformed);
             return;
@@ -286,6 +294,39 @@ public final class PortableIdentityPreflight {
             }
         }
         requireHookCount(className, "pauseButton", hooks, 1);
+    }
+
+    private static void verifyLegacyPauseReportingTargets(ZipFile archive, String className, byte[] transformed)
+        throws Exception {
+        int index = aliasIndex("pauseScreenClasses", className);
+        ClassNode widget = readClass(archive, alias("pauseLegacyWidgetClasses", index));
+        requireField(widget, "pauseLegacyButtonActiveFields");
+        requireMethod(widget, "pauseLegacyButtonSetMessageMethods", 1);
+        ClassNode minecraft = readClass(archive, alias("minecraftClasses", index).replace('.', '/'));
+        requireMethod(minecraft, "pauseLegacyLanguageManagerMethods", 0);
+        ClassNode languages = readClass(archive, alias("pauseLegacyLanguageManagerClasses", index));
+        requireMethod(languages, "pauseLegacyLanguageSelectedMethods", 0);
+        ClassNode language = readClass(archive, alias("pauseLegacyLanguageInfoClasses", index));
+        requireMethod(language, "pauseLegacyLanguageCodeMethods", 0);
+        ClassNode literal = readClass(archive, alias("pauseLegacyLiteralComponentClasses", index).replace('.', '/'));
+        requireConstructor(literal, "(Ljava/lang/String;)V");
+
+        ClassNode patched = new ClassNode();
+        new ClassReader(transformed).accept(patched, 0);
+        int labels = 0;
+        int actions = 0;
+        for (MethodNode method : patched.methods) for (AbstractInsnNode instruction : method.instructions) {
+            if (!(instruction instanceof MethodInsnNode call) ||
+                !call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks")) continue;
+            if (call.name.equals("decorateLegacyPauseButton") &&
+                call.desc.equals("(Ljava/lang/Object;ZLjava/lang/Object;)Z") &&
+                isAlias("pauseCreateMenuMethods", method.name) && method.desc.equals("()V")) labels++;
+            if (call.name.equals("legacyPauseReports") &&
+                call.desc.equals("(Ljava/lang/Object;)Z") &&
+                method.desc.equals("(L" + alias("pauseLegacyButtonClasses", index) + ";)V")) actions++;
+        }
+        requireHookCount(className, "decorateLegacyPauseButton", labels, 1);
+        requireHookCount(className, "legacyPauseReports", actions, 1);
     }
 
     private static void verifyLanPauseRowTargets(
@@ -503,14 +544,20 @@ public final class PortableIdentityPreflight {
         requireMethod(chat, "chatAddMessageMethods", 1);
 
         ClassNode publishCommand = readClass(archive, alias("publishCommandClasses", mappingIndex).replace('.', '/'));
-        // The line the game writes in chat when a world opens is wanted, not
-        // required: PublishCommand said it inline until 1.19.4, so on an older
-        // Minecraft the launcher does not name it at all. Demanding it here
-        // failed the whole preflight, and a failed preflight is no adapter -
-        // which cost an older pack its skins and its stable UUID over a line
-        // of chat.
         if (isConfigured("publishSuccessMethods")) {
             requireMethod(publishCommand, "publishSuccessMethods", 1);
+        } else if (isConfigured("componentTranslatableWithArgsMethods")) {
+            ClassNode component = readClass(archive, alias("componentClasses", mappingIndex).replace('.', '/'));
+            if (component.methods.stream().noneMatch(method ->
+                isAlias("componentTranslatableWithArgsMethods", method.name) &&
+                (method.access & Opcodes.ACC_STATIC) != 0 &&
+                method.desc.startsWith("(Ljava/lang/String;[Ljava/lang/Object;)L"))) {
+                throw new IllegalStateException("The native translated LAN port message factory is missing.");
+            }
+        } else if (isConfigured("translatableComponentClasses")) {
+            ClassNode translatable = readClass(archive,
+                alias("translatableComponentClasses", mappingIndex).replace('.', '/'));
+            requireConstructor(translatable, "(Ljava/lang/String;[Ljava/lang/Object;)V");
         }
 
         readClass(archive, alias("gameTypeClasses", mappingIndex).replace('.', '/'));

@@ -22,10 +22,21 @@ OWNED = "launcher/pack-owned.txt"
 RECEIPT = "tools/network-logging-policy.json"
 SELECTOR = "-Dlog4j.configurationFile=config/log4j2.xml"
 LOGGER = "net.minecraft.network.Connection"
+LEGACY_LOGGER = "net.minecraft.network.NetworkManager"
 MESSAGES = ["Failed to sent packet", "Double fault", "Skipping packet due to errors", "Timeout"]
 MESSAGE_PATTERN = "^(" + "|".join(MESSAGES) + ")$"
-SUPPORTED_MINECRAFT = {"1.20.1", "1.21.1", "26.3"}
+LOCALIZED_MESSAGE_PATTERN = "(?s)^(?!(?:Enabled auto read|Disabled auto read|Set listener of .* to .*)$).*"
+VERIFIED_FORGE = {"1.12.2": {"14.23.5.2847", "14.23.5.2860"}, "1.16.5": {"36.2.34"},
+                  "1.18.2": {"40.2.34"}, "1.19.2": {"43.2.10"}}
+SUPPORTED_MINECRAFT = {"1.20.1", "1.21.1", "26.3", *VERIFIED_FORGE}
 REFERENCE_SHA256 = "9e7b9918b6ede54f7393ed3d307e51a2edb032b98c12f069f5df976bcf940b89"
+FORGE_LOG4J_217_REFERENCE_SHA256 = "a16e625c201b1c483e4dc50088921c5658e7420671c4d1c06a8433ebe049cd34"
+FORGE_REFERENCES = {
+    "1.12.2": "dc0c922ad275f86615474e3bfcd3cd693a29cd5596494d219953ec59afe648a9",
+    "1.16.5": "30ac7559b312520bf0e382f0b26cf9c3a6013e006350d9cdedbff443e97edac2",
+    "1.18.2": FORGE_LOG4J_217_REFERENCE_SHA256,
+    "1.19.2": FORGE_LOG4J_217_REFERENCE_SHA256,
+}
 BLOCK = '''        <!-- Preserve only Connection's caught throwable diagnostics, without its packet DEBUG stream. -->
         <Logger level="DEBUG" name="net.minecraft.network.Connection">
             <Filters>
@@ -101,7 +112,20 @@ def _append(data: bytes | None, line: str) -> bytes:
     return _encode(text + ("" if not text or text.endswith(("\n", "\r")) else newline) + line + newline, data)
 
 
-def _xml(data: bytes, allow_missing=False) -> bool:
+def _logger_name(version: str) -> str:
+    return LEGACY_LOGGER if version in {"1.12.2", "1.16.5"} else LOGGER
+
+
+def _logger_block(version: str) -> str:
+    block = BLOCK.replace(LOGGER, _logger_name(version))
+    if version == "1.12.2":
+        marker = '                <MarkerFilter marker="NETWORK_PACKETS" onMatch="DENY" onMismatch="NEUTRAL"/>\n'
+        block = block.replace("            <Filters>\n", "            <Filters>\n" + marker)
+        block = block.replace(MESSAGE_PATTERN, LOCALIZED_MESSAGE_PATTERN)
+    return block
+
+
+def _xml(data: bytes, allow_missing=False, *, version: str) -> bool:
     text = _text(data)
     _require("<!DOCTYPE" not in text.upper() and "<!ENTITY" not in text.upper(), "Unsupported logging XML declaration")
     try:
@@ -144,10 +168,11 @@ def _xml(data: bytes, allow_missing=False) -> bool:
         _require("debug" not in Path(appender.get("fileName", "")).name.lower() and
                  "debug" not in Path(appender.get("filePattern", "")).name.lower(), "A separate DEBUG file is outside this policy")
     entries = loggers[0].findall("Logger")
-    selected = [item for item in entries if item.get("name") == LOGGER]
+    logger_name = _logger_name(version)
+    selected = [item for item in entries if item.get("name") == logger_name]
     _require(len(selected) <= 1, "Duplicate native Connection logger")
     for item in entries:
-        if item.get("name", "").startswith("net.minecraft.network") and item.get("name") != LOGGER:
+        if item.get("name", "").startswith("net.minecraft.network") and item.get("name") != logger_name:
             _require(item.get("level", "").upper() in {"INFO", "WARN", "ERROR", "FATAL", "OFF"}, "Unbounded network logger collision")
     if not selected:
         _require(allow_missing, "Missing bounded native Connection logger")
@@ -156,42 +181,59 @@ def _xml(data: bytes, allow_missing=False) -> bool:
     _require(logger.get("level", "").upper() == "DEBUG" and logger.get("additivity", "true").lower() == "true" and
              [child.tag for child in logger] == ["Filters"], "Unsupported native Connection logger collision")
     filters = logger[0]
-    _require(not filters.attrib and [(child.tag, child.attrib) for child in filters] == [
+    expected = [
         ("ThresholdFilter", {"level": "INFO", "onMatch": "ACCEPT", "onMismatch": "NEUTRAL"}),
-        ("RegexFilter", {"regex": MESSAGE_PATTERN, "onMatch": "NEUTRAL", "onMismatch": "DENY"})],
-        "Native Connection DEBUG must admit only the four approved exception labels")
+        ("RegexFilter", {"regex": LOCALIZED_MESSAGE_PATTERN if version == "1.12.2" else MESSAGE_PATTERN,
+                         "onMatch": "NEUTRAL", "onMismatch": "DENY"})]
+    if version == "1.12.2":
+        expected.insert(0, ("MarkerFilter", {"marker": "NETWORK_PACKETS", "onMatch": "DENY", "onMismatch": "NEUTRAL"}))
+    _require(not filters.attrib and [(child.tag, child.attrib) for child in filters] == expected,
+             "Native network DEBUG filters differ from the verified exception policy")
     _require(all(not list(child) for child in filters), "Unexpected nested logging filter")
     return True
 
 
 def _version(pack: Path) -> str:
     try:
-        value = json.loads(_text(_read(pack, "portable-pack.json")))["minecraftVersion"]
+        descriptor = json.loads(_text(_read(pack, "portable-pack.json")))
+        value = descriptor["minecraftVersion"]
     except (KeyError, TypeError, json.JSONDecodeError) as error:
         raise ValueError("Missing source Minecraft version") from error
-    _require(value in SUPPORTED_MINECRAFT, "Network logging native proof does not cover Minecraft " + str(value))
+    _require(isinstance(value, str) and value in SUPPORTED_MINECRAFT,
+             "Network logging native proof does not cover Minecraft " + str(value))
+    if value in VERIFIED_FORGE:
+        loader = descriptor.get("loader")
+        _require(isinstance(loader, dict) and loader.get("type") == "forge" and
+                 isinstance(loader.get("version"), str) and loader["version"] in VERIFIED_FORGE[value],
+                 "Network logging native proof requires the exact verified Forge loader for " + value)
     return value
 
 
 def _receipt(config: bytes, version: str) -> dict:
-    return {"schemaVersion": 1, "kind": "pack-owned-bounded-network-logging", "minecraftVersion": version,
-            "config": {"path": CONFIG, "sizeBytes": len(config), "sha256": hashlib.sha256(config).hexdigest()},
-            "jvmSelector": SELECTOR, "ownership": CONFIG, "logger": LOGGER, "debugMessages": list(MESSAGES),
-            "referenceConfigSha256": REFERENCE_SHA256}
+    receipt = {"schemaVersion": 1, "kind": "pack-owned-bounded-network-logging", "minecraftVersion": version,
+               "config": {"path": CONFIG, "sizeBytes": len(config), "sha256": hashlib.sha256(config).hexdigest()},
+               "jvmSelector": SELECTOR, "ownership": CONFIG, "logger": _logger_name(version),
+               "referenceConfigSha256": FORGE_REFERENCES.get(version, REFERENCE_SHA256)}
+    if version == "1.12.2":
+        receipt["localizedDebugPattern"] = LOCALIZED_MESSAGE_PATTERN
+    else:
+        receipt["debugMessages"] = list(MESSAGES)
+    return receipt
 
 
 def verify(pack: Path) -> dict:
     """Verify source logging and its pinned receipt without writing any files."""
     pack = Path(pack).absolute()
+    version = _version(pack)
     config = _read(pack, CONFIG)
-    _xml(config)
+    _xml(config, version=version)
     _selector(_read(pack, JVM))
     _require(_owns(_read(pack, OWNED)), "Pack must own config/log4j2.xml explicitly or through config/**")
     try:
         receipt = json.loads(_text(_read(pack, RECEIPT)))
     except json.JSONDecodeError as error:
         raise ValueError("Invalid network logging policy receipt") from error
-    expected = _receipt(config, _version(pack))
+    expected = _receipt(config, version)
     _require(receipt == expected, "Network logging receipt differs; reapply the source policy and review updated pins")
     return expected
 
@@ -221,14 +263,17 @@ def prepare(pack: Path, template: Path | None = None) -> dict:
         _require(template is not None and Path(template).is_file(), "A new pack requires an explicit reviewed --template")
         config = Path(template).read_bytes()
         _require(len(config) <= 1024 * 1024, "Logging template is too large")
-    if not _xml(config, allow_missing=True):
+        if version in FORGE_REFERENCES:
+            _require(hashlib.sha256(config).hexdigest() == FORGE_REFERENCES[version],
+                     "Use the verified Forge logging template for " + version)
+    if not _xml(config, allow_missing=True, version=version):
         text = _text(config)
         starts = list(re.finditer(r"(?m)^[ \t]*<Root\b", text))
         _require(len(starts) == 1, "Unsupported authored Root formatting; preserve XML for review")
         newline = "\r\n" if "\r\n" in text else "\n"
-        text = text[:starts[0].start()] + BLOCK.replace("\n", newline) + text[starts[0].start():]
+        text = text[:starts[0].start()] + _logger_block(version).replace("\n", newline) + text[starts[0].start():]
         config = _encode(text, config)
-    _xml(config)
+    _xml(config, version=version)
     jvm = original[JVM] or b""
     if not _selector(jvm, optional=True):
         jvm = _append(jvm, SELECTOR)
