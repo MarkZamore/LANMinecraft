@@ -80,6 +80,38 @@ public sealed class CatalogPresentationTests
     }
 
     [Fact]
+    public void LibraryProjectsGroupVisibleModulesWithoutAddingToTheInventory()
+    {
+        var pack = ModifiedPack();
+        const string fabric = "https://modrinth.com/mod/forgified-fabric-api";
+        const string log4j = "https://logging.apache.org/log4j/2.x/";
+        pack.Content.Mods.AddRange([
+            new() { Id = "fabric_api", Name = "Forgified Fabric API", IsLibrary = true, WebsiteUrl = fabric },
+            new() { Id = "forgified_fabric_api", Name = "Fabric API Dummy", IsLibrary = true, WebsiteUrl = fabric },
+            new() { Id = "fabric_base", Name = "Fabric API Base", IsLibrary = true, WebsiteUrl = fabric },
+            new() { Id = "fabric_hidden", Name = "Hidden module", IsLibrary = true, WebsiteUrl = fabric },
+            new() { Id = "log4j_api", Name = "Log4j API", IsLibrary = true, WebsiteUrl = log4j },
+            new() { Id = "log4j_core", Name = "Log4j Core", IsLibrary = true, WebsiteUrl = log4j, IsLoadedMod = false },
+            new() { Id = "unavailable", Name = "Unavailable", IsLibrary = true, WebsiteUrl = log4j, WebsiteAvailable = false }
+        ]);
+        pack.Content.VisibleModIds = [.. pack.Content.VisibleModIds!, "fabric_api", "forgified_fabric_api", "fabric_base",
+            "log4j_api", "log4j_core", "unavailable", "base_library", "nested_helper"];
+        pack.BuildTree();
+
+        var project = pack.Libraries.Single(node => node.WebsiteUri?.AbsoluteUri == fabric);
+        Assert.Equal("fabric_api", project.Id);
+        Assert.Equal(new[] { "fabric_base", "forgified_fabric_api" }, project.Children.Select(node => node.Id));
+        Assert.False(project.IsExpanded);
+        var moduleGroup = pack.Libraries.Single(node => node.WebsiteUri?.AbsoluteUri == log4j);
+        Assert.DoesNotContain(pack.Content.Mods, mod => mod.Id == moduleGroup.Id);
+        Assert.Equal(new[] { "log4j_api", "log4j_core" }, moduleGroup.Children.Select(node => node.Id));
+        Assert.All(moduleGroup.Children, node => Assert.Equal(moduleGroup.WebsiteUri, node.WebsiteUri));
+        Assert.Equal(3, pack.Libraries.Count(node => node.WebsiteUri is null && !node.HasChildren));
+        Assert.Equal(13, pack.ModCount);
+        Assert.Equal(3, pack.DisplayModCount);
+    }
+
+    [Fact]
     public void DetailViewBindsThePublishedHeadingAndHidesAnEmptyLibrarySection()
     {
         WindowCanvasTests.OnAStaThread(() =>
@@ -94,7 +126,7 @@ public sealed class CatalogPresentationTests
             library.ShowDetails(pack);
             WindowCanvasTests.LayoutWindow(window, new Size(1000, 800));
             Assert.Equal("Дополнительные моды", ((TextBlock)library.FindName("ModsHeading")).Text);
-            Assert.Equal(Visibility.Collapsed, ((StackPanel)library.FindName("LibrariesSection")).Visibility);
+            Assert.Equal(Visibility.Collapsed, ((Expander)library.FindName("LibrariesSection")).Visibility);
             return true;
         });
     }

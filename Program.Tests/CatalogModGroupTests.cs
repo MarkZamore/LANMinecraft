@@ -153,14 +153,12 @@ public sealed class CatalogModGroupTests
             var host = (StackPanel)view.FindName("GroupedModsHost");
             Assert.Single(Descendants<TextBlock>((StackPanel)view.FindName("DetailContent")), text => text.Text == "Minecraft 1.20.1 (5 модов)");
             Assert.Equal(grouped ? Titles : [], host.Children.OfType<TextBlock>().Select(text => text.Text));
-            var helperSection = (StackPanel)view.FindName("LibrariesSection");
+            var helperSection = (Expander)view.FindName("LibrariesSection");
             Assert.Equal(Visibility.Collapsed, helperSection.Visibility);
-            var helperHeading = helperSection.Children.OfType<TextBlock>().Single();
             Assert.All(host.Children.OfType<TextBlock>(), heading =>
             {
-                Assert.Equal(helperHeading.FontSize, heading.FontSize);
-                Assert.Equal(helperHeading.FontWeight, heading.FontWeight);
-                Assert.Equal(helperHeading.Margin, heading.Margin);
+                Assert.Equal(window.FindResource("Font.WeightEmphasis"), heading.FontWeight);
+                Assert.Equal(window.FindResource("Gap.Above4"), heading.Margin);
             });
             var trees = Descendants<TreeView>(view).ToArray();
             Assert.Equal(4, trees.Length);
