@@ -13,6 +13,19 @@ public enum PackLoaderKind
     Native
 }
 
+internal static class PackLoaderNames
+{
+    public static string? DisplayName(PackLoaderKind kind) => kind switch
+    {
+        PackLoaderKind.NeoForge => "NeoForge",
+        PackLoaderKind.Forge => "Forge",
+        PackLoaderKind.Fabric => "Fabric",
+        PackLoaderKind.LegacyFabric => "Legacy Fabric",
+        PackLoaderKind.Quilt => "Quilt",
+        _ => null
+    };
+}
+
 public sealed record PackLoaderDescriptor(PackLoaderKind Type, string? Version);
 
 public sealed record NativePackRuntimeDescriptor(string Executable, string Platform, string Adapter, string Version);

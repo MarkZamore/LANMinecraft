@@ -74,6 +74,7 @@ public sealed class CatalogDescription
     public string RelativePath { get; set; } = "";
     public string Name { get; set; } = "";
     public string MinecraftVersion { get; set; } = "";
+    public string? Loader { get; set; }
     public string Revision { get; set; } = "";
     public string Summary { get; set; } = "";
     public string Description { get; set; } = "";
@@ -148,6 +149,10 @@ public sealed class CatalogPack
                 _ => "модов"
             };
             var version = $"Minecraft {Content.MinecraftVersion}";
+            if (Enum.TryParse<PackLoaderKind>(Content.Loader, ignoreCase: true, out var loader) &&
+                string.Equals(Content.Loader, loader.ToString(), StringComparison.OrdinalIgnoreCase) &&
+                PackLoaderNames.DisplayName(loader) is { } loaderName)
+                version += $" {loaderName}";
             if (Content.ShowNativeProject && Content.NativeProject is { } project)
                 version += $" · {project.Name} {project.Version} · {project.Revision[..7]}";
             return $"{version} ({count} {word})";

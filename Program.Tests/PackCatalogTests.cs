@@ -121,11 +121,11 @@ public sealed class PackCatalogTests : IDisposable
         var pack = catalog.Find(CatalogHost.Folder)!;
         Assert.Equal(9, pack.ModCount);
         Assert.Equal(7, pack.DisplayModCount);
-        Assert.Equal("Minecraft 26.3 (7 модов)", pack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 NeoForge (7 модов)", pack.VersionLabel);
         pack.Content.ModCountScope = "visible";
         pack.BuildTree();
         Assert.Equal(3, pack.DisplayModCount);
-        Assert.Equal("Minecraft 26.3 (3 мода)", pack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 NeoForge (3 мода)", pack.VersionLabel);
         var root = Assert.Single(pack.Mods);
         pack.Mods.Add(new CatalogModNode(new CatalogMod { Id = "grandchild", Name = "Repeated view entry" }));
         Assert.Equal(3, pack.DisplayModCount);
@@ -146,7 +146,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Single(pack.ModGroups);
         Assert.Single(pack.Mods);
         Assert.Single(pack.Mods[0].Children);
-        Assert.Equal("Minecraft 26.3 (7 модов)", pack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 NeoForge (7 модов)", pack.VersionLabel);
         pack.Content.ModCountScope = "visible";
         pack.Content.ModGroups = null;
         pack.BuildTree();
@@ -186,7 +186,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
         var originalPack = service.Find(CatalogHost.Folder)!;
         Assert.Equal(3, originalPack.ModCount);
-        Assert.Equal("Minecraft 26.3 (2 мода)", originalPack.VersionLabel);
+        Assert.Equal("Minecraft 26.3 NeoForge (2 мода)", originalPack.VersionLabel);
         var before = host.Requests.Count;
         var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
         Assert.Equal(host.Source, sync.TryResolveSource(CatalogHost.Folder));
@@ -210,7 +210,7 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
         await nextStartup.RefreshOnceAsync();
         Assert.Equal(5, nextStartup.Find(CatalogHost.Folder)!.ModCount);
-        Assert.Equal("Minecraft 26.3 (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
+        Assert.Equal("Minecraft 26.3 NeoForge (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
         Assert.Equal(3, originalPack.ModCount);
 
         // Discovery persists without an EXE update, but offline presentation
@@ -315,6 +315,8 @@ public sealed class PackCatalogTests : IDisposable
         var service = new PackCatalogService(_paths, _logger, host.Client);
         await service.RefreshOnceAsync();
         Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(2, service.Packs.Count(pack => pack.VersionLabel.Contains(" Forge (", StringComparison.Ordinal)));
+        Assert.Equal(3, service.Packs.Count(pack => pack.VersionLabel.Contains(" NeoForge (", StringComparison.Ordinal)));
         Assert.DoesNotContain(service.Sources, p => p.RelativePath.Contains("..", StringComparison.Ordinal));
         Assert.False(PackCatalogService.ValidFolder("../escape"));
     }
@@ -661,6 +663,7 @@ public sealed class PackCatalogTests : IDisposable
         using var host = new CatalogHost(mods: [], configure: doc =>
         {
             doc.MinecraftVersion = "26.3";
+            doc.Loader = "native";
             doc.NativeProject = project;
         });
         var catalogue = new PackCatalogService(_paths, _logger, host.Client);
@@ -672,7 +675,10 @@ public sealed class PackCatalogTests : IDisposable
         Assert.Equal(project.WebsiteUrl, pack.WebsiteUri!.AbsoluteUri);
 
         using var unverified = new CatalogHost(mods: [], revision: "next", configure: doc =>
-            doc.NativeProject = project with { WebsiteUrl = "file:///C:/client.exe" });
+        {
+            doc.Loader = "native";
+            doc.NativeProject = project with { WebsiteUrl = "file:///C:/client.exe" };
+        });
         var reopened = new PackCatalogService(_paths, _logger, unverified.Client);
         await reopened.RefreshOnceAsync();
         Assert.Equal(project, Assert.Single(reopened.Packs).Content.NativeProject);
@@ -691,7 +697,7 @@ public sealed class PackCatalogTests : IDisposable
     [InlineData(200, "модов")]
     public void VersionLabelCountsDisplayedModIdsAndUsesRussianPlural(int count, string word)
     {
-        var pack = new PackCatalogService(_paths, _logger).Packs[0];
+        var pack = new PackCatalogService(_paths, _logger).Find("All The Mods 10")!;
         pack.Content.Mods = Enumerable.Range(0, count)
             .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })
             .Concat(count > 0 ? [new CatalogMod { Id = "mod_0", Name = "Repeated ID" }] : Array.Empty<CatalogMod>())
@@ -703,7 +709,7 @@ public sealed class PackCatalogTests : IDisposable
         pack.Mods.Clear();
         pack.Mods.AddRange(Enumerable.Range(0, count).Select(index => new CatalogModNode(new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })));
         Assert.Equal(count, pack.DisplayModCount);
-        Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} ({count} {word})", pack.VersionLabel);
+        Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} NeoForge ({count} {word})", pack.VersionLabel);
     }
 
     [Fact]
