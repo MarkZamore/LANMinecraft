@@ -27,10 +27,12 @@ class ModPageProvenanceTests(unittest.TestCase):
             return {"id": project_id, "slug": "mod-one", "links": {"websiteUrl": url}, **fields}
 
         url = "https://www.curseforge.com/minecraft/mc-mods/mod-one"
+        shrink_url = "https://www.curseforge.com/minecraft/mc-mods/shrink_"
         records = [record(11, url), record(12, url + "/files/65"), record(13, url + "?id=14"),
                    record(14, url.replace("mod-one", "another-mod")), record(15, url, isAvailable=False),
-                   record(16, url.replace("www.curseforge.com", "www.curseforge.com.example"))]
-        self.assertEqual(provenance.official_project_urls({"data": records}), {11: url})
+                   record(16, url.replace("www.curseforge.com", "www.curseforge.com.example")),
+                   record(426386, shrink_url, slug="shrink_")]
+        self.assertEqual(provenance.official_project_urls({"data": records}), {11: url, 426386: shrink_url})
         with self.assertRaisesRegex(ValueError, "repeated CurseForge project ID"):
             provenance.official_project_urls({"data": [records[0], records[0]]})
 
