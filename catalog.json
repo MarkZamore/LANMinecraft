@@ -123,6 +123,15 @@
         "repo": "Hide-and-Hunt",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-12",
+      "relativePath": "FTB Inferno",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "FTB-Inferno",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
