@@ -11,6 +11,18 @@
     { "id": "minecraft-8", "legacyId": "better-than-wolves" },
     { "id": "minecraft-9", "legacyId": "minecraft-rust-edition", "allowCanonicalInput": true },
     { "id": "minecraft-10", "legacyId": "minecraft-rust-mods", "allowCanonicalInput": true },
-    { "id": "minecraft-11" }
+    { "id": "minecraft-11" },
+    { "id": "minecraft-12" },
+    { "id": "minecraft-13" },
+    { "id": "minecraft-14" },
+    { "id": "minecraft-15" },
+    { "id": "minecraft-16" },
+    { "id": "minecraft-17" },
+    { "id": "minecraft-18" },
+    { "id": "minecraft-19" },
+    { "id": "minecraft-20" },
+    { "id": "minecraft-21" },
+    { "id": "minecraft-22" },
+    { "id": "minecraft-23" }
   ]
 }
