@@ -141,6 +141,15 @@
         "repo": "All-in-One",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-18",
+      "relativePath": "UniversIO",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "UniversIO",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
