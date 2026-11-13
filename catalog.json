@@ -209,6 +209,15 @@
         "repo": "ATM10-To-the-Sky",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-16",
+      "relativePath": "Beebeeblock - The Skyhive",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Beebeeblock",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
