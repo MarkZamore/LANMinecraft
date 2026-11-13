@@ -150,6 +150,15 @@
         "repo": "UniversIO",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-17",
+      "relativePath": "Antimatter Chemistry",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Antimatter-Chemistry",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
