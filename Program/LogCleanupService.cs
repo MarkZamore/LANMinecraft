@@ -51,6 +51,7 @@ public static class LogCleanupService
     public static void RunCleanup(AppPaths paths, bool rotateLauncherLog = true)
     {
         if (rotateLauncherLog) CleanupLauncherLog(paths.LogFile);
+        JavaLaunchArgumentFile.CleanupStale(paths);
         CleanupMinecraftGeneratedFiles(paths.Personal);
         CleanupInstanceGeneratedFiles(paths.Instances);
         try

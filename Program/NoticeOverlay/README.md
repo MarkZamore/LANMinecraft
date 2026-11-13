@@ -42,6 +42,15 @@ example a Vulkan replacement, requires a corresponding presentation backend;
 the agent reports readiness rather than claiming that an unhooked renderer is
 working.
 
+The window transformer reads its enable flag during JVM agent startup. Class
+loading callbacks only check graphics class names. Forge 1.12.2 installs its
+security manager before loading game libraries. Reading a system property in
+an unrelated callback can cause recursive permission checks and a
+`ClassCircularityError`. `Test-NoticeOverlay.ps1` checks this startup contract
+against the packaged transformer. A native bootstrap check on Java 8u504 ran
+`FMLTweaker.acceptOptions` on Forge 14.23.5.2847 and 14.23.5.2860 and verified
+that both still installed the Forge security manager.
+
 The OpenGL implementation supports the compatibility GL 2.1/GLSL 1.20 path and
 the GL 3.2+/GLSL 1.50 core path. It captures and restores the program, VAO and
 array buffer, touched texture/sampler bindings, pixel-unpack buffer and layout,

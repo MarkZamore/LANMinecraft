@@ -4,12 +4,14 @@ import java.io.File;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.security.CodeSource;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.TreeMap;
@@ -31,6 +33,7 @@ public final class Forge112SteamQaAgent {
     private final Path world;
     private final String worldName;
     private final String reopenLevelSha256;
+    private final String expectedWindowTitle;
     private Object client;
     private ClassLoader loader;
 
@@ -41,6 +44,7 @@ public final class Forge112SteamQaAgent {
         Path installation = run.resolve("runtime-qa");
         String suffix = System.getProperty(PREFIX + "worldSuffix", "");
         reopenLevelSha256 = System.getProperty(PREFIX + "reopenLevelSha256", "");
+        expectedWindowTitle = System.getProperty(PREFIX + "expectedWindowTitle", "");
         require(suffix.matches("[A-Za-z0-9_-]{0,16}"), "Invalid QA world suffix.");
         require(reopenLevelSha256.isEmpty() || reopenLevelSha256.matches("[0-9a-f]{64}"),
                 "Invalid QA level pin.");
@@ -82,11 +86,15 @@ public final class Forge112SteamQaAgent {
             await(165, () -> findClient(instrumentation), "Minecraft client");
             await(180, () -> scheduled(client, this::titleReady), "title");
             event("title", "\"loaded\":true");
+            verifyWindowTitle("title_screen");
             scheduled(client, () -> { recordModSources(); return null; });
             boolean reopen = !reopenLevelSha256.isEmpty();
             scheduled(client, () -> { openWorld(reopen); return null; });
             await(115, () -> scheduled(client, () -> player() != null && server() != null), "world join");
-            event(reopen ? "world_reopened" : "world_created", "\"commands\":false,\"mode\":\"SURVIVAL\"");
+            int playerDimension = scheduled(client, () -> ((Number) field(player(), "field_71093_bK")).intValue());
+            event(reopen ? "world_reopened" : "world_created", "\"commands\":false,\"mode\":\"SURVIVAL\",\"playerDimension\":"
+                    + playerDimension);
+            verifyWindowTitle("world_before_steam");
             scheduled(client, () -> { publishFromNativePause(); return null; });
             event("published", "\"oneNativeAction\":true,\"intermediateScreen\":false,\"reports\":true,\"reportsLabel\":"
                     + json(translated("text.e4steam_minecraft.launcherReports")));
@@ -96,6 +104,7 @@ public final class Forge112SteamQaAgent {
                     + json(translated("text.e4steam_minecraft.launcherDomainAssigned")));
             require(chat, "Steam did not produce the expected local-port and sharing chat messages.");
             scheduled(client, () -> { verifySteamMetadata(); return null; });
+            verifyWindowTitle("world_after_steam");
             event("steam_metadata", "\"lobbyReady\":true,\"worldName\":" + json(worldName)
                     + ",\"launcherNickname\":" + json(System.getProperty("link.e4steam.launcherPlayerName")));
             Object server = scheduled(client, this::server);
@@ -154,6 +163,42 @@ public final class Forge112SteamQaAgent {
                 && player() == null && server() == null;
     }
 
+    private void verifyWindowTitle(String phase) throws Exception {
+        if (expectedWindowTitle.isEmpty()) {
+            event("window_title", "\"phase\":" + json(phase) + ",\"status\":\"NOT RUN\"");
+            return;
+        }
+        String actual = scheduled(client, () -> {
+            Class<?> display = type("org.lwjgl.opengl.Display");
+            require(Boolean.TRUE.equals(invoke(display, null, "isCreated", NONE)), "Game display is not created.");
+            Object implementation = invoke(display, null, "getImplementation", NONE);
+            return windowsCaption(((Number) call(implementation, "getHwnd", NONE)).longValue());
+        });
+        require(expectedWindowTitle.equals(actual), "Unexpected window title at " + phase + ".");
+        event("window_title", "\"phase\":" + json(phase) + ",\"matches\":true,\"nativeWindow\":true,\"expected\":"
+                + json(expectedWindowTitle) + ",\"actual\":" + json(actual));
+    }
+
+    private String windowsCaption(long hwnd) throws Exception {
+        require(hwnd != 0L, "Game window has no native handle.");
+        Class<?> library = type("com.sun.jna.NativeLibrary");
+        Class<?> function = type("com.sun.jna.Function");
+        Object user32 = invoke(library, null, "getInstance", new Class<?>[] {String.class}, "user32");
+        Object getWindowText = call(user32, "getFunction", new Class<?>[] {String.class, int.class},
+                "GetWindowTextW", function.getField("ALT_CONVENTION").getInt(null));
+        Object handle = type("com.sun.jna.Pointer").getConstructor(long.class).newInstance(hwnd);
+        int maxCharacters = 256;
+        Object buffer = type("com.sun.jna.Memory").getConstructor(long.class).newInstance(2L * maxCharacters);
+        try {
+            int copied = (Integer) call(getWindowText, "invokeInt", new Class<?>[] {Object[].class},
+                    (Object) new Object[] {handle, buffer, maxCharacters});
+            require(copied > 0 && copied < maxCharacters - 1, "Unexpected Windows title length.");
+            return (String) call(buffer, "getWideString", new Class<?>[] {long.class}, 0L);
+        } finally {
+            call(buffer, "dispose", NONE);
+        }
+    }
+
     private void openWorld(boolean reopen) throws Exception {
         require(titleReady(), "Opening a QA world requires the title screen.");
         if (reopen) {
@@ -192,11 +237,21 @@ public final class Forge112SteamQaAgent {
             String name = String.valueOf(call(mod, "getName", NONE));
             String version = String.valueOf(call(mod, "getVersion", NONE));
             File file = (File) call(mod, "getSource", NONE);
+            String origin = "forge_container";
+            if (file == null) {
+                CodeSource code = mod.getClass().getProtectionDomain().getCodeSource();
+                URL location = code == null ? null : code.getLocation();
+                if (location != null && "file".equals(location.getProtocol())) {
+                    file = Paths.get(location.toURI()).toFile();
+                    origin = "core_code_source";
+                }
+            }
             Path source = file != null && file.isFile() ? file.toPath().toRealPath() : null;
             String relative = source != null && source.startsWith(mods)
                     ? game.relativize(source).toString().replace('\\', '/') : null;
             String row = "{\"id\":" + json(id) + ",\"name\":" + json(name) + ",\"version\":" + json(version)
-                    + ",\"source\":" + (relative == null ? "null" : json(relative)) + "}";
+                    + ",\"source\":" + (relative == null ? "null" : json(relative))
+                    + ",\"origin\":" + (relative == null ? "null" : json(origin)) + "}";
             require(nativeRows.put(id, row) == null, "Duplicate native mod ID.");
         }
         event("loaded_mod_sources", "\"count\":" + nativeRows.size()
@@ -254,6 +309,7 @@ public final class Forge112SteamQaAgent {
         Class<?> profile = type("com.mojang.authlib.GameProfile");
         Object guest = profile.getConstructor(UUID.class, String.class).newInstance(
                 UUID.fromString("ad587e6a-e53c-43bd-955b-de8d677ff0dd"), "LanMcQaGuest");
+        TreeMap<String, Boolean> registeredPermissions = new TreeMap<>();
         scheduled(server, () -> {
             Object data = call(call(server, "func_71218_a", new Class<?>[] {int.class}, 0), "func_72912_H", NONE);
             Object players = call(server, "func_184103_al", NONE);
@@ -267,10 +323,29 @@ public final class Forge112SteamQaAgent {
                     && !allows(players, profile, host) && !allows(players, profile, guest)
                     && !allowsGameMode(liveHost),
                     "A mutation granted commands or changed the saved world policy.");
+            Object commands = call(server, "func_71187_D", NONE);
+            java.util.Map<?, ?> registered = (java.util.Map<?, ?>) call(commands, "func_71555_a", NONE);
+            Class<?>[] permissionParameters = {type("net.minecraft.server.MinecraftServer"),
+                    type("net.minecraft.command.ICommandSender")};
+            for (String name : new String[] {"gamemode", "give", "fly", "god", "heal"}) {
+                Object command = registered.get(name);
+                if (command != null) registeredPermissions.put(name,
+                        (Boolean) call(command, "func_184882_a", permissionParameters, server, liveHost));
+            }
             return null;
         });
         event("permissions", "\"nativePlayerList\":true,\"hostDenied\":true,\"syntheticGuestDenied\":true,"
                 + "\"liveHostGameModeDenied\":true,\"worldSetterDenied\":true,\"grantSetterDenied\":true");
+        StringBuilder actual = new StringBuilder("{");
+        for (java.util.Map.Entry<String, Boolean> entry : registeredPermissions.entrySet()) {
+            if (actual.length() > 1) actual.append(',');
+            actual.append(json(entry.getKey())).append(':').append(entry.getValue());
+        }
+        actual.append('}');
+        event("registered_command_permissions", "\"hostAllowed\":" + actual);
+        require(Boolean.FALSE.equals(registeredPermissions.get("gamemode"))
+                && Boolean.FALSE.equals(registeredPermissions.get("give"))
+                && !registeredPermissions.containsValue(true), "A registered cheat command allows the host.");
     }
 
     private static boolean allows(Object players, Class<?> profile, Object player) throws Exception {

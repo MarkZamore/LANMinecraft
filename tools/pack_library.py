@@ -124,9 +124,11 @@ def read_mods(data, jar_name, depth=0, loader=None):
         if "META-INF/jarjar/metadata.json" in names and not fabric_loader:
             nested_paths.extend(nested.get("path", "") for nested in
                                 json.loads(archive.read("META-INF/jarjar/metadata.json")).get("jars", []))
+        if loader == "forge" and manifest.get("Additional-Dependencies-Mod"):
+            nested_paths.append(manifest["Additional-Dependencies-Mod"])
         if fabric:
             nested_paths.extend(nested.get("file", "") for nested in fabric.get("jars", []))
-        for path in nested_paths:
+        for path in dict.fromkeys(nested_paths):
             if not path or path not in names:
                 raise ValueError("Missing declared nested mod in " + jar_name + ": " + path)
             if depth >= 8:

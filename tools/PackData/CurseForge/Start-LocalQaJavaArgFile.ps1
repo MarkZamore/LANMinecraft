@@ -5,12 +5,15 @@ $ErrorActionPreference = 'Stop'
 if (!$LocalQaArguments.WithSteam -or !$LocalQaArguments.NativeQaAgent) {
     throw 'The Java argument-file wrapper requires the native Steam QA agent.'
 }
+if ($LocalQaArguments.UseProductionJavaArgumentFile) {
+    throw 'Select either the QA wrapper or production Java argument-file verification.'
+}
 
 $runner = Join-Path $PSScriptRoot 'Start-LocalQa.ps1'
 $source = [IO.File]::ReadAllText($runner)
 $start = '    $start = $process.StartInfo'
 $cleanup = '    if ($null -ne $process) { $process.Dispose() }'
-$flag = 'javaArgumentFileUsed = $false'
+$flag = 'javaArgumentFileUsed = $javaArgumentFileUsed'
 foreach ($marker in @($start, $cleanup, $flag)) {
     if ($source.Split($marker, [StringSplitOptions]::None).Length -ne 2) {
         throw 'The local QA runner changed. Review its argument-file wrapper.'

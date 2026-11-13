@@ -257,6 +257,9 @@
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.ActualCmlLoggingDefaultAndPackChoiceReachTheJvmWithCorrectPrecedence|
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.PropertiesAreGenericAndAgentsClasspathsAndApplicationTokensKeepTheirOrder|
       FullyQualifiedName=Minecraft.Tests.FinalJvmArgumentsTests.MissingOrAmbiguousNativeBoundaryFailsWithoutChangingTheProcess|
+      FullyQualifiedName=Minecraft.Tests.JavaLaunchArgumentFileTests.Win32LimitMatchesDotNetQuotingAndKeepsOrdinaryAndJava8LaunchesUnchanged|
+      FullyQualifiedName=Minecraft.Tests.JavaLaunchArgumentFileTests.NativeJavaLaunchOverTheWin32LimitPreservesTokensAndDeletesItsPrivateFile|
+      FullyQualifiedName=Minecraft.Tests.JavaLaunchArgumentFileTests.ExplicitJavaExpansionControlsStayDirectAndOnlyOwnedStaleFilesAreSwept|
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.ANewStartupBypassesAnOldSuccessfulRollingResponseAndSyncUsesTheVerifiedNewSnapshot|
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FailedFreshMetadataOrBundleKeepsTheLastVerifiedOfflineSnapshot|
       FullyQualifiedName=Minecraft.Tests.PackCatalogFreshnessTests.FreshSuccessfulEmptyIndexRemovesOldOffersAndRemainsAuthoritativeOffline|

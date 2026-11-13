@@ -17,14 +17,15 @@ import org.objectweb.asm.tree.VarInsnNode;
 /** Installs the name and icons at the native creation boundary, before ShowWindow. */
 public final class PortableNoticeWindowTransformer implements ClassFileTransformer {
     private static final String HOOK = "minecraft/portable/notice/PortableNoticeWindowHooks";
+    // Read the launch setting before Forge can install its Java 8 security manager.
+    private final boolean enabled = !System.getProperty("lanminecraft.window.title", "").isEmpty();
 
     @Override public byte[] transform(ClassLoader loader, String name, Class<?> previous,
                                       ProtectionDomain domain, byte[] bytes) {
-        if (System.getProperty("lanminecraft.window.title", "").length() == 0) return null;
         boolean modern = "org/lwjgl/glfw/GLFW".equals(name);
         boolean windows = "org/lwjgl/opengl/WindowsDisplay".equals(name);
         boolean display = "org/lwjgl/opengl/Display".equals(name);
-        if (!modern && !windows && !display) return null;
+        if ((!modern && !windows && !display) || !enabled) return null;
         try {
             ClassReader reader = new ClassReader(bytes);
             ClassNode node = new ClassNode(Opcodes.ASM9);

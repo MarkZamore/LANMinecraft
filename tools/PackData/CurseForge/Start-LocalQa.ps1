@@ -12,6 +12,9 @@ param(
     [switch] $WithSteam,
     [string] $SteamComponentIndex,
     [string] $NativeQaAgent,
+    [string] $NativeQaLibraryArchive,
+    [ValidatePattern('^[0-9a-f]{64}$')][string] $NativeQaLibrarySha256,
+    [switch] $UseProductionJavaArgumentFile,
     [ValidatePattern('^[A-Za-z0-9_-]{1,16}$')][string] $NativeQaWorldSuffix,
     [ValidatePattern('^[0-9a-f]{64}$')][string] $NativeQaReopenLevelSha256,
     [string] $RunOwner = 'Codex'
@@ -77,6 +80,22 @@ if ($NativeQaAgent) {
 if (($NativeQaWorldSuffix -or $NativeQaReopenLevelSha256) -and !$NativeQaAgent) {
     throw 'Native QA world settings require -NativeQaAgent.'
 }
+if ([bool]$NativeQaLibraryArchive -ne [bool]$NativeQaLibrarySha256 -or
+    ($NativeQaLibraryArchive -and !$NativeQaAgent)) {
+    throw 'Native title QA requires the native agent and both the archive and its SHA256.'
+}
+$card = $null
+if ($NativeQaLibraryArchive) {
+    $NativeQaLibraryArchive = Get-RunPath $NativeQaLibraryArchive
+    if (!(Test-Path -LiteralPath $NativeQaLibraryArchive -PathType Leaf) -or
+        (Get-Item -LiteralPath $NativeQaLibraryArchive).Length -gt 32MB) {
+        throw 'Supply a bounded library archive inside the owned run.'
+    }
+    $cardBytes = [IO.File]::ReadAllBytes($NativeQaLibraryArchive)
+    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($cardBytes)) -ine $NativeQaLibrarySha256) {
+        throw 'The QA library archive did not match the supplied SHA256.'
+    }
+}
 if (!$WithSteam -and (Test-Path -LiteralPath $mods) -and
     (Get-ChildItem -LiteralPath $mods -Recurse -File -Filter '*e4steam*.jar' | Select-Object -First 1)) {
     throw 'This author baseline does not run with an installed Steam transport.'
@@ -95,6 +114,7 @@ foreach ($name in @('CmlLib.Core.Commons.dll', 'CmlLib.Core.dll', 'LANMinecraft.
     $assembly = [Reflection.Assembly]::LoadFrom($dependency)
 }
 $buildFlags = [Reflection.BindingFlags]'NonPublic, Static'
+$instanceFlags = [Reflection.BindingFlags]'NonPublic, Instance'
 $buildProcess = $assembly.GetType('Minecraft.MinecraftLaunchArguments', $true).GetMethod('BuildProcess', $buildFlags)
 if (!$buildProcess) { throw 'This launcher assembly has no production BuildProcess entrypoint.' }
 $componentIndexSha256 = $null
@@ -112,6 +132,10 @@ $lockPath = Get-RunPath (Join-Path $install '.local-qa.lock')
 $lock = [IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
 $runtimeService = $null
 $identityAdapter = $null
+$displayNames = $null
+$notice = $null
+$productionArgumentFile = $null
+$productionArgumentPath = $null
 $process = $null
 $timeout = $null
 $captures = @()
@@ -120,6 +144,24 @@ $stopReason = $null
 try {
     $paths = [Minecraft.AppPaths]::new($install)
     $paths.Ensure()
+    if ($NativeQaLibraryArchive) {
+        $zip = [IO.Compression.ZipArchive]::new([IO.MemoryStream]::new($cardBytes, $false))
+        try {
+            $entry = $zip.GetEntry('library.json')
+            if (!$entry -or $entry.Length -gt 4MB) { throw 'Invalid library JSON entry.' }
+            $stream = [IO.StreamReader]::new($entry.Open())
+            try { $metadata = $stream.ReadToEnd() | ConvertFrom-Json }
+            finally { $stream.Dispose() }
+        }
+        finally { $zip.Dispose() }
+        $source = [Minecraft.PackSyncSource]::new('local', $PackName, 'qa')
+        $entry = [Minecraft.CatalogSource]::new($metadata.id, $metadata.relativePath, $source)
+        $entry.LegacyRelativePaths.Add($PackName)
+        $decode = $assembly.GetType('Minecraft.PackCatalogService', $true).GetMethod('DecodeBundle', $buildFlags)
+        $card = $decode.Invoke($null, [object[]]@($entry, $cardBytes, $metadata.revision))
+        $displayNames = [Minecraft.PackDisplayNames]::new($paths)
+        [void]$displayNames.Publish([Minecraft.CatalogPack[]]@($card))
+    }
     $canonical = Get-RunPath ($paths.CombineUnderPacks($PackName))
     $canonicalDescriptor = Get-RunPath (Join-Path $canonical 'portable-pack.json')
     $descriptorSha256 = (Get-FileHash -LiteralPath $sourceDescriptor -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -165,6 +207,14 @@ try {
     }
     $launcher = $runtimeService.CreateLocalLauncher($runtime)
     $profile = $launcher.GetVersionAsync($runtime.ProfileId, $timeout.Token).GetAwaiter().GetResult()
+    $presentationArguments = @()
+    if ($card) {
+        $notices = [Minecraft.GameNoticeOverlayService]::new($paths, $logger)
+        $notice = $notices.GetType().GetMethod('PrepareSession', $instanceFlags).Invoke($notices, [object[]]@($false))
+        $presentation = $assembly.GetType('Minecraft.GameWindowPresentation', $true).GetMethod('Prepare', $buildFlags)
+        $presentationArguments = @($notice.GetType().GetProperty('JvmArguments', $instanceFlags).GetValue($notice)) +
+            @($presentation.Invoke($null, [object[]]@($paths, $runtime, $profile, $canonical, $game)))
+    }
     $launchPath = [CmlLib.Core.MinecraftPath]::new($game)
     foreach ($property in @('Library', 'Versions', 'Assets', 'Resource', 'Runtime')) {
         $launchPath.$property = $launcher.MinecraftPath.$property
@@ -196,6 +246,7 @@ try {
     $packArguments = [Minecraft.PackJvmArgumentsService]::new($logger).Load($game)
     foreach ($value in $packArguments) { $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new($value)) }
     foreach ($value in $adapterArguments) { $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new($value)) }
+    foreach ($value in $presentationArguments) { $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new($value)) }
     if ($NativeQaAgent) {
         foreach ($value in @("-Dlanminecraft.steamqa.game=$game", "-Dlanminecraft.steamqa.evidence=$evidence",
             "-Dlanminecraft.steamqa.run=$runRoot", "-Dlanminecraft.steamqa.minecraftVersion=$($runtime.Descriptor.MinecraftVersion)",
@@ -208,12 +259,15 @@ try {
         if ($NativeQaReopenLevelSha256) {
             $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.reopenLevelSha256=$NativeQaReopenLevelSha256"))
         }
+        if ($card) {
+            $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.expectedWindowTitle=$($card.Content.Name)"))
+        }
     }
     $options.ExtraJvmArguments = $arguments
 
     $process = $buildProcess.Invoke($null, [object[]]@($launcher, $profile, $options))
     $start = $process.StartInfo
-    # Keep the exact production Java command line, including on Java 8.
+    # Keep the production Java command line unless verifying its long-command path.
     $start.WorkingDirectory = $game
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
@@ -237,6 +291,34 @@ try {
     $start.Environment['LOCALAPPDATA'] = $qaLocal
     $start.Environment['USERPROFILE'] = $qaHome
 
+    $javaArgumentFileUsed = $false
+    $windowsCommandLengthBefore = $null
+    $windowsCommandLengthAfter = $null
+    if ($UseProductionJavaArgumentFile) {
+        $processType = $assembly.GetType('Minecraft.MinecraftProcessService', $true)
+        $complete = $processType.GetMethod('CompleteJvmArguments', $buildFlags)
+        $completeArguments = $complete.Invoke($null, [object[]]@($start, $profile, $game, [Minecraft.PackJvmArgumentsService]::new(), $null))
+        $mainClass = $profile.MainClass
+        for ($parent = $profile.ParentVersion; !$mainClass -and $parent; $parent = $parent.ParentVersion) {
+            $mainClass = $parent.MainClass
+        }
+        $mainIndex = [Array]::IndexOf([string[]]$completeArguments, [string]$mainClass)
+        if ($mainIndex -lt 0) { throw 'The QA profile has no main class for production argument-file verification.' }
+        $runtimeCatalog = $assembly.GetType('Minecraft.JavaRuntimeCatalog', $true)
+        $runtimePin = $runtimeCatalog.GetMethod('RequiredFor').Invoke($null, [object[]]@($runtime.Descriptor))
+        $argFileType = $assembly.GetType('Minecraft.JavaLaunchArgumentFile', $true)
+        $windowsLength = $argFileType.GetMethod('WindowsLength', $buildFlags)
+        $windowsCommandLengthBefore = $windowsLength.Invoke($null, [object[]]@($start))
+        $productionArgumentFile = $argFileType.GetMethod('Prepare', $buildFlags).Invoke($null,
+            [object[]]@($paths, $start, $completeArguments, $runtimePin.MajorVersion, $mainIndex, $logger))
+        $windowsCommandLengthAfter = $windowsLength.Invoke($null, [object[]]@($start))
+        if ($productionArgumentFile) {
+            if (!$start.ArgumentList[0].StartsWith('@', [StringComparison]::Ordinal)) { throw 'Expected a production Java argument file.' }
+            $productionArgumentPath = Get-RunPath ($start.ArgumentList[0].Substring(1))
+            $javaArgumentFileUsed = $true
+        }
+    }
+
     Write-Evidence (Join-Path $evidence 'launch.json') ([ordered]@{
         mode = if ($WithSteam) { 'launcher-steam' } else { 'author-baseline' }
         launcherAssemblySha256 = (Get-FileHash -LiteralPath $assemblyPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -252,7 +334,11 @@ try {
         steam = if ($WithSteam) { $steamBuild.Sha256 } else { 'NOT RUN' }
         steamComponentIndexSha256 = $componentIndexSha256
         nativeQaAgentSha256 = if ($NativeQaAgent) { (Get-FileHash -LiteralPath $NativeQaAgent -Algorithm SHA256).Hash.ToLowerInvariant() }
-        javaArgumentFileUsed = $false
+        nativeQaLibrarySha256 = if ($card) { $NativeQaLibrarySha256 }
+        javaArgumentFileUsed = $javaArgumentFileUsed
+        productionJavaArgumentFileMode = [bool]$UseProductionJavaArgumentFile
+        windowsCommandLengthBefore = $windowsCommandLengthBefore
+        windowsCommandLengthAfter = $windowsCommandLengthAfter
     })
     $started = $process.Start()
     if (!$started) { throw 'Production BuildProcess did not start a Java child.' }
@@ -326,11 +412,14 @@ finally {
         $process.Kill($true)
     }
     foreach ($capture in $captures) { $capture.Output.Dispose() }
-    if ($started -and $process.WaitForExit(5000)) {
+    $childExited = $started -and $process.WaitForExit(5000)
+    if ($productionArgumentFile) { $productionArgumentFile.Dispose() }
+    if ($childExited) {
         Write-Evidence (Join-Path $evidence 'exit.json') ([ordered]@{
             processId = $process.Id
             exitCode = $process.ExitCode
             stopReason = $stopReason
+            productionJavaArgumentFileRemoved = if ($productionArgumentPath) { ![IO.File]::Exists($productionArgumentPath) }
             exitedUtc = [DateTimeOffset]::UtcNow
             console = @($captures | ForEach-Object { @{ name = $_.Name; writtenBytes = $_.Written; truncated = $_.Truncated } })
         })
@@ -339,6 +428,8 @@ finally {
     if ($null -ne $process) { $process.Dispose() }
     if ($null -ne $timeout) { $timeout.Dispose() }
     if ($null -ne $identityAdapter) { $identityAdapter.Dispose() }
+    if ($null -ne $notice) { $notice.Dispose() }
+    if ($null -ne $displayNames) { $displayNames.Dispose() }
     if ($null -ne $runtimeService) { $runtimeService.Dispose() }
     $lock.Dispose()
 }
