@@ -168,6 +168,15 @@
         "repo": "Liminal-Industries",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-19",
+      "relativePath": "Desolate Planet",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Desolate-Planet",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
