@@ -311,6 +311,24 @@ class LibraryPublisherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_mods(carrier.getvalue(), "legacy.jar", loader="neoforge")
 
+    def test_legacy_forge_inventory_retains_native_core_id_with_pipe(self):
+        runtime = {"minecraftVersion": "1.12.2", "loader": {"type": "forge"}}
+        (self.pack / "portable-pack.json").write_text(json.dumps(runtime))
+        source = "mods/opencomputers.jar"
+        with zipfile.ZipFile(self.pack / source, "w") as archive:
+            archive.writestr("mcmod.info", '[{"modid":"opencomputers","name":"OpenComputers"}]')
+        mod_id = "opencomputers|core"
+        website = "https://www.curseforge.com/minecraft/mc-mods/opencomputers"
+        self.pages[mod_id] = website
+        self.write_pages()
+        inventory = {"schemaVersion": 1, **runtime,
+                     "sourceJars": {source: hashlib.sha256((self.pack / source).read_bytes()).hexdigest()},
+                     "mods": [{"id": mod_id, "name": "OpenComputers (Core)", "version": "1.7.5.192", "source": source}]}
+        (self.pack / "library/loaded-mods.json").write_text(json.dumps(inventory))
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1", shipped={source}))) as archive:
+            mod, = json.loads(archive.read("library.json"))["mods"]
+        self.assertEqual((mod_id, "OpenComputers (Core)", website), (mod["id"], mod["name"], mod["websiteUrl"]))
+
     def test_actual_loader_inventory_resolves_selected_ids_and_versions_and_rejects_stale_jars(self):
         inventory = {"schemaVersion": 1,
                      "minecraftVersion": "1.21.1", "loader": {"type": "NeoForge"},

@@ -293,7 +293,7 @@ def read_pack_mods(pack, shipped=None, *, metadata_root=None):
                 if mod_id in ("fml", "mcp"):
                     continue
                 source = loaded.get("source")
-                if (not isinstance(mod_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", mod_id) or
+                if (not isinstance(mod_id, str) or not re.fullmatch(r"[A-Za-z0-9_.|-]{1,128}", mod_id) or
                         mod_id in actual_mods or not isinstance(source, str) or source not in actual_hashes or
                         any(not isinstance(loaded.get(key), str) or not loaded[key].strip() for key in ("name", "version"))):
                     raise ValueError("Invalid or unbound legacy Forge mod inventory entry: " + str(mod_id))

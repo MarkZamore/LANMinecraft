@@ -1,7 +1,9 @@
 import json
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from zipfile import ZipFile
 
 import prepare
 import release_overlay as release
@@ -103,6 +105,64 @@ class ReleaseOverlayTests(unittest.TestCase):
         next_author["overrides"] = [*next_author["overrides"], recipe["additions"][0]]
         with self.assertRaisesRegex(ValueError, "conflicting logging path"):
             release.review_update(self.source, self.author, next_author)
+
+    def test_bootstrap_binds_exact_author_jar_and_is_required_in_payload(self):
+        artifact_path = "lanminecraft/checked-bootstrap.jar"
+        args_path = "launcher/jvm-args.txt"
+        author_jar = b"exact author dependency"
+        author_input = {"projectId": 18, "fileId": 28, "path": "mods/provider.jar",
+                        **prepare.fingerprint(author_jar)}
+        author = {**self.receipt, "declaredDependencies": [{"projectId": 18, "fileId": 28, "required": True}],
+                  "files": [{**author_input, "required": True}]}
+        artifact = BytesIO()
+        with ZipFile(artifact, "w") as jar:
+            jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nPremain-Class: lanminecraft.Agent\r\n\r\n")
+            jar.writestr("lanminecraft/Agent.class", b"\xca\xfe\xba\xbe\x00\x00\x00\x34")
+        payloads = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
+                    args_path: f"-Dlog4j.configurationFile=config/log4j2.xml\n-javaagent:{artifact_path}\n".encode(),
+                    artifact_path: artifact.getvalue()}
+        for name, data in payloads.items():
+            path = self.source / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(data)
+        recipe = {**self.recipe, "additions": [{"path": name, **prepare.fingerprint(payloads[name])}
+                                               for name in prepare.LOGGING_FILES],
+                  "bootstrap": {"input": author_input,
+                                "artifact": {"path": artifact_path, **prepare.fingerprint(artifact.getvalue())}}}
+        self.write_json(self.recipe_path, recipe)
+        (self.source / release.OWNERSHIP).write_bytes(
+            ("\n".join(sorted({self.config_path, prepare.LOGGING_CONFIG, artifact_path})) + "\n").encode("utf-8"))
+        stage = self.stage / "with-bootstrap"
+        game = stage / "game"
+        for name, data in {self.config_path: self.original, author_input["path"]: author_jar}.items():
+            path = game / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        receipt = {**author, "overlay": prepare.apply_overlay(game, self.source, author, {})}
+        self.write_json(stage / "intake.json", receipt)
+        policy, _ = release.verify_stage(stage, self.source, receipt)
+        _, required = release.payload_inventory(receipt, policy, [])
+        self.assertIn(artifact_path, required)
+        self.assertEqual((game / author_input["path"]).read_bytes(), author_jar)
+        self.assertEqual(release.review_update(self.source, author, author)["bootstrap"], recipe["bootstrap"])
+
+        changed = {**author, "files": [{**author["files"][0], "sha256": "0" * 64}]}
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap input bytes"):
+            release.review_update(self.source, author, changed)
+        self.write_json(stage / "intake.json", {**receipt, "files": changed["files"]})
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap input bytes"):
+            release.verify_stage(stage, self.source, {**author, "status": "client-only"})
+        self.write_json(stage / "intake.json", receipt)
+        client_candidate = {**author, "status": "client-only",
+                            "declaredDependencies": [{"projectId": 18, "fileId": 29, "required": True}]}
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap dependency"):
+            release.review_update(self.source, author, client_candidate)
+        with self.assertRaisesRegex(ValueError, "exact launcher JVM argument"):
+            prepare.overlay_bootstrap(recipe, self.source, author, {args_path: b"-javaagent:other.jar\n"})
+
+        (game / artifact_path).write_bytes(b"replaced helper")
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(stage, self.source, receipt)
 
     def test_release_preserves_author_overrides_and_required_and_optional_dependencies(self):
         game = self.stage / "game"

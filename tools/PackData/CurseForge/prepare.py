@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -33,6 +34,9 @@ LOADERS = {"forge", "neoforge", "fabric", "quilt"}
 REQUIRED_SHARE_FEATURE = "preserve-steam-world-settings-v1"
 LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
+BOOTSTRAP_PATH = re.compile(r"lanminecraft/[a-z0-9][a-z0-9-]{0,63}\.jar")
+MAX_BOOTSTRAP_BYTES = 256 * 1024
+BOOTSTRAP_INPUT_KEYS = {"path", "sizeBytes", "sha256", "projectId", "fileId"}
 
 
 def require(ok, message):
@@ -503,6 +507,76 @@ def overlay_additions(recipe, pack_source, author):
     return additions
 
 
+def overlay_bootstrap(recipe, pack_source, author, additions):
+    if "bootstrap" not in recipe:
+        return {}
+    bootstrap = recipe["bootstrap"]
+    require(isinstance(bootstrap, dict) and set(bootstrap) == {"input", "artifact"}, "Invalid Java 8 bootstrap recipe")
+    source, artifact = bootstrap["input"], bootstrap["artifact"]
+    pin_keys = {"path", "sizeBytes", "sha256"}
+    require(isinstance(source, dict) and set(source) == BOOTSTRAP_INPUT_KEYS and
+            isinstance(artifact, dict) and set(artifact) == pin_keys and
+            all(positive(pin["sizeBytes"]) and isinstance(pin["sha256"], str) and
+                re.fullmatch("[a-f0-9]{64}", pin["sha256"]) for pin in (source, artifact)) and
+            all(positive(source[key]) for key in ("projectId", "fileId")), "Invalid Java 8 bootstrap pins")
+    source_path = safe_path(source["path"])
+    name = safe_path(artifact["path"]).as_posix()
+    platform = author["pack"]
+    require(platform["minecraftVersion"] == "1.12.2" and platform["loader"]["type"] == "forge" and
+            source_path.is_relative_to("mods") and len(source_path.parts) == 2 and source_path.suffix == ".jar" and
+            BOOTSTRAP_PATH.fullmatch(name) and artifact["sizeBytes"] <= MAX_BOOTSTRAP_BYTES,
+            "Unsupported Java 8 bootstrap platform or paths")
+    key = source["projectId"], source["fileId"]
+    declared = [row for row in author["declaredDependencies"] if row["projectId"] == key[0]]
+    require(declared == [{"projectId": key[0], "fileId": key[1], "required": True}] and
+            key not in overlay_dependency_keys(recipe, author), "Review required for a changed Java 8 bootstrap dependency")
+    authored = [*author["overrides"], *author.get("files", [])]
+    if author.get("status") == "complete":
+        matched = [row for row in author["files"] if row["projectId"] == key[0]]
+        require(len(matched) == 1 and matched[0]["required"] is True and
+                all(matched[0][field] == value for field, value in source.items()),
+                "Review required for changed Java 8 bootstrap input bytes")
+    require(not any(row["path"].casefold() == name.casefold() for row in authored),
+            "Java 8 bootstrap artifact collides with an author file")
+    args = additions.get("launcher/jvm-args.txt", b"").decode("utf-8").splitlines()
+    require([line.strip() for line in args if line.lstrip().startswith("-javaagent:")] == [f"-javaagent:{name}"],
+            "Java 8 bootstrap needs its exact launcher JVM argument")
+    data = overlay_bytes(pack_source / name)
+    require(fingerprint(data) == {key: artifact[key] for key in ("sizeBytes", "sha256")},
+            "Java 8 bootstrap artifact differs from its pin")
+    try:
+        validate_bootstrap_jar(data)
+    except zipfile.BadZipFile as error:
+        raise ValueError("Invalid Java 8 bootstrap JAR") from error
+    return {name: data}
+
+
+def validate_bootstrap_jar(data):
+    with zipfile.ZipFile(BytesIO(data)) as jar:
+        entries = [info for info in jar.infolist() if not info.is_dir()]
+        names = {info.filename for info in entries}
+        manifest = "META-INF/MANIFEST.MF"
+        require(len(entries) == len(names) and manifest in names and
+                sum(info.file_size for info in entries) <= MAX_BOOTSTRAP_BYTES,
+                "Invalid Java 8 bootstrap JAR members")
+        for info in jar.infolist():
+            safe_path(info.filename.rstrip("/"))
+        attributes = jar.read(manifest).decode("utf-8").replace("\r\n ", "").replace("\n ", "").splitlines()
+        require(all(not line or line.startswith(("Manifest-Version: ", "Premain-Class: ", "Created-By: "))
+                    for line in attributes), "Unexpected Java 8 bootstrap manifest attribute")
+        premain = [line[len("Premain-Class: "):] for line in attributes if line.startswith("Premain-Class: ")]
+        classes = names - {manifest}
+        require(len(premain) == 1 and premain[0].startswith("lanminecraft.") and
+                premain[0].replace(".", "/") + ".class" in classes and
+                all(re.fullmatch(r"lanminecraft/(?:[A-Za-z0-9_$]+/)*[A-Za-z0-9_$]+\.class", name) for name in classes),
+                "Java 8 bootstrap JAR must contain only its named launcher helper classes")
+        for name in classes:
+            with jar.open(name) as stream:
+                header = stream.read(8)
+            require(len(header) == 8 and header[:4] == b"\xca\xfe\xba\xbe" and int.from_bytes(header[6:], "big") <= 52,
+                    "Java 8 bootstrap JAR contains unsupported bytecode")
+
+
 def overlay_dependency_keys(recipe, author):
     items = recipe.get("excludedDependencies", [])
     require(isinstance(items, list), "Invalid author dependency exclusions")
@@ -554,7 +628,7 @@ def exclude_dependencies(game, rows):
 def apply_overlay(game, pack_source, receipt, paths):
     raw = overlay_bytes(pack_source / "tools/overlay.json")
     recipe = decode_json(raw)
-    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions"} ==
+    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
@@ -562,7 +636,8 @@ def apply_overlay(game, pack_source, receipt, paths):
             "Overlay does not match the pinned author archive")
     dependency_keys = overlay_dependency_keys(recipe, receipt)
     additions = overlay_additions(recipe, pack_source, receipt)
-    for name in additions:
+    bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
+    for name in additions.keys() | bootstrap.keys():
         reserve_path(paths, safe_path(name))
     descriptor = overlay_bytes(pack_source / "portable-pack.json")
     descriptor_pin = fingerprint(descriptor)
@@ -612,12 +687,15 @@ def apply_overlay(game, pack_source, receipt, paths):
     if additions:
         owned_names.add(LOGGING_CONFIG)
         result["additions"] = recipe["additions"]
+    if bootstrap:
+        owned_names.update(bootstrap)
+        result["bootstrap"] = recipe["bootstrap"]
     if owned_names:
         owned_path = PurePosixPath("launcher/pack-owned.txt")
         reserve_path(paths, owned_path)
         owned = overlay_bytes(pack_source.joinpath(*owned_path.parts))
         require(owned == ("\n".join(sorted(owned_names)) + "\n").encode("utf-8"),
-                "Pack ownership must list exactly the patched files and the logging configuration")
+                "Pack ownership must list exactly the patched files and owned overlay artifacts")
         target = game.joinpath(*owned_path.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("xb") as output:
@@ -625,7 +703,7 @@ def apply_overlay(game, pack_source, receipt, paths):
         result["ownership"] = fingerprint(owned)
     for target, data in edits.values():
         target.write_bytes(data)
-    for name, data in additions.items():
+    for name, data in {**additions, **bootstrap}.items():
         target = game / name
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("xb") as output:
@@ -714,11 +792,14 @@ def prepare(args):
                                    sum(row["sizeBytes"] for row in overrides), fallbacks, override_files)
             with ThreadPoolExecutor(max_workers=WORKERS) as pool:
                 files = list(pool.map(lambda entry: acquire_dependency(game, entry, override_files, verified_source), plan))
+            receipt.update(status="complete", files=files)
+            if overlay and "bootstrap" in overlay:
+                overlay_bootstrap(overlay, args.pack_source, receipt,
+                                  overlay_additions(overlay, args.pack_source, receipt))
             if excluded_keys:
                 excluded = excluded_dependency_files(excluded_keys, files)
                 exclude_dependencies(game, excluded)
                 overlay["excludedDependencies"] = excluded
-            receipt.update(status="complete", files=files)
         write_json(stage / "intake.json", receipt)
         check_output(out)
         no_links(stage)

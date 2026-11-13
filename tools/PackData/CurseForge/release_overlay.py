@@ -64,7 +64,8 @@ def source_policy(pack_source, author):
                     "Checked pack descriptor must retain the platform and Steam world-sharing policy")
     patch_inputs(recipe, author)
     prepare.overlay_dependency_keys(recipe, author)
-    prepare.overlay_additions(recipe, pack_source, author)
+    additions = prepare.overlay_additions(recipe, pack_source, author)
+    prepare.overlay_bootstrap(recipe, pack_source, author, additions)
     return recipe, prepare.fingerprint(recipe_bytes)["sha256"], descriptor, descriptor_pin
 
 
@@ -122,7 +123,7 @@ def payload_inventory(author, policy_files, excluded):
         required.remove(name)
 
     for name, pin in policy_files.items():
-        if name in (DESCRIPTOR, OWNERSHIP) or name in prepare.LOGGING_FILES:
+        if name in (DESCRIPTOR, OWNERSHIP) or name in prepare.LOGGING_FILES or prepare.BOOTSTRAP_PATH.fullmatch(name):
             prepare.reserve_path(paths, prepare.safe_path(name))
         else:
             prepare.require(name in override_paths and name not in shared_paths,
@@ -134,11 +135,11 @@ def payload_inventory(author, policy_files, excluded):
 
 def verify_stage(stage, pack_source, author):
     game = prepare.native_path(stage / "game")
-    recipe, recipe_sha, descriptor, descriptor_pin = source_policy(pack_source, author)
     receipt = read_lock(stage / "intake.json", "complete")
     same_author(author, receipt)
     if author["status"] == "complete":
         prepare.require(author["files"] == receipt["files"], "Staged dependencies differ from the complete author lock")
+    recipe, recipe_sha, descriptor, descriptor_pin = source_policy(pack_source, receipt)
     base_descriptor = {key: value for key, value in descriptor.items() if key != "preserveWorldSettingsOnShare"}
     prepare.require(receipt.get("descriptor") == base_descriptor, "Stage was prepared for another platform")
     patches = [{key: patch[key] for key in ("path", "before", "after")} for patch in recipe["patches"]]
@@ -151,6 +152,11 @@ def verify_stage(stage, pack_source, author):
         policy_files.update({row["path"]: {key: row[key] for key in ("sizeBytes", "sha256")}
                              for row in recipe["additions"]})
         owned_names.add(prepare.LOGGING_CONFIG)
+    if "bootstrap" in recipe:
+        expected["bootstrap"] = recipe["bootstrap"]
+        artifact = recipe["bootstrap"]["artifact"]
+        policy_files[artifact["path"]] = {key: artifact[key] for key in ("sizeBytes", "sha256")}
+        owned_names.add(artifact["path"])
     if owned_names:
         ownership = prepare.overlay_bytes(pack_source / OWNERSHIP)
         prepare.require(ownership == ("\n".join(sorted(owned_names)) + "\n").encode("utf-8"),
@@ -220,7 +226,8 @@ def review_update(pack_source, current, candidate):
                     "Review required for a changed author project or game platform")
     patch_inputs(recipe, candidate)
     prepare.overlay_dependency_keys(recipe, candidate)
-    prepare.overlay_additions(recipe, pack_source, candidate)
+    additions = prepare.overlay_additions(recipe, pack_source, candidate)
+    prepare.overlay_bootstrap(recipe, pack_source, candidate, additions)
     return {**recipe, "authorArchiveSha256": candidate["client"]["sha256"]}
 
 

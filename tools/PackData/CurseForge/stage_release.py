@@ -45,6 +45,7 @@ def check_source(pack_source, revision, pack_id, policy_files):
     if release_overlay.OWNERSHIP in policy_files:
         required.append(release_overlay.OWNERSHIP)
     required.extend(sorted(prepare.LOGGING_FILES & policy_files.keys()))
+    required.extend(sorted(path for path in policy_files if prepare.BOOTSTRAP_PATH.fullmatch(path)))
     runtime_sources = "library/runtime-sources.json"
     if (pack_source / runtime_sources).exists():
         required.append(runtime_sources)
