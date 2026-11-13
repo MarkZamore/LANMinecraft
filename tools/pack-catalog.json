@@ -22,14 +22,12 @@
     },
     {
       "id": "minecraft-26-2",
-      "relativePath": "Minecraft 26.3",
-      "installationPath": "Minecraft Java Edition",
+      "relativePath": "Minecraft Java Edition",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-Java-Edition",
         "tag": "pack-latest"
       },
-      "legacyRelativePaths": ["Minecraft 26.2"],
       "legacySources": [
         {
           "owner": "MarkZamore",
