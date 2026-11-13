@@ -204,6 +204,15 @@
         "repo": "Reclamation",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-13",
+      "relativePath": "ATM10 To the Sky",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "ATM10-To-the-Sky",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
