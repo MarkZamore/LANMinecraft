@@ -177,6 +177,15 @@
         "repo": "Desolate-Planet",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-22",
+      "relativePath": "Clayblock",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Clayblock",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
