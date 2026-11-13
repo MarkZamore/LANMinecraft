@@ -218,6 +218,15 @@
         "repo": "Beebeeblock",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-23",
+      "relativePath": "Fear Nightfall - Remains of Chaos",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Fear-Nightfall-Remains-of-Chaos",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
