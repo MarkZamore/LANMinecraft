@@ -227,6 +227,15 @@
         "repo": "Fear-Nightfall",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-24",
+      "relativePath": "Nuclear Tech Reborn",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Nuclear-Tech-Reborn",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
