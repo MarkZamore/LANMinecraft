@@ -4,10 +4,10 @@
     {
       "id": "all-the-mods-10",
       "numberedId": "minecraft-1",
-      "relativePath": "All The Mods 10",
+      "relativePath": "All the Mods 10",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-10",
+        "repo": "All-the-Mods-10",
         "tag": "pack-latest"
       }
     },
@@ -56,10 +56,10 @@
     {
       "id": "all-the-mods-9",
       "numberedId": "minecraft-5",
-      "relativePath": "All The Mods 9",
+      "relativePath": "All the Mods 9",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-9",
+        "repo": "All-the-Mods-9",
         "tag": "pack-latest"
       }
     },
@@ -69,7 +69,7 @@
       "relativePath": "All the Mods 9 Modified",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-9-Modified",
+        "repo": "All-the-Mods-9-Modified",
         "tag": "pack-latest"
       }
     },
@@ -203,33 +203,30 @@
     },
     {
       "id": "minecraft-13",
-      "relativePath": "ATM10 To the Sky",
+      "relativePath": "All the Mods 10 To the Sky",
       "source": {
         "owner": "MarkZamore",
-        "repo": "ATM10-To-the-Sky",
+        "repo": "All-the-Mods-10-To-the-Sky",
         "tag": "pack-latest"
-      },
-      "installationPath": "All the Mods 10 To the Sky"
+      }
     },
     {
       "id": "minecraft-16",
-      "relativePath": "Beebeeblock - The Skyhive",
+      "relativePath": "Beebeeblock",
       "source": {
         "owner": "MarkZamore",
         "repo": "Beebeeblock",
         "tag": "pack-latest"
-      },
-      "installationPath": "Beebeeblock"
+      }
     },
     {
       "id": "minecraft-23",
-      "relativePath": "Fear Nightfall - Remains of Chaos",
+      "relativePath": "Fear Nightfall",
       "source": {
         "owner": "MarkZamore",
-        "repo": "Fear-Nightfall-Remains-of-Chaos",
+        "repo": "Fear-Nightfall",
         "tag": "pack-latest"
-      },
-      "installationPath": "Fear Nightfall"
+      }
     }
   ]
 }
