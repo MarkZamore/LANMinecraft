@@ -208,7 +208,8 @@
         "owner": "MarkZamore",
         "repo": "ATM10-To-the-Sky",
         "tag": "pack-latest"
-      }
+      },
+      "installationPath": "All the Mods 10 To the Sky"
     },
     {
       "id": "minecraft-16",
@@ -217,7 +218,8 @@
         "owner": "MarkZamore",
         "repo": "Beebeeblock",
         "tag": "pack-latest"
-      }
+      },
+      "installationPath": "Beebeeblock"
     },
     {
       "id": "minecraft-23",
@@ -226,7 +228,8 @@
         "owner": "MarkZamore",
         "repo": "Fear-Nightfall-Remains-of-Chaos",
         "tag": "pack-latest"
-      }
+      },
+      "installationPath": "Fear Nightfall"
     }
   ]
 }
