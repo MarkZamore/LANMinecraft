@@ -32,7 +32,23 @@
 - По отдельному запросу `6bffa034572bd993e24e98395759932b03f0e326` поменял публичный путь TerraFirma на `TerraFirma Rebirth 2`. Проверка через публичный 497 подтвердила новый путь, прежний ID, карточку, превью и отсутствие старой папки в чистой установке.
 - Minecraft Java Edition опубликована на ревизии `6f8ea6d29260fdd6c753ae8daae0f8e487a2bd3a` с путём `Minecraft Java Edition` внутри карточки. Скачаны все семь игровых архивов, SHA256 и записи девяти игровых файлов совпали с предыдущим выпуском. Каталог `a788cc1bb21209db5c056a95fdd3a1dc9ffe079f` указывает этот путь напрямую. Алиасы папок `Minecraft 26.2` и `Minecraft 26.3` убраны. [Проверки и выпуск](https://github.com/MarkZamore/Minecraft-Java-Edition/actions/runs/43503605713).
 
-## Сверка названий
+## Переименование семи сборок 14 ноября 2026 года
+
+Публичный [каталог на 23 записи](https://github.com/MarkZamore/LANMinecraft/blob/306821629f1a1d94321032e971a80b84763f6cc2/catalog.json) использует точные имена ниже для карточек, папок установки и списка «Играть». Все ID сохранены. В итоговом индексе отсутствуют `installationPath`, `legacyRelativePaths` и `compatibilityPath`. В опубликованных манифестах изменены только ревизия и ссылка на архив карточки. Игровые архивы, файлы, моды и превью сверены с прежними выпусками. Переименование GitHub выполнено для пяти репозиториев с сохранением их ID.
+
+| Имя и путь установки | GitHub | Ревизия карточки |
+| --- | --- | --- |
+| All the Mods 10 | [All-the-Mods-10](https://github.com/MarkZamore/All-the-Mods-10) | `88ec986849892c0308d90b1231bd42d87c86344d` |
+| All the Mods 9 | [All-the-Mods-9](https://github.com/MarkZamore/All-the-Mods-9) | `7eabf7ea9b490eab35c93997bb356c2ffd48b2e3` |
+| All the Mods 9 Modified | [All-the-Mods-9-Modified](https://github.com/MarkZamore/All-the-Mods-9-Modified) | `445eced8707cd2c8b1a15d4728ed6a7f60fe66c2` |
+| All the Mods 10 To the Sky | [All-the-Mods-10-To-the-Sky](https://github.com/MarkZamore/All-the-Mods-10-To-the-Sky) | `5dcd0a6242419870d61b592529b627991a7b4a6f` |
+| All in One | [All-in-One](https://github.com/MarkZamore/All-in-One) | `389ba4ee615b748135b81a1926847c22e0f3303a` |
+| Beebeeblock | [Beebeeblock](https://github.com/MarkZamore/Beebeeblock) | `b23d7ac93c3473cc8eec67095deb447c76c71655` |
+| Fear Nightfall | [Fear-Nightfall](https://github.com/MarkZamore/Fear-Nightfall) | `5cff71d48dc15afe8f1d16e345bf1ec17dc5f71d` |
+
+В рабочей установке регистр путей ATM10 и ATM9 изменён в пяти игровых каталогах. Ссылки `saves`, привязки миров и настройки выбора согласованы с новыми именами. SHA256 обоих файлов `level.dat` совпал до и после. Установочный путь ATM9 Modified уже совпадал с новым именем. All in One, All the Mods 10 To the Sky, Beebeeblock и Fear Nightfall в этой установке ещё не скачаны.
+
+## Сверка названий до переименования
 
 У 11 прежних карточек имена прочитаны из опубликованных архивов по SHA256 манифеста. У 12 новых имена сверены в `library/content.json`, пути по каталогу или кандидату. В GitHub пробелы заменены дефисами. Для существующих установок проверены папки `Minecraft/Packs` на этом ПК. Сверка выполнена без переименований.
 
