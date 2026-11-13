@@ -195,6 +195,15 @@
         "repo": "Levitated",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-21",
+      "relativePath": "Reclamation",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Reclamation",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
