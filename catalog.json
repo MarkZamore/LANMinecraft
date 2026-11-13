@@ -159,6 +159,15 @@
         "repo": "Antimatter-Chemistry",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-15",
+      "relativePath": "Liminal Industries",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Liminal-Industries",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
