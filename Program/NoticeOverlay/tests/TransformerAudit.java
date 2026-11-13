@@ -18,9 +18,37 @@ public final class TransformerAudit {
         if (new PortableNoticeTransformer().transform(null, "example/Unrelated", null, null, unrelated) != null) {
             throw new AssertionError("Unrelated classes must be untouched");
         }
+        windowTitleContracts();
         snapshotContracts();
         scaleContracts();
         System.out.println("Presentation transformer contracts passed (LWJGL2, LWJGL3, SDL3, native refusal, unrelated class).");
+    }
+
+    private static void windowTitleContracts() {
+        String property = "lanminecraft.window.title";
+        String previous = System.getProperty(property);
+        String display = "org/lwjgl/opengl/Display";
+        byte[] source = fixture(display, "setTitle", "(Ljava/lang/String;)V", false);
+        try {
+            System.clearProperty(property);
+            PortableNoticeWindowTransformer disabled = new PortableNoticeWindowTransformer();
+            System.setProperty(property, "Pack title");
+            PortableNoticeWindowTransformer enabled = new PortableNoticeWindowTransformer();
+            if (disabled.transform(null, display, null, null, source) != null) {
+                throw new AssertionError("A disabled launch acquired a window title hook");
+            }
+            System.clearProperty(property);
+            if (enabled.transform(null, display, null, null, source) == null) {
+                throw new AssertionError("Window title hook read the property during class loading");
+            }
+            if (enabled.transform(null, "java/lang/ClassLoader$1", null, null, null) != null) {
+                throw new AssertionError("Window title hook touched a JVM class");
+            }
+        } finally {
+            if (previous == null) System.clearProperty(property);
+            else System.setProperty(property, previous);
+        }
+        System.out.println("Window title transformer reads its setting before class loading.");
     }
 
     private static void scaleContracts() {

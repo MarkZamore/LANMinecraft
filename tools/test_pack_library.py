@@ -34,6 +34,21 @@ class LibraryPublisherTests(unittest.TestCase):
                 records = read_mods(universal.getvalue(), "universal.jar", loader=loader)
                 self.assertEqual(["fabric_base", "fabric_child"], [record["id"] for record in records])
 
+    def test_forge_bootstrap_declares_its_embedded_mod_in_the_manifest(self):
+        nested = io.BytesIO()
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr("META-INF/mods.toml", '[[mods]]\nmodId="embedded"\nversion="1.2"\n')
+        bootstrap = io.BytesIO()
+        with zipfile.ZipFile(bootstrap, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n"
+                             "Additional-Dependencies-Mod: embedded.jar\n"
+                             "Additional-Dependencies-Service: service.jar\n")
+            archive.writestr("embedded.jar", nested.getvalue())
+            archive.writestr("service.jar", b"a loader service is not a mod")
+        records = read_mods(bootstrap.getvalue(), "bootstrap.jar", loader="forge")
+        self.assertEqual([("embedded", "1.2", 1, True)],
+                         [(row["id"], row["version"], row["_depth"], row["isLoadedMod"]) for row in records])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.pack = pathlib.Path(self.temp.name) / "Example Pack"

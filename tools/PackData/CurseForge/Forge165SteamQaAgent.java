@@ -4,6 +4,8 @@ import java.io.File;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -35,6 +37,7 @@ public final class Forge165SteamQaAgent {
     private final Path world;
     private final String worldName;
     private final String reopenLevelSha256;
+    private final String expectedWindowTitle;
     private final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(11);
     private Object client;
     private ClassLoader loader;
@@ -49,6 +52,7 @@ public final class Forge165SteamQaAgent {
         worldName = "LanMcSteamQa165" + suffix;
         world = game.resolve("saves").resolve(worldName);
         reopenLevelSha256 = System.getProperty(PREFIX + "reopenLevelSha256", "");
+        expectedWindowTitle = System.getProperty(PREFIX + "expectedWindowTitle", "");
         require(run.getParent().getFileName().toString().equals("agent-runs")
                 && run.getParent().getParent().getFileName().toString().equals("artifacts")
                 && Files.isRegularFile(run.resolve("RUN.json"), LinkOption.NOFOLLOW_LINKS)
@@ -78,22 +82,28 @@ public final class Forge165SteamQaAgent {
             await("native game loop", 220, () -> findClient(instrumentation));
             await("title", 200, () -> schedule(client, this::titleReady));
             event("title", "\"loaded\":true");
+            checkWindowTitle("initial");
             event("loaded_mod_ids", schedule(client, this::readMods));
             phase = reopenLevelSha256.isEmpty() ? "world creation" : "world reopen";
             schedule(client, () -> { openWorld(); return null; });
             await("native world", 125, () -> schedule(client, () -> player() != null && server() != null));
+            checkWindowTitle("before_publication");
             checkPermissions(false);
             require(schedule(client, this::usesAuthorSkyblockGenerator), "The author default skyblock generator was not selected.");
             if (!reopenLevelSha256.isEmpty()) {
                 event("world_reopened", "\"authorDefaultWorldType\":true,\"commands\":false,\"mode\":\"SURVIVAL\","
                         + "\"verifiedInputLevelDatSha256\":\"" + reopenLevelSha256 + "\"");
-                event("complete", "\"worldReopened\":true,\"realSteamGuest\":\"NOT RUN\"");
-                return;
+                if (expectedWindowTitle.isEmpty()) {
+                    event("complete", "\"worldReopened\":true,\"realSteamGuest\":\"NOT RUN\"");
+                    return;
+                }
+            } else {
+                event("world_created", "\"authorDefaultWorldType\":true,\"commands\":false,\"mode\":\"SURVIVAL\"");
             }
-            event("world_created", "\"authorDefaultWorldType\":true,\"commands\":false,\"mode\":\"SURVIVAL\"");
             phase = "pause and publication";
             schedule(client, () -> { publishFromPause(); return null; });
             event("published", "\"oneNativeButtonAction\":true,\"intermediateScreen\":false,\"reports\":true");
+            checkWindowTitle("after_publication");
             phase = "native command authority";
             checkPermissions(true);
             phase = "native chat";
@@ -101,7 +111,8 @@ public final class Forge165SteamQaAgent {
             event("chat", chat.evidence());
             phase = "native save";
             saveWorld();
-            event("complete", "\"worldSaved\":true,\"nativeSteamHostChat\":" + chat.complete()
+            event("complete", "\"worldSaved\":true,\"worldReopened\":" + !reopenLevelSha256.isEmpty()
+                    + ",\"nativeSteamHostChat\":" + chat.complete()
                     + ",\"realSteamGuest\":\"NOT RUN\"");
         } catch (Throwable failure) {
             Throwable detail = failure;
@@ -142,6 +153,38 @@ public final class Forge165SteamQaAgent {
                 "Wrong actual game directory.");
         return type(SCREEN + "MainMenuScreen").isInstance(screen())
                 && call(client, "func_213250_au", NONE) == null && player() == null && server() == null;
+    }
+
+    private void checkWindowTitle(String phase) throws Exception {
+        if (expectedWindowTitle.isEmpty()) return;
+        String actual = schedule(client, this::nativeWindowTitle);
+        boolean matches = expectedWindowTitle.equals(actual);
+        event("window_title", "\"phase\":" + jsonString(phase) + ",\"expected\":" + jsonString(expectedWindowTitle)
+                + ",\"actual\":" + jsonString(actual) + ",\"matches\":" + matches);
+        require(matches, "Native window title differs from the verified card name.");
+    }
+
+    private String nativeWindowTitle() throws Exception {
+        Object window = call(client, "func_228018_at_", NONE);
+        long handle = (Long) call(window, "func_198092_i", NONE);
+        long hwnd = (Long) invoke(type("org.lwjgl.glfw.GLFWNativeWin32"), null, "glfwGetWin32Window",
+                new Class<?>[] {long.class}, handle);
+        require(hwnd != 0, "Expected a native game window.");
+        Object user32 = invoke(type("org.lwjgl.system.windows.User32"), null, "getLibrary", NONE);
+        long getWindowText = (Long) invoke(type("org.lwjgl.system.APIUtil"), null, "apiGetFunctionAddress",
+                new Class<?>[] {type("org.lwjgl.system.FunctionProvider"), String.class}, user32, "GetWindowTextW");
+        Class<?> memory = type("org.lwjgl.system.MemoryUtil");
+        int capacity = 1024;
+        ByteBuffer buffer = (ByteBuffer) invoke(memory, null, "memAlloc", new Class<?>[] {int.class}, capacity * 2);
+        try {
+            long address = (Long) invoke(memory, null, "memAddress", new Class<?>[] {ByteBuffer.class}, buffer);
+            int size = (Integer) invoke(type("org.lwjgl.system.JNI"), null, "callPPI",
+                    new Class<?>[] {long.class, long.class, int.class, long.class}, hwnd, address, capacity, getWindowText);
+            require(size > 0 && size < capacity - 1, "Native game window title is empty or too long.");
+            return (String) invoke(memory, null, "memUTF16", new Class<?>[] {ByteBuffer.class, int.class}, buffer, size);
+        } finally {
+            invoke(memory, null, "memFree", new Class<?>[] {Buffer.class}, buffer);
+        }
     }
 
     private String readMods() throws Exception {

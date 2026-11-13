@@ -663,7 +663,8 @@ public sealed class MinecraftProcessService
         // Only JVM options are logged. The application suffix includes the
         // session/access token and must never enter this diagnostic line.
         var mainClass = profile.GetInheritedProperty(version => version.MainClass);
-        _logger.Info("Java: " + string.Join(' ', finalArguments.TakeWhile(argument => argument != mainClass)));
+        var mainClassIndex = finalArguments.TakeWhile(argument => argument != mainClass).Count();
+        _logger.Info("Java: " + string.Join(' ', finalArguments.Take(mainClassIndex)));
         minecraftProcess.StartInfo.CreateNoWindow = true;
         // Windows applies the startup show state to LWJGL 2's first ShowWindow call.
         minecraftProcess.StartInfo.WindowStyle = descriptor.Loader.Type == PackLoaderKind.LegacyFabric
@@ -681,7 +682,9 @@ public sealed class MinecraftProcessService
                 {
                     [PackLaunchContextService.LocalAiEndpoint] = localAi.Endpoint
                 }),
-            afterStart: noticeOverlay.BindProcess, heapGb: heapGb, video: video, installedGb: installedGb);
+            afterStart: noticeOverlay.BindProcess, heapGb: heapGb, video: video, installedGb: installedGb,
+            prepareArguments: () => JavaLaunchArgumentFile.Prepare(_paths, minecraftProcess.StartInfo, finalArguments,
+                JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion, mainClassIndex, _logger));
 
         _logger.Info($"Minecraft client started with profile {runtime.ProfileId}.");
     }
@@ -738,11 +741,13 @@ public sealed class MinecraftProcessService
     private async Task RunClientAsync(Process process, string packRelativePath, string gameDir,
         WorldLaunchSession worldSession, CancellationToken token, Action? beforeStart = null,
         Action<Process>? afterStart = null, int heapGb = 0, VideoMemoryProfile video = default,
-        int installedGb = 0, string? nativeExecutable = null, NativeRuntimeFiles? nativeFiles = null)
+        int installedGb = 0, string? nativeExecutable = null, NativeRuntimeFiles? nativeFiles = null,
+        Func<JavaLaunchArgumentFile?>? prepareArguments = null)
     {
         var startupOutput = new StartupOutputBuffer();
         var started = false;
         var monitored = false;
+        JavaLaunchArgumentFile? argumentFile = null;
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
@@ -758,6 +763,7 @@ public sealed class MinecraftProcessService
             process.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
 
             token.ThrowIfCancellationRequested();
+            argumentFile = prepareArguments?.Invoke();
             beforeStart?.Invoke();
             if (!process.Start())
                 throw new InvalidOperationException("Minecraft process could not be started.");
@@ -775,7 +781,7 @@ public sealed class MinecraftProcessService
 
             // The monitor owns the Process object from here on.
             _ = MonitorClientExitAsync(process, packRelativePath, exitCode, startupOutput, gameDir,
-                heapGb, video, installedGb, worldSession, nativeExecutable is not null, nativeFiles);
+                heapGb, video, installedGb, worldSession, nativeExecutable is not null, nativeFiles, argumentFile);
             monitored = true;
         }
         catch (Win32Exception ex) when (MinecraftLaunchFailure.IsNativeMemoryError(ex.NativeErrorCode))
@@ -794,6 +800,7 @@ public sealed class MinecraftProcessService
                 startupOutput.Close();
                 process.Dispose();
                 nativeFiles?.Dispose();
+                argumentFile?.Dispose();
             }
         }
 
@@ -817,7 +824,8 @@ public sealed class MinecraftProcessService
         int installedGb = 0,
         WorldLaunchSession? worldSession = null,
         bool native = false,
-        NativeRuntimeFiles? nativeFiles = null)
+        NativeRuntimeFiles? nativeFiles = null,
+        JavaLaunchArgumentFile? argumentFile = null)
     {
         var processId = process.Id;
         // Timed here rather than from the process's own start time: a session
@@ -912,6 +920,7 @@ public sealed class MinecraftProcessService
             exitCode.TrySetResult(0);
             _presence.Forget(processId);
             nativeFiles?.Dispose();
+            argumentFile?.Dispose();
             if (!native)
             {
                 NoticeOverlay.ProcessExited(processId);

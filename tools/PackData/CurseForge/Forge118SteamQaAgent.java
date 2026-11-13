@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -39,6 +41,7 @@ public final class Forge118SteamQaAgent {
     private final String minecraftVersion;
     private final String worldName;
     private final String reopenLevelSha256;
+    private final String expectedWindowTitle;
     private final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(11);
     private Object client;
     private ClassLoader gameLoader;
@@ -59,6 +62,7 @@ public final class Forge118SteamQaAgent {
             case "1.18.2" -> "LanMcSteamQa118";
             case "1.19.2" -> "LanMcSteamQa119";
             case "1.20.1" -> "LanMcSteamQa120";
+            case "1.21.1" -> "LanMcSteamQa121";
             default -> throw new SecurityException("No reviewed Forge QA profile for " + minecraftVersion);
         };
         String suffix = System.getProperty(PREFIX + "worldSuffix", "");
@@ -66,6 +70,7 @@ public final class Forge118SteamQaAgent {
         worldName = worldPrefix + suffix;
         world = game.resolve("saves").resolve(worldName);
         reopenLevelSha256 = System.getProperty(PREFIX + "reopenLevelSha256", "");
+        expectedWindowTitle = System.getProperty(PREFIX + "expectedWindowTitle", "");
         if (!game.startsWith(install.resolve("Minecraft/Personal/Instances")) ||
                 !evidence.startsWith(install.resolve("evidence")) ||
                 Files.exists(evidence.resolve("native-steam-qa.jsonl"), LinkOption.NOFOLLOW_LINKS) ||
@@ -96,22 +101,26 @@ public final class Forge118SteamQaAgent {
             event("started", Map.of("world", worldName, "minecraft", minecraftVersion, "computerUse", false,
                 "transforms", false, "twoAccounts", "NOT RUN"));
             waitForClient(instrumentation);
-            waitUntil("title", 180, () -> onClient(() -> titleReady()));
+            waitUntil("title", 240, () -> onClient(this::completeStartup));
+            checkWindowTitle("startup");
             event("loaded_mod_ids", onClient(this::readMods));
             onClient(() -> { openWorld(); return null; });
             waitUntil("world join", 180, () -> onClient(() -> player() != null && server() != null));
             event(reopenLevelSha256.isEmpty() ? "world_created" : "world_reopened",
                 Map.of("gameMode", "SURVIVAL", "commands", false));
+            checkWindowTitle("world_before_steam");
 
             onClient(() -> { beginPublish(); return null; });
             waitUntil("world published and settings gone", 20, () -> onClient(() ->
-                Boolean.TRUE.equals(invoke(server(), "m_6992_")) && screen() == null));
+                Boolean.TRUE.equals(invoke(server(), runtimeName("m_6992_", "isPublished"))) && screen() == null));
             event("published", Map.of("nativeListener", true, "settingsClosedOnPublication", true));
 
             checkPermissions();
             event("pause_after_publish", onClient(this::checkPauseAfter));
             ChatProbe steamChat = waitForChat();
             event("chat", steamChat.evidence());
+            checkWindowTitle("world_after_steam");
+            if (steamChat.complete()) checkPublishedSteamMetadata();
 
             saveWorld();
             event("complete", Map.of("nativeSteamHost", steamChat.complete() ? "PASS" : "FAIL", "guestConnection", "NOT RUN"));
@@ -123,7 +132,7 @@ public final class Forge118SteamQaAgent {
         } finally {
             if (client != null) try {
                 ((Executor) client).execute(() -> {
-                    try { invoke(client, "m_91395_"); }
+                    try { invoke(client, runtimeName("m_91395_", "stop")); }
                     catch (ReflectiveOperationException failure) {
                         System.err.println("[Forge118SteamQa] Native shutdown failed: " + failure.getClass().getName());
                     }
@@ -137,10 +146,10 @@ public final class Forge118SteamQaAgent {
             // The exact native run loop establishes that the singleton was
             // initialized by Minecraft itself before the agent reflects on it.
             if (!Thread.getAllStackTraces().values().stream().flatMap(java.util.Arrays::stream)
-                    .anyMatch(frame -> frame.getClassName().equals(MC) && frame.getMethodName().equals("m_91374_"))) return false;
+                    .anyMatch(frame -> frame.getClassName().equals(MC) && frame.getMethodName().equals(runtimeName("m_91374_", "runTick")))) return false;
             for (Class<?> loaded : instrumentation.getAllLoadedClasses()) {
                 if (!loaded.getName().equals(MC)) continue;
-                client = invoke(loaded, null, "m_91087_", new Class<?>[0]);
+                client = invoke(loaded, null, runtimeName("m_91087_", "getInstance"), new Class<?>[0]);
                 if (client == null) continue;
                 gameLoader = loaded.getClassLoader();
                 return true;
@@ -150,14 +159,52 @@ public final class Forge118SteamQaAgent {
     }
 
     private boolean titleReady() throws Exception {
-        require(((File) field(client.getClass(), "f_91069_").get(client)).toPath().toRealPath().equals(game),
+        require(((File) field(client.getClass(), runtimeName("f_91069_", "gameDirectory")).get(client)).toPath().toRealPath().equals(game),
             "Wrong actual game directory.");
         return type(SCREENS + "TitleScreen").isInstance(screen()) &&
-            invoke(client, "m_91265_") == null && player() == null && server() == null;
+            invoke(client, runtimeName("m_91265_", "getOverlay")) == null && player() == null && server() == null;
+    }
+
+    private boolean completeStartup() throws Exception {
+        if (titleReady()) return true;
+        Object current = screen();
+        if (current != null && current.getClass().getName().equals(SCREENS + "AccessibilityOnboardingScreen") &&
+                invoke(client, runtimeName("m_91265_", "getOverlay")) == null) {
+            // The ordinary first-run lifecycle only persists the isolated QA instance's options.
+            invoke(current, runtimeName("m_7379_", "onClose"));
+            event("accessibility_onboarding_completed", Map.of("nativeLifecycle", true));
+        }
+        return false;
+    }
+
+    private void checkWindowTitle(String phase) throws Exception {
+        if (expectedWindowTitle.isEmpty()) return;
+        String title = onClient(this::readWindowTitle);
+        boolean matches = expectedWindowTitle.equals(title);
+        event("window_title", Map.of("phase", phase, "actual", title, "expected", expectedWindowTitle,
+            "matches", matches, "nativeWindow", true));
+        require(matches, "The native game window did not show only the card name at " + phase + ".");
+    }
+
+    private String readWindowTitle() throws Exception {
+        long window = (Long) invoke(invoke(client, runtimeName("m_91268_", "getWindow")), runtimeName("m_85439_", "getWindow"));
+        long hwnd = (Long) invoke(type("org.lwjgl.glfw.GLFWNativeWin32"), null,
+            "glfwGetWin32Window", new Class<?>[] { long.class }, window);
+        require(hwnd != 0L, "The game has no native window handle.");
+        Object user32 = invoke(type("org.lwjgl.system.windows.User32"), null, "getLibrary", new Class<?>[0]);
+        long read = (Long) invoke(type("org.lwjgl.system.APIUtil"), null, "apiGetFunctionAddress",
+            new Class<?>[] { type("org.lwjgl.system.FunctionProvider"), String.class }, user32, "GetWindowTextW");
+        ByteBuffer utf16 = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
+        long address = (Long) invoke(type("org.lwjgl.system.MemoryUtil"), null, "memAddress",
+            new Class<?>[] { ByteBuffer.class }, utf16);
+        int length = (Integer) invoke(type("org.lwjgl.system.JNI"), null, "callPPI",
+            new Class<?>[] { long.class, long.class, int.class, long.class }, hwnd, address, 512, read);
+        require(length > 0 && length < 511, "Invalid native window title length.");
+        return utf16.asCharBuffer().subSequence(0, length).toString();
     }
 
     private Map<String, Object> readMods() throws Exception {
-        Class<?> modList = type("net.minecraftforge.fml.ModList");
+        Class<?> modList = type(runtimeName("net.minecraftforge.fml.ModList", "net.neoforged.fml.ModList"));
         Object list = invoke(modList, null, "get", new Class<?>[0]);
         Map<String, String> ids = new TreeMap<>();
         Map<String, String> files = new TreeMap<>();
@@ -180,10 +227,13 @@ public final class Forge118SteamQaAgent {
     private void openWorld() throws Exception {
         require(titleReady(), "World open requires the native title screen.");
         verifyWorldInput();
-        Object worldFlows = legacyComponents() ? client : invoke(client, "m_231466_");
+        Object worldFlows = legacyComponents() ? client : invoke(client, runtimeName("m_231466_", "createWorldOpenFlows"));
         if (!reopenLevelSha256.isEmpty()) {
             if (legacyComponents()) {
                 invoke(client, "m_91200_", new Class<?>[] { String.class }, worldName);
+            } else if (usesNamedClasses()) {
+                Runnable onFailure = () -> { throw new IllegalStateException("The pinned QA world could not reopen."); };
+                invoke(worldFlows, "openWorld", new Class<?>[] { String.class, Runnable.class }, worldName, onFailure);
             } else {
                 invoke(worldFlows, "m_233133_", new Class<?>[] { type(SCREENS + "Screen"), String.class }, screen(), worldName);
             }
@@ -193,27 +243,32 @@ public final class Forge118SteamQaAgent {
         Class<?> mode = type(LEVEL + "GameType");
         Class<?> difficulty = type("net.minecraft.world.Difficulty");
         Class<?> gameRules = type(LEVEL + "GameRules");
-        boolean worldDimensions = minecraftVersion.equals("1.20.1");
+        boolean worldDimensions = minecraftVersion.equals("1.20.1") || usesNamedClasses();
         Class<?> dataPacks = type(LEVEL + (worldDimensions ? "WorldDataConfiguration" : "DataPackConfig"));
         Class<?> registry = type("net.minecraft.core.RegistryAccess");
         Object levelSettings = settings.getConstructor(String.class, mode, boolean.class, difficulty, boolean.class,
             gameRules, dataPacks).newInstance(worldName, mode.getField("SURVIVAL").get(null), false,
                 difficulty.getField("NORMAL").get(null), false, gameRules.getConstructor().newInstance(),
-                dataPacks.getField(worldDimensions ? "f_244649_" : "f_45842_").get(null));
+                dataPacks.getField(worldDimensions ? runtimeName("f_244649_", "DEFAULT") : "f_45842_").get(null));
         if (worldDimensions) {
             Class<?> options = type(LEVEL + "levelgen.WorldOptions");
             Class<?> presets = type(LEVEL + "levelgen.presets.WorldPresets");
-            Object generationOptions = invoke(options, null, "m_247394_", new Class<?>[0]);
+            Object generationOptions = invoke(options, null, runtimeName("m_247394_", "defaultWithRandomSeed"), new Class<?>[0]);
             Function<Object, Object> dimensions = access -> {
                 Thread thread = Thread.currentThread();
                 ClassLoader previous = thread.getContextClassLoader();
                 thread.setContextClassLoader(gameLoader);
-                try { return invoke(presets, null, "m_246552_", new Class<?>[] { registry }, access); }
+                try { return invoke(presets, null, runtimeName("m_246552_", "createNormalWorldDimensions"), new Class<?>[] { registry }, access); }
                 catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
                 finally { thread.setContextClassLoader(previous); }
             };
-            invoke(worldFlows, "m_233157_", new Class<?>[] { String.class, settings, options, Function.class },
-                worldName, levelSettings, generationOptions, dimensions);
+            if (usesNamedClasses()) {
+                invoke(worldFlows, "createFreshLevel", new Class<?>[] { String.class, settings, options, Function.class, type(SCREENS + "Screen") },
+                    worldName, levelSettings, generationOptions, dimensions, screen());
+            } else {
+                invoke(worldFlows, "m_233157_", new Class<?>[] { String.class, settings, options, Function.class },
+                    worldName, levelSettings, generationOptions, dimensions);
+            }
             return;
         }
         Class<?> generation = type(LEVEL + "levelgen.WorldGenSettings");
@@ -244,7 +299,7 @@ public final class Forge118SteamQaAgent {
 
     private void saveWorld() throws Exception {
         Object server = onClient(this::server);
-        require(Boolean.TRUE.equals(schedule((Executor) server, () -> invoke(server, "m_195514_",
+        require(Boolean.TRUE.equals(schedule((Executor) server, () -> invoke(server, runtimeName("m_195514_", "saveEverything"),
             new Class<?>[] { boolean.class, boolean.class, boolean.class }, false, true, false))),
             "Native saveEverything did not save the QA world.");
         event("world_saved", Map.of("levelDatSha256", levelDatSha256(), "levelDatBytes", Files.size(world.resolve("level.dat"))));
@@ -262,7 +317,7 @@ public final class Forge118SteamQaAgent {
         require(type("net.minecraft.client.gui.components.AbstractButton").isInstance(action) && isActive(action),
             "Share to LAN was not an active native button.");
         event("pause_before_publish", Map.of("shareToLan", 1, "worldSettingsOrCheats", false, "nativeButtonCallback", true));
-        invoke(action, "m_5691_");
+        invoke(action, runtimeName("m_5691_", "onPress"));
     }
 
     private Map<String, Boolean> checkPauseAfter() throws Exception {
@@ -279,21 +334,22 @@ public final class Forge118SteamQaAgent {
 
     private void checkPermissions() throws Exception {
         Object server = onClient(this::server);
-        Object host = onClient(() -> invoke(player(), "m_36316_"));
+        Object host = onClient(() -> invoke(player(), runtimeName("m_36316_", "getGameProfile")));
         Class<?> profile = type("com.mojang.authlib.GameProfile");
         require(PLAYER_NAME.equals(invoke(host, "getName")), "Wrong native QA player.");
         Object guest = profile.getConstructor(UUID.class, String.class).newInstance(
             UUID.fromString("d96a4354-8ff0-4b76-8202-6835ef952efb"), "LanMcQaGuest");
         Map<String, Boolean> result = schedule((Executor) server, () -> {
-            Object players = invoke(server, "m_6846_");
-            Object data = invoke(server, "m_129910_");
-            boolean hostBefore = Boolean.TRUE.equals(invoke(players, "m_11303_", new Class<?>[] { profile }, host));
-            boolean guestBefore = Boolean.TRUE.equals(invoke(players, "m_11303_", new Class<?>[] { profile }, guest));
-            invoke(players, "m_11284_", new Class<?>[] { boolean.class }, true);
-            boolean hostAfter = Boolean.TRUE.equals(invoke(players, "m_11303_", new Class<?>[] { profile }, host));
-            boolean guestAfter = Boolean.TRUE.equals(invoke(players, "m_11303_", new Class<?>[] { profile }, guest));
-            boolean stored = Boolean.TRUE.equals(invoke(data, "m_5468_"));
-            boolean survival = "SURVIVAL".equals(((Enum<?>) invoke(data, "m_5464_")).name());
+            Object players = invoke(server, runtimeName("m_6846_", "getPlayerList"));
+            Object data = invoke(server, runtimeName("m_129910_", "getWorldData"));
+            String isOp = runtimeName("m_11303_", "isOp");
+            boolean hostBefore = Boolean.TRUE.equals(invoke(players, isOp, new Class<?>[] { profile }, host));
+            boolean guestBefore = Boolean.TRUE.equals(invoke(players, isOp, new Class<?>[] { profile }, guest));
+            invoke(players, runtimeName("m_11284_", "setAllowCommandsForAllPlayers"), new Class<?>[] { boolean.class }, true);
+            boolean hostAfter = Boolean.TRUE.equals(invoke(players, isOp, new Class<?>[] { profile }, host));
+            boolean guestAfter = Boolean.TRUE.equals(invoke(players, isOp, new Class<?>[] { profile }, guest));
+            boolean stored = Boolean.TRUE.equals(invoke(data, runtimeName("m_5468_", "isAllowCommands")));
+            boolean survival = "SURVIVAL".equals(((Enum<?>) invoke(data, runtimeName("m_5464_", "getGameType"))).name());
             return Map.of("hostBefore", hostBefore, "guestBefore", guestBefore, "hostAfter", hostAfter,
                 "guestAfter", guestAfter, "savedAllowsCommands", stored, "savedSurvivalMode", survival);
         });
@@ -314,14 +370,41 @@ public final class Forge118SteamQaAgent {
         return probe;
     }
 
+    private void checkPublishedSteamMetadata() throws Exception {
+        Class<?> steamRuntime = type("link.e4steam.steam.SteamRuntime");
+        Object runtime = invoke(steamRuntime, null, "get", new Class<?>[0]);
+        boolean[] matches = new boolean[3];
+        waitUntil("Steam lobby display metadata", 45, () -> {
+            CompletableFuture<?> read = (CompletableFuture<?>) invoke(runtime, "submitSteamTask",
+                new Class<?>[] { Callable.class }, (Callable<Boolean>) () -> {
+                    Object host = field(steamRuntime, "hostRegistration").get(runtime);
+                    Object manager = field(steamRuntime, "lobbyManager").get(runtime);
+                    if (host == null || manager == null) return false;
+                    long id = (Long) field(manager.getClass(), "hostLobbyId").get(manager);
+                    if (id == 0 || field(manager.getClass(), "hostLobbyOwner").get(manager) != invoke(host, "owner")) return false;
+                    Class<?> steamId = type("com.codedisaster.steamworks.SteamID");
+                    Object lobby = invoke(steamId, null, "createFromNativeHandle", new Class<?>[] { long.class }, id);
+                    Object matchmaking = field(manager.getClass(), "matchmaking").get(manager);
+                    Class<?>[] signature = { steamId, String.class };
+                    matches[0] = worldName.equals(invoke(matchmaking, "getLobbyData", signature, lobby, "lanminecraft_world"));
+                    matches[1] = PLAYER_NAME.equals(invoke(matchmaking, "getLobbyData", signature, lobby, "lanminecraft_player"));
+                    matches[2] = "1".equals(invoke(matchmaking, "getLobbyData", signature, lobby, "lanminecraft_display"));
+                    return matches[0] && matches[1] && matches[2];
+                });
+            return Boolean.TRUE.equals(read.get(8, TimeUnit.SECONDS));
+        });
+        event("steam_lobby_metadata", Map.of("actualSteamLobby", true, "matchesWorldName", matches[0],
+            "matchesLauncherPlayer", matches[1], "displayFlag", matches[2], "secondAccountDiscovery", "NOT RUN"));
+    }
+
     private ChatProbe readChat() throws Exception {
-        Object gui = field(client.getClass(), "f_91065_").get(client);
+        Object gui = field(client.getClass(), runtimeName("f_91065_", "gui")).get(client);
         // Read the native local chat. Mods may redirect getChat() to a
         // different selected channel and forward system messages to this HUD.
-        Object chat = field(gui.getClass(), "f_92988_").get(gui);
+        Object chat = field(gui.getClass(), runtimeName("f_92988_", "chat")).get(gui);
         var probe = new ChatProbe();
-        for (Object entry : (List<?>) field(chat.getClass(), "f_93760_").get(chat)) {
-            Object message = invoke(entry, legacyComponents() ? "m_90793_" : "f_240363_");
+        for (Object entry : (List<?>) field(chat.getClass(), runtimeName("f_93760_", "allMessages")).get(chat)) {
+            Object message = invoke(entry, legacyComponents() ? "m_90793_" : runtimeName("f_240363_", "content"));
             if ("commands.publish.started".equals(translationKey(message))) probe.portLines++;
             if (!"text.e4steam_minecraft.domainAssigned".equals(translationKey(message))) continue;
             probe.readyLines++;
@@ -332,24 +415,24 @@ public final class Forge118SteamQaAgent {
 
     private void inspectActions(Object component, ChatProbe probe, int depth) throws Exception {
         require(depth < 20, "Chat component is too deeply nested.");
-        Object style = invoke(component, "m_7383_");
-        Object click = invoke(style, "m_131182_");
+        Object style = invoke(component, runtimeName("m_7383_", "getStyle"));
+        Object click = invoke(style, runtimeName("m_131182_", "getClickEvent"));
         if (click != null) {
-            String action = ((Enum<?>) invoke(click, "m_130622_")).name();
-            String value = (String) invoke(click, "m_130623_");
-            Object color = invoke(style, "m_131135_");
-            int rgb = color == null ? -1 : (Integer) invoke(color, "m_131265_");
+            String action = ((Enum<?>) invoke(click, runtimeName("m_130622_", "getAction"))).name();
+            String value = (String) invoke(click, runtimeName("m_130623_", "getValue"));
+            Object color = invoke(style, runtimeName("m_131135_", "getColor"));
+            int rgb = color == null ? -1 : (Integer) invoke(color, runtimeName("m_131265_", "getValue"));
             if ("COPY_TO_CLIPBOARD".equals(action) && value.endsWith(".steam") && rgb == 0x55ff55) probe.address = true;
             if ("RUN_COMMAND".equals(action) && "/e4steam invite".equals(value) && rgb == 0x5555ff) probe.invite = true;
             if ("RUN_COMMAND".equals(action) && "/e4steam stop".equals(value) && rgb == 0xff5555) probe.stop = true;
         }
         Object contents = translatableContents(component);
         if (contents != null) {
-            for (Object arg : (Object[]) invoke(contents, legacyComponents() ? "m_131329_" : "m_237523_")) {
+            for (Object arg : (Object[]) invoke(contents, legacyComponents() ? "m_131329_" : runtimeName("m_237523_", "getArgs"))) {
                 if (type(CHAT + "Component").isInstance(arg)) inspectActions(arg, probe, depth + 1);
             }
         }
-        for (Object sibling : (List<?>) invoke(component, "m_7360_")) inspectActions(sibling, probe, depth + 1);
+        for (Object sibling : (List<?>) invoke(component, runtimeName("m_7360_", "getSiblings"))) inspectActions(sibling, probe, depth + 1);
     }
 
     private static final class ChatProbe {
@@ -363,9 +446,9 @@ public final class Forge118SteamQaAgent {
     }
 
     private boolean noWorldControls(Object pause) throws Exception {
-        for (Object widget : (List<?>) invoke(pause, "m_6702_")) {
+        for (Object widget : (List<?>) invoke(pause, runtimeName("m_6702_", "children"))) {
             if (!type("net.minecraft.client.gui.components.AbstractWidget").isInstance(widget)) continue;
-            Object label = invoke(widget, "m_6035_");
+            Object label = invoke(widget, runtimeName("m_6035_", "getMessage"));
             String key = translationKey(label);
             String text = (String) invoke(label, "getString");
             if (List.of("selectWorld.allowCommands", "lanServer.allowCommands", "menu.worldOptions", "menu.worldSettings").contains(key == null ? "" : key) ||
@@ -377,38 +460,40 @@ public final class Forge118SteamQaAgent {
     private List<Object> visibleActions(Object pause, String key, String... labels) throws Exception {
         List<Object> actions = new ArrayList<>();
         List<String> translations = List.of(labels);
-        for (Object widget : (List<?>) invoke(pause, "m_6702_")) {
+        for (Object widget : (List<?>) invoke(pause, runtimeName("m_6702_", "children"))) {
             if (!type("net.minecraft.client.gui.components.AbstractWidget").isInstance(widget)) continue;
-            if (!Boolean.TRUE.equals(field(widget.getClass(), "f_93624_").get(widget))) continue;
-            Object label = invoke(widget, "m_6035_");
+            if (!Boolean.TRUE.equals(field(widget.getClass(), runtimeName("f_93624_", "visible")).get(widget))) continue;
+            Object label = invoke(widget, runtimeName("m_6035_", "getMessage"));
             if (key.equals(translationKey(label)) || translations.contains(invoke(label, "getString"))) actions.add(widget);
         }
         return actions;
     }
 
-    private static boolean isActive(Object widget) throws ReflectiveOperationException {
-        return Boolean.TRUE.equals(field(widget.getClass(), "f_93623_").get(widget));
+    private boolean isActive(Object widget) throws ReflectiveOperationException {
+        return Boolean.TRUE.equals(field(widget.getClass(), runtimeName("f_93623_", "active")).get(widget));
     }
 
     private String translationKey(Object component) throws Exception {
         Object contents = translatableContents(component);
-        return contents == null ? null : (String) invoke(contents, legacyComponents() ? "m_131328_" : "m_237508_");
+        return contents == null ? null : (String) invoke(contents, legacyComponents() ? "m_131328_" : runtimeName("m_237508_", "getKey"));
     }
 
     private Object translatableContents(Object component) throws Exception {
         if (legacyComponents()) return type(CHAT + "TranslatableComponent").isInstance(component) ? component : null;
-        Object contents = invoke(component, "m_214077_");
+        Object contents = invoke(component, runtimeName("m_214077_", "getContents"));
         return type(CHAT + "contents.TranslatableContents").isInstance(contents) ? contents : null;
     }
 
     private boolean legacyComponents() { return minecraftVersion.equals("1.18.2"); }
+    private boolean usesNamedClasses() { return minecraftVersion.equals("1.21.1"); }
+    private String runtimeName(String srg, String named) { return usesNamedClasses() ? named : srg; }
 
     private void setScreen(Object screen) throws ReflectiveOperationException {
-        invoke(client, "m_91152_", new Class<?>[] { type(SCREENS + "Screen") }, screen);
+        invoke(client, runtimeName("m_91152_", "setScreen"), new Class<?>[] { type(SCREENS + "Screen") }, screen);
     }
-    private Object screen() throws ReflectiveOperationException { return field(client.getClass(), "f_91080_").get(client); }
-    private Object player() throws ReflectiveOperationException { return field(client.getClass(), "f_91074_").get(client); }
-    private Object server() throws ReflectiveOperationException { return invoke(client, "m_91092_"); }
+    private Object screen() throws ReflectiveOperationException { return field(client.getClass(), runtimeName("f_91080_", "screen")).get(client); }
+    private Object player() throws ReflectiveOperationException { return field(client.getClass(), runtimeName("f_91074_", "player")).get(client); }
+    private Object server() throws ReflectiveOperationException { return invoke(client, runtimeName("m_91092_", "getSingleplayerServer")); }
     private Class<?> type(String name) throws ClassNotFoundException { return Class.forName(name, false, gameLoader); }
 
     private <T> T onClient(Callable<T> action) throws Exception { return schedule((Executor) client, action); }
