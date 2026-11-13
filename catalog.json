@@ -132,6 +132,15 @@
         "repo": "FTB-Inferno",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-14",
+      "relativePath": "All in One",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-in-One",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
