@@ -66,7 +66,9 @@ def source_policy(pack_source, author):
     prepare.overlay_dependency_keys(recipe, author)
     additions = prepare.overlay_additions(recipe, pack_source, author)
     prepare.overlay_bootstrap(recipe, pack_source, author, additions)
-    prepare.jar_metadata_patches(recipe, author, pack_source)
+    jar_patches = prepare.jar_metadata_patches(recipe, author, pack_source)
+    prepare.book_localizations(recipe, pack_source, author)
+    prepare.book_jar_localizations(recipe, author, pack_source, jar_patches)
     prepare.quest_translation(recipe, pack_source, author)
     return recipe, prepare.fingerprint(recipe_bytes)["sha256"], descriptor, descriptor_pin
 
@@ -125,7 +127,8 @@ def payload_inventory(author, policy_files, excluded, jar_patches=()):
         required.remove(name)
 
     for name, pin in policy_files.items():
-        if name in (DESCRIPTOR, OWNERSHIP, prepare.RUSSIAN_QUESTS) or name in prepare.LOGGING_FILES or prepare.BOOTSTRAP_PATH.fullmatch(name):
+        if (name in (DESCRIPTOR, OWNERSHIP, prepare.RUSSIAN_QUESTS) or name in prepare.LOGGING_FILES or
+                prepare.BOOTSTRAP_PATH.fullmatch(name) or name not in override_paths and prepare.book_localization_addition(name)):
             prepare.reserve_path(paths, prepare.safe_path(name))
         else:
             prepare.require(name in override_paths and name not in shared_paths,
@@ -155,8 +158,11 @@ def verify_stage(stage, pack_source, author):
     policy_files = {DESCRIPTOR: descriptor_pin, **{patch["path"]: patch["after"] for patch in patches}}
     owned_names = {patch["path"] for patch in patches}
     jar_patches = prepare.jar_metadata_patches(recipe, receipt, pack_source)
+    book_jars = prepare.book_jar_localizations(recipe, receipt, pack_source, jar_patches)
     if jar_patches:
         expected["jarMetadataPatches"] = jar_patches
+    if book_jars:
+        expected["bookJarLocalization"] = book_jars
     if "additions" in recipe:
         expected["additions"] = recipe["additions"]
         policy_files.update({row["path"]: {key: row[key] for key in ("sizeBytes", "sha256")}
@@ -171,6 +177,12 @@ def verify_stage(stage, pack_source, author):
         expected["questTranslation"] = recipe["questTranslation"]
         policy_files[prepare.RUSSIAN_QUESTS] = recipe["questTranslation"]["output"]
         owned_names.add(prepare.RUSSIAN_QUESTS)
+    if "bookLocalization" in recipe:
+        localized = {row["path"]: row["output"] for row in recipe["bookLocalization"]}
+        prepare.require(not (policy_files.keys() & localized.keys()), "Conflicting book localization overlay edits")
+        expected["bookLocalization"] = recipe["bookLocalization"]
+        policy_files.update(localized)
+        owned_names.update(localized)
     if owned_names:
         ownership = prepare.overlay_bytes(pack_source / OWNERSHIP)
         prepare.require(ownership == ("\n".join(sorted(owned_names)) + "\n").encode("utf-8"),
@@ -188,7 +200,7 @@ def verify_stage(stage, pack_source, author):
             prepare.no_links(target)
             prepare.require(not target.exists(), f"Excluded author dependency remains in staged game: {path}")
     prepare.require(receipt.get("overlay") == expected, "Missing or changed overlay receipt or required launcher feature")
-    inventory, _ = payload_inventory(receipt, policy_files, excluded, jar_patches)
+    inventory, _ = payload_inventory(receipt, policy_files, excluded, [*jar_patches, *book_jars])
     for path, pin in inventory.items():
         target = game / path
         prepare.no_links(target)
@@ -242,8 +254,10 @@ def review_update(pack_source, current, candidate):
     prepare.overlay_dependency_keys(recipe, candidate)
     additions = prepare.overlay_additions(recipe, pack_source, candidate)
     prepare.overlay_bootstrap(recipe, pack_source, candidate, additions)
-    prepare.jar_metadata_patches(recipe, candidate, pack_source)
+    jar_patches = prepare.jar_metadata_patches(recipe, candidate, pack_source)
     prepare.quest_translation(recipe, pack_source, candidate)
+    prepare.book_localizations(recipe, pack_source, candidate)
+    prepare.book_jar_localizations(recipe, candidate, pack_source, jar_patches)
     return {**recipe, "authorArchiveSha256": candidate["client"]["sha256"]}
 
 
@@ -282,7 +296,12 @@ def main():
         client_lock = read_lock(client_path, "client-only")
         if args.command == "review-update":
             candidate = read_lock(args.candidate_lock, "client-only")
-            print(json.dumps(review_update(args.pack_source, client_lock, candidate), ensure_ascii=False, indent=2))
+            current = client_lock
+            complete_lock = args.pack_source / COMPLETE_LOCK
+            if complete_lock.is_file():
+                current = read_lock(complete_lock, "complete")
+                same_author(client_lock, current)
+            print(json.dumps(review_update(args.pack_source, current, candidate), ensure_ascii=False, indent=2))
             return
         lock_path = client_path
         author = client_lock
@@ -297,7 +316,8 @@ def main():
             policy_files, excluded = verify_stage(args.stage, args.pack_source, author)
             recipe, _, _, _ = source_policy(args.pack_source, author)
             jar_patches = prepare.jar_metadata_patches(recipe, author, args.pack_source)
-            verify_manifest(prepare.read_local_json(args.manifest), policy_files, author, excluded, jar_patches)
+            book_jars = prepare.book_jar_localizations(recipe, author, args.pack_source, jar_patches)
+            verify_manifest(prepare.read_local_json(args.manifest), policy_files, author, excluded, [*jar_patches, *book_jars])
             print(f"Verified release payload, policy and required launcher feature: {args.manifest}")
     except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as error:
         parser.exit(1, f"{parser.prog}: {error}\n")

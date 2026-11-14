@@ -145,6 +145,119 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "author's new Russian"):
             prepare.quest_translation(recipe, self.source, official)
 
+    def test_book_localization_keeps_english_and_requires_exact_replacement_and_addition(self):
+        english = "patchouli_books/guide/en_us/entries/first.json"
+        russian = "patchouli_books/guide/ru_ru/entries/first.json"
+        quest = "config/ftbquests/quests/chapters/start.snbt"
+        original = b'{"name":"Guide"}'
+        original_quest = b'{title:"First Steps"}'
+        translated = '{"name":"Справочник"}'.encode()
+        localized_quest = b'{title:"{example.first_steps}"}'
+        additions = {
+            russian: translated, quest: localized_quest,
+            "kubejs/assets/example/lang/en_us.json": b'{"example.first_steps":"First Steps"}',
+            "kubejs/assets/example/lang/ru_ru.json": '{"example.first_steps":"Первые шаги"}'.encode()
+        }
+        for name, data in additions.items():
+            target = self.source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt = {**self.receipt, "overrides": [*self.receipt["overrides"],
+            {"path": english, **prepare.fingerprint(original)}, {"path": quest, **prepare.fingerprint(original_quest)}]}
+        recipe = {**self.recipe, "bookLocalization": [
+            {"path": name, "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(data),
+             **({"before": prepare.fingerprint(original_quest)} if name == quest else {})}
+            for name, data in additions.items()
+        ]}
+        self.write_json(self.recipe_path, recipe)
+        (self.source / release.OWNERSHIP).write_bytes(
+            ("\n".join(sorted({self.config_path, *additions})) + "\n").encode())
+        stage = self.stage / "localized"
+        game = stage / "game"
+        for name, data in {english: original, quest: original_quest, self.config_path: self.original}.items():
+            target = game / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        self.write_json(stage / "intake.json", receipt)
+        policy, _ = release.verify_stage(stage, self.source, receipt)
+        _, required = release.payload_inventory(receipt, policy, [])
+        self.assertLessEqual(additions.keys(), required)
+        self.assertEqual((game / english).read_bytes(), original)
+        self.assertEqual((game / quest).read_bytes(), localized_quest)
+        changed = {**receipt, "overrides": [row for row in receipt["overrides"] if row["path"] != english]}
+        with self.assertRaisesRegex(ValueError, "changed book localization input"):
+            prepare.book_localizations(recipe, self.source, changed)
+        conflict = {**receipt, "overrides": [
+            *receipt["overrides"], {"path": russian, **prepare.fingerprint(translated)}]}
+        with self.assertRaisesRegex(ValueError, "conflicting or unsupported"):
+            prepare.book_localizations(recipe, self.source, conflict)
+        (game / russian).write_bytes(original)
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(stage, self.source, receipt)
+
+    def test_book_jar_localization_only_touches_pinned_book_resources(self):
+        path = "mods/guide.jar"
+        book = "data/guide/patchouli_books/manual/"
+        descriptor = book + "book.json"
+        english = book + "en_us/entries/first.json"
+        russian = book + "ru_ru/entries/first.json"
+        original_files = {descriptor: b'{"landing_text":"Start here","version":1}', english: b'{"name":"Guide"}',
+                          "guide/Example.class": b"unchanged bytecode"}
+        jar = BytesIO()
+        with ZipFile(jar, "w") as archive:
+            for name, data in original_files.items():
+                archive.writestr(name, data)
+        original = jar.getvalue()
+        entries = {descriptor: b'{"landing_text":"guide.book.landing","version":1}',
+                   russian: '{"name":"Справочник"}'.encode(),
+                   "LICENSE": b"Exact license text", "NOTICE": b"Modified book variant"}
+        descriptor_pin = prepare.fingerprint(original_files[descriptor])
+        rebuilt = prepare.rebuild_book_jar(original, entries, {descriptor: descriptor_pin})
+        with ZipFile(BytesIO(rebuilt)) as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, {**original_files, **entries})
+        with self.assertRaisesRegex(ValueError, "Only title and landing"):
+            prepare.rebuild_book_jar(original, {**entries, descriptor: b'{"version":2}'}, {descriptor: descriptor_pin})
+        dependency = {"projectId": 11, "fileId": 22, "required": True}
+        receipt = {**self.receipt, "declaredDependencies": [dependency],
+                   "files": [{**dependency, "path": path, **prepare.fingerprint(original)}]}
+        recipe = {**self.recipe, "bookJarLocalization": [{
+            "path": path, "projectId": 11, "fileId": 22, "before": prepare.fingerprint(original),
+            "after": prepare.fingerprint(rebuilt), "entries": []
+        }]}
+        for name, data in entries.items():
+            source = ("licenses/" + name) if name in {"LICENSE", "NOTICE"} else ("tools/book-localization/" + name)
+            target = self.source / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            recipe["bookJarLocalization"][0]["entries"].append({
+                "path": name, "source": source, "output": prepare.fingerprint(data),
+                **({"before": descriptor_pin} if name == descriptor else {})
+            })
+        self.write_json(self.recipe_path, recipe)
+        stage = self.stage / "jar-localized"
+        game = stage / "game"
+        for name, data in {self.config_path: self.original, path: original}.items():
+            target = game / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        prepare.apply_book_jar_localizations(game, self.source, receipt)
+        self.write_json(stage / "intake.json", receipt)
+        policy, excluded = release.verify_stage(stage, self.source, receipt)
+        checked = prepare.book_jar_localizations(recipe, receipt, self.source)
+        files, required = release.payload_inventory(receipt, policy, excluded, checked)
+        self.assertEqual(files[path], prepare.fingerprint(rebuilt))
+        self.assertIn(path, required)
+        next_author = {**self.author, "declaredDependencies": [dependency]}
+        reviewed = release.review_update(self.source, receipt, next_author)
+        self.assertEqual(reviewed["bookJarLocalization"], checked)
+        with self.assertRaisesRegex(ValueError, "changed book localization dependency"):
+            release.review_update(self.source, receipt, self.author)
+        (game / path).write_bytes(original)
+        with self.assertRaisesRegex(ValueError, "Staged author payload differs"):
+            release.verify_stage(stage, self.source, receipt)
+
     def test_pinned_logging_survives_author_update_and_is_required_in_payload(self):
         additions = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
                      "launcher/jvm-args.txt": b"-Dlog4j.configurationFile=config/log4j2.xml\n"}

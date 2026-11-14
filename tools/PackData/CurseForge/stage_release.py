@@ -33,7 +33,7 @@ def git(pack_source, *args):
     return result.stdout
 
 
-def check_source(pack_source, revision, pack_id, policy_files, jar_patches=()):
+def check_source(pack_source, revision, pack_id, policy_files, jar_patches=(), recipe=None, book_jars=()):
     prepare.require(isinstance(revision, str) and re.fullmatch("[0-9a-f]{40}", revision), "Use a full Git source revision")
     prepare.require(isinstance(pack_id, str) and re.fullmatch(r"minecraft-[1-9][0-9]*", pack_id), "Use a numbered minecraft-N ID")
     prepare.no_links(pack_source)
@@ -47,6 +47,8 @@ def check_source(pack_source, revision, pack_id, policy_files, jar_patches=()):
     required.extend(sorted((prepare.LOGGING_FILES | {prepare.RUSSIAN_QUESTS}) & policy_files.keys()))
     required.extend(sorted(path for path in policy_files if prepare.BOOTSTRAP_PATH.fullmatch(path)))
     required.extend(sorted({row["license"] for row in jar_patches}))
+    required.extend(row["path"] for row in (recipe or {}).get("bookLocalization", []))
+    required.extend(sorted({entry["source"] for row in book_jars for entry in row["entries"]}))
     runtime_sources = "library/runtime-sources.json"
     if (pack_source / runtime_sources).exists():
         required.append(runtime_sources)
@@ -133,8 +135,10 @@ def build_release(pack_source, stage, out, revision, pack_id, include_optional=(
     policy_files, excluded = release_overlay.verify_stage(stage, pack_source, author)
     recipe, _, _, _ = release_overlay.source_policy(pack_source, author)
     jar_patches = prepare.jar_metadata_patches(recipe, author, pack_source)
-    generated_at = check_source(pack_source, revision, pack_id, policy_files, jar_patches)
-    inventory, required = release_overlay.payload_inventory(author, policy_files, excluded, jar_patches)
+    book_jars = prepare.book_jar_localizations(recipe, author, pack_source, jar_patches)
+    generated_at = check_source(pack_source, revision, pack_id, policy_files, jar_patches, recipe, book_jars)
+    patched_jars = [*jar_patches, *book_jars]
+    inventory, required = release_overlay.payload_inventory(author, policy_files, excluded, patched_jars)
     optional = set(include_optional)
     prepare.require(optional <= inventory.keys() - required, "Optional selections must be exact optional author paths")
     payload = {path: inventory[path] for path in sorted(required | optional)}
@@ -162,7 +166,7 @@ def build_release(pack_source, stage, out, revision, pack_id, include_optional=(
             "files": [{"path": path, **pin} for path, pin in payload.items()],
             "assets": build_assets(game, pending / "assets", payload), "library": library,
         }
-        release_overlay.verify_manifest(manifest, policy_files, author, excluded, jar_patches)
+        release_overlay.verify_manifest(manifest, policy_files, author, excluded, patched_jars)
         prepare.write_json(pending / "pack-manifest.json", manifest)
         pending.rename(out)
     return manifest

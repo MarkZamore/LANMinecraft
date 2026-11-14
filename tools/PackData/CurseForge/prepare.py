@@ -35,6 +35,13 @@ LOADERS = {"forge", "neoforge", "fabric", "quilt"}
 REQUIRED_SHARE_FEATURE = "preserve-steam-world-settings-v1"
 LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
+BOOK_PAGES = r"patchouli_books/[a-z0-9_.-]+/ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
+BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
+BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
+BOOK_NOTICE = r"licenses/[a-zA-Z0-9_.-]+\.txt"
+BOOK_JAR_ROOT = r"data/[a-z0-9_.-]+/patchouli_books/[a-z0-9_.-]+/"
+BOOK_JAR_PAGES = BOOK_JAR_ROOT + r"ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
+BOOK_JAR_DESCRIPTOR = BOOK_JAR_ROOT + r"book\.json"
 QUEST_LANG = "config/ftbquests/quests/lang/"
 RUSSIAN_QUESTS = QUEST_LANG + "ru_ru.snbt"
 BOOTSTRAP_PATH = re.compile(r"lanminecraft/[a-z0-9][a-z0-9-]{0,63}\.jar")
@@ -491,6 +498,77 @@ def fingerprint(data):
     return {"sizeBytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
+def book_localization_pin(pin, fields=(), limit=MAX_JSON):
+    return (isinstance(pin, dict) and set(pin) == {"sizeBytes", "sha256", *fields} and
+            positive(pin["sizeBytes"]) and pin["sizeBytes"] <= limit and
+            isinstance(pin["sha256"], str) and re.fullmatch("[a-f0-9]{64}", pin["sha256"]))
+
+
+def matches_book_pin(pin, original):
+    return original is not None and all(original.get(key) == value for key, value in pin.items())
+
+
+def book_localization_jar_input(path, pin, author):
+    key = pin["projectId"], pin["fileId"]
+    require(all(map(positive, key)) and path.is_relative_to("mods") and len(path.parts) == 2 and
+            path.suffix == ".jar" and any(row["required"] is True and
+            (row["projectId"], row["fileId"]) == key for row in author["declaredDependencies"]),
+            f"Review required for changed book localization dependency: {path}")
+    if "files" in author:
+        originals = [row for row in author["files"] if row["path"] == path.as_posix()]
+        require(len(originals) == 1 and originals[0]["required"] is True and matches_book_pin(pin, originals[0]),
+                f"Review required for changed book localization JAR bytes: {path}")
+
+
+def book_localization_addition(path):
+    return any(re.fullmatch(pattern, path) for pattern in (BOOK_PAGES, BOOK_LANGUAGE, BOOK_NOTICE))
+
+
+def book_localizations(recipe, pack_source, author):
+    rows = recipe.get("bookLocalization", [])
+    if "bookLocalization" not in recipe:
+        return {}
+    require(isinstance(rows, list) and rows, "Expected nonempty book localization recipe")
+    overrides = {row["path"].casefold(): row for row in author["overrides"]}
+    destinations = {}
+    localized = {}
+    keys = {"path", "inputs", "output"}
+    for row in rows:
+        require(isinstance(row, dict) and set(row) in (keys, keys | {"before"}),
+                "Invalid book localization entry")
+        path = safe_path(row["path"])
+        name = path.as_posix()
+        reserve_path(destinations, path)
+        if "before" in row:
+            original = overrides.get(name.casefold())
+            require(re.fullmatch(BOOK_QUESTS, name) and book_localization_pin(row["before"]) and
+                    matches_book_pin({**row["before"], "path": name}, original),
+                    f"Review required for changed book localization replacement: {name}")
+        else:
+            require(book_localization_addition(name) and name.casefold() not in overrides,
+                    f"Review required for duplicate, conflicting or unsupported book localization output: {name}")
+        inputs = row["inputs"]
+        require(isinstance(inputs, dict) and inputs, f"Missing book localization inputs: {name}")
+        for source, pin in inputs.items():
+            source_path = safe_path(source)
+            if book_localization_pin(pin, ("projectId", "fileId"), MAX_FILE):
+                book_localization_jar_input(source_path, pin, author)
+            else:
+                original = overrides.get(source.casefold())
+                require(book_localization_pin(pin) and matches_book_pin({**pin, "path": source}, original),
+                        f"Review required for changed book localization input: {source}")
+        data = overlay_bytes(pack_source / path)
+        require(book_localization_pin(row["output"]) and fingerprint(data) == row["output"],
+                f"Book localization differs from its pin: {name}")
+        if path.suffix == ".json":
+            content = decode_json(data)
+            require(isinstance(content, dict) and content, f"Expected book localization JSON object: {name}")
+            if re.fullmatch(BOOK_LANGUAGE, name):
+                require(all(isinstance(value, str) for value in content.values()), f"Expected language strings: {name}")
+        localized[name] = data
+    return localized
+
+
 def overlay_additions(recipe, pack_source, author):
     if "additions" not in recipe:
         return {}
@@ -661,6 +739,115 @@ def jar_metadata_patches(recipe, author, pack_source):
     return rows
 
 
+def book_jar_localizations(recipe, author, pack_source, metadata_patches=()):
+    rows = recipe.get("bookJarLocalization", [])
+    if "bookJarLocalization" not in recipe:
+        return []
+    require(isinstance(rows, list) and rows, "Expected nonempty dependency JAR book localizations")
+    excluded = set(overlay_dependency_keys(recipe, author))
+    claimed = {(row["projectId"], row["fileId"]) for row in metadata_patches}
+    overrides = {row["path"].casefold() for row in author["overrides"]}
+    paths = {}
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == {"path", "projectId", "fileId", "before", "after", "entries"},
+                "Invalid dependency JAR book localization")
+        path = safe_path(row["path"])
+        reserve_path(paths, path)
+        key = row["projectId"], row["fileId"]
+        require(book_localization_pin(row["before"]) and book_localization_pin(row["after"]) and
+                row["path"].casefold() not in overrides and key not in excluded and key not in claimed,
+                f"Conflicting localization or invalid dependency JAR pins: {path}")
+        claimed.add(key)
+        book_localization_jar_input(path, {**row["before"], "projectId": key[0], "fileId": key[1]}, author)
+        book_jar_resources(pack_source, row["entries"])
+    return rows
+
+
+def book_jar_resources(pack_source, entries):
+    require(isinstance(entries, list) and entries, "Expected localized dependency JAR book files")
+    paths = {}
+    resources = {}
+    keys = {"path", "source", "output"}
+    for entry in entries:
+        require(isinstance(entry, dict) and set(entry) in (keys, keys | {"before"}),
+                "Invalid dependency JAR book member")
+        path = safe_path(entry["path"])
+        source = safe_path(entry["source"])
+        name = path.as_posix()
+        reserve_path(paths, path)
+        if name in {"LICENSE", "NOTICE", "LICENSE.txt", "NOTICE.txt"}:
+            valid = "before" not in entry and source.parts[0] == "licenses" and len(source.parts) == 2
+        elif "before" in entry:
+            valid = re.fullmatch(BOOK_JAR_DESCRIPTOR, name) and book_localization_pin(entry["before"])
+        else:
+            valid = re.fullmatch(BOOK_JAR_PAGES, name)
+        require(valid and (source.parts[0] == "licenses" or source == PurePosixPath("tools/book-localization") / path),
+                f"Unsupported dependency JAR book member: {name}")
+        data = overlay_bytes(pack_source / source)
+        require(book_localization_pin(entry["output"]) and fingerprint(data) == entry["output"],
+                f"Dependency JAR resource differs from its pin: {name}")
+        if path.suffix == ".json":
+            content = decode_json(data)
+            require(isinstance(content, dict) and content, f"Expected book resource JSON object: {name}")
+        resources[name] = data
+    require(any(re.fullmatch(BOOK_JAR_PAGES, name) for name in resources), "Expected translated dependency JAR pages")
+    return resources
+
+
+def rebuild_book_jar(original, resources, before=None):
+    before = before or {}
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(original)) as source, zipfile.ZipFile(output, "w") as jar:
+        archive_members(source)
+        members = source.infolist()
+        require(sum(member.file_size for member in members) <= 64 * MAX_JSON, "Oversized unpacked dependency JAR")
+        paths = {}
+        for member in members:
+            name = member.filename
+            upper = name.upper()
+            require(not (upper.startswith("META-INF/") and
+                         (upper.endswith((".SF", ".RSA", ".DSA", ".EC")) or upper.rsplit("/", 1)[-1].startswith("SIG-"))),
+                    "Cannot modify a signed dependency JAR")
+            reserve_path(paths, safe_path(name.rstrip("/")), member.is_dir())
+        for name in resources:
+            if name not in before:
+                reserve_path(paths, safe_path(name))
+        for notice in ("LICENSE", "NOTICE"):
+            require(any(name in paths and paths[name][1] is False for name in
+                        (notice.casefold(), notice.casefold() + ".txt")),
+                    f"Expected dependency JAR {notice} (existing or pinned addition)")
+        for name, pin in before.items():
+            old_bytes = source.read(name)
+            require(fingerprint(old_bytes) == pin, f"Dependency JAR book descriptor differs: {name}")
+            old = decode_json(old_bytes)
+            new = decode_json(resources[name])
+            translatable = {key: new[key] for key in ("name", "landing_text") if key in new and new[key] != old.get(key)}
+            require(translatable and all(isinstance(value, str) and re.fullmatch(r"[a-z0-9_.-]+", value)
+                                         for value in translatable.values()) and {**old, **translatable} == new,
+                    f"Only title and landing translation keys may change in a dependency JAR: {name}")
+        jar.comment = source.comment
+        for member in members:
+            data = resources[member.filename] if member.filename in before else source.read(member)
+            jar.writestr(copy(member), data, compress_type=zipfile.ZIP_STORED)
+        for name in sorted(resources.keys() - before.keys()):
+            jar.writestr(zipfile.ZipInfo(name), resources[name])
+    return output.getvalue()
+
+
+def apply_book_jar_localizations(game, pack_source, receipt):
+    recipe = receipt["overlay"]
+    rows = book_jar_localizations(recipe, receipt, pack_source, recipe.get("jarMetadataPatches", ()))
+    for row in rows:
+        target = game / safe_path(row["path"])
+        original = overlay_bytes(target)
+        require(fingerprint(original) == row["before"], f"Dependency JAR differs: {row['path']}")
+        resources = book_jar_resources(pack_source, row["entries"])
+        before = {entry["path"]: entry["before"] for entry in row["entries"] if "before" in entry}
+        modified = rebuild_book_jar(original, resources, before)
+        require(fingerprint(modified) == row["after"], f"Localized dependency JAR differs: {row['path']}")
+        target.write_bytes(modified)
+
+
 def rebuild_jar_metadata(original, metadata, license_bytes):
     output = BytesIO()
     with zipfile.ZipFile(BytesIO(original)) as source, zipfile.ZipFile(output, "w") as jar:
@@ -724,7 +911,9 @@ def exclude_dependencies(game, rows):
 def apply_overlay(game, pack_source, receipt, paths):
     raw = overlay_bytes(pack_source / "tools/overlay.json")
     recipe = decode_json(raw)
-    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap", "jarMetadataPatches", "questTranslation"} ==
+    require(isinstance(recipe, dict) and set(recipe) - {
+                "excludedDependencies", "additions", "bootstrap", "jarMetadataPatches", "questTranslation",
+                "bookLocalization", "bookJarLocalization"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
@@ -732,9 +921,15 @@ def apply_overlay(game, pack_source, receipt, paths):
             "Overlay does not match the pinned author archive")
     dependency_keys = overlay_dependency_keys(recipe, receipt)
     jar_patches = jar_metadata_patches(recipe, receipt, pack_source)
+    book_jars = book_jar_localizations(recipe, receipt, pack_source, jar_patches)
     additions = overlay_additions(recipe, pack_source, receipt)
     bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
     quests = quest_translation(recipe, pack_source, receipt)
+    localized = book_localizations(recipe, pack_source, receipt)
+    localized_replacements = {row["path"]: row["before"] for row in recipe.get("bookLocalization", []) if "before" in row}
+    localized_additions = localized.keys() - localized_replacements.keys()
+    for name in localized_additions:
+        reserve_path(paths, safe_path(name))
     for name in additions.keys() | bootstrap.keys() | quests.keys():
         reserve_path(paths, safe_path(name))
     descriptor = overlay_bytes(pack_source / "portable-pack.json")
@@ -776,6 +971,11 @@ def apply_overlay(game, pack_source, receipt, paths):
         require(fingerprint(new) == patch["after"], f"Overlay output differs from its pin: {name}")
         edits[name] = (target, new)
         applied.append({"path": name, "before": patch["before"], "after": patch["after"]})
+    for name, pin in localized_replacements.items():
+        target = game / safe_path(name)
+        require(name not in edits and fingerprint(overlay_bytes(target)) == pin,
+                f"Conflicting or changed staged book localization input: {name}")
+        edits[name] = (target, localized[name])
 
     result = {"recipeSha256": fingerprint(raw)["sha256"], "descriptor": descriptor_pin, "patches": applied,
               "requiredLauncherFeatures": [REQUIRED_SHARE_FEATURE]}
@@ -784,6 +984,8 @@ def apply_overlay(game, pack_source, receipt, paths):
     owned_names = set(edits)
     if jar_patches:
         result["jarMetadataPatches"] = jar_patches
+    if book_jars:
+        result["bookJarLocalization"] = book_jars
     if additions:
         owned_names.add(LOGGING_CONFIG)
         result["additions"] = recipe["additions"]
@@ -793,6 +995,9 @@ def apply_overlay(game, pack_source, receipt, paths):
     if quests:
         owned_names.update(quests)
         result["questTranslation"] = recipe["questTranslation"]
+    if localized:
+        owned_names.update(localized)
+        result["bookLocalization"] = recipe["bookLocalization"]
     if owned_names:
         owned_path = PurePosixPath("launcher/pack-owned.txt")
         reserve_path(paths, owned_path)
@@ -806,7 +1011,8 @@ def apply_overlay(game, pack_source, receipt, paths):
         result["ownership"] = fingerprint(owned)
     for target, data in edits.values():
         target.write_bytes(data)
-    for name, data in {**additions, **bootstrap, **quests}.items():
+    for name, data in {**additions, **bootstrap, **quests,
+                       **{name: localized[name] for name in localized_additions}}.items():
         target = game / name
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("xb") as output:
@@ -898,6 +1104,10 @@ def prepare(args):
             receipt.update(status="complete", files=files)
             if overlay and "jarMetadataPatches" in overlay:
                 apply_jar_metadata_patches(game, args.pack_source, receipt)
+            if overlay and "bookLocalization" in overlay:
+                book_localizations(overlay, args.pack_source, receipt)
+            if overlay and "bookJarLocalization" in overlay:
+                apply_book_jar_localizations(game, args.pack_source, receipt)
             if overlay and "bootstrap" in overlay:
                 overlay_bootstrap(overlay, args.pack_source, receipt,
                                   overlay_additions(overlay, args.pack_source, receipt))
