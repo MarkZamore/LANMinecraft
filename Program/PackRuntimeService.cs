@@ -162,7 +162,8 @@ public sealed class PackRuntimeService : IDisposable
         // What the button says while each set of files comes down. The base
         // game is Minecraft's own; everything after it belongs to the loader,
         // however many rounds that takes.
-        var loaderName = PackLoaderNames.DisplayName(descriptor.Loader.Type) ?? "Minecraft";
+        const string gameLabel = "Minecraft";
+        var loaderName = PackLoaderNames.DisplayName(descriptor.Loader.Type);
         var usePinnedInstallerJava = (descriptor.Loader.Type, descriptor.MinecraftVersion,
             descriptor.Loader.Version, requiredJava.MajorVersion) is
             (PackLoaderKind.Forge, "1.20.1", "47.3.7" or "1.20.1-47.3.7", 17) or
@@ -174,7 +175,7 @@ public sealed class PackRuntimeService : IDisposable
             temporaryRoot,
             progress,
             localOnly: false,
-            subject: "Minecraft",
+            subject: gameLabel,
             includeInstallerJava: includeInstallerJava,
             librarySources: RuntimeLibrarySource.Load(packDirectory));
         IVersion baseVersion;
@@ -197,20 +198,53 @@ public sealed class PackRuntimeService : IDisposable
             ValidateClientJar(sourceClientJar, clientFile);
             CopyClientJar(sourceClientJar, clientFile.Path!);
         }
-        else
+        var gameInstaller = (PortableGameInstaller)launcher.GameInstaller;
+        var gameLabels = new[] { gameLabel, gameLabel };
+        List<GameFile>? plannedBaseFiles = null;
+        if (sourceClientJar.Length == 0)
         {
+            // A single visible download keeps its original caption. Plan the
+            // other files up front only if the official client also needs fetching.
+            if (progress is not null && gameInstaller.HasPendingDownloads([clientFile]))
+            {
+                try
+                {
+                    var files = new List<GameFile>();
+                    foreach (var version in baseVersion.EnumerateToParent())
+                        files.AddRange(await launcher.ExtractFiles(version, token).ConfigureAwait(false));
+                    if (gameInstaller.HasPendingDownloads(files))
+                        gameLabels = PreparationLabels.NumberRepeated(gameLabel, gameLabel);
+                    plannedBaseFiles = files;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or UnauthorizedAccessException ||
+                                           ex is TaskCanceledException && !token.IsCancellationRequested)
+                {
+                    // Caption planning is optional. The normal install still
+                    // fetches the client first and retries the metadata step.
+                }
+            }
+
+            gameInstaller.Subject = gameLabels[0];
             await FromMojangAsync(
                 $"Minecraft {descriptor.MinecraftVersion} client",
-                () => InstallOfficialClientAsync(launcher.GameInstaller, clientFile, token).AsTask(), token)
+                () => InstallOfficialClientAsync(gameInstaller, clientFile, token).AsTask(), token)
                 .ConfigureAwait(false);
         }
 
+        gameInstaller.Subject = gameLabels[1];
         await FromMojangAsync(
             $"Minecraft {descriptor.MinecraftVersion}",
-            () => RuntimeRetry.RunAsync(
-                retryToken => launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask(),
-                token),
-            token).ConfigureAwait(false);
+            () => RuntimeRetry.RunAsync(retryToken =>
+            {
+                if (plannedBaseFiles is null)
+                    return launcher.InstallAsync(baseVersion, cancellationToken: retryToken).AsTask();
+
+                // Reuse the metadata already fetched for the captions on the
+                // first attempt. CmlLib extracts it afresh if installation retries.
+                var files = plannedBaseFiles;
+                plannedBaseFiles = null;
+                return gameInstaller.Install(files, null, null, retryToken).AsTask();
+            }, token), token).ConfigureAwait(false);
         var gameJava = await _javaRuntime
             .EnsureAsync(_paths.JavaRuntimes, requiredJava, progress, token)
             .ConfigureAwait(false);
@@ -224,15 +258,15 @@ public sealed class PackRuntimeService : IDisposable
                 throw new FileNotFoundException("The Java runtime required by this Minecraft version was not prepared.", installerJavaPath);
         }
 
-        progress?.Report(new RuntimePreparationProgress(
-            RuntimePreparationStage.InstallingLoader,
-            loaderName));
+        var loaderLabels = loaderName is null ? [gameLabel, gameLabel] : PreparationLabels.NumberRepeated(loaderName, loaderName);
+        if (loaderName is not null)
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.InstallingLoader, loaderLabels[0]));
         launcher = CreateLauncher(
             runtimeRoot,
             temporaryRoot,
             progress,
             localOnly: false,
-            subject: loaderName,
+            subject: loaderLabels[0],
             includeInstallerJava: includeInstallerJava);
 
         var context = new PackLoaderInstallationContext(
@@ -248,18 +282,20 @@ public sealed class PackRuntimeService : IDisposable
             _logger) { GameJavaPath = gameJava.JavaPath };
         var profileId = await provider.InstallAsync(context, token).ConfigureAwait(false);
 
+        if (loaderName is not null)
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.InstallingLoader, loaderLabels[1]));
         launcher = CreateLauncher(
             runtimeRoot,
             temporaryRoot,
             progress,
             localOnly: true,
-            subject: loaderName,
+            subject: loaderLabels[1],
             includeInstallerJava: includeInstallerJava);
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
         await FromMojangAsync(
-            $"the files {loaderName} needs",
+            $"the files {loaderName ?? gameLabel} needs",
             () => RuntimeRetry.RunAsync(
                 retryToken => launcher.InstallAsync(profile, cancellationToken: retryToken).AsTask(),
                 token),

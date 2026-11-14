@@ -58,6 +58,7 @@ public partial class App : Application
             return;
         }
 
+        var installUpdateAfterGame = false;
         if (!e.Args.Any(argument => argument.StartsWith(SkipPrestartUpdateArgument, StringComparison.OrdinalIgnoreCase)))
         {
             try
@@ -74,9 +75,13 @@ public partial class App : Application
                 var prepared = updateService.TryGetPreparedUpdate();
                 if (prepared is not null)
                 {
-                    updateService.StartInstall(prepared, UpdateInstallMode.InstallAndRestart);
-                    Shutdown();
-                    return;
+                    installUpdateAfterGame = new ClientPresenceService(paths, logger).ReadLiveSessions().Count != 0;
+                    if (!installUpdateAfterGame)
+                    {
+                        updateService.StartInstall(prepared, UpdateInstallMode.InstallAndRestart);
+                        Shutdown();
+                        return;
+                    }
                 }
             }
             catch (Exception ex)
@@ -91,7 +96,7 @@ public partial class App : Application
         // last looked at it, and it draws the icon from what it looked at.
         ShellIconCache.AnnounceRunningExecutable();
 
-        var window = new MainWindow();
+        var window = new MainWindow { InstallUpdateAfterStartupGame = installUpdateAfterGame };
         StartupTrace.Mark("окно");
         MainWindow = window;
         // A second press of the icon is a request for this window, not for

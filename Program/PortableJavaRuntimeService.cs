@@ -167,20 +167,19 @@ public sealed partial class PortableJavaRuntimeService
             return installed;
         }
 
-        progress?.Report(new RuntimePreparationProgress(
-            RuntimePreparationStage.InstallingJava,
-            $"Java {_pin.JavaVersion}"));
-
         var cachePath = GetCachePath();
-        if (!IsValidArchive(cachePath))
+        var archiveCached = IsValidArchive(cachePath);
+        var labels = archiveCached ? ["Java"] : PreparationLabels.NumberRepeated("Java", "Java");
+        if (!archiveCached)
         {
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.InstallingJava, labels[0]));
             if (!_freeSpaceProbe(cachePath, _pin.ArchiveSizeBytes))
             {
                 throw new IOException(
                     $"Not enough free disk space to download Java {_pin.JavaVersion}: " +
                     $"{FormatMegabytes(_pin.ArchiveSizeBytes)} MB required.");
             }
-            await DownloadToCacheAsync(cachePath, progress, token).ConfigureAwait(false);
+            await DownloadToCacheAsync(cachePath, labels[0], progress, token).ConfigureAwait(false);
         }
         else
         {
@@ -196,7 +195,7 @@ public sealed partial class PortableJavaRuntimeService
 
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.InstallingJava,
-            $"Java {_pin.JavaVersion}"));
+            labels[^1]));
         Install(cachePath, installRoot, token);
 
         var prepared = TryDescribeInstalled(installRoot)
@@ -403,6 +402,7 @@ public sealed partial class PortableJavaRuntimeService
 
     private async Task DownloadToCacheAsync(
         string cachePath,
+        string label,
         IProgress<RuntimePreparationProgress>? progress,
         CancellationToken token)
     {
@@ -448,7 +448,7 @@ public sealed partial class PortableJavaRuntimeService
                                  temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                                  128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
                 {
-                    await CopyExactAsync(input, output, _pin.ArchiveSizeBytes, _pin.JavaVersion, progress, sourceToken)
+                    await CopyExactAsync(input, output, _pin.ArchiveSizeBytes, label, progress, sourceToken)
                         .ConfigureAwait(false);
                     await output.FlushAsync(sourceToken).ConfigureAwait(false);
                     output.Flush(flushToDisk: true);
@@ -518,7 +518,7 @@ public sealed partial class PortableJavaRuntimeService
         Stream input,
         Stream output,
         long expectedSize,
-        string javaVersion,
+        string label,
         IProgress<RuntimePreparationProgress>? progress,
         CancellationToken token)
     {
@@ -540,9 +540,7 @@ public sealed partial class PortableJavaRuntimeService
                 lastReport = total;
                 progress?.Report(new RuntimePreparationProgress(
                     RuntimePreparationStage.InstallingJava,
-                    // This runtime, not the one the build pins by default: a
-                    // 1.20.1 pack downloads Java 17 and the line said 21.
-                    $"Java {javaVersion}",
+                    label,
                     (double)total / expectedSize,
                     total,
                     expectedSize));
