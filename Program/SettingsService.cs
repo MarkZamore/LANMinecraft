@@ -82,55 +82,6 @@ public sealed class SettingsService
     }
 
     /// <summary>
-    /// Puts the field in step with the pack that is now selected: back to the
-    /// number the player last set on this pack, or to what the launcher makes
-    /// of its weight if they never set one. Returns true when the number moved.
-    /// </summary>
-    public bool ApplyPackMemory(AppSettings settings)
-    {
-        var video = VideoMemoryProfile.Measure();
-        var remembered = RememberedMemoryGb(settings);
-        var wanted = remembered
-            ?? MemorySizingService.GetRecommendedMemoryGb(PackMemory, video, MeasuredMemory);
-        if (settings.MaxHeapGb == wanted) return false;
-
-        _logger?.Info(
-            $"Memory for this pack ({DescribePack()}): a {wanted} GB Java heap, and about " +
-            $"{MemorySizingService.GetNativeReserveGb(PackMemory, video, MeasuredMemory)} GB more beside it" +
-            (remembered is null ? "." : ", which is what was set here last."));
-        settings.MaxHeapGb = wanted;
-        Save(settings);
-        return true;
-    }
-
-    /// <summary>
-    /// The number this pack was last set to by hand, held to what the machine
-    /// allows, or null where it never was. A remembered number outlives the
-    /// machine it was chosen on, so a file carried to a smaller one still comes
-    /// back to a number that fits.
-    /// </summary>
-    public int? RememberedMemoryGb(AppSettings settings)
-    {
-        var pack = PackKey(settings);
-        return pack.Length != 0 && settings.MemoryByPack.TryGetValue(pack, out var stored)
-            ? MemorySizingService.ClampHeapGb(stored)
-            : null;
-    }
-
-    /// <summary>
-    /// Writes down what the player set the field to for the pack in front of
-    /// them. This happens on the edit rather than on the launch: a number
-    /// chosen for a pack they then thought better of playing is still theirs
-    /// the next time they come back to it.
-    /// </summary>
-    public void RememberMemoryForPack(AppSettings settings, int memoryGb)
-    {
-        var pack = PackKey(settings);
-        if (pack.Length == 0) return;
-        settings.MemoryByPack[pack] = MemorySizingService.ClampHeapGb(memoryGb);
-    }
-
-    /// <summary>
     /// Reads a settings file written while the number meant the whole of the
     /// game and turns every number in it into the heap that number was already
     /// producing: the top-level one by the pack that is selected, and each
@@ -174,15 +125,6 @@ public sealed class SettingsService
         }
     }
 
-    internal void ForgetMemoryForPack(AppSettings settings) => settings.MemoryByPack.Remove(PackKey(settings));
-
-    private static string PackKey(AppSettings settings) => settings.ClientRelativePath?.Trim() ?? "";
-
-    private string DescribePack() =>
-        PackMemory.IsKnown
-            ? $"{PackMemory.ModCount} mods, Minecraft {PackMemory.MinecraftVersion ?? "unknown"}"
-            : "not installed yet";
-
     public AppSettings Load()
     {
         // Migration failures must reach startup, before the generic settings
@@ -204,59 +146,14 @@ public sealed class SettingsService
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _options) ?? new AppSettings();
             RestoreLocalLl8Visibility(settings);
             PackMembership.Initialize(settings, _paths);
-            // Weighing the pack means opening every jar in it, which on a
-            // full build is most of a second and is paid again the first time
-            // the mods folder changes - that is, after every pack update, on
-            // the launch where the player is already waiting. Almost no file
-            // needs the answer: one that carries a number of its own is read
-            // through arithmetic about the machine, not the pack. So it is
-            // asked for only where it is genuinely used, and the window gets
-            // the weight from RefreshPackMemory afterwards, off the UI thread.
-            PackMemoryProfile? weighed = null;
-            PackMemoryProfile Pack() => weighed ??= MeasurePack(settings.ClientRelativePath);
-            // The number has meant two things and now means the first of them
-            // again. It was the Java heap; for a while it was everything the
-            // game may take, marked by memorySettingIsWholeGame; and it is the
-            // heap once more. A file from the middle of that is read through the
-            // arithmetic it was written under, so the heap it was already
-            // producing is the heap it keeps - top-level number and every
-            // remembered pack alike, each by its own pack's weight. A file from
-            // before it has a number that was always a heap, and is left alone.
-            if (hasConfiguredMemory &&
+            if (!settings.MemoryIsGlobal && hasConfiguredMemory &&
                 !HasJsonProperty(json, "memorySettingIsTheHeap") &&
-                HasJsonProperty(json, "memorySettingIsWholeGame"))
+                ReadBoolean(json, "memorySettingIsWholeGame"))
             {
-                // This one really does need it: the migration runs once and
-                // the flag below closes it for good, so a wrong number here
-                // is a wrong number for ever.
-                CarryBudgetsAcrossToHeaps(settings, Pack());
+                CarryBudgetsAcrossToHeaps(settings, MeasurePack(settings.ClientRelativePath));
             }
-            // A file that already holds a number is clamped by what the
-            // machine has, which the pack does not enter into; only a file
-            // without one is given a recommendation, and that is worked out
-            // from the pack.
-            settings = ApplyFallbacks(
-                settings,
-                hasConfiguredMemory ? PackMemoryProfile.Unknown : Pack(),
-                MeasuredMemory,
-                useRecommendedMemory: !hasConfiguredMemory);
-            // Whose number is it, and which pack was it for? Up to schema 12
-            // there was one answer for every pack, kept under a flag; a file
-            // written then is read once and its number becomes the answer for
-            // the pack that was selected when it was written, which is the only
-            // pack it can honestly have been about. Where even the flag is
-            // missing the file is older still and answers by arithmetic: a
-            // number the launcher would have suggested is the launcher's, and
-            // anything else was typed by hand.
-            if (hasConfiguredMemory && !HasJsonProperty(json, "memoryByPack"))
-            {
-                var typedByHand = HasJsonProperty(json, "memoryChosenByPlayer")
-                    ? ReadBoolean(json, "memoryChosenByPlayer")
-                    : settings.MaxHeapGb !=
-                      MemorySizingService.GetRecommendedMemoryGb(PackMemoryProfile.Unknown);
-                if (typedByHand) RememberMemoryForPack(settings, settings.MaxHeapGb);
-            }
-            ApplyPackMemory(settings);
+            settings.MaxHeapGb = ReadGlobalHeapGb(settings, json, hasConfiguredMemory);
+            ApplyFallbacks(settings);
             TryPersistSafeDefaults(settings);
             return settings;
         }
@@ -274,52 +171,47 @@ public sealed class SettingsService
         // choice. Only loading an old on-disk file is allowed to undo 408's hide.
         settings.Ll8LocalVisibilityMigrated = true;
         PackMembership.Initialize(settings, _paths);
-        settings = ApplyFallbacks(settings, PackMemory, MeasuredMemory);
+        ApplyFallbacks(settings);
         AtomicFile.WriteAllTextIfChanged(_paths.SettingsFile, JsonSerializer.Serialize(settings, _options));
     }
 
-    private static AppSettings ApplyFallbacks(
-        AppSettings? source,
-        PackMemoryProfile pack,
-        MeasuredMemoryProfile measured = default,
-        bool useRecommendedMemory = false)
+    private static int ReadGlobalHeapGb(AppSettings settings, string json, bool hasConfiguredMemory)
     {
-        var settings = source ?? new AppSettings();
+        if (settings.MemoryIsGlobal && hasConfiguredMemory) return settings.MaxHeapGb;
+        if (HasJsonProperty(json, "memoryByPack"))
+        {
+            var selectedPack = settings.ClientRelativePath?.Trim();
+            foreach (var (pack, memory) in settings.MemoryByPack ?? [])
+            {
+                if (string.Equals(pack.Trim(), selectedPack, StringComparison.OrdinalIgnoreCase)) return memory;
+            }
+            return MemorySizingService.GetDefaultHeapGb();
+        }
+        return hasConfiguredMemory && (!HasJsonProperty(json, "memoryChosenByPlayer") ||
+                                       ReadBoolean(json, "memoryChosenByPlayer"))
+            ? settings.MaxHeapGb
+            : MemorySizingService.GetDefaultHeapGb();
+    }
 
+    private static void ApplyFallbacks(AppSettings settings)
+    {
         settings.SchemaVersion = CurrentSchemaVersion;
         // A save always writes the current meaning, including the very first
         // defaults file. Leaving this false made the next launch rewrite it.
         settings.MemorySettingIsTheHeap = true;
+        settings.MemoryIsGlobal = true;
         settings.PlayerName = settings.PlayerName?.Trim() ?? "";
         settings.PreviousPlayerName = settings.PreviousPlayerName?.Trim() ?? "";
 
         settings.LocalIdentityId = settings.LocalIdentityId?.Trim() ?? "";
         settings.LocalIdentityName = settings.LocalIdentityName?.Trim() ?? "";
-        if (source is null || useRecommendedMemory ||
-            settings.MaxHeapGb < MemorySizingService.MinHeapGb ||
-            settings.MaxHeapGb > MemorySizingService.MaxHeapGb)
-        {
-            settings.MaxHeapGb = MemorySizingService.GetRecommendedMemoryGb(
-                pack, VideoMemoryProfile.Measure(), measured);
-        }
-        else
-        {
-            // Held to what this machine will leave this pack, not merely to what
-            // a number may be. The box in the window has always refused more
-            // than the machine can spare; the file did not, so a number written
-            // into it by hand went straight to -Xmx and the two disagreed about
-            // the same setting. A file is not a way around the window.
-            settings.MaxHeapGb = MemorySizingService.ClampHeapGb(settings.MaxHeapGb);
-        }
+        settings.MaxHeapGb = settings.MaxHeapGb < MemorySizingService.MinHeapGb
+            ? MemorySizingService.GetDefaultHeapGb()
+            : MemorySizingService.ClampHeapGb(settings.MaxHeapGb);
 
         settings.ClientRelativePath = settings.ClientRelativePath?.Trim() ?? "";
 
-        // Case-insensitively keyed however the file spelled it: these are folder
-        // names, and Windows does not think two spellings of one folder are two
-        // folders. Held only to what a heap may be, not to what this machine
-        // leaves any one pack - the ceiling is the selected pack's now, and
-        // cutting pack A's number with pack B's reserve would be worse than
-        // leaving it be. It meets the real ceiling when it is put in the field.
+        // Keep historical values for the pack migration and rollback paths.
         var byPack = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, memoryGb) in settings.MemoryByPack ?? [])
         {
@@ -332,7 +224,6 @@ public sealed class SettingsService
         settings.SkinPath = settings.SkinPath?.Trim() ?? "";
         settings.SelectedWorldRelativePath = settings.SelectedWorldRelativePath?.Trim() ?? "";
 
-        return settings;
     }
 
     private void RestoreLocalLl8Visibility(AppSettings settings)
@@ -346,8 +237,12 @@ public sealed class SettingsService
 
     private AppSettings CreateSafeDefaults()
     {
-        var settings = ApplyFallbacks(new AppSettings { Ll8LocalVisibilityMigrated = true },
-            PackMemory, MeasuredMemory, useRecommendedMemory: true);
+        var settings = new AppSettings
+        {
+            Ll8LocalVisibilityMigrated = true,
+            MaxHeapGb = MemorySizingService.GetDefaultHeapGb()
+        };
+        ApplyFallbacks(settings);
         PackMembership.Initialize(settings, _paths);
         return settings;
     }

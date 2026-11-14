@@ -31,6 +31,7 @@ if (Invoke-Gh release view $tag 2>$null) {
 Invoke-Gh release create $tag `
     $ExecutablePath `
     $ManifestPath `
+    --target $CommitSha `
     --prerelease `
     --title "Update base $ReleaseNumber" `
     --notes "Binary base for commit $CommitSha retained for direct delta generation."

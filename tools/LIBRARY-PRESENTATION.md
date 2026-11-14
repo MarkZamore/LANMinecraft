@@ -45,6 +45,15 @@ manifest `modCount`, installation checks and memory estimation keep the complete
 native inventory and remain independent of presentation. Non-mod language
 providers and Minecraft/loader platform entries are not pack mods.
 
+For a Forge compatibility loader that registers a Fabric mod, record the
+native `id`, `version` and `nativeSourceFile` and the shipped outer `source`
+in `library/loaded-mods.json`. Its `forgeFabricSource` object contains the
+declared `nestedPaths` chain, or an empty list for a top-level mod, and the
+SHA256 of the selected original JAR. The generator verifies those bytes,
+the native SRG source basename and the normalized ID and version against the
+original Fabric metadata. Document the observed remapped JAR hash in the
+pack's provenance. Remapped runtime files are never release inputs.
+
 Official links remain required for the entire inventory, including hidden base
 mods and dependencies. The filter does not change manifest files, installation,
 memory estimation or update ownership. It requires a launcher release supporting

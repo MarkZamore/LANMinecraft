@@ -296,9 +296,9 @@ public sealed class LocalAiProvisioningTests : IDisposable
                     MemorySizingService.GetRecommendedMemoryGb(before, 16UL * 1024 * 1024 * 1024));
         var settingsService = new SettingsService(paths);
         var settings = new AppSettings { ClientRelativePath = "IndependentPack", MaxHeapGb = MemorySizingService.MinHeapGb };
-        settings.MemoryByPack["IndependentPack"] = settings.MaxHeapGb;
-        settingsService.MeasurePack(settings.ClientRelativePath); settingsService.ApplyPackMemory(settings);
-        Assert.Equal(MemorySizingService.MinHeapGb, settings.MaxHeapGb);
+        settingsService.MeasurePack(settings.ClientRelativePath);
+        settingsService.Save(settings);
+        Assert.Equal(MemorySizingService.MinHeapGb, settingsService.Load().MaxHeapGb);
     }
 
     [Fact]

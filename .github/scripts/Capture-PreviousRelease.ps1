@@ -22,6 +22,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/GhRetry.ps1"
+. "$PSScriptRoot/CompressedHistoryRelease.ps1"
 # A background job starts wherever PowerShell puts it, so gh is told which
 # repository it is talking about instead of being left to find a git remote.
 $env:GH_REPO = $Repository
@@ -119,13 +120,14 @@ $releaseNumber = if ($previous.commitSha -eq $currentCommit) {
 }
 # Updates are offered by number, so it must never walk backwards - which is
 # what a rewritten history would do.
-if ($releaseNumber -le $previous.releaseNumber -and $previous.commitSha -ne $currentCommit) {
+if ($releaseNumber -le $previous.releaseNumber -and $previous.commitSha -ne $currentCommit -and
+    !(Test-CompressedHistoryRelease $releaseNumber $previous)) {
     throw ("The commit count $CommitNumber is not above the published release " +
            "$($previous.releaseNumber); was the history rewritten?")
 }
 
 $bases = [System.Collections.Generic.List[object]]::new()
-if ($previous.commitSha -ne $currentCommit) { $bases.Add($previous) }
+if ($previous.releaseNumber -lt $releaseNumber) { $bases.Add($previous) }
 $releaseRows = Invoke-Gh release list --limit 100 --json tagName | ConvertFrom-Json
 $archiveTags = $releaseRows.tagName |
     Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } |
@@ -133,7 +135,7 @@ $archiveTags = $releaseRows.tagName |
 foreach ($tag in $archiveTags) {
     if ($bases.Count -ge 2) { break }
     $number = [int]($tag -replace '^update-base-', '')
-    if ($number -ge $previous.releaseNumber) { continue }
+    if ($number -ge [Math]::Min($previous.releaseNumber, $releaseNumber)) { continue }
     $archive = Get-ValidatedBase $tag (Join-Path $WorkDirectory "minecraft-$tag")
     if (-not ($bases | Where-Object { $_.sha256 -eq $archive.sha256 })) {
         $bases.Add($archive)

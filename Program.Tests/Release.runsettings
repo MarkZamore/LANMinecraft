@@ -41,7 +41,7 @@
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.SwitchingBuilds_PointsTheLinkSomewhereElse_WithoutMovingAnything|
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.AWorldTheGameStillHasOpen_IsNotMovedYet|
       FullyQualifiedName=Minecraft.Tests.NbtStringCodecTests.AWorldNamedWithAnEmoji_SurvivesTheLauncherWritingIt|
-      FullyQualifiedName=Minecraft.Tests.SettingsSchemaTests.EachPackKeepsTheNumberItWasSetTo|
+      FullyQualifiedName=Minecraft.Tests.SettingsSchemaTests.SelectedManualHeapMigratesAndThenAppliesAcrossPacks|
       FullyQualifiedName=Minecraft.Tests.SettingsSchemaTests.AFileWithKeysThisBuildNoLongerHas_LoadsAndKeepsWhatMatters|
       FullyQualifiedName=Minecraft.Tests.PortableFormatTests.ADocumentFromANewerBuild_IsRefusedWithSomethingAPlayerCanActOn|
       FullyQualifiedName=Minecraft.Tests.WorldTransferHandshakeTests.FullTransfer_ProgressFrameBeforeCommit_IsNotMistakenForCommit|

@@ -124,8 +124,9 @@ def read_mods(data, jar_name, depth=0, loader=None):
         if "META-INF/jarjar/metadata.json" in names and not fabric_loader:
             nested_paths.extend(nested.get("path", "") for nested in
                                 json.loads(archive.read("META-INF/jarjar/metadata.json")).get("jars", []))
-        if loader == "forge" and manifest.get("Additional-Dependencies-Mod"):
-            nested_paths.append(manifest["Additional-Dependencies-Mod"])
+        if loader == "forge":
+            nested_paths.extend(manifest[key] for key in ("Additional-Dependencies-Mod", "Embedded-Dependencies-Mod")
+                                if manifest.get(key))
         if fabric:
             nested_paths.extend(nested.get("file", "") for nested in fabric.get("jars", []))
         for path in dict.fromkeys(nested_paths):
@@ -241,6 +242,48 @@ def read_native_mods(pack, runtime, shipped):
     return mods
 
 
+def read_forge_fabric_metadata(archive):
+    text = archive.read("fabric.mod.json").decode("utf-8-sig")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # The selected Forge compatibility loader accepts a literal newline in
+        # a Fabric description. Keep other fields subject to strict JSON.
+        text, count = re.subn(r'("description"\s*:\s*")((?:[^"\\]|\\.)*)(")',
+                              lambda match: match[1] + match[2].replace("\r", r"\r").replace("\n", r"\n") + match[3],
+                              text, flags=re.DOTALL)
+        if not count:
+            raise
+        return json.loads(text)
+
+
+def read_forge_fabric_mod(pack, minecraft_version, actual_hashes, loaded):
+    source = loaded.get("source")
+    evidence = loaded["forgeFabricSource"]
+    nested = evidence.get("nestedPaths") if isinstance(evidence, dict) else None
+    if (not isinstance(source, str) or source not in actual_hashes or not isinstance(nested, list) or
+            len(nested) > 8 or any(not isinstance(path, str) for path in nested)):
+        raise ValueError("Forge Fabric inventory is not bound to a shipped JAR")
+    data = (pack / source).read_bytes()
+    native_name = pathlib.PurePosixPath(source).stem
+    for path in [*nested, None]:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            metadata = read_forge_fabric_metadata(archive)
+            if path is not None:
+                if not any(row.get("file") == path for row in metadata.get("jars", [])):
+                    raise ValueError("Forge Fabric inventory points to an undeclared nested JAR")
+                data = archive.read(path)
+                native_name += "$" + pathlib.PurePosixPath(path).stem
+    native_name += f"_mapped_srg_{minecraft_version}.jar"
+    mod_id = metadata.get("id", "").replace("-", "_")
+    version = str(metadata.get("version", "")).replace("+", "")
+    if (loaded["id"] != mod_id or loaded.get("nativeSourceFile") != native_name or
+            loaded.get("version") != version or not isinstance(loaded.get("name"), str) or
+            not loaded["name"].strip() or evidence.get("sha256") != hashlib.sha256(data).hexdigest()):
+        raise ValueError("Forge Fabric inventory differs from the selected source metadata: " + mod_id)
+    return {"id": mod_id, "name": loaded["name"], "version": version, "isLoadedMod": True}
+
+
 def read_pack_mods(pack, shipped=None, *, metadata_root=None):
     """Read metadata, optionally pinned to an exact-hash actual loader inventory.
 
@@ -293,12 +336,16 @@ def read_pack_mods(pack, shipped=None, *, metadata_root=None):
                 if mod_id in ("fml", "mcp"):
                     continue
                 source = loaded.get("source")
-                if (not isinstance(mod_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", mod_id) or
+                if (not isinstance(mod_id, str) or not re.fullmatch(r"[A-Za-z0-9_.|-]{1,128}", mod_id) or
                         mod_id in actual_mods or not isinstance(source, str) or source not in actual_hashes or
                         any(not isinstance(loaded.get(key), str) or not loaded[key].strip() for key in ("name", "version"))):
                     raise ValueError("Invalid or unbound legacy Forge mod inventory entry: " + str(mod_id))
                 actual_sources.add(source)
                 actual_mods[mod_id] = {"id": mod_id, "name": loaded["name"], "version": loaded["version"], "isLoadedMod": True}
+                continue
+            if loader == "forge" and "forgeFabricSource" in loaded and mod_id not in actual_mods:
+                actual_mods[mod_id] = read_forge_fabric_mod(pack, runtime["minecraftVersion"], actual_hashes, loaded)
+                actual_sources.add(loaded["source"])
                 continue
             if mod_id not in mods or not mods[mod_id]["isLoadedMod"] or mod_id in actual_mods:
                 raise ValueError("Unexpected/duplicate actual loaded mod ID: " + str(mod_id))
