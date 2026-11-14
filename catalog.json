@@ -184,15 +184,6 @@
       }
     },
     {
-      "id": "minecraft-20",
-      "relativePath": "Levitated",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Levitated",
-        "tag": "pack-latest"
-      }
-    },
-    {
       "id": "minecraft-21",
       "relativePath": "Reclamation",
       "source": {
