@@ -194,6 +194,8 @@ class ReleaseOverlayTests(unittest.TestCase):
         english = "patchouli_books/guide/en_us/entries/first.json"
         russian = "patchouli_books/guide/ru_ru/entries/first.json"
         quest = "config/ftbquests/quests/chapters/start.snbt"
+        language = "kubejs/assets/example/lang/ru_ru.json"
+        original_language = b"{}\r\n"
         original = b'{"name":"Guide"}'
         original_quest = b'{title:"First Steps"}'
         translated = '{"name":"Справочник"}'.encode()
@@ -201,17 +203,22 @@ class ReleaseOverlayTests(unittest.TestCase):
         additions = {
             russian: translated, quest: localized_quest,
             "kubejs/assets/example/lang/en_us.json": b'{"example.first_steps":"First Steps"}',
-            "kubejs/assets/example/lang/ru_ru.json": '{"example.first_steps":"Первые шаги"}'.encode()
+            language: '{"example.first_steps":"Первые шаги"}'.encode(),
+            "kubejs/assets/example/patchouli_books/guide/ru_ru/categories/start.json": translated,
+            "kubejs/assets/example/book/materials/ru_ru/tools/first.json": translated,
+            "kubejs/assets/example/guide/_ru_ru/first.md": "## Первые шаги\n".encode(),
         }
         for name, data in additions.items():
             target = self.source / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        replacements = {quest: original_quest, language: original_language}
         receipt = {**self.receipt, "overrides": [*self.receipt["overrides"],
-            {"path": english, **prepare.fingerprint(original)}, {"path": quest, **prepare.fingerprint(original_quest)}]}
+            {"path": english, **prepare.fingerprint(original)},
+            *({"path": name, **prepare.fingerprint(data)} for name, data in replacements.items())]}
         recipe = {**self.recipe, "bookLocalization": [
             {"path": name, "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(data),
-             **({"before": prepare.fingerprint(original_quest)} if name == quest else {})}
+             **({"before": prepare.fingerprint(replacements[name])} if name in replacements else {})}
             for name, data in additions.items()
         ]}
         self.write_json(self.recipe_path, recipe)
@@ -219,7 +226,7 @@ class ReleaseOverlayTests(unittest.TestCase):
             ("\n".join(sorted({self.config_path, *additions})) + "\n").encode())
         stage = self.stage / "localized"
         game = stage / "game"
-        for name, data in {english: original, quest: original_quest, self.config_path: self.original}.items():
+        for name, data in {english: original, self.config_path: self.original, **replacements}.items():
             target = game / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -230,6 +237,7 @@ class ReleaseOverlayTests(unittest.TestCase):
         self.assertLessEqual(additions.keys(), required)
         self.assertEqual((game / english).read_bytes(), original)
         self.assertEqual((game / quest).read_bytes(), localized_quest)
+        self.assertEqual((game / language).read_bytes(), additions[language])
         changed = {**receipt, "overrides": [row for row in receipt["overrides"] if row["path"] != english]}
         with self.assertRaisesRegex(ValueError, "changed book localization input"):
             prepare.book_localizations(recipe, self.source, changed)

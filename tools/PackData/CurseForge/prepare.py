@@ -37,7 +37,11 @@ LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
 CLIENT_SCRIPT_PATH = re.compile(r"kubejs/client_scripts/lanmc_[a-z0-9_]+\.js")
 MAX_CLIENT_SCRIPT_BYTES = 64 * 1024
-BOOK_PAGES = r"patchouli_books/[a-z0-9_.-]+/ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
+BOOK_PAGE = r"(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+"
+BOOK_PAGES = (r"(?:kubejs/assets/[a-z0-9_.-]+/)?patchouli_books/[a-z0-9_.-]+/ru_ru/"
+              r"(?:categories|entries|templates)/" + BOOK_PAGE + r"\.json")
+BOOK_TINKERS_PAGES = r"kubejs/assets/[a-z0-9_.-]+/book/[a-z0-9_.-]+/ru_ru/" + BOOK_PAGE + r"\.json"
+BOOK_GUIDEME_PAGES = r"kubejs/assets/[a-z0-9_.-]+/[a-z0-9_.-]+/_ru_ru/" + BOOK_PAGE + r"\.md"
 BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
 BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
 BOOK_NOTICE = r"licenses/[a-zA-Z0-9_.-]+\.txt"
@@ -523,7 +527,8 @@ def book_localization_jar_input(path, pin, author):
 
 
 def book_localization_addition(path):
-    return any(re.fullmatch(pattern, path) for pattern in (BOOK_PAGES, BOOK_LANGUAGE, BOOK_NOTICE))
+    return any(re.fullmatch(pattern, path) for pattern in
+               (BOOK_PAGES, BOOK_TINKERS_PAGES, BOOK_GUIDEME_PAGES, BOOK_LANGUAGE, BOOK_NOTICE))
 
 
 def book_localizations(recipe, pack_source, author):
@@ -543,7 +548,8 @@ def book_localizations(recipe, pack_source, author):
         reserve_path(destinations, path)
         if "before" in row:
             original = overrides.get(name.casefold())
-            require(re.fullmatch(BOOK_QUESTS, name) and book_localization_pin(row["before"]) and
+            replaceable = re.fullmatch(BOOK_QUESTS, name) or re.fullmatch(BOOK_LANGUAGE, name)
+            require(replaceable and book_localization_pin(row["before"]) and
                     matches_book_pin({**row["before"], "path": name}, original),
                     f"Review required for changed book localization replacement: {name}")
         else:
