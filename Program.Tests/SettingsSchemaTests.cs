@@ -107,15 +107,15 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = new SettingsService(paths).Load();
 
         Assert.Equal(SettingsService.CurrentSchemaVersion, settings.SchemaVersion);
+        Assert.True(settings.MemoryIsGlobal);
+        Assert.Equal(MemorySizingService.GetDefaultHeapGb(), settings.MaxHeapGb);
     }
 
     /// <summary>
-    /// A number the launcher suggested follows the pack it is for: put a
-    /// vanilla pack under a file nobody has edited by hand, and the suggestion
-    /// comes down to what vanilla wants rather than staying at a modpack's.
+    /// Existing automatic values are replaced when switching to the shared setting.
     /// </summary>
     [Fact]
-    public void ANumberTheLauncherChose_FollowsThePack()
+    public void AnOldAutomaticValue_MigratesToTheHardwareDefault()
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
@@ -124,12 +124,8 @@ public sealed class SettingsSchemaTests : IDisposable
 
         var settings = new SettingsService(paths).Load();
 
-        var vanilla = PackMemoryProfile.Measure(Path.Combine(paths.Packs, "Vanilla"));
-        Assert.True(vanilla.IsKnown);
-        Assert.Equal(
-            MemorySizingService.GetRecommendedMemoryGb(vanilla, VideoMemoryProfile.Measure()),
-            settings.MaxHeapGb);
-        Assert.True(settings.MaxHeapGb < 20, "vanilla must not keep a modpack's number");
+        Assert.Equal(MemorySizingService.GetDefaultHeapGb(), settings.MaxHeapGb);
+        Assert.True(settings.MemoryIsGlobal);
     }
 
     /// <summary>
@@ -163,58 +159,43 @@ public sealed class SettingsSchemaTests : IDisposable
         var kept = MemorySizingService.ClampHeapGb(
             MemorySizingService.GetHeapForBudgetGb(vanillaPack, 20, video));
         Assert.Equal(kept, settings.MaxHeapGb);
-        // And it is kept under the name of the pack it was chosen on. A file
-        // from before the number was per-pack cannot say which pack that was,
-        // so it is taken to have been the one that was selected.
-        Assert.Equal(kept, settings.MemoryByPack["Vanilla"]);
+        Assert.True(settings.MemoryIsGlobal);
+        Assert.Equal(kept, new SettingsService(paths).Load().MaxHeapGb);
     }
 
     /// <summary>
-    /// Two packs, two numbers, and switching between them brings each one back.
+    /// The first load prefers the selected pack's old edit.
+    /// Future pack selections keep the new shared value.
     /// </summary>
-    /// <remarks>
-    /// One number for every pack was wrong in both directions at once: it sent
-    /// a heavy pack's twelve gigabytes to a pack built for a laptop, and the
-    /// laptop pack's five to the heavy one, and whichever the player fixed last
-    /// was the only one that was right.
-    /// </remarks>
     [Fact]
-    public void EachPackKeepsTheNumberItWasSetTo()
+    public void SelectedManualHeapMigratesAndThenAppliesAcrossPacks()
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
         WriteVanillaPack(paths, "Vanilla");
         WriteVanillaPack(paths, "Heavy");
-        WriteSettings(paths, memoryGb: 20, chosenByPlayer: false, pack: "Vanilla");
+        File.WriteAllText(paths.SettingsFile, """
+        {
+          "maxMemoryGb": 12,
+          "memorySettingIsTheHeap": true,
+          "clientRelativePath": "Vanilla",
+          "memoryByPack": { "vanilla": 3, "Heavy": 12 }
+        }
+        """);
 
         var service = new SettingsService(paths);
         var settings = service.Load();
 
-        // Set on one pack.
-        settings.MaxHeapGb = 3;
-        service.RememberMemoryForPack(settings, settings.MaxHeapGb);
-        service.Save(settings);
-        var laptopNumber = settings.MaxHeapGb;
-
-        // Switch to the other, which was never set: it gets the suggestion.
+        var migrated = MemorySizingService.ClampHeapGb(3);
+        Assert.Equal(migrated, settings.MaxHeapGb);
         settings.ClientRelativePath = "Heavy";
         service.MeasurePack(settings.ClientRelativePath);
-        service.ApplyPackMemory(settings);
-        Assert.Null(service.RememberedMemoryGb(settings));
-        settings.MaxHeapGb = MemorySizingService.ClampHeapGb(12);
-        service.RememberMemoryForPack(settings, settings.MaxHeapGb);
         service.Save(settings);
-        var heavyNumber = settings.MaxHeapGb;
-
-        // Back to the first, in a launcher that has just started.
         var reloaded = new SettingsService(paths).Load();
-        reloaded.ClientRelativePath = "Vanilla";
-        var second = new SettingsService(paths);
-        second.MeasurePack(reloaded.ClientRelativePath);
-        second.ApplyPackMemory(reloaded);
 
-        Assert.Equal(laptopNumber, reloaded.MaxHeapGb);
-        Assert.Equal(heavyNumber, reloaded.MemoryByPack["Heavy"]);
+        Assert.Equal("Heavy", reloaded.ClientRelativePath);
+        Assert.Equal(migrated, reloaded.MaxHeapGb);
+        Assert.Equal(12, reloaded.MemoryByPack["Heavy"]);
     }
 
     /// <summary>
@@ -233,10 +214,9 @@ public sealed class SettingsSchemaTests : IDisposable
         var settings = service.Load();
         const int chosen = 3;
         settings.MaxHeapGb = chosen;
-        service.RememberMemoryForPack(settings, chosen);
         service.Save(settings);
 
-        Assert.Equal(chosen, new SettingsService(paths).Load().MaxHeapGb);
+        Assert.Equal(MemorySizingService.ClampHeapGb(chosen), new SettingsService(paths).Load().MaxHeapGb);
     }
 
     private static void WriteSettings(AppPaths paths, int memoryGb, bool chosenByPlayer, string pack)

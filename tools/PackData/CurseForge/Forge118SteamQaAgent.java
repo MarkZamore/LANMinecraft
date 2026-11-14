@@ -18,6 +18,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -36,12 +37,16 @@ public final class Forge118SteamQaAgent {
     private static final String CHAT = "net.minecraft.network.chat.";
     private static final String LEVEL = "net.minecraft.world.level.";
     private static final String PLAYER_NAME = "LanMcPackQa";
+    private static final String SKYBLOCK_PRESET = "skyblockbuilder:skyblock";
 
     private final Path game, evidence, world;
     private final String minecraftVersion;
     private final String worldName;
     private final String reopenLevelSha256;
     private final String expectedWindowTitle;
+    private final String worldPreset;
+    private final String expectedInitialItem;
+    private final boolean requireDefaultWorldPreset;
     private final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(11);
     private Object client;
     private ClassLoader gameLoader;
@@ -71,6 +76,15 @@ public final class Forge118SteamQaAgent {
         world = game.resolve("saves").resolve(worldName);
         reopenLevelSha256 = System.getProperty(PREFIX + "reopenLevelSha256", "");
         expectedWindowTitle = System.getProperty(PREFIX + "expectedWindowTitle", "");
+        worldPreset = System.getProperty(PREFIX + "worldPreset", "");
+        expectedInitialItem = System.getProperty(PREFIX + "expectedInitialItem", "");
+        requireDefaultWorldPreset = Boolean.getBoolean(PREFIX + "requireDefaultWorldPreset");
+        require(worldPreset.isEmpty() || (usesNamedClasses() || minecraftVersion.equals("1.20.1")) &&
+            worldPreset.matches("[a-z0-9_]+:[a-z0-9_./-]+"),
+            "World preset verification requires a reviewed client and a resource identifier.");
+        require(expectedInitialItem.isEmpty() || minecraftVersion.equals("1.20.1") &&
+            expectedInitialItem.matches("[a-z0-9_]+:[a-z0-9_./-]+"),
+            "Initial item verification requires a reviewed client and a resource identifier.");
         if (!game.startsWith(install.resolve("Minecraft/Personal/Instances")) ||
                 !evidence.startsWith(install.resolve("evidence")) ||
                 Files.exists(evidence.resolve("native-steam-qa.jsonl"), LinkOption.NOFOLLOW_LINKS) ||
@@ -105,10 +119,11 @@ public final class Forge118SteamQaAgent {
             checkWindowTitle("startup");
             event("loaded_mod_ids", onClient(this::readMods));
             onClient(() -> { openWorld(); return null; });
-            waitUntil("world join", 180, () -> onClient(() -> player() != null && server() != null));
+            waitUntil("world join", 180, () -> onClient(this::completeWorldJoin));
             event(reopenLevelSha256.isEmpty() ? "world_created" : "world_reopened",
                 Map.of("gameMode", "SURVIVAL", "commands", false));
             checkWindowTitle("world_before_steam");
+            if (usesNamedClasses() || !worldPreset.isEmpty()) recordWorldGeneration();
 
             onClient(() -> { beginPublish(); return null; });
             waitUntil("world published and settings gone", 20, () -> onClient(() ->
@@ -116,13 +131,18 @@ public final class Forge118SteamQaAgent {
             event("published", Map.of("nativeListener", true, "settingsClosedOnPublication", true));
 
             checkPermissions();
-            event("pause_after_publish", onClient(this::checkPauseAfter));
+            Map<String, Object> pause = onClient(this::checkPauseAfter);
+            event("pause_after_publish", pause);
             ChatProbe steamChat = waitForChat();
             event("chat", steamChat.evidence());
             checkWindowTitle("world_after_steam");
             if (steamChat.complete()) checkPublishedSteamMetadata();
 
+            if (!expectedInitialItem.isEmpty()) checkInitialItem();
             saveWorld();
+            require(Boolean.TRUE.equals(pause.get("reports")) && Boolean.TRUE.equals(pause.get("shareToLanGone")) &&
+                Boolean.FALSE.equals(pause.get("worldSettingsOrCheats")),
+                "Published pause menu did not replace Share to LAN with Reports.");
             event("complete", Map.of("nativeSteamHost", steamChat.complete() ? "PASS" : "FAIL", "guestConnection", "NOT RUN"));
         } catch (Exception failure) {
             Throwable detail = failure;
@@ -173,6 +193,24 @@ public final class Forge118SteamQaAgent {
             // The ordinary first-run lifecycle only persists the isolated QA instance's options.
             invoke(current, runtimeName("m_7379_", "onClose"));
             event("accessibility_onboarding_completed", Map.of("nativeLifecycle", true));
+        }
+        if (!worldPreset.isEmpty() && current != null &&
+                current.getClass().getName().equals("org.betterx.bclib.client.gui.screens.WelcomeScreen") &&
+                invoke(client, runtimeName("m_91265_", "getOverlay")) == null) {
+            activateNativeAction(current, "gui.proceed");
+            event("bclib_onboarding_completed", Map.of("nativeButtonCallback", true));
+        }
+        return false;
+    }
+
+    private boolean completeWorldJoin() throws Exception {
+        if (player() != null && server() != null) return true;
+        Object current = screen();
+        if (minecraftVersion.equals("1.20.1") && !worldPreset.isEmpty() &&
+                type(SCREENS + "ConfirmScreen").isInstance(current) &&
+                "selectWorld.warning.experimental.title".equals(translationKey(invoke(current, "m_96636_")))) {
+            activateNativeAction(current, "gui.yes");
+            event("experimental_world_confirmation", Map.of("nativeButtonCallback", true));
         }
         return false;
     }
@@ -239,6 +277,10 @@ public final class Forge118SteamQaAgent {
             }
             return;
         }
+        if (!worldPreset.isEmpty()) {
+            createWorldThroughNativePreset();
+            return;
+        }
         Class<?> settings = type(LEVEL + "LevelSettings");
         Class<?> mode = type(LEVEL + "GameType");
         Class<?> difficulty = type("net.minecraft.world.Difficulty");
@@ -280,6 +322,45 @@ public final class Forge118SteamQaAgent {
             new Class<?>[] { String.class, settings, registry, generation }, worldName, levelSettings, access, worldGen);
     }
 
+    private void createWorldThroughNativePreset() throws Exception {
+        String selection = SCREENS + "worldselection.";
+        Class<?> create = type(selection + "CreateWorldScreen");
+        invoke(create, null, runtimeName("m_232896_", "openFresh"),
+            new Class<?>[] { type(MC), type(SCREENS + "Screen") }, client, screen());
+        Object form = screen();
+        require(create.isInstance(form), "The native Create World form did not open.");
+        Object state = invoke(form, runtimeName("m_267748_", "getUiState"));
+        String getWorldType = runtimeName("m_267828_", "getWorldType");
+        Object current = invoke(state, getWorldType);
+        String defaultPreset = presetKey(current);
+        if (!worldPreset.equals(defaultPreset)) {
+            require(!requireDefaultWorldPreset, "The author default world preset differs from the expected preset.");
+            Object selected = null;
+            for (Object candidate : (List<?>) invoke(state, runtimeName("m_267815_", "getNormalPresetList"))) {
+                if (worldPreset.equals(presetKey(candidate))) { selected = candidate; break; }
+            }
+            require(selected != null, "The native Create World form does not offer the expected preset.");
+            invoke(state, runtimeName("m_267576_", "setWorldType"),
+                new Class<?>[] { type(selection + "WorldCreationUiState$WorldTypeEntry") }, selected);
+        }
+        String selectedPreset = presetKey(invoke(state, getWorldType));
+        require(worldPreset.equals(selectedPreset), "The chosen world preset did not persist in the native form.");
+        invoke(state, runtimeName("m_267649_", "setName"), new Class<?>[] { String.class }, worldName);
+        Class<?> mode = type(selection + "WorldCreationUiState$SelectedGameMode");
+        invoke(state, runtimeName("m_267616_", "setGameMode"), new Class<?>[] { mode }, mode.getField("SURVIVAL").get(null));
+        invoke(state, runtimeName("m_267601_", "setAllowCommands"), new Class<?>[] { boolean.class }, false);
+        event("native_world_preset", Map.of("defaultPreset", defaultPreset, "selectedPreset", selectedPreset,
+            "authorDefaultVerified", requireDefaultWorldPreset, "nativeButtonCallback", true));
+        activateNativeAction(form, "selectWorld.create");
+    }
+
+    private String presetKey(Object entry) throws Exception {
+        Object holder = invoke(entry, runtimeName("f_267398_", "preset"));
+        if (holder == null) return "custom";
+        Optional<?> key = (Optional<?>) invoke(holder, runtimeName("m_203543_", "unwrapKey"));
+        return key.isEmpty() ? "custom" : invoke(key.get(), runtimeName("m_135782_", "location")).toString();
+    }
+
     private void verifyWorldInput() throws Exception {
         if (reopenLevelSha256.isEmpty()) {
             require(!Files.exists(world, LinkOption.NOFOLLOW_LINKS), "Fresh QA world already exists.");
@@ -307,6 +388,86 @@ public final class Forge118SteamQaAgent {
         // renders a forced progress frame and can block on hidden GL windows.
     }
 
+    private void recordWorldGeneration() throws Exception {
+        Object server = onClient(this::server);
+        Map<String, Object> dimensions = schedule((Executor) server, () -> {
+            Object overworld = invoke(server, runtimeName("m_129783_", "overworld"));
+            Object nether = serverDimension(server, "f_46429_", "NETHER");
+            if (SKYBLOCK_PRESET.equals(worldPreset)) verifySkyblockGenerator(overworld);
+            return usesNamedClasses()
+                ? Map.of("overworld", describeGeneration(overworld), "nether", describeGeneration(nether))
+                : Map.of("overworld", describeGeneration(overworld), "nether", describeGeneration(nether),
+                    "end", describeGeneration(serverDimension(server, "f_46430_", "END")));
+        });
+        event("native_world_generation", dimensions);
+    }
+
+    private Object serverDimension(Object server, String srgField, String namedField) throws Exception {
+        Object key = type(LEVEL + "Level").getField(runtimeName(srgField, namedField)).get(null);
+        return invoke(server, runtimeName("m_129880_", "getLevel"),
+            new Class<?>[] { type("net.minecraft.resources.ResourceKey") }, key);
+    }
+
+    private void verifySkyblockGenerator(Object overworld) throws Exception {
+        Object chunks = invoke(overworld, "getChunkSource");
+        Object generator = invoke(chunks, "getGenerator");
+        require(generator.getClass().getName().equals("de.melanx.skyblockbuilder.world.chunkgenerators.SkyblockNoiseBasedChunkGenerator"),
+            "The active overworld did not use the expected skyblock generator.");
+        Object randomState = invoke(chunks, "randomState");
+        Class<?>[] columnTypes = { int.class, int.class, type(LEVEL + "LevelHeightAccessor"), type(LEVEL + "levelgen.RandomState") };
+        Object column = invoke(generator, "getBaseColumn", columnTypes, 1024, -1024, overworld, randomState);
+        int min = (Integer) invoke(overworld, "getMinBuildHeight");
+        int max = (Integer) invoke(overworld, "getMaxBuildHeight");
+        require(max > min && max - min <= 2048, "Unexpected skyblock vertical bounds.");
+        for (int y = min; y < max; y++) {
+            Object block = invoke(column, "getBlock", new Class<?>[] { int.class }, y);
+            require(Boolean.TRUE.equals(invoke(block, "isAir")), "Skyblock base noise created a non-air block.");
+        }
+        event("native_skyblock_noise", Map.of("generator", generator.getClass().getName(), "baseColumnAir", true,
+            "testedHeights", max - min, "loadedChunk", false));
+    }
+
+    private Map<String, Object> describeGeneration(Object level) throws Exception {
+        Object chunks = invoke(level, runtimeName("m_7726_", "getChunkSource"));
+        Object generator = invoke(chunks, runtimeName("m_8481_", "getGenerator"));
+        Object biomeSource = invoke(generator, runtimeName("m_62218_", "getBiomeSource"));
+        List<String> biomes = new ArrayList<>();
+        for (Object holder : (Iterable<?>) invoke(biomeSource, runtimeName("m_207840_", "possibleBiomes"))) {
+            var key = (Optional<?>) invoke(holder, runtimeName("m_203543_", "unwrapKey"));
+            if (key.isPresent()) biomes.add(invoke(key.get(), runtimeName("m_135782_", "location")).toString());
+        }
+        biomes.sort(String::compareTo);
+        return Map.of("generator", generator.getClass().getName(), "biomes", biomes);
+    }
+
+    private void checkInitialItem() throws Exception {
+        Object server = onClient(this::server);
+        waitUntil("expected native host item", 30, () -> {
+            int slot = schedule((Executor) server, () -> initialItemSlot(server));
+            if (slot < 0) return false;
+            event("native_initial_item", Map.of("item", expectedInitialItem, "slot", slot, "present", true));
+            return true;
+        });
+    }
+
+    private int initialItemSlot(Object server) throws Exception {
+        Object players = invoke(server, "m_6846_");
+        Object host = invoke(players, "m_11255_", new Class<?>[] { String.class }, PLAYER_NAME);
+        Object inventory = invoke(host, "m_150109_");
+        Object registry = type("net.minecraft.core.registries.BuiltInRegistries").getField("f_257033_").get(null);
+        int slots = (Integer) invoke(inventory, "m_6643_");
+        require(slots > 0 && slots <= 256, "Unexpected native player inventory size.");
+        for (int i = 0; i < slots; i++) {
+            Object stack = invoke(inventory, "m_8020_", new Class<?>[] { int.class }, i);
+            if (Boolean.TRUE.equals(invoke(stack, "m_41619_"))) continue;
+            Object item = invoke(stack, "m_41720_");
+            if (expectedInitialItem.equals(invoke(registry, "m_7981_", new Class<?>[] { Object.class }, item).toString())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void beginPublish() throws Exception {
         Object pause = type(SCREENS + "PauseScreen").getConstructor(boolean.class).newInstance(true);
         setScreen(pause);
@@ -320,16 +481,31 @@ public final class Forge118SteamQaAgent {
         invoke(action, runtimeName("m_5691_", "onPress"));
     }
 
-    private Map<String, Boolean> checkPauseAfter() throws Exception {
+    private Map<String, Object> checkPauseAfter() throws Exception {
         Object pause = type(SCREENS + "PauseScreen").getConstructor(boolean.class).newInstance(true);
         setScreen(pause);
         List<Object> reportActions = visibleActions(pause, "menu.playerReporting", "Жалобы", "Player Reporting");
         boolean reports = reportActions.size() == 1 && isActive(reportActions.get(0));
         boolean shareGone = visibleActions(pause, "menu.shareToLan").isEmpty();
         boolean noWorldControls = noWorldControls(pause);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("reports", reports);
+        result.put("shareToLanGone", shareGone);
+        result.put("worldSettingsOrCheats", !noWorldControls);
+        if (!reports || !shareGone || !noWorldControls) {
+            List<Map<String, Object>> widgets = new ArrayList<>();
+            for (Object widget : (List<?>) invoke(pause, runtimeName("m_6702_", "children"))) {
+                if (!type("net.minecraft.client.gui.components.AbstractWidget").isInstance(widget)) continue;
+                Object label = invoke(widget, runtimeName("m_6035_", "getMessage"));
+                String key = translationKey(label);
+                widgets.add(Map.of("class", widget.getClass().getName(), "key", key == null ? "" : key,
+                    "visible", field(widget.getClass(), runtimeName("f_93624_", "visible")).get(widget),
+                    "active", isActive(widget)));
+            }
+            result.put("widgets", widgets);
+        }
         setScreen(null);
-        require(reports && shareGone && noWorldControls, "Published pause menu did not replace Share to LAN with Reports.");
-        return Map.of("reports", reports, "shareToLanGone", shareGone, "worldSettingsOrCheats", !noWorldControls);
+        return result;
     }
 
     private void checkPermissions() throws Exception {
@@ -469,6 +645,12 @@ public final class Forge118SteamQaAgent {
         return actions;
     }
 
+    private void activateNativeAction(Object screen, String key) throws Exception {
+        List<Object> actions = visibleActions(screen, key);
+        require(actions.size() == 1 && isActive(actions.get(0)), "The native action was not available: " + key);
+        invoke(actions.get(0), runtimeName("m_5691_", "onPress"));
+    }
+
     private boolean isActive(Object widget) throws ReflectiveOperationException {
         return Boolean.TRUE.equals(field(widget.getClass(), runtimeName("f_93623_", "active")).get(widget));
     }
@@ -580,6 +762,11 @@ public final class Forge118SteamQaAgent {
         if (value instanceof Map<?, ?> map) {
             var entries = new StringJoiner(",", "{", "}");
             map.forEach((key, entry) -> entries.add(json(key.toString()) + ":" + json(entry)));
+            return entries.toString();
+        }
+        if (value instanceof Iterable<?> values) {
+            var entries = new StringJoiner(",", "[", "]");
+            values.forEach(entry -> entries.add(json(entry)));
             return entries.toString();
         }
         var text = new StringBuilder("\"");

@@ -44,8 +44,9 @@ namespace Minecraft;
 /// </summary>
 public static class MemorySizingService
 {
-    /// <summary>The smallest heap worth starting with, and the floor of the field.</summary>
-    public const int MinHeapGb = 2;
+    /// <summary>The smallest heap accepted by the settings and the memory field.</summary>
+    public const int MinHeapGb = 1;
+    private const int MinRecommendedHeapGb = 2;
     /// <summary>The largest heap any arithmetic here may produce.</summary>
     public const int MaxHeapGb = 128;
     /// <summary>
@@ -137,6 +138,38 @@ public static class MemorySizingService
     /// <summary>How much over a measurement its reserve is set; see <see cref="MeasuredReserveGb"/>.</summary>
     private const double MeasuredMargin = 1.1;
 
+    public static int GetDefaultHeapGb()
+    {
+        try
+        {
+            return GetDefaultHeapGb(GetTotalPhysicalMemoryBytes());
+        }
+        catch (InvalidOperationException)
+        {
+            return 4;
+        }
+    }
+
+    internal static int GetDefaultHeapGb(ulong physicalMemoryBytes)
+    {
+        var heapGb = InstalledMemoryTierGb(physicalMemoryBytes) switch
+        {
+            >= 20 => 16,
+            >= 16 => 12,
+            >= 12 => 8,
+            >= 10 => 6,
+            >= 8 => 4,
+            >= 6 => 3,
+            >= 4 => 2,
+            _ => 1
+        };
+        return ClampHeapGb(heapGb, physicalMemoryBytes);
+    }
+
+    // A marketed 8 or 16 GB machine usually reports less usable memory.
+    private static int InstalledMemoryTierGb(ulong physicalMemoryBytes) =>
+        (int)Math.Ceiling(physicalMemoryBytes / BytesPerGb);
+
     public static int GetWholeGameAllowanceGb()
     {
         try
@@ -186,6 +219,7 @@ public static class MemorySizingService
     public static int GetAllowedHeapGb(ulong totalPhysicalMemoryBytes)
     {
         var installedGb = (int)Math.Floor(totalPhysicalMemoryBytes / BytesPerGb);
+        if (installedGb < 6) installedGb = InstalledMemoryTierGb(totalPhysicalMemoryBytes);
         return Math.Clamp(installedGb - GetOperatingSystemReserveGb(installedGb), MinHeapGb, MaxHeapGb);
     }
 
@@ -202,7 +236,8 @@ public static class MemorySizingService
     /// held back a quarter, which is a reasonable share of a machine to leave
     /// idle and an unreasonable one to refuse a player who asked for it.
     /// </remarks>
-    public static int GetOperatingSystemReserveGb(int installedGb) => Math.Max(3, installedGb / 8);
+    public static int GetOperatingSystemReserveGb(int installedGb) =>
+        installedGb < 6 ? Math.Max(1, installedGb / 2) : Math.Max(3, installedGb / 8);
 
     public static int GetRecommendedMemoryGb(
         PackMemoryProfile pack,
@@ -393,7 +428,7 @@ public static class MemorySizingService
         int budgetGb,
         VideoMemoryProfile video = default,
         MeasuredMemoryProfile measured = default) =>
-        Math.Max(MinHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video, measured));
+        Math.Max(MinRecommendedHeapGb, budgetGb - GetNativeReserveGb(pack, budgetGb, video, measured));
 
     /// <summary>
     /// The heap this pack wants: enough to open a world and keep playing in it.
@@ -410,7 +445,7 @@ public static class MemorySizingService
             (double)pack.ModCount * HeapPerModMb;
         return Math.Clamp(
             (int)Math.Round(megabytes / 1024d, MidpointRounding.AwayFromZero),
-            MinHeapGb,
+            MinRecommendedHeapGb,
             MaxRecommendedHeapGb);
     }
 
@@ -434,7 +469,8 @@ public static class MemorySizingService
         // ceiling above lets a player overrule both.
         var room = GetWholeGameAllowanceGb(totalPhysicalMemoryBytes) -
                    GetNativeReserveGb(pack, GetWholeGameAllowanceGb(totalPhysicalMemoryBytes), video, measured);
-        return Math.Clamp(wanted, MinHeapGb, Math.Max(MinHeapGb, Math.Min(room, GetAllowedHeapGb(totalPhysicalMemoryBytes))));
+        var allowed = GetAllowedHeapGb(totalPhysicalMemoryBytes);
+        return Math.Min(allowed, Math.Clamp(wanted, MinRecommendedHeapGb, Math.Max(MinRecommendedHeapGb, room)));
     }
 
     /// <summary>
@@ -464,10 +500,10 @@ public static class MemorySizingService
         // And no further than the point where more stops being worth having:
         // past this a larger heap buys longer collections rather than more
         // comfort.
-        wholeGame = Math.Max(MinHeapGb, wholeGame);
+        wholeGame = Math.Max(MinRecommendedHeapGb, wholeGame);
         return Math.Clamp(
             wholeGame - GetNativeReserveGb(PackMemoryProfile.Unknown, wholeGame),
-            MinHeapGb,
+            MinRecommendedHeapGb,
             MaxRecommendedHeapGb);
     }
 
@@ -505,6 +541,6 @@ public static class MemorySizingService
     {
         var installedGb = (int)Math.Floor(totalPhysicalMemoryBytes / BytesPerGb);
         var reserved = Math.Max(3, installedGb / 4);
-        return Math.Clamp(installedGb - reserved, MinHeapGb, MaxHeapGb);
+        return Math.Clamp(installedGb - reserved, MinRecommendedHeapGb, MaxHeapGb);
     }
 }

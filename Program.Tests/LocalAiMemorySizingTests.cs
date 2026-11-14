@@ -47,10 +47,8 @@ public sealed class LocalAiMemorySizingTests
             Assert.True(service.UsePackMemory(withAi));
             var chosen = Math.Min(9, MemorySizingService.GetAllowedHeapGb());
             var settings = new AppSettings { ClientRelativePath = "MemoryFixture", MaxHeapGb = chosen };
-            service.RememberMemoryForPack(settings, chosen);
-            Assert.False(service.ApplyPackMemory(settings));
-            Assert.Equal(chosen, settings.MaxHeapGb);
-            Assert.Equal(chosen, settings.MemoryByPack["MemoryFixture"]);
+            service.Save(settings);
+            Assert.Equal(chosen, service.Load().MaxHeapGb);
         }
         finally { TempTree.Delete(root); }
     }

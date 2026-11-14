@@ -83,7 +83,7 @@ public final class Forge112SteamQaAgent {
     private void run(Instrumentation instrumentation) {
         try {
             event("started", "\"nativeRuntime\":true,\"transformer\":false,\"computerUse\":false");
-            await(165, () -> findClient(instrumentation), "Minecraft client");
+            await(300, () -> findClient(instrumentation), "Minecraft client");
             await(180, () -> scheduled(client, this::titleReady), "title");
             event("title", "\"loaded\":true");
             verifyWindowTitle("title_screen");

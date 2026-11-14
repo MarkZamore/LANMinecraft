@@ -38,6 +38,7 @@ public final class WorldOptionsPublishProbe {
         pauseType = loader.define(PAUSE, transformer.transform(null, null, PAUSE, null, null, pause));
         worldType = loader.define(WORLD, transformer.transform(null, null, WORLD, null, null, world));
         successfulPublication();
+        guestCommandsFollowSavedWorld();
         failedPublication(false);
         failedPublication(true);
         noIntegratedRow(null);
@@ -98,6 +99,26 @@ public final class WorldOptionsPublishProbe {
         WorldBase afterPublish = (WorldBase) client.gui.current;
         check(afterPublish.widgetsReady && server.attempts == 1 && client.queue.isEmpty(),
             "published world's ordinary settings were treated as Open LAN");
+    }
+
+    private static void guestCommandsFollowSavedWorld() throws Exception {
+        property("lanGuestCommandAccessMethods", "setGuestCommandAccess");
+        property("getWorldDataMethods", "getWorldData");
+        property("isAllowCommandsMethods", "isAllowCommands");
+        for (boolean commands : new boolean[] {false, true}) {
+            for (boolean publicationSucceeds : new boolean[] {false, true}) {
+                Server server = new Server();
+                server.succeed = publicationSucceeds;
+                server.savedCommands = commands;
+                server.guestCommands = !commands;
+                reset(server);
+                MenuBase pause = menu();
+                ((Button) pause.rows.children.get(1)).click();
+                check(server.guestCommands == (publicationSucceeds ? commands : !commands),
+                    "guest permission did not follow the saved setting after successful publication only");
+            }
+        }
+        System.clearProperty("minecraft.portable.identity.lanGuestCommandAccessMethods");
     }
 
     private static void failedPublication(boolean throwing) throws Exception {
@@ -316,6 +337,11 @@ public final class WorldOptionsPublishProbe {
     public enum Scope { LAN }
     public enum GameType { SURVIVAL }
     public static final class Server {
+        boolean savedCommands;
+        boolean guestCommands;
+        public Server getWorldData() { return this; }
+        public boolean isAllowCommands() { return savedCommands; }
+        public void setGuestCommandAccess(boolean commands) { guestCommands = commands; }
         public boolean published;
         public boolean succeed = true;
         public boolean throwPublish;

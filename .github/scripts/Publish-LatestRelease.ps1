@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GhRetry.ps1')
 . (Join-Path $PSScriptRoot 'HostedDefenderPolicy.ps1')
+. (Join-Path $PSScriptRoot 'CompressedHistoryRelease.ps1')
 $assetRoot = [IO.Path]::GetFullPath($AssetDirectory, (Get-Location).ProviderPath)
 $commit = $CommitSha.ToLowerInvariant()
 $locks = [Collections.Generic.List[IO.FileStream]]::new()
@@ -68,7 +69,7 @@ function Read-Latest {
     $pointers = @($release.assets | Where-Object name -eq 'update.json')
     if ($pointers.Count -ne 1) { throw 'The existing latest release has no unambiguous update pointer.' }
     $pointer = Invoke-CheckedGh api "repos/$Repository/releases/assets/$($pointers[0].id)" -H 'Accept: application/octet-stream' | ConvertFrom-Json
-    if ($pointer.releaseNumber -gt $ReleaseNumber -or
+    if (($pointer.releaseNumber -gt $ReleaseNumber -and !(Test-CompressedHistoryRelease $ReleaseNumber $pointer)) -or
         ($pointer.releaseNumber -eq $ReleaseNumber -and $pointer.commitSha -ne $commit)) {
         throw 'A newer or conflicting latest release already exists; refusing to replace it.'
     }
@@ -159,7 +160,9 @@ try {
         [void](Invoke-CheckedGh release edit latest --repo $Repository --target $commit --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
     $archiveTags = (Invoke-CheckedGh release list --repo $Repository --limit 100 --json tagName | ConvertFrom-Json).tagName |
-        Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' } | Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
+        Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' -and
+            [int]($_ -replace '^update-base-', '') -lt $ReleaseNumber } |
+        Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
     foreach ($tag in @($archiveTags | Select-Object -Skip 2)) { [void](Invoke-CheckedGh release delete $tag --repo $Repository --cleanup-tag --yes) }
     Write-Host ("Published verified release $ReleaseNumber ($commit).")
 }

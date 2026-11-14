@@ -200,7 +200,7 @@ public partial class MainWindow : Window
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
             RefreshControlsPresetStatus();
-            RefreshMemoryText(saveIfChanged: false);
+            SetMemoryText(_settings.MaxHeapGb.ToString(CultureInfo.InvariantCulture));
             RefreshUi();
             SetState("Ready");
             StartupTrace.Mark("кадр");
@@ -2271,18 +2271,6 @@ public partial class MainWindow : Window
     /// Tidies the field when it is left: the text is read back, held to what
     /// the machine allows, and written out again.
     /// </summary>
-    /// <remarks>
-    /// Leaving a field is not choosing a number. This used to say
-    /// <c>chosenByPlayer: true</c>, which was survivable while there was one
-    /// number for every pack and merely froze the launcher's suggestion; with a
-    /// number per pack it meant that clicking near the box - or the window
-    /// losing focus at all - stamped whatever was showing as this pack's answer
-    /// for ever. A 287-mod build was pinned at four gigabytes that way, on a
-    /// machine where the launcher would have offered five, and it ran out of
-    /// them while generating a world. A number the player types is written down
-    /// by <see cref="MemoryTextBox_TextChanged"/> on the keystroke that types
-    /// it. Confirming an unchanged value with Enter does not pin it.
-    /// </remarks>
     private void MemoryTextBox_LostFocus(object sender, RoutedEventArgs e)
     {
         ApplyMemoryText();
@@ -2327,20 +2315,15 @@ public partial class MainWindow : Window
         var allowedHeapGb = GetAllowedHeapGb();
         if (!int.TryParse(digitsOnly, out var memoryGb) || memoryGb > allowedHeapGb)
         {
-            SetMemoryGb(allowedHeapGb, chosenByPlayer: true);
+            SetMemoryGb(allowedHeapGb);
             return;
         }
 
         if (memoryGb >= MinHeapGb)
         {
             _settings.MaxHeapGb = memoryGb;
-            // Typed by hand: from here this is what the pack in front of them
-            // is worth, kept under that pack's name and put back in the field
-            // every time they return to it. Written on the keystroke rather
-            // than on the launch, because thinking better of playing is not
-            // thinking better of the number.
-            _settingsService.RememberMemoryForPack(_settings, memoryGb);
             _settingsService.Save(_settings);
+            DescribeMemorySplit(digitsOnly);
         }
     }
 
@@ -2824,40 +2807,25 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// Reads the field back into the settings. <paramref name="chosenByPlayer"/>
-    /// is false where the launcher is only re-applying what it put there
-    /// itself - pressing Play, above all - because a number the player never
-    /// touched goes on following the pack it is for.
-    /// </summary>
     private void ApplyMemoryText()
     {
-        if (int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb))
-        {
-            SetMemoryGb(memoryGb, chosenByPlayer: false);
-            return;
-        }
-
-        SetMemoryGb(MinHeapGb, chosenByPlayer: false);
+        if (!_selectedNativeRuntime && _settings is not null)
+            SetMemoryGb(int.TryParse(MemoryTextBox.Text.Trim(), out var memoryGb) && memoryGb >= MinHeapGb
+                ? memoryGb
+                : _settings.MaxHeapGb);
     }
 
-    private void SetMemoryGb(int memoryGb, bool chosenByPlayer)
+    private void SetMemoryGb(int memoryGb)
     {
         var settings = RequireSettings();
-        var clamped = ClampHeapGb(memoryGb);
+        var clamped = MemorySizingService.ClampHeapGb(memoryGb);
         settings.MaxHeapGb = clamped;
-        var service = RequireSettingsService();
-        if (chosenByPlayer) service.RememberMemoryForPack(settings, clamped);
-        service.Save(settings);
+        RequireSettingsService().Save(settings);
         SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
     }
 
     /// <summary>
-    /// Weighs the pack that is selected - its mods, their bytes, the texture it
-    /// ships - and puts the field back to the number that belongs to it: the one
-    /// the player last set here, or what the pack asks for where they never set
-    /// one. Vanilla on an old version and a pack of nine hundred jars are
-    /// both packs here, and they are why the number is not shared between them.
+    /// Recomputes the selected pack's recommendation and launch information.
     /// </summary>
     private void RefreshPackMemory() => _ = RefreshPackMemoryAsync();
 
@@ -2882,7 +2850,6 @@ public partial class MainWindow : Window
         }
         StartMemoryEstimateWait();
         var service = _settingsService;
-        var settings = _settings;
         var sync = _packSync;
         return Task.Run(async () =>
         {
@@ -2905,8 +2872,8 @@ public partial class MainWindow : Window
                 // only the last one is about the build in front of them.
                 if (generation != _packMemoryGeneration) return;
                 StopMemoryEstimateWait();
-                service.ApplyPackMemory(settings);
-                RefreshMemoryText();
+                DescribeMemorySplit(MemoryTextBox.Text);
+                RefreshMemoryEstimate();
                 RefreshSkinHint();
             },
             CancellationToken.None,
@@ -2939,8 +2906,7 @@ public partial class MainWindow : Window
     {
         if (_recommendedMemoryGb is not { } memoryGb || !MemoryTextBox.IsEnabled ||
             _settings is null || _settingsService is null || _memoryEstimateWait?.IsEnabled == true) return;
-        _settingsService.ForgetMemoryForPack(_settings);
-        SetMemoryGb(memoryGb, chosenByPlayer: false);
+        SetMemoryGb(memoryGb);
     }
 
     private void StartMemoryEstimateWait()
@@ -2975,27 +2941,6 @@ public partial class MainWindow : Window
         SkinButton.ToolTip = SkinCompatibility.Describe(
             _settingsService?.PackMemory.MinecraftVersion,
             _settings?.SkinPath);
-    }
-
-    private void RefreshMemoryText(bool saveIfChanged = false)
-    {
-        var settings = RequireSettings();
-        var clamped = ClampHeapGb(settings.MaxHeapGb);
-        if (settings.MaxHeapGb != clamped)
-        {
-            settings.MaxHeapGb = clamped;
-            if (saveIfChanged)
-            {
-                RequireSettingsService().Save(settings);
-            }
-        }
-
-        SetMemoryText(clamped.ToString(CultureInfo.InvariantCulture));
-    }
-
-    private static int ClampHeapGb(int value)
-    {
-        return MemorySizingService.ClampHeapGb(value);
     }
 
     /// <summary>
@@ -3053,7 +2998,7 @@ public partial class MainWindow : Window
         _recommendedMemoryGb = estimateGb;
         MemoryEstimateButton.IsEnabled = MemoryTextBox.IsEnabled && _memoryEstimateWait?.IsEnabled != true;
         MemoryEstimateText.Text = $"Рекомендуется от {estimateGb} ГБ";
-        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы автоматически использовать рекомендацию.";
+        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы установить это значение для всех сборок.";
     }
 
     /// <summary>

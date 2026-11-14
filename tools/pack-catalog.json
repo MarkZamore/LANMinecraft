@@ -3,10 +3,10 @@
   "packs": [
     {
       "id": "all-the-mods-10",
-      "relativePath": "All The Mods 10",
+      "relativePath": "All the Mods 10",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-10",
+        "repo": "All-the-Mods-10",
         "tag": "pack-latest"
       }
     },
@@ -22,14 +22,12 @@
     },
     {
       "id": "minecraft-26-2",
-      "relativePath": "Minecraft 26.3",
-      "installationPath": "Minecraft Java Edition",
+      "relativePath": "Minecraft Java Edition",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-Java-Edition",
         "tag": "pack-latest"
       },
-      "legacyRelativePaths": ["Minecraft 26.2"],
       "legacySources": [
         {
           "owner": "MarkZamore",
@@ -54,10 +52,10 @@
     },
     {
       "id": "all-the-mods-9",
-      "relativePath": "All The Mods 9",
+      "relativePath": "All the Mods 9",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-9",
+        "repo": "All-the-Mods-9",
         "tag": "pack-latest"
       }
     }

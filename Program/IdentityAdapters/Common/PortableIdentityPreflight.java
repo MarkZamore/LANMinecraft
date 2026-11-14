@@ -489,6 +489,9 @@ public final class PortableIdentityPreflight {
         ClassNode integrated = readClass(archive, alias("integratedServerClasses", mappingIndex));
         if (isConfigured("multiplayerScopeClasses")) {
             requireMethod(integrated, "publishServerMethods", 2);
+            if (isConfigured("lanGuestCommandAccessMethods")) {
+                requireInheritedMethod(archive, integrated, "lanGuestCommandAccessMethods", "(Z)V");
+            }
             ClassNode scope = readClass(archive,
                 alias("multiplayerScopeClasses", mappingIndex).replace('.', '/'));
             boolean lanConstantFound = false;

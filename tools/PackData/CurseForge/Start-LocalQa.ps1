@@ -15,6 +15,9 @@ param(
     [string] $NativeQaLibraryArchive,
     [ValidatePattern('^[0-9a-f]{64}$')][string] $NativeQaLibrarySha256,
     [switch] $UseProductionJavaArgumentFile,
+    [ValidatePattern('^[a-z0-9_]+:[a-z0-9_./-]+$')][string] $NativeQaWorldPreset,
+    [switch] $NativeQaRequireDefaultWorldPreset,
+    [ValidatePattern('^[a-z0-9_]+:[a-z0-9_./-]+$')][string] $NativeQaExpectedInitialItem,
     [ValidatePattern('^[A-Za-z0-9_-]{1,16}$')][string] $NativeQaWorldSuffix,
     [ValidatePattern('^[0-9a-f]{64}$')][string] $NativeQaReopenLevelSha256,
     [string] $RunOwner = 'Codex'
@@ -79,6 +82,12 @@ if ($NativeQaAgent) {
 }
 if (($NativeQaWorldSuffix -or $NativeQaReopenLevelSha256) -and !$NativeQaAgent) {
     throw 'Native QA world settings require -NativeQaAgent.'
+}
+if (($NativeQaWorldPreset -and !$NativeQaAgent) -or ($NativeQaRequireDefaultWorldPreset -and !$NativeQaWorldPreset)) {
+    throw 'Native QA preset verification requires an agent and an explicit preset.'
+}
+if ($NativeQaExpectedInitialItem -and !$NativeQaAgent) {
+    throw 'Native QA item verification requires an agent.'
 }
 if ([bool]$NativeQaLibraryArchive -ne [bool]$NativeQaLibrarySha256 -or
     ($NativeQaLibraryArchive -and !$NativeQaAgent)) {
@@ -258,6 +267,15 @@ try {
         }
         if ($NativeQaReopenLevelSha256) {
             $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.reopenLevelSha256=$NativeQaReopenLevelSha256"))
+        }
+        if ($NativeQaWorldPreset) {
+            $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.worldPreset=$NativeQaWorldPreset"))
+            if ($NativeQaRequireDefaultWorldPreset) {
+                $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new('-Dlanminecraft.steamqa.requireDefaultWorldPreset=true'))
+            }
+        }
+        if ($NativeQaExpectedInitialItem) {
+            $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.expectedInitialItem=$NativeQaExpectedInitialItem"))
         }
         if ($card) {
             $arguments.Add([CmlLib.Core.ProcessBuilder.MArgument]::new("-Dlanminecraft.steamqa.expectedWindowTitle=$($card.Content.Name)"))

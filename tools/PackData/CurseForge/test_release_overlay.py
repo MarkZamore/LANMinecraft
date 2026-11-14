@@ -1,7 +1,9 @@
 import json
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from zipfile import ZipFile
 
 import prepare
 import release_overlay as release
@@ -65,6 +67,37 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(self.stage, self.source, self.receipt)
 
+    def test_metadata_patch_keeps_author_pin_and_requires_fixed_jar(self):
+        path = "mods/example.jar"
+        original_jar = BytesIO()
+        with ZipFile(original_jar, "w") as archive:
+            archive.writestr("pack.mcmeta", '{"pack":{"pack_format":${pack_format_number}}}')
+            archive.writestr("assets/example/data.txt", b"unchanged")
+        original = original_jar.getvalue()
+        metadata = {"pack": {"description": "Example", "pack_format": 34}}
+        license_path = "licenses/Example.txt"
+        (self.source / "licenses").mkdir()
+        (self.source / license_path).write_bytes(b"Example license")
+        modified = prepare.rebuild_jar_metadata(original, metadata, b"Example license")
+        with ZipFile(BytesIO(modified)) as archive:
+            self.assertEqual(json.loads(archive.read("pack.mcmeta")), metadata)
+            self.assertEqual(archive.read("assets/example/data.txt"), b"unchanged")
+            self.assertEqual(archive.read("LICENSE"), b"Example license")
+        before = prepare.fingerprint(original)
+        after = prepare.fingerprint(modified)
+        dependency = {"projectId": 11, "fileId": 22, "required": True}
+        author = {**self.receipt, "declaredDependencies": [dependency],
+                  "files": [{**dependency, "path": path, **before}]}
+        recipe = {"jarMetadataPatches": [{"path": path, "projectId": 11, "fileId": 22, "before": before,
+                                          "after": after, "metadata": metadata, "license": license_path}]}
+        rows = prepare.jar_metadata_patches(recipe, author, self.source)
+        inventory, required = release.payload_inventory(author, {}, [], rows)
+        self.assertEqual(inventory[path], after)
+        self.assertIn(path, required)
+        changed = {**author, "files": [{**author["files"][0], "sha256": "f" * 64}]}
+        with self.assertRaisesRegex(ValueError, "changed dependency JAR bytes"):
+            prepare.jar_metadata_patches(recipe, changed, self.source)
+
     def test_manifest_requires_feature_and_all_policy_files(self):
         files, _ = release.verify_stage(self.stage, self.source, self.receipt)
         manifest = {"schemaVersion": 2, **self.author["pack"],
@@ -75,6 +108,155 @@ class ReleaseOverlayTests(unittest.TestCase):
             release.verify_manifest({**manifest, "requiredLauncherFeatures": []}, files, self.receipt)
         with self.assertRaisesRegex(ValueError, "missing required payload files"):
             release.verify_manifest({**manifest, "files": manifest["files"][:-1]}, files, self.receipt)
+
+    def test_quest_translation_tracks_exact_source_and_only_owns_russian_table(self):
+        english = prepare.QUEST_LANG + "en_us.snbt"
+        russian = prepare.RUSSIAN_QUESTS
+        original = b'{file.0000000000000001.title: "Book"}'
+        translated = '{file.0000000000000001.title: "Книга"}'.encode()
+        source_path = self.source / russian
+        source_path.parent.mkdir(parents=True)
+        source_path.write_bytes(translated)
+        (self.stage / "game" / english).parent.mkdir(parents=True)
+        (self.stage / "game" / english).write_bytes(original)
+        receipt = {**self.receipt, "overrides": [
+            *self.receipt["overrides"], {"path": english, **prepare.fingerprint(original)}
+        ]}
+        recipe = {**self.recipe, "questTranslation": {
+            "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(translated)
+        }}
+        self.write_json(self.recipe_path, recipe)
+        ownership = "\n".join(sorted([russian, self.config_path])) + "\n"
+        (self.source / release.OWNERSHIP).write_bytes(ownership.encode())
+        ownership_path = self.stage / "game" / release.OWNERSHIP
+        ownership_path.unlink()
+        (self.stage / "game" / release.DESCRIPTOR).unlink()
+        self.stage_config.write_bytes(self.original)
+        receipt["overlay"] = prepare.apply_overlay(self.stage / "game", self.source, receipt, {})
+        self.write_json(self.receipt_path, receipt)
+        files, _ = release.verify_stage(self.stage, self.source, receipt)
+        self.assertEqual(files[russian], prepare.fingerprint(translated))
+        self.assertEqual((self.stage / "game" / english).read_bytes(), original)
+        self.assertNotIn(english, ownership_path.read_text())
+        changed = {**receipt, "overrides": [{"path": english, **prepare.fingerprint(b"new text")}]}
+        with self.assertRaisesRegex(ValueError, "changed quest text"):
+            prepare.quest_translation(recipe, self.source, changed)
+        official = {**receipt, "overrides": [*receipt["overrides"], {"path": russian, **prepare.fingerprint(translated)}]}
+        with self.assertRaisesRegex(ValueError, "author's new Russian"):
+            prepare.quest_translation(recipe, self.source, official)
+
+    def test_book_localization_keeps_english_and_requires_exact_replacement_and_addition(self):
+        english = "patchouli_books/guide/en_us/entries/first.json"
+        russian = "patchouli_books/guide/ru_ru/entries/first.json"
+        quest = "config/ftbquests/quests/chapters/start.snbt"
+        original = b'{"name":"Guide"}'
+        original_quest = b'{title:"First Steps"}'
+        translated = '{"name":"Справочник"}'.encode()
+        localized_quest = b'{title:"{example.first_steps}"}'
+        additions = {
+            russian: translated, quest: localized_quest,
+            "kubejs/assets/example/lang/en_us.json": b'{"example.first_steps":"First Steps"}',
+            "kubejs/assets/example/lang/ru_ru.json": '{"example.first_steps":"Первые шаги"}'.encode()
+        }
+        for name, data in additions.items():
+            target = self.source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt = {**self.receipt, "overrides": [*self.receipt["overrides"],
+            {"path": english, **prepare.fingerprint(original)}, {"path": quest, **prepare.fingerprint(original_quest)}]}
+        recipe = {**self.recipe, "bookLocalization": [
+            {"path": name, "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(data),
+             **({"before": prepare.fingerprint(original_quest)} if name == quest else {})}
+            for name, data in additions.items()
+        ]}
+        self.write_json(self.recipe_path, recipe)
+        (self.source / release.OWNERSHIP).write_bytes(
+            ("\n".join(sorted({self.config_path, *additions})) + "\n").encode())
+        stage = self.stage / "localized"
+        game = stage / "game"
+        for name, data in {english: original, quest: original_quest, self.config_path: self.original}.items():
+            target = game / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        self.write_json(stage / "intake.json", receipt)
+        policy, _ = release.verify_stage(stage, self.source, receipt)
+        _, required = release.payload_inventory(receipt, policy, [])
+        self.assertLessEqual(additions.keys(), required)
+        self.assertEqual((game / english).read_bytes(), original)
+        self.assertEqual((game / quest).read_bytes(), localized_quest)
+        changed = {**receipt, "overrides": [row for row in receipt["overrides"] if row["path"] != english]}
+        with self.assertRaisesRegex(ValueError, "changed book localization input"):
+            prepare.book_localizations(recipe, self.source, changed)
+        conflict = {**receipt, "overrides": [
+            *receipt["overrides"], {"path": russian, **prepare.fingerprint(translated)}]}
+        with self.assertRaisesRegex(ValueError, "conflicting or unsupported"):
+            prepare.book_localizations(recipe, self.source, conflict)
+        (game / russian).write_bytes(original)
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(stage, self.source, receipt)
+
+    def test_book_jar_localization_only_touches_pinned_book_resources(self):
+        path = "mods/guide.jar"
+        book = "data/guide/patchouli_books/manual/"
+        descriptor = book + "book.json"
+        english = book + "en_us/entries/first.json"
+        russian = book + "ru_ru/entries/first.json"
+        original_files = {descriptor: b'{"landing_text":"Start here","version":1}', english: b'{"name":"Guide"}',
+                          "guide/Example.class": b"unchanged bytecode"}
+        jar = BytesIO()
+        with ZipFile(jar, "w") as archive:
+            for name, data in original_files.items():
+                archive.writestr(name, data)
+        original = jar.getvalue()
+        entries = {descriptor: b'{"landing_text":"guide.book.landing","version":1}',
+                   russian: '{"name":"Справочник"}'.encode(),
+                   "LICENSE": b"Exact license text", "NOTICE": b"Modified book variant"}
+        descriptor_pin = prepare.fingerprint(original_files[descriptor])
+        rebuilt = prepare.rebuild_book_jar(original, entries, {descriptor: descriptor_pin})
+        with ZipFile(BytesIO(rebuilt)) as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, {**original_files, **entries})
+        with self.assertRaisesRegex(ValueError, "Only title and landing"):
+            prepare.rebuild_book_jar(original, {**entries, descriptor: b'{"version":2}'}, {descriptor: descriptor_pin})
+        dependency = {"projectId": 11, "fileId": 22, "required": True}
+        receipt = {**self.receipt, "declaredDependencies": [dependency],
+                   "files": [{**dependency, "path": path, **prepare.fingerprint(original)}]}
+        recipe = {**self.recipe, "bookJarLocalization": [{
+            "path": path, "projectId": 11, "fileId": 22, "before": prepare.fingerprint(original),
+            "after": prepare.fingerprint(rebuilt), "entries": []
+        }]}
+        for name, data in entries.items():
+            source = ("licenses/" + name) if name in {"LICENSE", "NOTICE"} else ("tools/book-localization/" + name)
+            target = self.source / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            recipe["bookJarLocalization"][0]["entries"].append({
+                "path": name, "source": source, "output": prepare.fingerprint(data),
+                **({"before": descriptor_pin} if name == descriptor else {})
+            })
+        self.write_json(self.recipe_path, recipe)
+        stage = self.stage / "jar-localized"
+        game = stage / "game"
+        for name, data in {self.config_path: self.original, path: original}.items():
+            target = game / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        prepare.apply_book_jar_localizations(game, self.source, receipt)
+        self.write_json(stage / "intake.json", receipt)
+        policy, excluded = release.verify_stage(stage, self.source, receipt)
+        checked = prepare.book_jar_localizations(recipe, receipt, self.source)
+        files, required = release.payload_inventory(receipt, policy, excluded, checked)
+        self.assertEqual(files[path], prepare.fingerprint(rebuilt))
+        self.assertIn(path, required)
+        next_author = {**self.author, "declaredDependencies": [dependency]}
+        reviewed = release.review_update(self.source, receipt, next_author)
+        self.assertEqual(reviewed["bookJarLocalization"], checked)
+        with self.assertRaisesRegex(ValueError, "changed book localization dependency"):
+            release.review_update(self.source, receipt, self.author)
+        (game / path).write_bytes(original)
+        with self.assertRaisesRegex(ValueError, "Staged author payload differs"):
+            release.verify_stage(stage, self.source, receipt)
 
     def test_pinned_logging_survives_author_update_and_is_required_in_payload(self):
         additions = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
@@ -103,6 +285,64 @@ class ReleaseOverlayTests(unittest.TestCase):
         next_author["overrides"] = [*next_author["overrides"], recipe["additions"][0]]
         with self.assertRaisesRegex(ValueError, "conflicting logging path"):
             release.review_update(self.source, self.author, next_author)
+
+    def test_bootstrap_binds_exact_author_jar_and_is_required_in_payload(self):
+        artifact_path = "lanminecraft/checked-bootstrap.jar"
+        args_path = "launcher/jvm-args.txt"
+        author_jar = b"exact author dependency"
+        author_input = {"projectId": 18, "fileId": 28, "path": "mods/provider.jar",
+                        **prepare.fingerprint(author_jar)}
+        author = {**self.receipt, "declaredDependencies": [{"projectId": 18, "fileId": 28, "required": True}],
+                  "files": [{**author_input, "required": True}]}
+        artifact = BytesIO()
+        with ZipFile(artifact, "w") as jar:
+            jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\nPremain-Class: lanminecraft.Agent\r\n\r\n")
+            jar.writestr("lanminecraft/Agent.class", b"\xca\xfe\xba\xbe\x00\x00\x00\x34")
+        payloads = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
+                    args_path: f"-Dlog4j.configurationFile=config/log4j2.xml\n-javaagent:{artifact_path}\n".encode(),
+                    artifact_path: artifact.getvalue()}
+        for name, data in payloads.items():
+            path = self.source / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(data)
+        recipe = {**self.recipe, "additions": [{"path": name, **prepare.fingerprint(payloads[name])}
+                                               for name in prepare.LOGGING_FILES],
+                  "bootstrap": {"input": author_input,
+                                "artifact": {"path": artifact_path, **prepare.fingerprint(artifact.getvalue())}}}
+        self.write_json(self.recipe_path, recipe)
+        (self.source / release.OWNERSHIP).write_bytes(
+            ("\n".join(sorted({self.config_path, prepare.LOGGING_CONFIG, artifact_path})) + "\n").encode("utf-8"))
+        stage = self.stage / "with-bootstrap"
+        game = stage / "game"
+        for name, data in {self.config_path: self.original, author_input["path"]: author_jar}.items():
+            path = game / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        receipt = {**author, "overlay": prepare.apply_overlay(game, self.source, author, {})}
+        self.write_json(stage / "intake.json", receipt)
+        policy, _ = release.verify_stage(stage, self.source, receipt)
+        _, required = release.payload_inventory(receipt, policy, [])
+        self.assertIn(artifact_path, required)
+        self.assertEqual((game / author_input["path"]).read_bytes(), author_jar)
+        self.assertEqual(release.review_update(self.source, author, author)["bootstrap"], recipe["bootstrap"])
+
+        changed = {**author, "files": [{**author["files"][0], "sha256": "0" * 64}]}
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap input bytes"):
+            release.review_update(self.source, author, changed)
+        self.write_json(stage / "intake.json", {**receipt, "files": changed["files"]})
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap input bytes"):
+            release.verify_stage(stage, self.source, {**author, "status": "client-only"})
+        self.write_json(stage / "intake.json", receipt)
+        client_candidate = {**author, "status": "client-only",
+                            "declaredDependencies": [{"projectId": 18, "fileId": 29, "required": True}]}
+        with self.assertRaisesRegex(ValueError, "changed Java 8 bootstrap dependency"):
+            release.review_update(self.source, author, client_candidate)
+        with self.assertRaisesRegex(ValueError, "exact launcher JVM argument"):
+            prepare.overlay_bootstrap(recipe, self.source, author, {args_path: b"-javaagent:other.jar\n"})
+
+        (game / artifact_path).write_bytes(b"replaced helper")
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(stage, self.source, receipt)
 
     def test_release_preserves_author_overrides_and_required_and_optional_dependencies(self):
         game = self.stage / "game"

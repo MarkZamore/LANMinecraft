@@ -38,16 +38,48 @@ class LibraryPublisherTests(unittest.TestCase):
         nested = io.BytesIO()
         with zipfile.ZipFile(nested, "w") as archive:
             archive.writestr("META-INF/mods.toml", '[[mods]]\nmodId="embedded"\nversion="1.2"\n')
-        bootstrap = io.BytesIO()
-        with zipfile.ZipFile(bootstrap, "w") as archive:
-            archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n"
-                             "Additional-Dependencies-Mod: embedded.jar\n"
-                             "Additional-Dependencies-Service: service.jar\n")
-            archive.writestr("embedded.jar", nested.getvalue())
-            archive.writestr("service.jar", b"a loader service is not a mod")
-        records = read_mods(bootstrap.getvalue(), "bootstrap.jar", loader="forge")
-        self.assertEqual([("embedded", "1.2", 1, True)],
-                         [(row["id"], row["version"], row["_depth"], row["isLoadedMod"]) for row in records])
+        for header in ("Additional-Dependencies-Mod", "Embedded-Dependencies-Mod"):
+            with self.subTest(header=header):
+                bootstrap = io.BytesIO()
+                with zipfile.ZipFile(bootstrap, "w") as archive:
+                    archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n"
+                                     f"{header}: META-INF/jarjar/embedded-\r\n mod.jar\r\n"
+                                     "Additional-Dependencies-Service: service.jar\r\n")
+                    archive.writestr("META-INF/jarjar/embedded-mod.jar", nested.getvalue())
+                    archive.writestr("service.jar", b"a loader service is not a mod")
+                records = read_mods(bootstrap.getvalue(), "bootstrap.jar", loader="forge")
+                self.assertEqual([("embedded", "1.2", 1, True)],
+                                 [(row["id"], row["version"], row["_depth"], row["isLoadedMod"]) for row in records])
+
+    def test_forge_fabric_inventory_checks_author_bytes_and_native_mapping(self):
+        runtime = {"minecraftVersion": "1.20.1", "loader": {"type": "forge"}}
+        (self.pack / "portable-pack.json").write_text(json.dumps(runtime))
+        child = io.BytesIO()
+        with zipfile.ZipFile(child, "w") as archive:
+            archive.writestr("fabric.mod.json", '{"id":"child-mod","version":"1.2+mc",'
+                             '"name":"Child mod","description":"first line\nsecond line"}')
+        parent = self.pack / "mods" / "parent.jar"
+        with zipfile.ZipFile(parent, "w") as archive:
+            archive.writestr("fabric.mod.json", json.dumps({"id": "parent", "version": "1",
+                "jars": [{"file": "META-INF/jars/child.jar"}]}))
+            archive.writestr("META-INF/jars/child.jar", child.getvalue())
+        self.pages["child_mod"] = "https://example.org/child"
+        self.write_pages()
+        row = {"id": "child_mod", "name": "Child mod", "version": "1.2mc", "source": "mods/parent.jar",
+               "nativeSourceFile": "parent$child_mapped_srg_1.20.1.jar",
+               "forgeFabricSource": {"nestedPaths": ["META-INF/jars/child.jar"],
+                                     "sha256": hashlib.sha256(child.getvalue()).hexdigest()}}
+        inventory = {**runtime, "schemaVersion": 1,
+                     "sourceJars": {"mods/parent.jar": hashlib.sha256(parent.read_bytes()).hexdigest()},
+                     "mods": [row]}
+        inventory_path = self.pack / "library/loaded-mods.json"
+        inventory_path.write_text(json.dumps(inventory))
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "pack-rev", shipped=inventory["sourceJars"]))) as archive:
+            self.assertEqual(["child_mod"], [mod["id"] for mod in json.loads(archive.read("library.json"))["mods"]])
+        row["nativeSourceFile"] = "wrong_mapped_srg_1.20.1.jar"
+        inventory_path.write_text(json.dumps(inventory))
+        with self.assertRaisesRegex(ValueError, "differs from the selected source"):
+            build_library(self.pack, "pack-rev", shipped=inventory["sourceJars"])
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -310,6 +342,24 @@ class LibraryPublisherTests(unittest.TestCase):
                          [(mod["id"], mod["name"], mod["version"]) for mod in mods])
         with self.assertRaises(ValueError):
             read_mods(carrier.getvalue(), "legacy.jar", loader="neoforge")
+
+    def test_legacy_forge_inventory_retains_native_core_id_with_pipe(self):
+        runtime = {"minecraftVersion": "1.12.2", "loader": {"type": "forge"}}
+        (self.pack / "portable-pack.json").write_text(json.dumps(runtime))
+        source = "mods/opencomputers.jar"
+        with zipfile.ZipFile(self.pack / source, "w") as archive:
+            archive.writestr("mcmod.info", '[{"modid":"opencomputers","name":"OpenComputers"}]')
+        mod_id = "opencomputers|core"
+        website = "https://www.curseforge.com/minecraft/mc-mods/opencomputers"
+        self.pages[mod_id] = website
+        self.write_pages()
+        inventory = {"schemaVersion": 1, **runtime,
+                     "sourceJars": {source: hashlib.sha256((self.pack / source).read_bytes()).hexdigest()},
+                     "mods": [{"id": mod_id, "name": "OpenComputers (Core)", "version": "1.7.5.192", "source": source}]}
+        (self.pack / "library/loaded-mods.json").write_text(json.dumps(inventory))
+        with zipfile.ZipFile(io.BytesIO(build_library(self.pack, "r1", shipped={source}))) as archive:
+            mod, = json.loads(archive.read("library.json"))["mods"]
+        self.assertEqual((mod_id, "OpenComputers (Core)", website), (mod["id"], mod["name"], mod["websiteUrl"]))
 
     def test_actual_loader_inventory_resolves_selected_ids_and_versions_and_rejects_stale_jars(self):
         inventory = {"schemaVersion": 1,

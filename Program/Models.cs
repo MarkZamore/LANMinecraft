@@ -40,20 +40,11 @@ public sealed class AppSettings
     public bool MemorySettingIsTheHeap { get; set; }
 
     /// <summary>
-    /// What the player last set the field to, for each pack they set it on,
-    /// keyed by the pack's folder. A pack that is not in here has never been
-    /// answered for by hand and follows the launcher's suggestion for what it
-    /// weighs, because a build of nine hundred mods and a vanilla one do not
-    /// want the same number and nobody should have to work that out.
+    /// Marks files where maxMemoryGb applies to all packs.
     /// </summary>
-    /// <remarks>
-    /// It is a number per pack rather than one number because the packs
-    /// disagree: the same player wants twelve gigabytes for a thousand-mod
-    /// pack and five for a pack built to fit a laptop, and a single answer made
-    /// one of those two wrong every time they switched. Written the moment the
-    /// field is edited, not when the game is started, so a number chosen and
-    /// thought better of is still there on the way back.
-    /// </remarks>
+    public bool MemoryIsGlobal { get; set; }
+
+    /// <summary>Historical settings retained for migration and older launchers.</summary>
     public Dictionary<string, int> MemoryByPack { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public string ClientRelativePath { get; set; } = "";

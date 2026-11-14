@@ -64,8 +64,8 @@ public sealed class MemorySizingTests
     [Fact]
     public void ASmallMachine_StillGetsTheFloor()
     {
-        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetWholeGameAllowanceGb(Gb(4)));
-        Assert.Equal(MemorySizingService.MinHeapGb, MemorySizingService.GetWholeGameAllowanceGb(Gb(2)));
+        Assert.Equal(2, MemorySizingService.GetWholeGameAllowanceGb(Gb(4)));
+        Assert.Equal(2, MemorySizingService.GetWholeGameAllowanceGb(Gb(2)));
     }
 
     /// <summary>
@@ -350,7 +350,7 @@ public sealed class MemorySizingTests
 
             Assert.Equal(
                 Math.Max(
-                    MemorySizingService.MinHeapGb,
+                    2,
                     budgetGb - MemorySizingService.GetNativeReserveGb(pack, budgetGb)),
                 heapGb);
             Assert.InRange(heapGb, MemorySizingService.MinHeapGb, budgetGb);
@@ -403,7 +403,7 @@ public sealed class MemorySizingTests
         // And the measurement is looked up for this pack on this machine, not
         // taken from whatever pack was played last.
         Assert.Contains(
-            "_measuredMemory.Recall(settings.ClientRelativePath, video, installedGb)",
+            "_measuredMemory.Recall(packRelativePath, video, installedGb)",
             launch,
             StringComparison.Ordinal);
 
@@ -440,5 +440,23 @@ public sealed class MemorySizingTests
             current = current.Parent;
         }
         throw new System.IO.FileNotFoundException($"Repository file was not found: {System.IO.Path.Combine(relativeParts)}");
+    }
+
+    [Fact]
+    public void StartupHeapMatchesTheHardwareTableAndTheInputAllowsOneGigabyte()
+    {
+        (int Physical, int Expected)[] tiers =
+        [
+            (2, 1), (3, 1), (4, 2), (5, 2), (6, 3), (7, 3), (8, 4), (9, 4),
+            (10, 6), (11, 6), (12, 8), (15, 8), (16, 12), (19, 12), (20, 16),
+            (24, 16), (32, 16), (64, 16)
+        ];
+        foreach (var (physical, expected) in tiers)
+        {
+            Assert.Equal(expected, MemorySizingService.GetDefaultHeapGb(Gb(physical)));
+            Assert.Equal(expected, MemorySizingService.GetDefaultHeapGb(Gb(physical) - 256UL * 1024 * 1024));
+            Assert.Equal(1, MemorySizingService.ClampHeapGb(1, Gb(physical)));
+        }
+        Assert.Equal(1024, MinecraftProcessService.InitialHeapMbFor(1024));
     }
 }
