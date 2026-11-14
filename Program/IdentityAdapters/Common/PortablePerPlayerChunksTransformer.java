@@ -86,7 +86,13 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
                 // standing where he has no ground.
                 patched += askThePlayerInstead(property("chunkMapClasses", ""), method);
             } else if (perPlayer && chunkMap && isDelivery(method)) {
-                onlyIfHeAskedForIt(method, pacing);
+                // A cancellable mixin can queue this delivery and call it back
+                // later. If we queue that callback too, neither queue can send.
+                boolean pacingHere = pacing && !hasCancellableMixin(method);
+                onlyIfHeAskedForIt(method, pacingHere);
+                if (pacing && !pacingHere) {
+                    System.out.println("[PortableIdentity] Chunk delivery uses the installed handler's queue.");
+                }
                 patched++;
             } else if (pacing && chunkMap &&
                 matches(method, "chunkMapTickMethods", "chunkMapTickDescriptors")) {
@@ -112,6 +118,17 @@ public final class PortablePerPlayerChunksTransformer implements ClassFileTransf
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         return writer.toByteArray();
+    }
+
+    private static boolean hasCancellableMixin(MethodNode method) {
+        for (AbstractInsnNode instruction : method.instructions) {
+            if (instruction instanceof MethodInsnNode call
+                && call.owner.equals("org/spongepowered/asm/mixin/injection/callback/CallbackInfo")
+                && call.name.equals("isCancelled") && call.desc.equals("()Z")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

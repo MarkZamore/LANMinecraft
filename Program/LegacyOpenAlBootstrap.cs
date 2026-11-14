@@ -10,12 +10,15 @@ namespace Minecraft;
 /// <summary>Load the original LWJGL 2 audio DLL through Java's Unicode Windows loader.</summary>
 internal static class LegacyOpenAlBootstrap
 {
+    internal static bool UsesLwjgl2(string? coordinate) =>
+        coordinate?.StartsWith("org.lwjgl.lwjgl:lwjgl:2.", StringComparison.Ordinal) == true;
+
     internal static IReadOnlyList<string> Prepare(AppPaths paths, MinecraftLauncher launcher,
         IVersion profile, string? nativesDirectory)
     {
         var libraries = profile.ConcatInheritedCollection(version => version.Libraries).ToArray();
         if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(nativesDirectory) ||
-            !libraries.Any(library => library.Name?.StartsWith("org.lwjgl.lwjgl:lwjgl:2.", StringComparison.Ordinal) == true))
+            !libraries.Any(library => UsesLwjgl2(library.Name)))
             return [];
 
         // BuildProcess has already selected and extracted this exact directory.

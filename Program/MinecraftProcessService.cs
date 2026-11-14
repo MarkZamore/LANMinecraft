@@ -436,6 +436,9 @@ public sealed class MinecraftProcessService
             throw new InvalidOperationException("Pack manifest changed while its runtime was being prepared. Start the game again.");
         }
         var instance = await _packInstances.PrepareAsync(packRelativePath, token);
+        new OptionsDefaultsService(_logger).Apply(packDir, instance.GameDirectory, descriptor.MinecraftVersion,
+            clientJar: runtime.ClientJarPath);
+        new ResourcePackDefaultsService(_logger).Apply(packDir, instance.GameDirectory);
         // PackInstanceService mirrors the pack over the instance mods folder and
         // deletes anything the pack does not carry, so launcher-owned JARs have
         // to be (re)installed after every prepare - the order here is load-bearing.
@@ -666,8 +669,11 @@ public sealed class MinecraftProcessService
         var mainClassIndex = finalArguments.TakeWhile(argument => argument != mainClass).Count();
         _logger.Info("Java: " + string.Join(' ', finalArguments.Take(mainClassIndex)));
         minecraftProcess.StartInfo.CreateNoWindow = true;
-        // Windows applies the startup show state to LWJGL 2's first ShowWindow call.
-        minecraftProcess.StartInfo.WindowStyle = descriptor.Loader.Type == PackLoaderKind.LegacyFabric
+        // LWJGL 2 uses SW_SHOWDEFAULT for its first window, so SW_HIDE at process
+        // startup hides Minecraft itself. CreateNoWindow still suppresses a console.
+        var usesLwjgl2 = profile.ConcatInheritedCollection(version => version.Libraries)
+            .Any(library => LegacyOpenAlBootstrap.UsesLwjgl2(library.Name));
+        minecraftProcess.StartInfo.WindowStyle = descriptor.Loader.Type == PackLoaderKind.LegacyFabric || usesLwjgl2
             ? ProcessWindowStyle.Normal
             : ProcessWindowStyle.Hidden;
         ConfigureChildEnvironment(minecraftProcess.StartInfo.Environment, javaTempDir, javaHome);
@@ -701,6 +707,7 @@ public sealed class MinecraftProcessService
         {
             var instance = await _packInstances.PrepareAsync(packRelativePath, token).ConfigureAwait(false);
             var gameDir = instance.GameDirectory;
+            new OptionsDefaultsService(_logger).Apply(packDir, gameDir, descriptor.MinecraftVersion, native: true);
             var executable = files.ExecutablePath;
             var skinRegistryPath = _skinService.PrepareRegistry(settings, identityContext);
             var identityRegistryPath = _identityRegistry.Prepare(identityContext);

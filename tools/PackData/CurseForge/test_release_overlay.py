@@ -67,6 +67,51 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(self.stage, self.source, self.receipt)
 
+    def test_author_update_preserves_pinned_client_script_and_rejects_changed_inputs(self):
+        path = "kubejs/client_scripts/lanmc_policy.js"
+        data = b"// priority: 1000\n"
+        source = self.source / path
+        source.parent.mkdir(parents=True)
+        source.write_bytes(data)
+        dependency = {"projectId": 11, "fileId": 22}
+        required = {**dependency, "required": True}
+        self.recipe["clientScripts"] = {
+            "dependencies": [dependency],
+            "files": [{"path": path, **prepare.fingerprint(data)}],
+        }
+        self.author["declaredDependencies"] = [required]
+        self.write_json(self.recipe_path, self.recipe)
+        (self.source / release.OWNERSHIP).write_bytes(f"{self.config_path}\n{path}\n".encode())
+        candidate = {**self.author, "client": {**self.author["client"], "fileId": 21, "sha256": "b" * 64}}
+        reviewed = release.review_update(self.source, self.author, candidate)
+        self.assertEqual(reviewed["clientScripts"], self.recipe["clientScripts"])
+        with self.assertRaisesRegex(ValueError, "changed, missing or excluded client script dependency"):
+            release.review_update(self.source, self.author,
+                                  {**candidate, "declaredDependencies": [{**required, "fileId": 23}]})
+        with self.assertRaisesRegex(ValueError, "conflicting client script"):
+            release.review_update(self.source, self.author, {**candidate, "overrides": [
+                *candidate["overrides"], {"path": path.upper(), **prepare.fingerprint(data)}]})
+
+        self.write_json(self.recipe_path, reviewed)
+        stage = self.stage.parent / "updated-stage"
+        game = stage / "game"
+        (game / self.config_path).parent.mkdir(parents=True)
+        (game / self.config_path).write_bytes(self.original)
+        artifact = {"path": "mods/client-script-fixture.jar", **prepare.fingerprint(b"jar")}
+        (game / "mods").mkdir()
+        (game / artifact["path"]).write_bytes(b"jar")
+        receipt = {**candidate, "status": "complete", "descriptor": self.base,
+                   "files": [{**required, **artifact}]}
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        self.write_json(stage / "intake.json", receipt)
+        self.assertEqual((game / path).read_bytes(), data)
+        policy_files, excluded = release.verify_stage(stage, self.source, receipt)
+        self.assertEqual(policy_files[path], prepare.fingerprint(data))
+        self.assertFalse(excluded)
+        (game / path).write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
+            release.verify_stage(stage, self.source, receipt)
+
     def test_metadata_patch_keeps_author_pin_and_requires_fixed_jar(self):
         path = "mods/example.jar"
         original_jar = BytesIO()

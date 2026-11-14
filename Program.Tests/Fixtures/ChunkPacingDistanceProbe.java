@@ -6,6 +6,7 @@ import minecraft.portable.identity.PortablePerPlayerChunksTransformer;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.*;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /** Real common transformer/hooks, fake native API; no Minecraft process or network. */
 public final class ChunkPacingDistanceProbe {
@@ -15,6 +16,10 @@ public final class ChunkPacingDistanceProbe {
     static void property(String key, String value) { System.setProperty("minecraft.portable.identity." + key, value); }
     public static void main(String[] args) throws Exception {
         configure();
+        if (args[0].equals("deferred-send")) {
+            verifyDeferredSend();
+            return;
+        }
         byte[] original;
         try (InputStream in = ChunkPacingDistanceProbe.class.getResourceAsStream("/" + TARGET + ".class")) { original = in.readAllBytes(); }
         byte[] changed = new PortablePerPlayerChunksTransformer().transform(null, null, TARGET, null, null, original);
@@ -87,6 +92,37 @@ public final class ChunkPacingDistanceProbe {
         check(type.getField("viewDistance").getInt(map) == 32, "Pacing mutated native range");
         System.out.println("NATIVE_DISTANCE_AND_PACING_PASSED mode=" + args[0] + " checks=" + checks + " nativeView=32 offered=4225 hold=" + limit + " immediate=" + (4225 - limit) + " ticks=" + ticks + " delivered=" + stress.received.size());
     }
+
+    private static void verifyDeferredSend() throws Exception {
+        // Exercise a cancellable delivery which re-enters with a transient send marker.
+        String name = DeferredMap.class.getName();
+        property("chunkMapClasses", name);
+        byte[] original;
+        try (InputStream in = DeferredMap.class.getResourceAsStream("/" + name + ".class")) {
+            original = in.readAllBytes();
+        }
+        byte[] result = new PortablePerPlayerChunksTransformer().transform(null, null, name, null, null, original);
+        check(result != null, "Deferred delivery was not transformed");
+        ClassNode node = new ClassNode();
+        new ClassReader(result).accept(node, 0);
+        MethodNode delivery = node.methods.stream().filter(method -> method.name.equals("handChunk")).findFirst().orElseThrow();
+        boolean keptRadiusFilter = false;
+        for (AbstractInsnNode instruction : delivery.instructions) {
+            if (!(instruction instanceof MethodInsnNode call)) continue;
+            check(!call.name.equals("admit"), "The launcher still queues delivery owned by the mixin");
+            keptRadiusFilter |= call.name.equals("shouldSend");
+        }
+        check(keptRadiusFilter, "The player's native range filter was removed");
+        Class<?> type = new Loader().define(name, result);
+        Object map = type.getConstructor().newInstance();
+        Player player = new Player(map);
+        type.getMethod("handChunk", Player.class, Scratch.class, Chunk.class)
+            .invoke(map, player, new Scratch(), new Chunk(1, 0));
+        check(held() == 0 && player.received.isEmpty(), "The launcher's queue took ownership");
+        type.getMethod("tick").invoke(map);
+        check(player.received.equals(Set.of(key(1, 0))) && held() == 0, "The deferred chunk never reached the guest");
+        System.out.println("DEFERRED_SEND_PASSED");
+    }
     static int distance(Class<?> type, Object map, Player player) throws Exception { return (Integer) type.getMethod("distanceFor", Player.class).invoke(map, player); }
     static int constant(String name) throws Exception { Field field = PortablePerPlayerChunksHooks.class.getDeclaredField(name); field.setAccessible(true); return field.getInt(null); }
     static int held() throws Exception {
@@ -106,7 +142,10 @@ public final class ChunkPacingDistanceProbe {
         property("chunkPosXFields", "x"); property("chunkPosZFields", "z"); property("clientViewDistanceMethods", "viewDistance");
         property("serverLevelMethods", "serverLevel"); property("getChunkSourceMethods", "getChunkSource"); property("chunkMapFields", "map"); property("playerLatencyFields", "latency");
     }
-    public static final class Loader extends ClassLoader { public Class<?> define(byte[] bytes) { return defineClass(TARGET, bytes, 0, bytes.length); } }
+    public static final class Loader extends ClassLoader {
+        public Class<?> define(byte[] bytes) { return define(TARGET, bytes); }
+        public Class<?> define(String name, byte[] bytes) { return defineClass(name, bytes, 0, bytes.length); }
+    }
     public static class NativeMap {
         public int viewDistance;
         public int distanceFor(Player player) { return viewDistance; }
@@ -117,6 +156,35 @@ public final class ChunkPacingDistanceProbe {
             if (!player.received.add(((long) chunk.position.z << 32) | (chunk.position.x & 0xffffffffL))) throw new AssertionError("Duplicate native chunk delivery");
         }
         public void tick() { }
+    }
+    public static class DeferredMap extends NativeMap {
+        private Chunk queued;
+        private boolean sending;
+
+        @Override public void handChunk(Player player, Scratch scratch, Chunk chunk) {
+            CallbackInfo callback = new CallbackInfo();
+            if (!sending) {
+                queued = chunk;
+                this.player = player;
+                callback.cancel();
+            }
+            if (callback.isCancelled()) return;
+            super.handChunk(player, scratch, chunk);
+        }
+
+        private Player player;
+
+        @Override public void tick() {
+            if (queued == null) return;
+            Chunk next = queued;
+            queued = null;
+            sending = true;
+            try {
+                handChunk(player, new Scratch(), next);
+            } finally {
+                sending = false;
+            }
+        }
     }
     public static final class Player {
         public final Set<Long> received = new HashSet<>(); public final UUID uuid = UUID.randomUUID(); public final Level level; public int latency;

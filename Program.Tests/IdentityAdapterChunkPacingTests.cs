@@ -190,6 +190,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
             Path.Combine(common, "PortableLanAutoPublishHooks.java"),
             Path.Combine(common, "PortablePerPlayerChunksHooks.java"),
             Path.Combine(common, "PortablePerPlayerChunksTransformer.java"),
+            RepositoryFile("Program.Tests", "Fixtures", "ChunkDelivery", "CallbackInfo.java"),
             RepositoryFile("Program.Tests", "Fixtures", "ChunkPacingDistanceProbe.java"));
         foreach (var mode in new[] { "normal", "reflection-miss" })
         {
@@ -199,6 +200,9 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
             Assert.Contains("offered=4225", output, StringComparison.Ordinal);
             Assert.Contains("delivered=4225", output, StringComparison.Ordinal);
         }
+        var deferred = await RunJava("java", "-Xverify:all", "-cp", classes + Path.PathSeparator + asm,
+            "ChunkPacingDistanceProbe", "deferred-send");
+        Assert.Contains("DEFERRED_SEND_PASSED", deferred, StringComparison.Ordinal);
     }
 
     [Fact]
