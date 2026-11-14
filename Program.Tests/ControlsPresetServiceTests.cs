@@ -210,12 +210,25 @@ public sealed class ControlsPresetServiceTests : IDisposable
         WritePreset("key_key.crawl:key.keyboard.c\n");
         var defaults = ControlsPresetService.GetPackDefaultOptionsPath(_pack);
         Directory.CreateDirectory(Path.GetDirectoryName(defaults)!);
-        File.WriteAllText(defaults, "fov:0.5\nguiScale:3\nkey_key.crawl:key.keyboard.x\nkey_key.jump:key.keyboard.space\n");
+        File.WriteAllText(defaults, "fov:0.5\nlang:en_us\nguiScale:3\nkey_key.crawl:key.keyboard.x\nkey_key.jump:key.keyboard.space\n");
 
         _service.Apply(_pack, _instance);
 
-        Assert.Equal("fov:0.5\nguiScale:3\nkey_key.crawl:key.keyboard.c\nkey_key.jump:key.keyboard.space\n", ReadOptions());
+        Assert.Equal("fov:0.5\nguiScale:3\nkey_key.crawl:key.keyboard.c\nkey_key.jump:key.keyboard.space\nlang:ru_ru\n", ReadOptions());
         Assert.True(_service.Evaluate(_pack, _instance).IsApplied);
+    }
+
+    [Fact]
+    public void Apply_BeforeTheFirstLegacyLaunch_UsesTheLocaleTheGameUnderstands()
+    {
+        WritePreset("key_key.jump:57\n");
+        File.WriteAllText(Path.Combine(_pack, PackManifestService.ManifestFileName), """
+            {"schemaVersion":1,"minecraftVersion":"1.6.4","loader":{"type":"legacyfabric","version":"0.16.14"},"javaMajorVersion":17}
+            """);
+
+        _service.Apply(_pack, _instance);
+
+        Assert.Equal("lang:ru_RU\nkey_key.jump:57\n", ReadOptions());
     }
 
     [Fact]

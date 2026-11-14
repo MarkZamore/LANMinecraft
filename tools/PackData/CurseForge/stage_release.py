@@ -48,6 +48,7 @@ def check_source(pack_source, revision, pack_id, policy_files, jar_patches=(), r
     required.extend(sorted(path for path in policy_files if prepare.BOOTSTRAP_PATH.fullmatch(path)))
     required.extend(sorted({row["license"] for row in jar_patches}))
     required.extend(row["path"] for row in (recipe or {}).get("bookLocalization", []))
+    required.extend(row["path"] for row in (recipe or {}).get("clientScripts", {}).get("files", []))
     required.extend(sorted({entry["source"] for row in book_jars for entry in row["entries"]}))
     runtime_sources = "library/runtime-sources.json"
     if (pack_source / runtime_sources).exists():

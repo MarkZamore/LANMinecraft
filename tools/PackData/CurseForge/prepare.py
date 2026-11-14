@@ -35,6 +35,8 @@ LOADERS = {"forge", "neoforge", "fabric", "quilt"}
 REQUIRED_SHARE_FEATURE = "preserve-steam-world-settings-v1"
 LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
+CLIENT_SCRIPT_PATH = re.compile(r"kubejs/client_scripts/lanmc_[a-z0-9_]+\.js")
+MAX_CLIENT_SCRIPT_BYTES = 64 * 1024
 BOOK_PAGES = r"patchouli_books/[a-z0-9_.-]+/ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
 BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
 BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
@@ -588,6 +590,40 @@ def overlay_additions(recipe, pack_source, author):
     return additions
 
 
+def client_scripts(recipe, pack_source, author):
+    if "clientScripts" not in recipe:
+        return {}
+    policy = recipe["clientScripts"]
+    require(isinstance(policy, dict) and set(policy) == {"dependencies", "files"},
+            "Invalid KubeJS client script overlay")
+    dependencies = policy["dependencies"]
+    require(isinstance(dependencies, list) and dependencies and
+            all(isinstance(row, dict) and set(row) == {"projectId", "fileId"} and
+                all(positive(value) for value in row.values()) for row in dependencies),
+            "Invalid required client script dependencies")
+    required = {(row["projectId"], row["fileId"]) for row in dependencies}
+    require(len(required) == len(dependencies), "Duplicate client script dependency")
+    excluded = set(overlay_dependency_keys(recipe, author))
+    available = {(row["projectId"], row["fileId"]) for row in author["declaredDependencies"]
+                 if row["required"] is True}
+    require(required <= available - excluded, "Review required for changed, missing or excluded client script dependency")
+    authored = {row["path"].casefold() for row in [*author["overrides"], *author.get("files", [])]}
+    rows = policy["files"]
+    require(isinstance(rows, list) and rows, "Missing KubeJS client scripts")
+    scripts = {}
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == {"path", "sizeBytes", "sha256"}, "Invalid client script pin")
+        name = safe_path(row["path"]).as_posix()
+        require(CLIENT_SCRIPT_PATH.fullmatch(name) and name not in scripts and name.casefold() not in authored,
+                f"Review required for a duplicate or conflicting client script: {name}")
+        data = overlay_bytes(pack_source / name)
+        require(0 < len(data) <= MAX_CLIENT_SCRIPT_BYTES and type(row["sizeBytes"]) is int
+                and fingerprint(data) == {key: row[key] for key in ("sizeBytes", "sha256")},
+                f"Client script differs from its pin: {name}")
+        scripts[name] = data
+    return scripts
+
+
 def quest_translation(recipe, pack_source, author):
     if "questTranslation" not in recipe:
         return {}
@@ -913,7 +949,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     recipe = decode_json(raw)
     require(isinstance(recipe, dict) and set(recipe) - {
                 "excludedDependencies", "additions", "bootstrap", "jarMetadataPatches", "questTranslation",
-                "bookLocalization", "bookJarLocalization"} ==
+                "bookLocalization", "bookJarLocalization", "clientScripts"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
@@ -923,6 +959,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     jar_patches = jar_metadata_patches(recipe, receipt, pack_source)
     book_jars = book_jar_localizations(recipe, receipt, pack_source, jar_patches)
     additions = overlay_additions(recipe, pack_source, receipt)
+    scripts = client_scripts(recipe, pack_source, receipt)
     bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
     quests = quest_translation(recipe, pack_source, receipt)
     localized = book_localizations(recipe, pack_source, receipt)
@@ -930,7 +967,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     localized_additions = localized.keys() - localized_replacements.keys()
     for name in localized_additions:
         reserve_path(paths, safe_path(name))
-    for name in additions.keys() | bootstrap.keys() | quests.keys():
+    for name in additions.keys() | bootstrap.keys() | quests.keys() | scripts.keys():
         reserve_path(paths, safe_path(name))
     descriptor = overlay_bytes(pack_source / "portable-pack.json")
     descriptor_pin = fingerprint(descriptor)
@@ -989,6 +1026,9 @@ def apply_overlay(game, pack_source, receipt, paths):
     if additions:
         owned_names.add(LOGGING_CONFIG)
         result["additions"] = recipe["additions"]
+    if scripts:
+        owned_names.update(scripts)
+        result["clientScripts"] = recipe["clientScripts"]
     if bootstrap:
         owned_names.update(bootstrap)
         result["bootstrap"] = recipe["bootstrap"]
@@ -1011,7 +1051,7 @@ def apply_overlay(game, pack_source, receipt, paths):
         result["ownership"] = fingerprint(owned)
     for target, data in edits.values():
         target.write_bytes(data)
-    for name, data in {**additions, **bootstrap, **quests,
+    for name, data in {**additions, **bootstrap, **quests, **scripts,
                        **{name: localized[name] for name in localized_additions}}.items():
         target = game / name
         target.parent.mkdir(parents=True, exist_ok=True)

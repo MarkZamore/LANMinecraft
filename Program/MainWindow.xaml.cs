@@ -120,8 +120,6 @@ public partial class MainWindow : Window
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
     private ControlsPresetService? _controlsPreset;
-    private ResourcePackDefaultsService? _resourcePackDefaults;
-    private OptionsDefaultsService? _optionsDefaults;
     private MinimapResetService? _minimapReset;
     private ControlsPresetStatus _controlsPresetStatus;
     private string? _controlsPresetStamp;
@@ -231,8 +229,6 @@ public partial class MainWindow : Window
             _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
             _transferPacing = _transferPacingStore.Load();
-            _resourcePackDefaults = new ResourcePackDefaultsService(_logger);
-            _optionsDefaults = new OptionsDefaultsService(_logger);
             _minimapReset = new MinimapResetService(_logger);
             var steamComponents = await steamComponentsStartup;
             if (_shutdownStarted) return;
@@ -1476,15 +1472,6 @@ public partial class MainWindow : Window
         if (directories is null) return;
         var removed = _controlsPreset?.RemoveDuplicateMappings(directories.Value.Instance) ?? 0;
         if (removed > 0) SetState($"Repaired the controls file: {removed} repeated line(s)");
-        // The pack's own resource packs are switched on once, for an instance
-        // that has played before and would otherwise get the files and never
-        // see them selected. Afterwards the choice belongs to the player.
-        _resourcePackDefaults?.Apply(directories.Value.Pack, directories.Value.Instance);
-        // And the settings a pack built for a small machine wants to be met
-        // with - render distance and the rest - which only reach an instance
-        // that does not already have them, so they are a starting point and
-        // never a correction.
-        _optionsDefaults?.Apply(directories.Value.Pack, directories.Value.Instance);
         // And when the pack has reset the world's chunks, the map a minimap has
         // already drawn is a picture of ground that no longer exists.
         _minimapReset?.Apply(directories.Value.Pack, directories.Value.Instance);

@@ -212,8 +212,9 @@ public sealed class ControlsPresetService(Logger? logger = null)
         }
         else
         {
-            var defaults = GetPackDefaultOptionsPath(packDirectory);
-            existing = File.Exists(defaults) ? File.ReadAllText(defaults, Utf8NoBom) : string.Empty;
+            var descriptor = PackManifestService.HasManifest(packDirectory) ? PackManifestService.Load(packDirectory) : null;
+            existing = OptionsDefaultsService.PrepareInitialPresetOptions(
+                packDirectory, descriptor?.MinecraftVersion ?? "", descriptor?.NativeRuntime is not null);
         }
 
         var (merged, changed) = Merge(existing, preset.Entries);
