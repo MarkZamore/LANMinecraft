@@ -109,6 +109,42 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required payload files"):
             release.verify_manifest({**manifest, "files": manifest["files"][:-1]}, files, self.receipt)
 
+    def test_quest_translation_tracks_exact_source_and_only_owns_russian_table(self):
+        english = prepare.QUEST_LANG + "en_us.snbt"
+        russian = prepare.RUSSIAN_QUESTS
+        original = b'{file.0000000000000001.title: "Book"}'
+        translated = '{file.0000000000000001.title: "Книга"}'.encode()
+        source_path = self.source / russian
+        source_path.parent.mkdir(parents=True)
+        source_path.write_bytes(translated)
+        (self.stage / "game" / english).parent.mkdir(parents=True)
+        (self.stage / "game" / english).write_bytes(original)
+        receipt = {**self.receipt, "overrides": [
+            *self.receipt["overrides"], {"path": english, **prepare.fingerprint(original)}
+        ]}
+        recipe = {**self.recipe, "questTranslation": {
+            "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(translated)
+        }}
+        self.write_json(self.recipe_path, recipe)
+        ownership = "\n".join(sorted([russian, self.config_path])) + "\n"
+        (self.source / release.OWNERSHIP).write_bytes(ownership.encode())
+        ownership_path = self.stage / "game" / release.OWNERSHIP
+        ownership_path.unlink()
+        (self.stage / "game" / release.DESCRIPTOR).unlink()
+        self.stage_config.write_bytes(self.original)
+        receipt["overlay"] = prepare.apply_overlay(self.stage / "game", self.source, receipt, {})
+        self.write_json(self.receipt_path, receipt)
+        files, _ = release.verify_stage(self.stage, self.source, receipt)
+        self.assertEqual(files[russian], prepare.fingerprint(translated))
+        self.assertEqual((self.stage / "game" / english).read_bytes(), original)
+        self.assertNotIn(english, ownership_path.read_text())
+        changed = {**receipt, "overrides": [{"path": english, **prepare.fingerprint(b"new text")}]}
+        with self.assertRaisesRegex(ValueError, "changed quest text"):
+            prepare.quest_translation(recipe, self.source, changed)
+        official = {**receipt, "overrides": [*receipt["overrides"], {"path": russian, **prepare.fingerprint(translated)}]}
+        with self.assertRaisesRegex(ValueError, "author's new Russian"):
+            prepare.quest_translation(recipe, self.source, official)
+
     def test_pinned_logging_survives_author_update_and_is_required_in_payload(self):
         additions = {prepare.LOGGING_CONFIG: b"<Configuration/>\n",
                      "launcher/jvm-args.txt": b"-Dlog4j.configurationFile=config/log4j2.xml\n"}

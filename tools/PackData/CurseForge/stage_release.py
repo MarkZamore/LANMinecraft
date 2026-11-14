@@ -44,7 +44,7 @@ def check_source(pack_source, revision, pack_id, policy_files, jar_patches=()):
                 "tools/overlay.json", *LIBRARY_INPUTS]
     if release_overlay.OWNERSHIP in policy_files:
         required.append(release_overlay.OWNERSHIP)
-    required.extend(sorted(prepare.LOGGING_FILES & policy_files.keys()))
+    required.extend(sorted((prepare.LOGGING_FILES | {prepare.RUSSIAN_QUESTS}) & policy_files.keys()))
     required.extend(sorted(path for path in policy_files if prepare.BOOTSTRAP_PATH.fullmatch(path)))
     required.extend(sorted({row["license"] for row in jar_patches}))
     runtime_sources = "library/runtime-sources.json"

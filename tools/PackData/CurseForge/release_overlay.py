@@ -67,6 +67,7 @@ def source_policy(pack_source, author):
     additions = prepare.overlay_additions(recipe, pack_source, author)
     prepare.overlay_bootstrap(recipe, pack_source, author, additions)
     prepare.jar_metadata_patches(recipe, author, pack_source)
+    prepare.quest_translation(recipe, pack_source, author)
     return recipe, prepare.fingerprint(recipe_bytes)["sha256"], descriptor, descriptor_pin
 
 
@@ -124,7 +125,7 @@ def payload_inventory(author, policy_files, excluded, jar_patches=()):
         required.remove(name)
 
     for name, pin in policy_files.items():
-        if name in (DESCRIPTOR, OWNERSHIP) or name in prepare.LOGGING_FILES or prepare.BOOTSTRAP_PATH.fullmatch(name):
+        if name in (DESCRIPTOR, OWNERSHIP, prepare.RUSSIAN_QUESTS) or name in prepare.LOGGING_FILES or prepare.BOOTSTRAP_PATH.fullmatch(name):
             prepare.reserve_path(paths, prepare.safe_path(name))
         else:
             prepare.require(name in override_paths and name not in shared_paths,
@@ -166,6 +167,10 @@ def verify_stage(stage, pack_source, author):
         artifact = recipe["bootstrap"]["artifact"]
         policy_files[artifact["path"]] = {key: artifact[key] for key in ("sizeBytes", "sha256")}
         owned_names.add(artifact["path"])
+    if "questTranslation" in recipe:
+        expected["questTranslation"] = recipe["questTranslation"]
+        policy_files[prepare.RUSSIAN_QUESTS] = recipe["questTranslation"]["output"]
+        owned_names.add(prepare.RUSSIAN_QUESTS)
     if owned_names:
         ownership = prepare.overlay_bytes(pack_source / OWNERSHIP)
         prepare.require(ownership == ("\n".join(sorted(owned_names)) + "\n").encode("utf-8"),
@@ -238,6 +243,7 @@ def review_update(pack_source, current, candidate):
     additions = prepare.overlay_additions(recipe, pack_source, candidate)
     prepare.overlay_bootstrap(recipe, pack_source, candidate, additions)
     prepare.jar_metadata_patches(recipe, candidate, pack_source)
+    prepare.quest_translation(recipe, pack_source, candidate)
     return {**recipe, "authorArchiveSha256": candidate["client"]["sha256"]}
 
 

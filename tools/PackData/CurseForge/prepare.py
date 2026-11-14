@@ -35,6 +35,8 @@ LOADERS = {"forge", "neoforge", "fabric", "quilt"}
 REQUIRED_SHARE_FEATURE = "preserve-steam-world-settings-v1"
 LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
+QUEST_LANG = "config/ftbquests/quests/lang/"
+RUSSIAN_QUESTS = QUEST_LANG + "ru_ru.snbt"
 BOOTSTRAP_PATH = re.compile(r"lanminecraft/[a-z0-9][a-z0-9-]{0,63}\.jar")
 MAX_BOOTSTRAP_BYTES = 256 * 1024
 BOOTSTRAP_INPUT_KEYS = {"path", "sizeBytes", "sha256", "projectId", "fileId"}
@@ -508,6 +510,26 @@ def overlay_additions(recipe, pack_source, author):
     return additions
 
 
+def quest_translation(recipe, pack_source, author):
+    if "questTranslation" not in recipe:
+        return {}
+    translation = recipe["questTranslation"]
+    require(isinstance(translation, dict) and set(translation) == {"inputs", "output"},
+            "Invalid FTB Quests translation recipe")
+    inputs = translation["inputs"]
+    require(isinstance(inputs, dict) and QUEST_LANG + "en_us.snbt" in inputs and
+            set(inputs) <= {QUEST_LANG + "en_us.snbt", QUEST_LANG + "zh_cn.snbt"},
+            "Expected the pinned FTB Quests source languages")
+    overrides = {row["path"].casefold(): {key: row[key] for key in ("sizeBytes", "sha256")}
+                 for row in author["overrides"]}
+    require(RUSSIAN_QUESTS not in overrides, "Review required for the author's new Russian quest translation")
+    for path, pin in inputs.items():
+        require(path in overrides and overrides[path] == pin, f"Review required for changed quest text: {path}")
+    russian = overlay_bytes(pack_source / RUSSIAN_QUESTS)
+    require(russian and fingerprint(russian) == translation["output"], "Russian quest text differs from its pin")
+    return {RUSSIAN_QUESTS: russian}
+
+
 def overlay_bootstrap(recipe, pack_source, author, additions):
     if "bootstrap" not in recipe:
         return {}
@@ -702,7 +724,7 @@ def exclude_dependencies(game, rows):
 def apply_overlay(game, pack_source, receipt, paths):
     raw = overlay_bytes(pack_source / "tools/overlay.json")
     recipe = decode_json(raw)
-    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap", "jarMetadataPatches"} ==
+    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap", "jarMetadataPatches", "questTranslation"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
@@ -712,7 +734,8 @@ def apply_overlay(game, pack_source, receipt, paths):
     jar_patches = jar_metadata_patches(recipe, receipt, pack_source)
     additions = overlay_additions(recipe, pack_source, receipt)
     bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
-    for name in additions.keys() | bootstrap.keys():
+    quests = quest_translation(recipe, pack_source, receipt)
+    for name in additions.keys() | bootstrap.keys() | quests.keys():
         reserve_path(paths, safe_path(name))
     descriptor = overlay_bytes(pack_source / "portable-pack.json")
     descriptor_pin = fingerprint(descriptor)
@@ -767,6 +790,9 @@ def apply_overlay(game, pack_source, receipt, paths):
     if bootstrap:
         owned_names.update(bootstrap)
         result["bootstrap"] = recipe["bootstrap"]
+    if quests:
+        owned_names.update(quests)
+        result["questTranslation"] = recipe["questTranslation"]
     if owned_names:
         owned_path = PurePosixPath("launcher/pack-owned.txt")
         reserve_path(paths, owned_path)
@@ -780,7 +806,7 @@ def apply_overlay(game, pack_source, receipt, paths):
         result["ownership"] = fingerprint(owned)
     for target, data in edits.values():
         target.write_bytes(data)
-    for name, data in {**additions, **bootstrap}.items():
+    for name, data in {**additions, **bootstrap, **quests}.items():
         target = game / name
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("xb") as output:
