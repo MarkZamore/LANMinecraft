@@ -227,6 +227,15 @@
         "repo": "Nuclear-Tech-Reborn",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-20",
+      "relativePath": "Escape The End",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Escape-The-End",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
