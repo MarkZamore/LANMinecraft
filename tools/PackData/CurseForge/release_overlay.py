@@ -66,6 +66,7 @@ def source_policy(pack_source, author):
     prepare.overlay_dependency_keys(recipe, author)
     additions = prepare.overlay_additions(recipe, pack_source, author)
     prepare.client_scripts(recipe, pack_source, author)
+    prepare.memory_settings_config(recipe, pack_source, author)
     prepare.overlay_bootstrap(recipe, pack_source, author, additions)
     jar_patches = prepare.jar_metadata_patches(recipe, author, pack_source)
     prepare.book_localizations(recipe, pack_source, author)
@@ -129,6 +130,7 @@ def payload_inventory(author, policy_files, excluded, jar_patches=()):
 
     for name, pin in policy_files.items():
         if (name in (DESCRIPTOR, OWNERSHIP, prepare.RUSSIAN_QUESTS) or name in prepare.LOGGING_FILES or
+                (name == prepare.MEMORY_SETTINGS_CONFIG and name not in override_paths) or
                 prepare.BOOTSTRAP_PATH.fullmatch(name) or prepare.CLIENT_SCRIPT_PATH.fullmatch(name) or
                 name not in override_paths and prepare.book_localization_addition(name)):
             prepare.reserve_path(paths, prepare.safe_path(name))
@@ -175,6 +177,11 @@ def verify_stage(stage, pack_source, author):
         scripts = recipe["clientScripts"]["files"]
         policy_files.update({row["path"]: {key: row[key] for key in ("sizeBytes", "sha256")} for row in scripts})
         owned_names.update(row["path"] for row in scripts)
+    if "memorySettingsConfig" in recipe:
+        config = recipe["memorySettingsConfig"]
+        expected["memorySettingsConfig"] = config
+        policy_files[prepare.MEMORY_SETTINGS_CONFIG] = {key: config[key] for key in ("sizeBytes", "sha256")}
+        owned_names.add(prepare.MEMORY_SETTINGS_CONFIG)
     if "bootstrap" in recipe:
         expected["bootstrap"] = recipe["bootstrap"]
         artifact = recipe["bootstrap"]["artifact"]
@@ -261,6 +268,7 @@ def review_update(pack_source, current, candidate):
     prepare.overlay_dependency_keys(recipe, candidate)
     additions = prepare.overlay_additions(recipe, pack_source, candidate)
     prepare.client_scripts(recipe, pack_source, candidate)
+    prepare.memory_settings_config(recipe, pack_source, candidate)
     prepare.overlay_bootstrap(recipe, pack_source, candidate, additions)
     jar_patches = prepare.jar_metadata_patches(recipe, candidate, pack_source)
     prepare.quest_translation(recipe, pack_source, candidate)

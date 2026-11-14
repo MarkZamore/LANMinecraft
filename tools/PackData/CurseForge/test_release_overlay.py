@@ -112,6 +112,52 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(stage, self.source, receipt)
 
+    def test_memory_settings_seed_is_preserved_and_verified_after_author_update(self):
+        path = prepare.MEMORY_SETTINGS_CONFIG
+        source = self.source / path
+        source.parent.mkdir()
+        config = {"minimumClient": {"minimumClient": 0}, "disableWarnings": {"disableWarnings": False}}
+        self.write_json(source, config)
+        pin = prepare.fingerprint(source.read_bytes())
+        dependency = {"projectId": prepare.MEMORY_SETTINGS_PROJECT, "fileId": 31, "required": True}
+        self.recipe["memorySettingsConfig"] = {"fileId": 31, **pin}
+        self.author["declaredDependencies"] = [dependency]
+        self.write_json(self.recipe_path, self.recipe)
+        (self.source / release.OWNERSHIP).write_bytes(f"{self.config_path}\n{path}\n".encode())
+
+        candidate = {**self.author, "client": {**self.author["client"], "fileId": 21, "sha256": "b" * 64}}
+        reviewed = release.review_update(self.source, self.author, candidate)
+        self.assertEqual(reviewed["memorySettingsConfig"], self.recipe["memorySettingsConfig"])
+        with self.assertRaisesRegex(ValueError, "changed, missing or excluded Memory Settings dependency"):
+            release.review_update(self.source, self.author, {**candidate, "declaredDependencies": [{**dependency, "fileId": 32}]})
+        with self.assertRaisesRegex(ValueError, "author-provided Memory Settings config"):
+            release.review_update(self.source, self.author, {**candidate, "overrides": [*candidate["overrides"],
+                                                                                         {"path": path.upper(), **pin}]})
+
+        self.write_json(self.recipe_path, reviewed)
+        stage = self.stage.parent / "memory-settings-stage"
+        game = stage / "game"
+        (game / self.config_path).parent.mkdir(parents=True)
+        (game / self.config_path).write_bytes(self.original)
+        mod = "mods/memorysettings.jar"
+        (game / mod).parent.mkdir()
+        (game / mod).write_bytes(b"pinned memorysettings")
+        receipt = {**candidate, "status": "complete", "descriptor": self.base,
+                   "files": [{**dependency, "path": mod, **prepare.fingerprint((game / mod).read_bytes())}]}
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        self.write_json(stage / "intake.json", receipt)
+        policy_files, _ = release.verify_stage(stage, self.source, receipt)
+        self.assertEqual(policy_files[path], pin)
+        self.assertEqual((game / path).read_bytes(), source.read_bytes())
+
+        config["disableWarnings"]["disableWarnings"] = True
+        self.write_json(source, config)
+        with self.assertRaisesRegex(ValueError, "config differs from its pin"):
+            prepare.memory_settings_config(reviewed, self.source, candidate)
+        reviewed["memorySettingsConfig"].update(prepare.fingerprint(source.read_bytes()))
+        with self.assertRaisesRegex(ValueError, "retain architecture checks"):
+            prepare.memory_settings_config(reviewed, self.source, candidate)
+
     def test_metadata_patch_keeps_author_pin_and_requires_fixed_jar(self):
         path = "mods/example.jar"
         original_jar = BytesIO()

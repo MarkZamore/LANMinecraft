@@ -37,6 +37,8 @@ LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
 CLIENT_SCRIPT_PATH = re.compile(r"kubejs/client_scripts/lanmc_[a-z0-9_]+\.js")
 MAX_CLIENT_SCRIPT_BYTES = 64 * 1024
+MEMORY_SETTINGS_CONFIG = "config/memorysettings.json"
+MEMORY_SETTINGS_PROJECT = 526901
 BOOK_PAGES = r"patchouli_books/[a-z0-9_.-]+/ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
 BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
 BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
@@ -624,6 +626,31 @@ def client_scripts(recipe, pack_source, author):
     return scripts
 
 
+def memory_settings_config(recipe, pack_source, author):
+    pin = recipe.get("memorySettingsConfig")
+    if "memorySettingsConfig" not in recipe:
+        return {}
+    require(isinstance(pin, dict) and set(pin) == {"fileId", "sizeBytes", "sha256"} and
+            positive(pin["fileId"]) and positive(pin["sizeBytes"]), "Invalid Memory Settings config pin")
+    key = MEMORY_SETTINGS_PROJECT, pin["fileId"]
+    require(any(row["projectId"] == key[0] and row["fileId"] == key[1] and row["required"] is True
+                for row in author["declaredDependencies"]) and key not in overlay_dependency_keys(recipe, author),
+            "Review required for a changed, missing or excluded Memory Settings dependency")
+    authored = [*author["overrides"], *author.get("files", [])]
+    require(not any(row["path"].casefold() == MEMORY_SETTINGS_CONFIG for row in authored),
+            "Review required for author-provided Memory Settings config")
+    data = overlay_bytes(pack_source / MEMORY_SETTINGS_CONFIG)
+    require(0 < len(data) <= MAX_JSON and fingerprint(data) ==
+            {key: pin[key] for key in ("sizeBytes", "sha256")}, "Memory Settings config differs from its pin")
+    config = decode_json(data)
+    minimum = config.get("minimumClient") if isinstance(config, dict) else None
+    warning = config.get("disableWarnings") if isinstance(config, dict) else None
+    require(isinstance(minimum, dict) and type(minimum.get("minimumClient")) is int and
+            minimum["minimumClient"] == 0 and isinstance(warning, dict) and warning.get("disableWarnings") is False,
+            "Memory Settings config must disable the early client recommendation and retain architecture checks")
+    return {MEMORY_SETTINGS_CONFIG: data}
+
+
 def quest_translation(recipe, pack_source, author):
     if "questTranslation" not in recipe:
         return {}
@@ -949,7 +976,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     recipe = decode_json(raw)
     require(isinstance(recipe, dict) and set(recipe) - {
                 "excludedDependencies", "additions", "bootstrap", "jarMetadataPatches", "questTranslation",
-                "bookLocalization", "bookJarLocalization", "clientScripts"} ==
+                "bookLocalization", "bookJarLocalization", "clientScripts", "memorySettingsConfig"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
@@ -960,6 +987,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     book_jars = book_jar_localizations(recipe, receipt, pack_source, jar_patches)
     additions = overlay_additions(recipe, pack_source, receipt)
     scripts = client_scripts(recipe, pack_source, receipt)
+    memory_config = memory_settings_config(recipe, pack_source, receipt)
     bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
     quests = quest_translation(recipe, pack_source, receipt)
     localized = book_localizations(recipe, pack_source, receipt)
@@ -967,7 +995,7 @@ def apply_overlay(game, pack_source, receipt, paths):
     localized_additions = localized.keys() - localized_replacements.keys()
     for name in localized_additions:
         reserve_path(paths, safe_path(name))
-    for name in additions.keys() | bootstrap.keys() | quests.keys() | scripts.keys():
+    for name in additions.keys() | bootstrap.keys() | quests.keys() | scripts.keys() | memory_config.keys():
         reserve_path(paths, safe_path(name))
     descriptor = overlay_bytes(pack_source / "portable-pack.json")
     descriptor_pin = fingerprint(descriptor)
@@ -1029,6 +1057,9 @@ def apply_overlay(game, pack_source, receipt, paths):
     if scripts:
         owned_names.update(scripts)
         result["clientScripts"] = recipe["clientScripts"]
+    if memory_config:
+        owned_names.update(memory_config)
+        result["memorySettingsConfig"] = recipe["memorySettingsConfig"]
     if bootstrap:
         owned_names.update(bootstrap)
         result["bootstrap"] = recipe["bootstrap"]
@@ -1051,7 +1082,7 @@ def apply_overlay(game, pack_source, receipt, paths):
         result["ownership"] = fingerprint(owned)
     for target, data in edits.values():
         target.write_bytes(data)
-    for name, data in {**additions, **bootstrap, **quests, **scripts,
+    for name, data in {**additions, **bootstrap, **quests, **scripts, **memory_config,
                        **{name: localized[name] for name in localized_additions}}.items():
         target = game / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1144,6 +1175,8 @@ def prepare(args):
             receipt.update(status="complete", files=files)
             if overlay and "jarMetadataPatches" in overlay:
                 apply_jar_metadata_patches(game, args.pack_source, receipt)
+            if overlay and "memorySettingsConfig" in overlay:
+                memory_settings_config(overlay, args.pack_source, receipt)
             if overlay and "bookLocalization" in overlay:
                 book_localizations(overlay, args.pack_source, receipt)
             if overlay and "bookJarLocalization" in overlay:
