@@ -18,8 +18,8 @@ public sealed class PortableGameInstaller : IGameInstaller
     private readonly string _runtimeRoot;
     private readonly string _temporaryRoot;
     private readonly IProgress<RuntimePreparationProgress>? _runtimeProgress;
-    private readonly string _subject;
     private long _lastRuntimeProgressTimestamp;
+    internal string Subject { get; set; }
     internal IReadOnlyDictionary<string, RuntimeLibrarySource>? LibrarySources { get; init; }
     internal Logger? LibrarySourceLogger { get; init; }
 
@@ -39,7 +39,7 @@ public sealed class PortableGameInstaller : IGameInstaller
         _runtimeRoot = Path.GetFullPath(runtimeRoot);
         _temporaryRoot = Path.GetFullPath(temporaryRoot);
         _runtimeProgress = runtimeProgress;
-        _subject = string.IsNullOrWhiteSpace(subject) ? "Файлы" : subject;
+        Subject = string.IsNullOrWhiteSpace(subject) ? "Файлы" : subject;
     }
 
     public async ValueTask Install(
@@ -48,17 +48,8 @@ public sealed class PortableGameInstaller : IGameInstaller
         IProgress<ByteProgress>? byteProgress,
         CancellationToken cancellationToken)
     {
-        var files = gameFiles
-            .Where(file => !string.IsNullOrWhiteSpace(file.Path))
-            .GroupBy(file => Path.GetFullPath(file.Path!), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .ToArray();
-
-        foreach (var file in files)
-        {
-            EnsureRuntimePath(file.Path!);
-        }
-
+        var label = Subject;
+        var files = GetInstallFiles(gameFiles);
         var pending = files.Where(NeedsUpdate).ToArray();
         var totalBytes = pending.Where(file => file.Size > 0).Sum(file => file.Size);
         var discoveredSizes = new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
@@ -87,7 +78,7 @@ public sealed class PortableGameInstaller : IGameInstaller
                     bytesRead =>
                     {
                         var current = Interlocked.Add(ref downloadedBytes, bytesRead);
-                        ReportBytes(current, Interlocked.Read(ref totalBytes), byteProgress);
+                        ReportBytes(label, current, Interlocked.Read(ref totalBytes), byteProgress);
                     },
                     discoveredSize =>
                     {
@@ -115,7 +106,7 @@ public sealed class PortableGameInstaller : IGameInstaller
         {
             var finalDownloaded = Interlocked.Read(ref downloadedBytes);
             var finalTotal = Interlocked.Read(ref totalBytes);
-            ReportBytes(finalDownloaded, finalTotal, byteProgress, force: true);
+            ReportBytes(label, finalDownloaded, finalTotal, byteProgress, force: true);
         }
         else
         {
@@ -219,6 +210,7 @@ public sealed class PortableGameInstaller : IGameInstaller
     }
 
     private void ReportBytes(
+        string label,
         long downloaded,
         long total,
         IProgress<ByteProgress>? byteProgress,
@@ -230,7 +222,7 @@ public sealed class PortableGameInstaller : IGameInstaller
         double? fraction = total > 0 ? boundedDownloaded / (double)total : null;
         _runtimeProgress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.Downloading,
-            _subject,
+            label,
             fraction,
             boundedDownloaded,
             total));
@@ -248,7 +240,21 @@ public sealed class PortableGameInstaller : IGameInstaller
         }
     }
 
-    private bool NeedsUpdate(GameFile file)
+    internal bool HasPendingDownloads(IEnumerable<GameFile> files) => GetInstallFiles(files).Any(NeedsUpdate);
+
+    private GameFile[] GetInstallFiles(IEnumerable<GameFile> gameFiles)
+    {
+        var files = gameFiles
+            .Where(file => !string.IsNullOrWhiteSpace(file.Path))
+            .GroupBy(file => Path.GetFullPath(file.Path!), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+        foreach (var file in files)
+            EnsureRuntimePath(file.Path!);
+        return files;
+    }
+
+    private static bool NeedsUpdate(GameFile file)
     {
         var path = file.Path!;
         if (!File.Exists(path)) return true;

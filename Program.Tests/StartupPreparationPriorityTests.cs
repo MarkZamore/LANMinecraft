@@ -93,6 +93,36 @@ public sealed class StartupPreparationPriorityTests
         Assert.DoesNotContain("ShowSidePanel", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PreparedUpdateWaitsForTheLaunchAndTheGameBeforeRestarting()
+    {
+        var source = ReadWindow();
+        var startup = Method(ReadWindow("App.xaml.cs"), "protected override void OnStartup(");
+        Assert.Contains("ReadLiveSessions().Count != 0;", startup, StringComparison.Ordinal);
+        Assert.Matches(@"if \(!installUpdateAfterGame\)[\s\S]+?StartInstall\(prepared, UpdateInstallMode.InstallAndRestart\)", startup);
+        Assert.Contains("InstallUpdateAfterStartupGame = installUpdateAfterGame", startup, StringComparison.Ordinal);
+
+        var click = Method(source, "private async void UpdateButton_Click(");
+        Assert.Contains("_restartAfterUpdateOnExit = true;", click, StringComparison.Ordinal);
+        Assert.Contains("RestartWhenGameEnds();", click, StringComparison.Ordinal);
+        Assert.DoesNotContain("Close();", click, StringComparison.Ordinal);
+
+        var state = source[source.IndexOf("private bool GameNeedsLauncher", StringComparison.Ordinal)..];
+        state = state[..state.IndexOf(';')];
+        Assert.Contains("_playRequested", state, StringComparison.Ordinal);
+        Assert.Contains("IsClientPreparing: true", state, StringComparison.Ordinal);
+        Assert.Contains("IsClientRunning: true", state, StringComparison.Ordinal);
+        Assert.Contains("!GameNeedsLauncher)", Method(source, "private void RestartWhenGameEnds("), StringComparison.Ordinal);
+        Assert.Contains("RestartWhenGameEnds();", Method(source, "private void OnMinecraftClientRunningChanged("), StringComparison.Ordinal);
+        var play = Method(source, "private async void PlayButton_Click(");
+        Assert.Contains("_shutdownStarted || GameNeedsLauncher", play, StringComparison.Ordinal);
+        Assert.Matches(@"_playRequested = true;[\s\S]+?await [\s\S]+?finally[\s\S]+?_playRequested = false;[\s\S]+?RestartWhenGameEnds\(\);", play);
+
+        var closing = Method(source, "private async void Window_Closing(");
+        Assert.Contains("var canInstallUpdate = !GameNeedsLauncher;", closing, StringComparison.Ordinal);
+        Assert.Matches(@"if \(canInstallUpdate && _updateService is not null\)[\s\S]+?_updateService.StartInstall\(", closing);
+    }
+
     private static string Method(string source, string signature)
     {
         var start = source.IndexOf(signature, StringComparison.Ordinal);
@@ -102,11 +132,11 @@ public sealed class StartupPreparationPriorityTests
         return source[start..end];
     }
 
-    private static string ReadWindow()
+    private static string ReadWindow(string name = "MainWindow.xaml.cs")
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            var path = Path.Combine(directory.FullName, "Program", "MainWindow.xaml.cs");
+            var path = Path.Combine(directory.FullName, "Program", name);
             if (File.Exists(path)) return File.ReadAllText(path);
         }
         throw new FileNotFoundException("The launcher source was not found.");

@@ -45,6 +45,9 @@ internal static class UpdateProgressLine
     /// <summary>Downloaded and waiting for the launcher to close.</summary>
     public static string Ready(int release) => $"Обновление {release} готово к установке";
 
+    /// <summary>A requested update that will install when Minecraft exits.</summary>
+    public static string WaitForGame(int release) => $"Обновление {release} после выхода из игры";
+
     /// <summary>A patch being folded into the executable, which moves no bytes.</summary>
     public static string Applying(int release) => $"Применение обновления {release}";
 

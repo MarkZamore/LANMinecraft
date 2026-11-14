@@ -329,11 +329,15 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         var offline = new RecordingHandler(_ =>
             throw new InvalidOperationException("Network must not be used."));
         using var offlineClient = new HttpClient(offline);
+        var progress = new SynchronousProgress();
         await CreateService(offlineClient, archive)
-            .EnsureAsync(runtimeRoot, null, CancellationToken.None);
+            .EnsureAsync(runtimeRoot, progress, CancellationToken.None);
 
         Assert.True(File.Exists(Path.Combine(installRoot, "bin", "javaw.exe")));
         Assert.Empty(offline.RequestUris);
+        var unpack = Assert.Single(progress.Reports);
+        Assert.Equal("Java", unpack.Message);
+        Assert.Equal(0, unpack.TotalBytes);
     }
 
     [Fact]
@@ -448,15 +452,9 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
 
         Assert.All(progress.Reports, report =>
             Assert.Equal(RuntimePreparationStage.InstallingJava, report.Stage));
-        Assert.Contains(progress.Reports, report => report.TotalBytes == archive.Length);
-        // And every line names the runtime being installed rather than the one
-        // the build pins by default. The test pin is 25.0.3 and the default is
-        // 21.0.12.1, so a line that reads the constant instead of the pin says
-        // the wrong number here - which is what a player saw while a 1.20.1 pack
-        // downloaded Java 17 under the heading "Java 21.0.12.1".
-        Assert.NotEqual(TestJavaVersion, PortableJavaRuntimeService.PinnedJavaVersion);
-        Assert.All(progress.Reports, report =>
-            Assert.Equal($"Java {TestJavaVersion}", report.Message));
+        Assert.Contains(progress.Reports, report => report.TotalBytes == archive.Length && report.Message == "Java 1/2");
+        Assert.Equal(["Java 1/2", "Java 2/2"], progress.Reports.Select(report => report.Message).Distinct());
+        Assert.Equal(0, progress.Reports[^1].TotalBytes);
     }
 
     [Fact]

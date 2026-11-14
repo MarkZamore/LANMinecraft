@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -103,7 +104,11 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
     public Task ColdPreparationDownloadsOfficialClientAndValidatesLibraryMirror(bool invalidMirror) =>
         CheckColdPreparationAsync(true, invalidMirror);
 
-    private async Task CheckColdPreparationAsync(bool officialClient, bool invalidMirror)
+    [Fact]
+    public Task UnavailableAssetIndexDuringCaptionPlanningDoesNotDelayTheClientDownload() =>
+        CheckColdPreparationAsync(true, false, failFirstAssetIndexRequest: true);
+
+    private async Task CheckColdPreparationAsync(bool officialClient, bool invalidMirror, bool failFirstAssetIndexRequest = false)
     {
         var paths = new AppPaths(_root);
         paths.Ensure();
@@ -148,10 +153,11 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
         File.WriteAllText(Path.Combine(javaHome, ".portable-java.json"),
             JsonSerializer.Serialize(new { SchemaVersion = 1, pin.RuntimeId, pin.ArchiveSha256 }));
 
-        using var handler = new ColdRuntimeHandler(clientBytes, officialClient, invalidMirror);
+        using var handler = new ColdRuntimeHandler(clientBytes, officialClient, invalidMirror, failFirstAssetIndexRequest);
         using var http = new HttpClient(handler);
         using var service = new PackRuntimeService(paths, new Logger(paths.LogFile), http);
-        var runtime = await service.PrepareAsync("Legacy fixture", null, CancellationToken.None);
+        var progress = new PreparationProgress();
+        var runtime = await service.PrepareAsync("Legacy fixture", progress, CancellationToken.None);
 
         Assert.Equal(javaw, runtime.JavaPath);
         Assert.Equal(officialClient ? "fabric-loader-0.18.2-1.6.4" : "legacyfabric-loader-0.18.2-1.6.4", runtime.ProfileId);
@@ -159,15 +165,39 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
         Assert.Equal(officialClient ? 1 : 0, handler.ClientRequests);
         Assert.Equal(officialClient ? 1 : 0, handler.MirrorRequests);
         Assert.Equal(!officialClient || invalidMirror ? 1 : 0, handler.OfficialLibraryRequests);
+        if (failFirstAssetIndexRequest)
+        {
+            Assert.Equal(2, handler.AssetIndexRequests);
+            Assert.All(progress.Labels(RuntimePreparationStage.Downloading), label => Assert.StartsWith("Minecraft", label));
+        }
+        else
+        {
+            Assert.Equal(officialClient ? ["Minecraft 1/2", "Minecraft 2/2"] : new[] { "Minecraft" },
+                progress.Labels(RuntimePreparationStage.Downloading));
+        }
+        var loader = officialClient ? "Fabric" : "Legacy Fabric";
+        Assert.Equal([$"{loader} 1/2", $"{loader} 2/2"], progress.Labels(RuntimePreparationStage.InstallingLoader));
         Assert.Equal("fixture library", File.ReadAllText(Path.Combine(
             SharedRuntimeStore.Libraries(paths), "fixture", "library", "1", "library-1.jar")));
         Assert.False(Directory.Exists(Path.Combine(SharedRuntimeStore.Runtime(paths), "windows-x64", "jre-legacy")));
         var requestsAfterPreparation = handler.RequestCount;
 
-        var cached = await service.PrepareAsync("Legacy fixture", null, CancellationToken.None);
+        var cachedProgress = new PreparationProgress();
+        var cached = await service.PrepareAsync("Legacy fixture", cachedProgress, CancellationToken.None);
         Assert.Equal(runtime.ProfileId, cached.ProfileId);
         Assert.Equal(runtime.JavaPath, cached.JavaPath);
         Assert.Equal(requestsAfterPreparation, handler.RequestCount);
+        Assert.Empty(cachedProgress.Labels(RuntimePreparationStage.Downloading));
+        Assert.Empty(cachedProgress.Labels(RuntimePreparationStage.InstallingLoader));
+
+        if (officialClient)
+        {
+            File.Delete(runtime.ClientJarPath);
+            var repairProgress = new PreparationProgress();
+            await service.PrepareAsync("Legacy fixture", repairProgress, CancellationToken.None);
+            Assert.Equal(["Minecraft"], repairProgress.Labels(RuntimePreparationStage.Downloading));
+            Assert.Equal(2, handler.ClientRequests);
+        }
     }
 
     [Theory]
@@ -195,14 +225,30 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
 
     public void Dispose() => TempTree.Delete(_root);
 
-    private sealed class ColdRuntimeHandler(byte[] clientJar, bool officialClient, bool invalidMirror) : HttpMessageHandler
+    private sealed class PreparationProgress : IProgress<RuntimePreparationProgress>
+    {
+        private readonly ConcurrentQueue<RuntimePreparationProgress> _reports = new();
+
+        public void Report(RuntimePreparationProgress value) => _reports.Enqueue(value);
+
+        public string[] Labels(RuntimePreparationStage stage) => _reports
+            .Where(report => report.Stage == stage)
+            .Select(report => report.Message)
+            .Distinct()
+            .ToArray();
+    }
+
+    private sealed class ColdRuntimeHandler(byte[] clientJar, bool officialClient, bool invalidMirror,
+        bool failFirstAssetIndexRequest) : HttpMessageHandler
     {
         private int _requestCount;
         public int RequestCount => _requestCount;
         public int ClientRequests;
         public int MirrorRequests;
         public int OfficialLibraryRequests;
+        public int AssetIndexRequests;
         internal const string MirrorUrl = "https://github.com/fixture/pack/releases/download/runtime-v1/library.jar";
+        private const string AssetIndex = """{"objects":{}}""";
         internal static readonly byte[] Library = Encoding.UTF8.GetBytes("fixture library");
         internal static readonly string LibrarySha1 = Convert.ToHexStringLower(SHA1.HashData(Library));
 
@@ -213,6 +259,12 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
             {
                 Interlocked.Increment(ref ClientRequests);
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(clientJar) });
+            }
+            if (request.RequestUri.AbsoluteUri == "https://fixture.test/assets.json" && failFirstAssetIndexRequest)
+            {
+                if (Interlocked.Increment(ref AssetIndexRequests) == 1)
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+                Assert.Equal(1, ClientRequests);
             }
             if (request.RequestUri.AbsoluteUri == MirrorUrl && officialClient)
                 Interlocked.Increment(ref MirrorRequests);
@@ -225,10 +277,12 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
                     """,
                 "https://fixture.test/1.6.4.json" => $$$$"""
                     {"id":"1.6.4","type":"release","mainClass":"net.minecraft.client.main.Main",
+                     {{{{(failFirstAssetIndexRequest ? AssetIndexMetadata() : "")}}}}
                      "downloads":{"client":{"url":"https://piston-data.mojang.com/fixture/client.jar","size":{{{{clientJar.Length}}}},
                        "sha1":"{{{{Convert.ToHexStringLower(SHA1.HashData(clientJar))}}}}"}},
                      "libraries":[{"name":"fixture:library:1","downloads":{"artifact":{"url":"https://libraries.minecraft.net/fixture/library.jar","size":{{{{Library.Length}}}},"sha1":"{{{{LibrarySha1}}}}"}}}]}
                     """,
+                "https://fixture.test/assets.json" when failFirstAssetIndexRequest => AssetIndex,
                 MirrorUrl when officialClient => "fixture library",
                 "https://libraries.minecraft.net/fixture/library.jar" when !officialClient || invalidMirror => "fixture library",
                 "https://meta.legacyfabric.net/v2/versions/loader/1.6.4/0.18.2/profile/json" when !officialClient => """
@@ -247,6 +301,11 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
                 Content = new StringContent(response, Encoding.UTF8)
             });
         }
+
+        private static string AssetIndexMetadata() => $$$"""
+            "assetIndex":{"id":"fixture","url":"https://fixture.test/assets.json",
+              "sha1":"{{{Convert.ToHexStringLower(SHA1.HashData(Encoding.UTF8.GetBytes(AssetIndex)))}}}","size":{{{AssetIndex.Length}}}},
+            """;
     }
 
     private sealed class ProfileHandler(string inheritsFrom = "1.6.4") : HttpMessageHandler

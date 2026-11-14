@@ -156,13 +156,21 @@ public sealed class PlayButtonCaptionTests
     }
 
     [Fact]
-    public void JavaCaptionOmitsTheVersionAndKeepsTheDownloadNumbers()
+    public void JavaCaptionKeepsItsStageNumberAndDownloadNumbers()
     {
         var progress = new RuntimePreparationProgress(
-            RuntimePreparationStage.InstallingJava, "Java 17.0.20.1",
+            RuntimePreparationStage.InstallingJava, "Java 1/2",
             DownloadedBytes: 1024, TotalBytes: 2048);
-        Assert.Equal("Java: 1 / 2 КБ (1 КБ/с)", PlayButtonCaption.For(progress, 1024));
-        Assert.Equal("Java", PlayButtonCaption.For(progress with { TotalBytes = 0 }, 0));
+        Assert.Equal("Java 1/2: 1 / 2 КБ (1 КБ/с)", PlayButtonCaption.For(progress, 1024));
+        Assert.Equal("Java 2/2", PlayButtonCaption.For(progress with { Message = "Java 2/2", TotalBytes = 0 }, 0));
+    }
+
+    [Fact]
+    public void OnlyRepeatedLabelsAreNumberedInOrder()
+    {
+        Assert.Equal(
+            ["Minecraft 1/2", "Forge 1/3", "Java", "Forge 2/3", "Minecraft 2/2", "Forge 3/3"],
+            PreparationLabels.NumberRepeated("Minecraft", "Forge", "Java", "Forge", "Minecraft", "Forge"));
     }
 
     private static IEnumerable<string> Captions()
@@ -173,7 +181,8 @@ public sealed class PlayButtonCaptionTests
             RuntimePreparationStage.Downloading,
             RuntimePreparationStage.InstallingJava,
         };
-        string[] subjects = ["Java", "Minecraft", "NeoForge", "Fabric", "Quilt", "Forge", "Файлы"];
+        string[] subjects = ["Java", "Java 1/2", "Minecraft", "Minecraft 2/2", "NeoForge",
+            "Fabric", "Quilt", "Forge", "NeoForge 2/2", "Legacy Fabric 2/2", "Файлы"];
         foreach (var stage in byteStages)
         {
             foreach (var subject in subjects)

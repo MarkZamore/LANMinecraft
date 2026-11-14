@@ -11,14 +11,6 @@ namespace Minecraft;
 /// around them. The pair of sizes carries one unit because both halves use
 /// the same measure.
 /// </summary>
-/// <remarks>
-/// The name is the whole of what a caption says, and it is why the bar may go
-/// back to nothing without alarming anybody: preparing a pack fetches the base
-/// game, then the loader's installer, then the libraries that installer asks
-/// for, and each of those is a set of files of its own. The caption used to
-/// number those sets - "Файлы 1/2", "Файлы 2/2" - which was wrong twice over:
-/// they are not files, and there are more than two of them. It names them now.
-/// </remarks>
 internal static class PlayButtonCaption
 {
     /// <summary>The caption for one progress report, with the speed measured for it.</summary>
@@ -31,11 +23,8 @@ internal static class PlayButtonCaption
             RuntimePreparationStage.SyncingPack when moving =>
                 WithBytes("Сборка", progress, bytesPerSecond),
             RuntimePreparationStage.SyncingPack => "Проверка",
-            RuntimePreparationStage.Downloading when moving =>
+            RuntimePreparationStage.Downloading or RuntimePreparationStage.InstallingJava when moving =>
                 WithBytes(progress.Message, progress, bytesPerSecond),
-            RuntimePreparationStage.InstallingJava when moving =>
-                WithBytes("Java", progress, bytesPerSecond),
-            RuntimePreparationStage.InstallingJava => "Java",
             _ => progress.Message
         };
     }

@@ -112,6 +112,7 @@ public partial class MainWindow : Window
     private bool _startupComplete;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
+    private bool _playRequested;
     private string? _playProgressText;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
@@ -123,6 +124,8 @@ public partial class MainWindow : Window
     private MinimapResetService? _minimapReset;
     private ControlsPresetStatus _controlsPresetStatus;
     private string? _controlsPresetStamp;
+
+    internal bool InstallUpdateAfterStartupGame { get; init; }
 
     public MainWindow()
     {
@@ -373,6 +376,7 @@ public partial class MainWindow : Window
         if (_shutdownComplete) return;
         e.Cancel = true;
         if (_shutdownStarted) return;
+        var canInstallUpdate = !GameNeedsLauncher;
         _shutdownStarted = true;
         _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
@@ -433,7 +437,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                if (_updateService is not null)
+                if (canInstallUpdate && _updateService is not null)
                 {
                     var prepared = await Task.Run(_updateService.TryGetPreparedUpdate);
                     if (prepared is not null)
@@ -1282,6 +1286,7 @@ public partial class MainWindow : Window
                 RefreshPackMemory();
             }
             RefreshUi();
+            RestartWhenGameEnds();
         });
     }
 
@@ -1332,12 +1337,14 @@ public partial class MainWindow : Window
         {
             _minecraftPreparing = isPreparing;
             RefreshUi();
+            RestartWhenGameEnds();
         });
     }
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftPreparing || _minecraftRunning || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
+        if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
+        _playRequested = true;
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1438,8 +1445,10 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _playRequested = false;
             _minecraftPreparing = _minecraft?.IsClientPreparing == true;
             RefreshUi();
+            RestartWhenGameEnds();
         }
     }
 
@@ -2618,8 +2627,11 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    SetUpdateProgressCaption(UpdateProgressLine.Ready(startupPrepared.Manifest.ReleaseNumber));
+                    if (InstallUpdateAfterStartupGame)
+                        _restartAfterUpdateOnExit = true;
+                    ShowPreparedUpdate(startupPrepared.Manifest.ReleaseNumber);
                     RefreshUi();
+                    RestartWhenGameEnds();
                 });
             }
 
@@ -2691,7 +2703,7 @@ public partial class MainWindow : Window
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 100;
                     SetProgressActivity(UpdateProgressBar, active: false);
-                    SetUpdateProgressCaption(UpdateProgressLine.Ready(readyUpdate.Manifest.ReleaseNumber));
+                    ShowPreparedUpdate(readyUpdate.Manifest.ReleaseNumber);
                 });
             }
         }
@@ -2732,6 +2744,7 @@ public partial class MainWindow : Window
                     if (!retryingCheck) _updateDotsTimer?.Stop();
                     _updateBusy = false;
                     RefreshUi();
+                    RestartWhenGameEnds();
                 });
             }
         }
@@ -2756,7 +2769,7 @@ public partial class MainWindow : Window
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_updateBusy || _preparedUpdate is null) return;
+        if (_updateBusy || _restartAfterUpdateOnExit || _preparedUpdate is null) return;
 
         _updateBusy = true;
         RefreshUi();
@@ -2773,11 +2786,10 @@ public partial class MainWindow : Window
             }
 
             _preparedUpdate = prepared;
-            SetUpdateProgressCaption(UpdateProgressLine.Ready(prepared.Manifest.ReleaseNumber));
+            _restartAfterUpdateOnExit = true;
+            ShowPreparedUpdate(prepared.Manifest.ReleaseNumber);
             UpdateProgressBar.Value = 100;
             SetProgressActivity(UpdateProgressBar, active: false);
-            _restartAfterUpdateOnExit = true;
-            Close();
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -2791,7 +2803,27 @@ public partial class MainWindow : Window
         {
             _updateBusy = false;
             RefreshUi();
+            RestartWhenGameEnds();
         }
+    }
+
+    // Keep the request active while Play refreshes the pack, before the process
+    // service takes over. Dispatcher callbacks only reflect UI state.
+    private bool GameNeedsLauncher =>
+        _playRequested || _minecraft is { IsClientPreparing: true } or { IsClientRunning: true };
+
+    private void ShowPreparedUpdate(int release)
+    {
+        SetUpdateProgressCaption(_restartAfterUpdateOnExit && GameNeedsLauncher
+            ? UpdateProgressLine.WaitForGame(release)
+            : UpdateProgressLine.Ready(release));
+    }
+
+    private void RestartWhenGameEnds()
+    {
+        if (!_shutdownStarted && !_updateBusy && _restartAfterUpdateOnExit &&
+            _preparedUpdate is not null && !GameNeedsLauncher)
+            Close();
     }
 
     private void ApplyMemoryText()
@@ -3193,11 +3225,9 @@ public partial class MainWindow : Window
         TransferProgressArea.IsEnabled = _transferActive || canTransfer;
         MemoryTextBox.IsEnabled = settingsEnabled && !_selectedNativeRuntime;
         MemoryEstimateButton.IsEnabled = settingsEnabled && _recommendedMemoryGb.HasValue && _memoryEstimateWait?.IsEnabled != true;
-        // Updating is the one thing in this window that does not need to know who
-        // the player is: it replaces this program and touches nothing a world or a
-        // friend list depends on. Steam being down is often the very reason a
-        // player reaches for a newer build, so the button follows the update alone.
-        UpdateButton.IsEnabled = !_busy && !_updateBusy && _preparedUpdate is not null;
+        // A ready update can be requested without Steam. While a game is
+        // active the request stays queued until the local services can stop.
+        UpdateButton.IsEnabled = !_busy && !_updateBusy && !_restartAfterUpdateOnExit && _preparedUpdate is not null;
 
         RefreshDiagnosticsPanel();
         RefreshTransferStatus();
