@@ -249,6 +249,30 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(stage, self.source, receipt)
 
+    def test_book_localization_mod_is_bound_to_the_forge_payload(self):
+        path = "mods/guide-localization-1.0.0.jar"
+        input_path = "patchouli_books/guide/en_us/entries/first.json"
+        english = prepare.fingerprint(b'{"name":"Guide"}')
+        author = {**self.receipt, "overrides": [
+            *self.receipt["overrides"], {"path": input_path, **english}]}
+        target = self.source / path
+        target.parent.mkdir()
+
+        def write_mod(extra):
+            with ZipFile(target, "w") as jar:
+                jar.writestr("META-INF/mods.toml", 'modLoader="javafml"\n[[mods]]\nmodId="localization"\n')
+                jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n\n")
+                jar.writestr("localization.mixins.json", '{"client":["BookMixin"]}')
+                for name, value in extra.items():
+                    jar.writestr(name, value)
+            return {"bookLocalization": [
+                {"path": path, "inputs": {input_path: english}, "output": prepare.fingerprint(target.read_bytes())}]}
+
+        recipe = write_mod({})
+        self.assertEqual(prepare.book_localizations(recipe, self.source, author), {path: target.read_bytes()})
+        with self.assertRaisesRegex(ValueError, "Unexpected book localization mod"):
+            prepare.book_localizations(write_mod({"META-INF/jarjar/another.jar": b"any"}), self.source, author)
+
     def test_book_jar_localization_only_touches_pinned_book_resources(self):
         path = "mods/guide.jar"
         book = "data/guide/patchouli_books/manual/"
