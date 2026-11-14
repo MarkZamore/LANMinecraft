@@ -44,6 +44,7 @@ BOOK_PAGES = (r"(?:kubejs/assets/[a-z0-9_.-]+/)?patchouli_books/[a-z0-9_.-]+/ru_
 BOOK_TINKERS_PAGES = r"kubejs/assets/[a-z0-9_.-]+/book/[a-z0-9_.-]+/ru_ru/" + BOOK_PAGE + r"\.json"
 BOOK_GUIDEME_PAGES = r"kubejs/assets/[a-z0-9_.-]+/[a-z0-9_.-]+/_ru_ru/" + BOOK_PAGE + r"\.md"
 BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
+LEGACY_QUEST_TEXT = r"config/ftbquests/[a-z0-9_-]+/text/ru_ru/[a-f0-9]{8}\.txt"
 BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
 BOOK_NOTICE = r"licenses/[a-zA-Z0-9_.-]+\.txt"
 BOOK_LOCALIZATION_MOD = r"mods/[a-z0-9]+(?:-[a-z0-9]+)*-localization-[0-9]+(?:\.[0-9]+)+\.jar"
@@ -531,7 +532,7 @@ def book_localization_jar_input(path, pin, author):
 
 def book_localization_addition(path):
     return any(re.fullmatch(pattern, path) for pattern in
-               (BOOK_PAGES, BOOK_TINKERS_PAGES, BOOK_GUIDEME_PAGES, BOOK_LANGUAGE, BOOK_NOTICE,
+               (BOOK_PAGES, BOOK_TINKERS_PAGES, BOOK_GUIDEME_PAGES, BOOK_LANGUAGE, BOOK_NOTICE, LEGACY_QUEST_TEXT,
                 BOOK_LOCALIZATION_MOD))
 
 
@@ -555,6 +556,23 @@ def validate_book_localization_mod(data, author):
         require(not re.search(r"(?im)^(?:premain-class|agent-class|launcher-agent-class|class-path):",
                               jar.read("META-INF/MANIFEST.MF").decode("utf-8")),
                 "Book localization mod must load through Forge")
+
+
+def validate_legacy_quest_text(data, name):
+    lines = data.decode("utf-8").splitlines()
+    sections = {}
+    active = None
+    for line in lines:
+        if re.fullmatch(r"\[[^\]]*\]", line):
+            require(line in {"[title]", "[description]", "[text]"} and line not in sections,
+                    f"Unsupported or duplicate legacy quest section: {name}: {line}")
+            active = sections.setdefault(line, [])
+        else:
+            require(active is not None and "\x00" not in line, f"Invalid legacy quest text: {name}")
+            active.append(line)
+    require(sections and all(rows and rows[0] and rows[-1] and (key == "[text]" or len(rows) == 1)
+                             for key, rows in sections.items()),
+            f"Missing or malformed legacy quest text section: {name}")
 
 
 def book_localizations(recipe, pack_source, author):
@@ -594,6 +612,10 @@ def book_localizations(recipe, pack_source, author):
         data = overlay_bytes(pack_source / path)
         require(book_localization_pin(row["output"]) and fingerprint(data) == row["output"],
                 f"Book localization differs from its pin: {name}")
+        if re.fullmatch(LEGACY_QUEST_TEXT, name):
+            require(author["pack"]["minecraftVersion"] == "1.12.2" and author["pack"]["loader"]["type"] == "forge",
+                    f"Legacy quest text requires Forge 1.12.2: {name}")
+            validate_legacy_quest_text(data, name)
         if path.suffix == ".json":
             content = decode_json(data)
             require(isinstance(content, dict) and content, f"Expected book localization JSON object: {name}")

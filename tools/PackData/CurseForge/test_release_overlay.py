@@ -249,6 +249,35 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(stage, self.source, receipt)
 
+    def test_legacy_quest_text_survives_unrelated_author_updates(self):
+        english = "config/ftbquests/normal/chapters/abcdef01/chapter.snbt"
+        russian = "config/ftbquests/normal/text/ru_ru/abcdef01.txt"
+        original = b'{title:"First Steps"}'
+        translation = "[title]\nПервые шаги\n[text]\nПервая строка\n\nВторая строка\n".encode()
+        target = self.source / russian
+        target.parent.mkdir(parents=True)
+        target.write_bytes(translation)
+        pin = prepare.fingerprint(original)
+        row = {"path": russian, "inputs": {english: pin}, "output": prepare.fingerprint(translation)}
+        recipe = {**self.recipe, "bookLocalization": [row]}
+        self.write_json(self.recipe_path, recipe)
+        author = {**self.author, "overrides": [*self.author["overrides"], {"path": english, **pin}]}
+        candidate = {**author, "client": {**author["client"], "sha256": "b" * 64}}
+        self.assertEqual(release.review_update(self.source, author, candidate),
+                         {**recipe, "authorArchiveSha256": "b" * 64})
+        changed = {**candidate, "overrides": [*self.author["overrides"],
+                   {"path": english, **prepare.fingerprint(b'{title:"New Steps"}')}]}
+        with self.assertRaisesRegex(ValueError, "changed book localization input"):
+            release.review_update(self.source, author, changed)
+        conflict = {**candidate, "overrides": [*author["overrides"], {"path": russian, **row["output"]}]}
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            release.review_update(self.source, author, conflict)
+        invalid = b"[title]\nFirst\n[title]\nSecond\n"
+        target.write_bytes(invalid)
+        row["output"] = prepare.fingerprint(invalid)
+        with self.assertRaisesRegex(ValueError, "duplicate legacy quest section"):
+            prepare.book_localizations(recipe, self.source, author)
+
     def test_book_localization_mod_is_bound_to_the_forge_payload(self):
         path = "mods/guide-localization-1.0.0.jar"
         input_path = "patchouli_books/guide/en_us/entries/first.json"

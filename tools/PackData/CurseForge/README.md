@@ -386,3 +386,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Native Java 8 QA bridge packaging failed.' }
 ```powershell
 python -B -m unittest discover -s tools/PackData/CurseForge
 ```
+
+Для Forge 1.12.2 слой `bookLocalization` принимает нативные UTF-8 файлы
+`config/ftbquests/<профиль>/text/ru_ru/<8 hex>.txt` с секциями `[title]`,
+`[description]` и `[text]`. Закрепляйте в `inputs` авторские SNBT и
+обязательный JAR FTB Quests. Язык выбирает клиент игры. Исходные SNBT
+с идентификаторами, заданиями и наградами входят в выпуск как прежде.
