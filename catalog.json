@@ -227,6 +227,15 @@
         "repo": "Escape-The-End",
         "tag": "pack-latest"
       }
+    },
+    {
+      "id": "minecraft-17",
+      "relativePath": "Antimatter Chemistry Reforged",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Antimatter-Chemistry-Reforged",
+        "tag": "pack-latest"
+      }
     }
   ]
 }
