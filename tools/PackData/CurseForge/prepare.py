@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 import hashlib
 from io import BytesIO
 import json
@@ -595,6 +596,79 @@ def overlay_dependency_keys(recipe, author):
     return keys
 
 
+def jar_metadata_patches(recipe, author, pack_source):
+    rows = recipe.get("jarMetadataPatches", [])
+    require(isinstance(rows, list), "Invalid dependency JAR metadata patches")
+    if not rows:
+        return []
+    declared = {(row["projectId"], row["fileId"]) for row in author["declaredDependencies"]
+                if row["required"] is True}
+    excluded = set(overlay_dependency_keys(recipe, author))
+    overrides = {row["path"].casefold() for row in author["overrides"]}
+    resolved = {row["path"]: row for row in author.get("files", [])}
+    paths = {}
+    patched = set()
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == {
+            "path", "projectId", "fileId", "before", "after", "metadata", "license"
+        }, "Invalid dependency JAR metadata patch")
+        path = safe_path(row["path"])
+        reserve_path(paths, path)
+        key = row["projectId"], row["fileId"]
+        require(len(path.parts) == 2 and path.parts[0] == "mods" and path.suffix == ".jar" and
+                row["path"].casefold() not in overrides and key in declared and key not in excluded and key not in patched,
+                f"Review required for changed dependency JAR: {path}")
+        patched.add(key)
+        for pin in (row["before"], row["after"]):
+            require(isinstance(pin, dict) and set(pin) == {"sizeBytes", "sha256"} and
+                    positive(pin["sizeBytes"]) and pin["sizeBytes"] <= MAX_JSON and
+                    isinstance(pin["sha256"], str) and re.fullmatch("[0-9a-f]{64}", pin["sha256"]),
+                    f"Invalid dependency JAR pin: {path}")
+        if "files" in author:
+            original = resolved.get(row["path"])
+            require(original is not None and (original["projectId"], original["fileId"]) == key and
+                    row["before"] == {field: original[field] for field in ("sizeBytes", "sha256")},
+                    f"Review required for changed dependency JAR bytes: {path}")
+        metadata = row["metadata"]
+        require(isinstance(metadata, dict) and isinstance(metadata.get("pack"), dict) and
+                positive(metadata["pack"].get("pack_format")), f"Invalid replacement pack.mcmeta: {path}")
+        license_path = safe_path(row["license"])
+        require(license_path.parts[0] == "licenses" and len(license_path.parts) == 2,
+                f"Invalid dependency JAR license path: {path}")
+        require(overlay_bytes(pack_source / license_path), f"Empty dependency JAR license: {path}")
+    return rows
+
+
+def rebuild_jar_metadata(original, metadata, license_bytes):
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(original)) as source, zipfile.ZipFile(output, "w") as jar:
+        archive_members(source)
+        names = source.namelist()
+        require("pack.mcmeta" in names and "LICENSE" not in names,
+                "Expected pack.mcmeta and no root LICENSE in the dependency JAR")
+        require(not any(name.upper().startswith("META-INF/") and
+                        (name.upper().endswith((".SF", ".RSA", ".DSA", ".EC")) or
+                         name.upper().rsplit("/", 1)[-1].startswith("SIG-")) for name in names),
+                "Cannot modify a signed dependency JAR")
+        fixed_metadata = (json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        for member in source.infolist():
+            data = fixed_metadata if member.filename == "pack.mcmeta" else source.read(member)
+            jar.writestr(copy(member), data, compress_type=zipfile.ZIP_STORED)
+        jar.writestr(zipfile.ZipInfo("LICENSE"), license_bytes)
+    return output.getvalue()
+
+
+def apply_jar_metadata_patches(game, pack_source, receipt):
+    rows = jar_metadata_patches(receipt["overlay"], receipt, pack_source)
+    for row in rows:
+        target = game / safe_path(row["path"])
+        original = overlay_bytes(target)
+        require(fingerprint(original) == row["before"], f"Dependency JAR differs: {row['path']}")
+        modified = rebuild_jar_metadata(original, row["metadata"], overlay_bytes(pack_source / row["license"]))
+        require(fingerprint(modified) == row["after"], f"Patched dependency JAR differs: {row['path']}")
+        target.write_bytes(modified)
+
+
 def excluded_dependency_files(keys, files):
     matching = [row for row in files if (row["projectId"], row["fileId"]) in keys]
     require(len(matching) == len(keys), "Missing or duplicate checked author dependency")
@@ -628,13 +702,14 @@ def exclude_dependencies(game, rows):
 def apply_overlay(game, pack_source, receipt, paths):
     raw = overlay_bytes(pack_source / "tools/overlay.json")
     recipe = decode_json(raw)
-    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap"} ==
+    require(isinstance(recipe, dict) and set(recipe) - {"excludedDependencies", "additions", "bootstrap", "jarMetadataPatches"} ==
             {"schemaVersion", "authorArchiveSha256", "descriptorSha256", "patches"} and
             type(recipe["schemaVersion"]) is int and recipe["schemaVersion"] == 1 and
             isinstance(recipe["patches"], list), "Invalid author overlay recipe")
     require(recipe["authorArchiveSha256"] == receipt["client"]["sha256"],
             "Overlay does not match the pinned author archive")
     dependency_keys = overlay_dependency_keys(recipe, receipt)
+    jar_patches = jar_metadata_patches(recipe, receipt, pack_source)
     additions = overlay_additions(recipe, pack_source, receipt)
     bootstrap = overlay_bootstrap(recipe, pack_source, receipt, additions)
     for name in additions.keys() | bootstrap.keys():
@@ -684,6 +759,8 @@ def apply_overlay(game, pack_source, receipt, paths):
     if dependency_keys:
         result["excludedDependencies"] = recipe["excludedDependencies"]
     owned_names = set(edits)
+    if jar_patches:
+        result["jarMetadataPatches"] = jar_patches
     if additions:
         owned_names.add(LOGGING_CONFIG)
         result["additions"] = recipe["additions"]
@@ -793,6 +870,8 @@ def prepare(args):
             with ThreadPoolExecutor(max_workers=WORKERS) as pool:
                 files = list(pool.map(lambda entry: acquire_dependency(game, entry, override_files, verified_source), plan))
             receipt.update(status="complete", files=files)
+            if overlay and "jarMetadataPatches" in overlay:
+                apply_jar_metadata_patches(game, args.pack_source, receipt)
             if overlay and "bootstrap" in overlay:
                 overlay_bootstrap(overlay, args.pack_source, receipt,
                                   overlay_additions(overlay, args.pack_source, receipt))

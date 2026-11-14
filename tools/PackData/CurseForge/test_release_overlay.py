@@ -67,6 +67,37 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(self.stage, self.source, self.receipt)
 
+    def test_metadata_patch_keeps_author_pin_and_requires_fixed_jar(self):
+        path = "mods/example.jar"
+        original_jar = BytesIO()
+        with ZipFile(original_jar, "w") as archive:
+            archive.writestr("pack.mcmeta", '{"pack":{"pack_format":${pack_format_number}}}')
+            archive.writestr("assets/example/data.txt", b"unchanged")
+        original = original_jar.getvalue()
+        metadata = {"pack": {"description": "Example", "pack_format": 34}}
+        license_path = "licenses/Example.txt"
+        (self.source / "licenses").mkdir()
+        (self.source / license_path).write_bytes(b"Example license")
+        modified = prepare.rebuild_jar_metadata(original, metadata, b"Example license")
+        with ZipFile(BytesIO(modified)) as archive:
+            self.assertEqual(json.loads(archive.read("pack.mcmeta")), metadata)
+            self.assertEqual(archive.read("assets/example/data.txt"), b"unchanged")
+            self.assertEqual(archive.read("LICENSE"), b"Example license")
+        before = prepare.fingerprint(original)
+        after = prepare.fingerprint(modified)
+        dependency = {"projectId": 11, "fileId": 22, "required": True}
+        author = {**self.receipt, "declaredDependencies": [dependency],
+                  "files": [{**dependency, "path": path, **before}]}
+        recipe = {"jarMetadataPatches": [{"path": path, "projectId": 11, "fileId": 22, "before": before,
+                                          "after": after, "metadata": metadata, "license": license_path}]}
+        rows = prepare.jar_metadata_patches(recipe, author, self.source)
+        inventory, required = release.payload_inventory(author, {}, [], rows)
+        self.assertEqual(inventory[path], after)
+        self.assertIn(path, required)
+        changed = {**author, "files": [{**author["files"][0], "sha256": "f" * 64}]}
+        with self.assertRaisesRegex(ValueError, "changed dependency JAR bytes"):
+            prepare.jar_metadata_patches(recipe, changed, self.source)
+
     def test_manifest_requires_feature_and_all_policy_files(self):
         files, _ = release.verify_stage(self.stage, self.source, self.receipt)
         manifest = {"schemaVersion": 2, **self.author["pack"],
