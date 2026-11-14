@@ -316,6 +316,18 @@ public final class PortableLanAutoPublishHooks {
                 return false;
             }
 
+            if (hasAll("multiplayerScopeClasses", "lanGuestCommandAccessMethods")) {
+                try {
+                    Object worldData = PortableIdentityReflection.invoke(server, aliases("getWorldDataMethods"));
+                    boolean commands = Boolean.TRUE.equals(PortableIdentityReflection.invoke(
+                        worldData, aliases("isAllowCommandsMethods")));
+                    PortableIdentityReflection.invokeDeclared(server, new Class<?>[] { boolean.class },
+                        new Object[] { commands }, aliases("lanGuestCommandAccessMethods"));
+                } catch (ReflectiveOperationException failure) {
+                    System.err.println("[PortableIdentity] Could not restore guest command access after LAN publication: " + failure);
+                }
+            }
+
             // Optional managed discovery metadata is separate from publication
             // success. It observes this exact live world asynchronously.
             if (Boolean.getBoolean("minecraft.portable.identity.steamDiscoveryEnabled") &&

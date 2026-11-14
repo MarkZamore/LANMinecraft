@@ -806,6 +806,9 @@ internal sealed class IdentityAdapterMappingService
         {
             properties["multiplayerScopeClasses"] = JoinDottedAliases(multiplayerScope);
             properties["lanMultiplayerScopeFields"] = JoinAliases(lanScope);
+            var guestCommandAccess = integrated.FindMethod("setGuestCommandAccess", value => value == "(Z)V");
+            if (guestCommandAccess is not null)
+                properties["lanGuestCommandAccessMethods"] = JoinAliases(guestCommandAccess);
         }
         properties["serverClasses"] = JoinAliases(server);
         properties["playerListClasses"] = JoinAliases(playerList);
