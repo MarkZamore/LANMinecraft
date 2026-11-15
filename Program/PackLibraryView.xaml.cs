@@ -7,6 +7,8 @@ using System.Windows.Threading;
 
 namespace Minecraft;
 
+public sealed record PackLibraryHeading(string? Text);
+
 public partial class PackLibraryView : UserControl
 {
     public event Action? ReturnRequested;
@@ -84,11 +86,27 @@ public partial class PackLibraryView : UserControl
             if (preparation.Remove(old, out var steps)) steps.Dispose();
         }
         packs = next;
-        CatalogCards.ItemsSource = next;
+        CatalogCards.ItemsSource = OverviewItems(next);
         if (_selected is not null && !next.Contains(_selected)) { _selected = null; ShowCatalog(); }
         if (!isLoading) ScheduleOverview();
         RefreshMembership();
         UpdateOverviewVisibility();
+    }
+    private static IEnumerable OverviewItems(CatalogPack[] entries)
+    {
+        if (entries.All(pack => pack.Entry.LibraryGroup is null)) return entries;
+        var items = new List<object>();
+        string? group = null;
+        foreach (var pack in entries)
+        {
+            if (group != pack.Entry.LibraryGroup)
+            {
+                group = pack.Entry.LibraryGroup;
+                items.Add(new PackLibraryHeading(group));
+            }
+            items.Add(pack);
+        }
+        return items;
     }
     private void ScheduleOverview()
     {
@@ -151,6 +169,7 @@ public partial class PackLibraryView : UserControl
                 // Retain the native geometry warmed under the independent
                 // root; the generated templates stay live after reattachment.
                 PreparedOverviewCardSizes = FindOverviewPanel(CatalogCards)?.Children.Cast<FrameworkElement>()
+                    .Where(card => LibraryColumnsPanel.GetHeading(card) is null)
                     .Select(card => card.RenderSize).ToArray() ?? [];
                 Restore();
                 if (disposed || version != overviewGeneration || overviewLoading) return;

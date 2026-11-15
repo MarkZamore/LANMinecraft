@@ -418,10 +418,7 @@ public sealed partial class PackCatalogService
     {
         lock (_gate)
         {
-            var next = _sources.Select(entry => _packs.GetValueOrDefault(entry.RelativePath))
-                .Where(pack => pack is not null && IsCurrentEntry(pack.Entry)).Cast<CatalogPack>()
-                .OrderBy(pack => pack.Name, StringComparer.CurrentCultureIgnoreCase)
-                .ThenBy(pack => pack.Entry.Id, StringComparer.Ordinal).ToArray();
+            var next = OrderedOverview();
             if (requireComplete && next.Length != _sources.Count) return false;
             // Preserve identity for unchanged verified bytes, including any
             // cached detail expansion state owned by the published model.
@@ -442,7 +439,9 @@ public sealed partial class PackCatalogService
     {
         // Called under _gate when the authoritative index changes. Even an
         // otherwise incomplete replacement must never keep withdrawn cards.
-        var retained = _overviewSnapshot.Where(pack => IsCurrentEntry(pack.Entry)).ToArray();
+        var previous = _overviewSnapshot.ToDictionary(pack => pack.Entry.RelativePath, pack => pack.Entry.Id,
+            StringComparer.OrdinalIgnoreCase);
+        var retained = OrderedOverview().Where(pack => previous.GetValueOrDefault(pack.Entry.RelativePath) == pack.Entry.Id).ToArray();
         _overviewSnapshot = Array.AsReadOnly(retained);
         _overviewReady = retained.Length == _sources.Count;
     }

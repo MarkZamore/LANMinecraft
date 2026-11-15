@@ -262,7 +262,7 @@ public sealed class ControlsPresetServiceTests : IDisposable
     {
         var packRepo = Path.GetFullPath(
             Path.Combine(
-                FindRepositoryRoot(), "..", PortablePackSyncService.KnownPacks[0].RelativePath));
+                FindRepositoryRoot(), "..", PortablePackSyncService.DefaultPackRelativePath));
         var preset = Path.Combine(packRepo, "launcher", "controls-preset.txt");
         if (!File.Exists(preset)) return;
 

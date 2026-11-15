@@ -26,8 +26,8 @@ public sealed class PackCatalogAuthorityTests : IDisposable
     public async Task RemovedEntriesStayRemovedOfflineWhileListedPackKeepsItsVerifiedBundleOnUpdateFailure()
     {
         using var host = new CatalogHost();
-        var removed = host.Add("removed-pack", "Previously listed pack", "Removed-Pack");
-        var retained = host.Add("retained-pack", "Retained pack", "Retained-Pack");
+        var removed = host.Add("removed-pack", "Previously listed pack", "Removed-Pack") with { LibraryGroup = "Миры" };
+        var retained = host.Add("retained-pack", "Retained pack", "Retained-Pack") with { LibraryGroup = "Миры" };
         host.Index = [removed, retained];
         var initial = new PackCatalogService(_paths, _logger, host.Client);
         await initial.RefreshOnceAsync();
@@ -41,15 +41,17 @@ public sealed class PackCatalogAuthorityTests : IDisposable
         const string customFolder = "My local custom pack";
         WriteMarker(customFolder, retained.Source);
 
-        host.Index = [retained];
+        var regrouped = retained with { LibraryGroup = "Приключения" };
+        host.Index = [regrouped];
         host.UnavailableRepositories.Add(retained.Source.Repo);
         var startup = new PackCatalogService(_paths, _logger, host.Client);
         await startup.RefreshOnceAsync();
 
         Assert.True(startup.HasOnlineCatalog);
-        Assert.Equal(retained, Assert.Single(startup.Sources));
+        Assert.Equal(regrouped, Assert.Single(startup.Sources));
         var card = Assert.Single(startup.Packs);
         Assert.Equal(retained.RelativePath, card.Entry.RelativePath);
+        Assert.Equal(regrouped.LibraryGroup, card.Entry.LibraryGroup);
         Assert.Equal(retainedRevision, card.Content.Revision);
         Assert.Equal(retainedManifest, startup.SessionManifest(retained.Source));
         Assert.Null(startup.Find(removed.RelativePath));
@@ -68,8 +70,10 @@ public sealed class PackCatalogAuthorityTests : IDisposable
         await offline.RefreshOnceAsync();
 
         Assert.False(offline.HasOnlineCatalog);
-        Assert.Equal(retained, Assert.Single(offline.Sources));
-        Assert.Equal(retained.RelativePath, Assert.Single(offline.Packs).Entry.RelativePath);
+        Assert.Equal(regrouped, Assert.Single(offline.Sources));
+        var offlineCard = Assert.Single(offline.Packs);
+        Assert.Equal(retained.RelativePath, offlineCard.Entry.RelativePath);
+        Assert.Equal(regrouped.LibraryGroup, offlineCard.Entry.LibraryGroup);
         Assert.True(offline.IsWithdrawn(removed.RelativePath));
         Assert.Equal(retainedManifest, offline.SessionManifest(retained.Source));
         Assert.Equal("keep installed mod", File.ReadAllText(jar));
@@ -110,7 +114,8 @@ public sealed class PackCatalogAuthorityTests : IDisposable
     {
         using var host = new CatalogHost();
         var entry = host.Add("kept-pack", "Kept pack", "Kept-Pack");
-        host.Index = [entry];
+        var earlier = host.Add("another-pack", "Earlier pack", "Earlier-Pack");
+        host.Index = [entry, earlier];
         await new PackCatalogService(_paths, _logger, host.Client).RefreshOnceAsync();
         host.MalformedIndex = failure == "unsupported";
         host.MissingPacks = failure == "missing-packs";
@@ -119,8 +124,9 @@ public sealed class PackCatalogAuthorityTests : IDisposable
         await startup.RefreshOnceAsync();
 
         Assert.False(startup.HasOnlineCatalog);
-        Assert.Equal(entry, Assert.Single(startup.Sources));
-        Assert.Equal(entry.RelativePath, Assert.Single(startup.Packs).Entry.RelativePath);
+        Assert.Equal(new[] { entry, earlier }, startup.Sources);
+        Assert.Equal(new[] { earlier.RelativePath, entry.RelativePath }, startup.Packs.Select(pack => pack.Entry.RelativePath));
+        Assert.All(startup.Packs, pack => Assert.Null(pack.Entry.LibraryGroup));
         Assert.False(startup.IsWithdrawn(entry.RelativePath));
         Assert.Equal(entry.Source, startup.SourceFor(entry.RelativePath));
     }

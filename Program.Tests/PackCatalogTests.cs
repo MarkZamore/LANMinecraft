@@ -32,7 +32,8 @@ public sealed class PackCatalogTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_paths.Packs, "All The Mods 10", "mods"));
         var old = new AppSettings { ClientRelativePath = PortablePackSyncService.TerraFirmaRelativePath };
         PackMembership.Initialize(old, _paths);
-        Assert.Equal(new[] { "All The Mods 10", PortablePackSyncService.TerraFirmaRelativePath }, old.AddedPackRelativePaths);
+        Assert.Equal(new[] { "All The Mods 10", PortablePackSyncService.TerraFirmaRelativePath },
+            old.AddedPackRelativePaths!.Order(StringComparer.Ordinal));
         old.AddedPackRelativePaths = [];
         PackMembership.Initialize(old, _paths);
         Assert.Empty(old.AddedPackRelativePaths);
@@ -388,7 +389,7 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new Thickness(0), list.Margin);
             Assert.Equal(new Thickness(0, 0, -20, 0), view.Margin);
             AssertLibraryScrollGutter(list);
-            var cards = panel.Children.Cast<FrameworkElement>().ToArray();
+            var cards = CardRows();
             Assert.Equal(5, cards.Length);
             Assert.All(cards, card =>
             {
@@ -410,10 +411,14 @@ public sealed class PackCatalogTests : IDisposable
             AssertMatchingCardContour(radius, dpi);
             if (width == 804)
             {
-                var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
-                Assert.Equal(bounds[0].Top, bounds[1].Top, 3);
-                Assert.Equal(bounds[0].Top, bounds[2].Top, 3);
-                Assert.True(bounds[3].Top >= bounds[0].Bottom + 15);
+                foreach (var section in cards.GroupBy(card => ((CatalogPack)card.Content).Entry.LibraryGroup))
+                {
+                    var rows = section.Chunk(3).Select(row => row.Select(CardBounds).ToArray()).ToArray();
+                    foreach (var row in rows)
+                        Assert.All(row, bounds => Assert.Equal(row[0].Top, bounds.Top, 3));
+                    for (var index = 1; index < rows.Length; index++)
+                        Assert.True(rows[index][0].Top >= rows[index - 1][0].Bottom + 15);
+                }
             }
             foreach (var summary in VisualChildren<TextBlock>((ItemsControl)view.FindName("CatalogCards"))
                          .Where(text => catalog.Packs.Any(pack => pack.Summary == text.Text)))
@@ -422,9 +427,9 @@ public sealed class PackCatalogTests : IDisposable
                 Assert.Equal(TextTrimming.None, summary.TextTrimming);
                 Assert.True(summary.ActualHeight + summary.Margin.Top + summary.Margin.Bottom >= summary.DesiredSize.Height - 1);
             }
-            var sizes = panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize).ToArray();
+            var sizes = cards.Select(card => card.RenderSize).ToArray();
             WindowCanvasTests.LayoutWindow(window, new Size(width + 400, height));
-            Assert.Equal(sizes, panel.Children.Cast<FrameworkElement>().Select(card => card.RenderSize));
+            Assert.Equal(sizes, CardRows().Select(card => card.RenderSize));
             AssertLeftAlignedGrid();
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             if (list.ScrollableHeight > 0) AssertScrollInput(list);
@@ -465,9 +470,14 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
             return true;
 
+            ContentPresenter[] CardRows() => panel.Children.OfType<ContentPresenter>()
+                .Where(child => child.Content is CatalogPack).ToArray();
+
+            Rect CardBounds(ContentPresenter card) => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize));
+
             void AssertLeftAlignedGrid()
             {
-                var bounds = cards.Select(card => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize))).ToArray();
+                var bounds = cards.Select(CardBounds).ToArray();
                 var left = bounds.Min(rect => rect.Left);
                 Assert.InRange(Math.Abs(left), 0, 1);
                 Assert.True(bounds.Max(rect => rect.Right) <= panel.ActualWidth + 1);

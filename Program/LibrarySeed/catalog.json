@@ -2,14 +2,15 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "minecraft-1",
-      "legacyId": "all-the-mods-10",
-      "relativePath": "All The Mods 10",
+      "id": "minecraft-4",
+      "legacyId": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
       "source": {
         "owner": "MarkZamore",
-        "repo": "All-The-Mods-10",
+        "repo": "Caves-and-Dungeons",
         "tag": "pack-latest"
-      }
+      },
+      "libraryGroup": "Сюжетные"
     },
     {
       "id": "minecraft-2",
@@ -19,7 +20,30 @@
         "owner": "MarkZamore",
         "repo": "TerraFirma-Rebirth-2",
         "tag": "pack-latest"
-      }
+      },
+      "libraryGroup": "Сюжетные"
+    },
+    {
+      "id": "minecraft-1",
+      "legacyId": "all-the-mods-10",
+      "relativePath": "All The Mods 10",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-10",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Много модов"
+    },
+    {
+      "id": "minecraft-5",
+      "legacyId": "all-the-mods-9",
+      "relativePath": "All The Mods 9",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-The-Mods-9",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Много модов"
     },
     {
       "id": "minecraft-3",
@@ -31,7 +55,9 @@
         "repo": "Minecraft-Java-Edition",
         "tag": "pack-latest"
       },
-      "legacyRelativePaths": ["Minecraft 26.2"],
+      "legacyRelativePaths": [
+        "Minecraft 26.2"
+      ],
       "legacySources": [
         {
           "owner": "MarkZamore",
@@ -43,27 +69,8 @@
           "repo": "Minecraft-26.2",
           "tag": "pack-latest"
         }
-      ]
-    },
-    {
-      "id": "minecraft-4",
-      "legacyId": "caves-and-dungeons",
-      "relativePath": "Caves and Dungeons",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Caves-and-Dungeons",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-5",
-      "legacyId": "all-the-mods-9",
-      "relativePath": "All The Mods 9",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "All-The-Mods-9",
-        "tag": "pack-latest"
-      }
+      ],
+      "libraryGroup": "Мало модов"
     }
   ]
 }

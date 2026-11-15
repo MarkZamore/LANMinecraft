@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -30,7 +31,8 @@ public sealed class LibraryOverviewPreparationTests
             var cards = Assert.IsType<ItemsControl>(view.FindName("CatalogCards"));
             Assert.NotNull(cards.Parent);
             var panel = Descendants<LibraryColumnsPanel>(cards).Single();
-            Assert.Equal(catalog.Packs.Count, panel.Children.Count);
+            Assert.Equal(catalog.Packs, cards.Items.OfType<CatalogPack>().ToArray());
+            Assert.Equal(cards.Items.Count, panel.Children.Count);
             Assert.Equal(catalog.Packs.Count, view.PreparedOverviewCardSizes.Count);
             Assert.All(view.PreparedOverviewCardSizes, size =>
             {
@@ -41,12 +43,30 @@ public sealed class LibraryOverviewPreparationTests
             var requested = catalog.Packs[0];
             view.Visibility = Visibility.Visible;
             WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
-            Assert.All(panel.Children.Cast<FrameworkElement>(), card =>
+            Assert.All(cards.Items.OfType<CatalogPack>(), pack =>
             {
+                var card = Assert.IsAssignableFrom<FrameworkElement>(cards.ItemContainerGenerator.ContainerFromItem(pack));
                 Assert.True(card.ActualWidth > 0);
                 Assert.True(card.ActualHeight > 0);
             });
-            view.ShowDetails(requested);
+            var headings = cards.Items.OfType<PackLibraryHeading>().Where(item => item.Text is not null).ToArray();
+            Assert.NotEmpty(headings);
+            Assert.All(headings, heading =>
+            {
+                var row = Assert.IsAssignableFrom<FrameworkElement>(cards.ItemContainerGenerator.ContainerFromItem(heading));
+                var text = Assert.Single(Descendants<TextBlock>(row));
+                Assert.Equal(heading.Text, text.Text);
+                Assert.Equal(AutomationHeadingLevel.Level2, AutomationProperties.GetHeadingLevel(text));
+                Assert.False(text.Focusable);
+                Assert.False(text.IsHitTestVisible);
+                Assert.Empty(Descendants<Button>(row));
+                Assert.Equal(0, row.TranslatePoint(new Point(), panel).X, 3);
+                Assert.Equal(panel.ActualWidth, row.ActualWidth, 3);
+            });
+
+            var requestedRow = Assert.IsAssignableFrom<FrameworkElement>(cards.ItemContainerGenerator.ContainerFromItem(requested));
+            var requestedButton = Assert.Single(Descendants<Button>(requestedRow));
+            requestedButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, requestedButton));
             Assert.Equal(1, DetailPageCount(view));
             Assert.Contains("detail:" + requested.Entry.Id, queue.PendingKeys);
             Assert.DoesNotContain(queue.PendingKeys, key => key.StartsWith("detail:", StringComparison.Ordinal) && key != "detail:" + requested.Entry.Id);
@@ -73,7 +93,7 @@ public sealed class LibraryOverviewPreparationTests
             Assert.DoesNotContain("detail:" + removed.Entry.Id, queue.PendingKeys);
             view.SetCatalog(remaining); Drain();
             Assert.True(view.IsOverviewReady);
-            Assert.Equal(remaining.Length, Assert.IsType<ItemsControl>(view.FindName("CatalogCards")).Items.Count);
+            Assert.Equal(remaining, Assert.IsType<ItemsControl>(view.FindName("CatalogCards")).Items.OfType<CatalogPack>().ToArray());
         });
     }
 
@@ -91,6 +111,15 @@ public sealed class LibraryOverviewPreparationTests
             Layout();
             Assert.Equal(0, first.TranslatePoint(new Point(), panel).X, 3);
             Assert.All(panel.Children.Cast<FrameworkElement>(), card => Assert.Equal(240, card.ActualWidth, 3));
+
+            var heading = new ContentPresenter { Content = new PackLibraryHeading("Next section"), Height = 20 };
+            panel.Children.Insert(1, heading);
+            Layout();
+            var following = (FrameworkElement)panel.Children[2];
+            Assert.Equal(1600, heading.ActualWidth, 3);
+            Assert.Equal(first.ActualHeight + panel.Gap, heading.TranslatePoint(new Point(), panel).Y, 3);
+            Assert.Equal(0, following.TranslatePoint(new Point(), panel).X, 3);
+            Assert.Equal(first.ActualHeight + heading.ActualHeight + 2 * panel.Gap, following.TranslatePoint(new Point(), panel).Y, 3);
             return true;
 
             void Layout()

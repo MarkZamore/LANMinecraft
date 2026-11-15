@@ -12,6 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import tomllib
 from tempfile import TemporaryDirectory
 import time
 from urllib.error import HTTPError, URLError
@@ -37,10 +38,17 @@ LOGGING_CONFIG = "config/log4j2.xml"
 LOGGING_FILES = {LOGGING_CONFIG, "launcher/jvm-args.txt"}
 CLIENT_SCRIPT_PATH = re.compile(r"kubejs/client_scripts/lanmc_[a-z0-9_]+\.js")
 MAX_CLIENT_SCRIPT_BYTES = 64 * 1024
-BOOK_PAGES = r"patchouli_books/[a-z0-9_.-]+/ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
+BOOK_PAGE = r"(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+"
+BOOK_PAGES = (r"(?:kubejs/assets/[a-z0-9_.-]+/)?patchouli_books/[a-z0-9_.-]+/ru_ru/"
+              r"(?:categories|entries|templates)/" + BOOK_PAGE + r"\.json")
+BOOK_TINKERS_PAGES = r"kubejs/assets/[a-z0-9_.-]+/book/[a-z0-9_.-]+/ru_ru/" + BOOK_PAGE + r"\.json"
+BOOK_GUIDEME_PAGES = r"kubejs/assets/[a-z0-9_.-]+/[a-z0-9_.-]+/_ru_ru/" + BOOK_PAGE + r"\.md"
 BOOK_LANGUAGE = r"kubejs/assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json"
+LEGACY_QUEST_TEXT = r"config/ftbquests/[a-z0-9_-]+/text/ru_ru/[a-f0-9]{8}\.txt"
 BOOK_QUESTS = r"config/ftbquests/quests/(?:chapter_groups|chapters/[a-z0-9_.-]+)\.snbt"
 BOOK_NOTICE = r"licenses/[a-zA-Z0-9_.-]+\.txt"
+BOOK_LOCALIZATION_MOD = r"mods/[a-z0-9]+(?:-[a-z0-9]+)*-localization-[0-9]+(?:\.[0-9]+)+\.jar"
+MAX_BOOK_LOCALIZATION_MOD = 256 * 1024
 BOOK_JAR_ROOT = r"data/[a-z0-9_.-]+/patchouli_books/[a-z0-9_.-]+/"
 BOOK_JAR_PAGES = BOOK_JAR_ROOT + r"ru_ru/(?:categories|entries|templates)/(?:[a-z0-9_.-]+/)*[a-z0-9_.-]+\.json"
 BOOK_JAR_DESCRIPTOR = BOOK_JAR_ROOT + r"book\.json"
@@ -523,7 +531,48 @@ def book_localization_jar_input(path, pin, author):
 
 
 def book_localization_addition(path):
-    return any(re.fullmatch(pattern, path) for pattern in (BOOK_PAGES, BOOK_LANGUAGE, BOOK_NOTICE))
+    return any(re.fullmatch(pattern, path) for pattern in
+               (BOOK_PAGES, BOOK_TINKERS_PAGES, BOOK_GUIDEME_PAGES, BOOK_LANGUAGE, BOOK_NOTICE, LEGACY_QUEST_TEXT,
+                BOOK_LOCALIZATION_MOD))
+
+
+def validate_book_localization_mod(data, author):
+    require(author["pack"]["loader"]["type"] == "forge" and 0 < len(data) <= MAX_BOOK_LOCALIZATION_MOD,
+            "Book localization mod requires Forge and a bounded JAR")
+    with zipfile.ZipFile(BytesIO(data)) as jar:
+        members = archive_members(jar)
+        names = {path.as_posix() for path in members}
+        require(sum(member.file_size for member in members.values()) <= MAX_BOOK_LOCALIZATION_MOD and
+                {"META-INF/mods.toml", "META-INF/MANIFEST.MF"} <= names,
+                "Invalid book localization mod JAR")
+        metadata = tomllib.loads(jar.read("META-INF/mods.toml").decode("utf-8"))
+        mods = metadata.get("mods", [])
+        require(metadata.get("modLoader") == "javafml" and isinstance(mods, list) and len(mods) == 1,
+                "Book localization JAR must declare a single Forge mod")
+        allowed_entries = r"(?:[a-zA-Z_0-9$/]+\.class|[a-z0-9_.-]+\.mixins\.json|" \
+                          r"assets/[a-z0-9_.-]+/lang/(?:en_us|ru_ru)\.json|LICENSE(?:\.txt)?|pack\.mcmeta)"
+        require(all(re.fullmatch(allowed_entries, name) for name in names - {"META-INF/mods.toml", "META-INF/MANIFEST.MF"}),
+                "Unexpected book localization mod JAR member")
+        require(not re.search(r"(?im)^(?:premain-class|agent-class|launcher-agent-class|class-path):",
+                              jar.read("META-INF/MANIFEST.MF").decode("utf-8")),
+                "Book localization mod must load through Forge")
+
+
+def validate_legacy_quest_text(data, name):
+    lines = data.decode("utf-8").splitlines()
+    sections = {}
+    active = None
+    for line in lines:
+        if re.fullmatch(r"\[[^\]]*\]", line):
+            require(line in {"[title]", "[description]", "[text]"} and line not in sections,
+                    f"Unsupported or duplicate legacy quest section: {name}: {line}")
+            active = sections.setdefault(line, [])
+        else:
+            require(active is not None and "\x00" not in line, f"Invalid legacy quest text: {name}")
+            active.append(line)
+    require(sections and all(rows and rows[0] and rows[-1] and (key == "[text]" or len(rows) == 1)
+                             for key, rows in sections.items()),
+            f"Missing or malformed legacy quest text section: {name}")
 
 
 def book_localizations(recipe, pack_source, author):
@@ -543,7 +592,8 @@ def book_localizations(recipe, pack_source, author):
         reserve_path(destinations, path)
         if "before" in row:
             original = overrides.get(name.casefold())
-            require(re.fullmatch(BOOK_QUESTS, name) and book_localization_pin(row["before"]) and
+            replaceable = re.fullmatch(BOOK_QUESTS, name) or re.fullmatch(BOOK_LANGUAGE, name)
+            require(replaceable and book_localization_pin(row["before"]) and
                     matches_book_pin({**row["before"], "path": name}, original),
                     f"Review required for changed book localization replacement: {name}")
         else:
@@ -562,11 +612,17 @@ def book_localizations(recipe, pack_source, author):
         data = overlay_bytes(pack_source / path)
         require(book_localization_pin(row["output"]) and fingerprint(data) == row["output"],
                 f"Book localization differs from its pin: {name}")
+        if re.fullmatch(LEGACY_QUEST_TEXT, name):
+            require(author["pack"]["minecraftVersion"] == "1.12.2" and author["pack"]["loader"]["type"] == "forge",
+                    f"Legacy quest text requires Forge 1.12.2: {name}")
+            validate_legacy_quest_text(data, name)
         if path.suffix == ".json":
             content = decode_json(data)
             require(isinstance(content, dict) and content, f"Expected book localization JSON object: {name}")
             if re.fullmatch(BOOK_LANGUAGE, name):
                 require(all(isinstance(value, str) for value in content.values()), f"Expected language strings: {name}")
+        if re.fullmatch(BOOK_LOCALIZATION_MOD, name):
+            validate_book_localization_mod(data, author)
         localized[name] = data
     return localized
 

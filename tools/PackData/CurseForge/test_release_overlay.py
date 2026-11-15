@@ -194,6 +194,8 @@ class ReleaseOverlayTests(unittest.TestCase):
         english = "patchouli_books/guide/en_us/entries/first.json"
         russian = "patchouli_books/guide/ru_ru/entries/first.json"
         quest = "config/ftbquests/quests/chapters/start.snbt"
+        language = "kubejs/assets/example/lang/ru_ru.json"
+        original_language = b"{}\r\n"
         original = b'{"name":"Guide"}'
         original_quest = b'{title:"First Steps"}'
         translated = '{"name":"Справочник"}'.encode()
@@ -201,17 +203,22 @@ class ReleaseOverlayTests(unittest.TestCase):
         additions = {
             russian: translated, quest: localized_quest,
             "kubejs/assets/example/lang/en_us.json": b'{"example.first_steps":"First Steps"}',
-            "kubejs/assets/example/lang/ru_ru.json": '{"example.first_steps":"Первые шаги"}'.encode()
+            language: '{"example.first_steps":"Первые шаги"}'.encode(),
+            "kubejs/assets/example/patchouli_books/guide/ru_ru/categories/start.json": translated,
+            "kubejs/assets/example/book/materials/ru_ru/tools/first.json": translated,
+            "kubejs/assets/example/guide/_ru_ru/first.md": "## Первые шаги\n".encode(),
         }
         for name, data in additions.items():
             target = self.source / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        replacements = {quest: original_quest, language: original_language}
         receipt = {**self.receipt, "overrides": [*self.receipt["overrides"],
-            {"path": english, **prepare.fingerprint(original)}, {"path": quest, **prepare.fingerprint(original_quest)}]}
+            {"path": english, **prepare.fingerprint(original)},
+            *({"path": name, **prepare.fingerprint(data)} for name, data in replacements.items())]}
         recipe = {**self.recipe, "bookLocalization": [
             {"path": name, "inputs": {english: prepare.fingerprint(original)}, "output": prepare.fingerprint(data),
-             **({"before": prepare.fingerprint(original_quest)} if name == quest else {})}
+             **({"before": prepare.fingerprint(replacements[name])} if name in replacements else {})}
             for name, data in additions.items()
         ]}
         self.write_json(self.recipe_path, recipe)
@@ -219,7 +226,7 @@ class ReleaseOverlayTests(unittest.TestCase):
             ("\n".join(sorted({self.config_path, *additions})) + "\n").encode())
         stage = self.stage / "localized"
         game = stage / "game"
-        for name, data in {english: original, quest: original_quest, self.config_path: self.original}.items():
+        for name, data in {english: original, self.config_path: self.original, **replacements}.items():
             target = game / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -230,6 +237,7 @@ class ReleaseOverlayTests(unittest.TestCase):
         self.assertLessEqual(additions.keys(), required)
         self.assertEqual((game / english).read_bytes(), original)
         self.assertEqual((game / quest).read_bytes(), localized_quest)
+        self.assertEqual((game / language).read_bytes(), additions[language])
         changed = {**receipt, "overrides": [row for row in receipt["overrides"] if row["path"] != english]}
         with self.assertRaisesRegex(ValueError, "changed book localization input"):
             prepare.book_localizations(recipe, self.source, changed)
@@ -240,6 +248,59 @@ class ReleaseOverlayTests(unittest.TestCase):
         (game / russian).write_bytes(original)
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(stage, self.source, receipt)
+
+    def test_legacy_quest_text_survives_unrelated_author_updates(self):
+        english = "config/ftbquests/normal/chapters/abcdef01/chapter.snbt"
+        russian = "config/ftbquests/normal/text/ru_ru/abcdef01.txt"
+        original = b'{title:"First Steps"}'
+        translation = "[title]\nПервые шаги\n[text]\nПервая строка\n\nВторая строка\n".encode()
+        target = self.source / russian
+        target.parent.mkdir(parents=True)
+        target.write_bytes(translation)
+        pin = prepare.fingerprint(original)
+        row = {"path": russian, "inputs": {english: pin}, "output": prepare.fingerprint(translation)}
+        recipe = {**self.recipe, "bookLocalization": [row]}
+        self.write_json(self.recipe_path, recipe)
+        author = {**self.author, "overrides": [*self.author["overrides"], {"path": english, **pin}]}
+        candidate = {**author, "client": {**author["client"], "sha256": "b" * 64}}
+        self.assertEqual(release.review_update(self.source, author, candidate),
+                         {**recipe, "authorArchiveSha256": "b" * 64})
+        changed = {**candidate, "overrides": [*self.author["overrides"],
+                   {"path": english, **prepare.fingerprint(b'{title:"New Steps"}')}]}
+        with self.assertRaisesRegex(ValueError, "changed book localization input"):
+            release.review_update(self.source, author, changed)
+        conflict = {**candidate, "overrides": [*author["overrides"], {"path": russian, **row["output"]}]}
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            release.review_update(self.source, author, conflict)
+        invalid = b"[title]\nFirst\n[title]\nSecond\n"
+        target.write_bytes(invalid)
+        row["output"] = prepare.fingerprint(invalid)
+        with self.assertRaisesRegex(ValueError, "duplicate legacy quest section"):
+            prepare.book_localizations(recipe, self.source, author)
+
+    def test_book_localization_mod_is_bound_to_the_forge_payload(self):
+        path = "mods/guide-localization-1.0.0.jar"
+        input_path = "patchouli_books/guide/en_us/entries/first.json"
+        english = prepare.fingerprint(b'{"name":"Guide"}')
+        author = {**self.receipt, "overrides": [
+            *self.receipt["overrides"], {"path": input_path, **english}]}
+        target = self.source / path
+        target.parent.mkdir()
+
+        def write_mod(extra):
+            with ZipFile(target, "w") as jar:
+                jar.writestr("META-INF/mods.toml", 'modLoader="javafml"\n[[mods]]\nmodId="localization"\n')
+                jar.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n\n")
+                jar.writestr("localization.mixins.json", '{"client":["BookMixin"]}')
+                for name, value in extra.items():
+                    jar.writestr(name, value)
+            return {"bookLocalization": [
+                {"path": path, "inputs": {input_path: english}, "output": prepare.fingerprint(target.read_bytes())}]}
+
+        recipe = write_mod({})
+        self.assertEqual(prepare.book_localizations(recipe, self.source, author), {path: target.read_bytes()})
+        with self.assertRaisesRegex(ValueError, "Unexpected book localization mod"):
+            prepare.book_localizations(write_mod({"META-INF/jarjar/another.jar": b"any"}), self.source, author)
 
     def test_book_jar_localization_only_touches_pinned_book_resources(self):
         path = "mods/guide.jar"

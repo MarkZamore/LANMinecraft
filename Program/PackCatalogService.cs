@@ -15,6 +15,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
     public string? NumberedId { get; init; }
     public string? InstallationPath { get; init; }
     public string? CompatibilityPath { get; init; }
+    public string? LibraryGroup { get; init; }
     public List<string> LegacyRelativePaths { get; init; } = [];
     public List<PackSyncSource> LegacySources { get; init; } = [];
 
@@ -31,7 +32,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
         Id == other.Id && RelativePath == other.RelativePath && Source == other.Source &&
         LegacyId == other.LegacyId && NumberedId == other.NumberedId &&
         InstallationPath == other.InstallationPath &&
-        CompatibilityPath == other.CompatibilityPath &&
+        CompatibilityPath == other.CompatibilityPath && LibraryGroup == other.LibraryGroup &&
         (LegacyRelativePaths is null ? other.LegacyRelativePaths is null :
             other.LegacyRelativePaths is not null && LegacyRelativePaths.SequenceEqual(other.LegacyRelativePaths, StringComparer.Ordinal)) &&
         (LegacySources is null ? other.LegacySources is null :
@@ -47,6 +48,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
         hash.Add(Source);
         hash.Add(InstallationPath, StringComparer.Ordinal);
         hash.Add(CompatibilityPath, StringComparer.Ordinal);
+        hash.Add(LibraryGroup, StringComparer.Ordinal);
         hash.Add(LegacyRelativePaths?.Count ?? -1);
         if (LegacyRelativePaths is not null)
             foreach (var path in LegacyRelativePaths) hash.Add(path, StringComparer.Ordinal);
@@ -169,6 +171,23 @@ public sealed class CatalogPack
     public bool HasLibraries => Libraries.Count != 0;
     public bool ShowModSection => Content.NativeProject is null || Mods.Count != 0 || HasLibraries;
     internal IReadOnlySet<string> AllContentModIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
+
+    internal CatalogPack WithLibraryGroup(string? group)
+    {
+        if (Entry.LibraryGroup == group) return this;
+        var updated = new CatalogPack
+        {
+            Entry = Entry with { LibraryGroup = group },
+            Content = Content,
+            Preview = Preview,
+            ContentIdentity = ContentIdentity,
+            AllContentModIds = AllContentModIds
+        };
+        updated.Mods.AddRange(Mods);
+        updated.Libraries.AddRange(Libraries);
+        updated.ModGroups.AddRange(ModGroups);
+        return updated;
+    }
 
     public void BuildTree()
     {
@@ -313,10 +332,24 @@ public sealed partial class PackCatalogService
     {
         get
         {
-            lock (_gate) return IsStaged ? _overviewSnapshot :
-                _packs.Values.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+            lock (_gate) return IsStaged ? _overviewSnapshot : OrderedOverview();
         }
     }
+
+    private CatalogPack[] OrderedOverview()
+    {
+        var grouped = _sources.Any(entry => entry.LibraryGroup is not null);
+        var entries = grouped
+            ? _sources.GroupBy(entry => entry.LibraryGroup, StringComparer.Ordinal).SelectMany(group => group)
+            : _sources;
+        var available = entries.Select(entry =>
+            _packs.TryGetValue(entry.RelativePath, out var pack) && pack.Entry.Id == entry.Id ? pack : null)
+            .OfType<CatalogPack>();
+        if (grouped) return available.ToArray();
+        var alphabetical = available.OrderBy(pack => pack.Name, StringComparer.CurrentCultureIgnoreCase);
+        return (IsStaged ? alphabetical.ThenBy(pack => pack.Entry.Id, StringComparer.Ordinal) : alphabetical).ToArray();
+    }
+
     public IReadOnlyList<CatalogSource> Sources { get { lock (_gate) return _sources.ToArray(); } }
     public PackSyncSource? SourceFor(string relativePath)
     { lock (_gate) return RuntimeSource(relativePath)?.Source; }
@@ -635,6 +668,9 @@ public sealed partial class PackCatalogService
                 entry.Id.Length > 100 || !names.Add(entry.RelativePath) || entry.Source is null || !ValidSource(entry.Source) || !sources.Add(Key(entry.Source)))
                 throw new InvalidDataException("Invalid/duplicate library source.");
             AddIndexIds(ids, entry);
+            if (entry.LibraryGroup is { } group && (group.Length > 80 || string.IsNullOrWhiteSpace(group) ||
+                group != group.Trim() || group.Any(char.IsControl)))
+                throw new InvalidDataException("Invalid library group name.");
             if ((entry.InstallationPath is not null && !ValidFolder(entry.InstallationPath)) ||
                 (entry.CompatibilityPath is not null && !ValidFolder(entry.CompatibilityPath)))
                 throw new InvalidDataException("Invalid library installation path.");
@@ -702,10 +738,15 @@ public sealed partial class PackCatalogService
             _knownCatalogPaths.Add(entry.RelativePath);
             _knownCatalogPaths.UnionWith(entry.LegacyRelativePaths);
             _effectiveSources[entry.RelativePath] = previous.TryGetValue(entry.RelativePath, out var old) && entry.AcceptsIdentity(old)
-                ? old with { Id = entry.Id, LegacyId = entry.LegacyId } : entry;
+                ? old with { Id = entry.Id, LegacyId = entry.LegacyId, LibraryGroup = entry.LibraryGroup } : entry;
         }
-        foreach (var path in _packs.Keys.ToArray())
-            if (!IsCurrentEntry(_packs[path].Entry)) _packs.Remove(path);
+        foreach (var (path, pack) in _packs.ToArray())
+        {
+            if (_effectiveSources.TryGetValue(path, out var current) && current.Id == pack.Entry.Id)
+                _packs[path] = pack.WithLibraryGroup(current.LibraryGroup);
+            else
+                _packs.Remove(path);
+        }
         if (IsStaged) ReconcileOverviewMembership();
     }
 
@@ -754,7 +795,8 @@ public sealed partial class PackCatalogService
                 var active = _sources.FirstOrDefault(current => current.AcceptsIdentity(entry) &&
                     current.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
                 if (active is not null)
-                    _effectiveSources[active.RelativePath] = entry with { Id = active.Id, LegacyId = active.LegacyId };
+                    _effectiveSources[active.RelativePath] = entry with
+                        { Id = active.Id, LegacyId = active.LegacyId, LibraryGroup = active.LibraryGroup };
             }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library effective source cache: " + ex.Message); }

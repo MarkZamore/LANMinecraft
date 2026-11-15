@@ -194,6 +194,13 @@ python -B tools/PackData/CurseForge/release_overlay.py review-update --pack-sour
 Для просмотра обновления с клиентской квитанцией эти ID должны сохраниться.
 Полная подготовка сверяет и точный SHA256 полученного JAR.
 
+Для перевода, которому нужен клиентский обработчик Forge, в этом же
+слое можно закрепить отдельный JAR `mods/*-localization-<версия>.jar`.
+Укажите оригинальные входы, размер и SHA256 JAR, сохраните его исходники
+и воспроизводимую сборку в репозитории сборки. Подготовка проверяет
+структуру JAR и добавляет его в управляемую поставку. Зафиксируйте мод
+в нативном списке загруженных модов и проверьте смену языка на клиенте.
+
 `bookJarLocalization` применяется к встроенным книгам Patchouli, которые
 читаются из JAR мода. Рецепт закрепляет обязательный JAR через `path`,
 `projectId`, `fileId`, `before` и `after`. В `entries` указываются путь члена
@@ -379,3 +386,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Native Java 8 QA bridge packaging failed.' }
 ```powershell
 python -B -m unittest discover -s tools/PackData/CurseForge
 ```
+
+Для Forge 1.12.2 слой `bookLocalization` принимает нативные UTF-8 файлы
+`config/ftbquests/<профиль>/text/ru_ru/<8 hex>.txt` с секциями `[title]`,
+`[description]` и `[text]`. Закрепляйте в `inputs` авторские SNBT и
+обязательный JAR FTB Quests. Язык выбирает клиент игры. Исходные SNBT
+с идентификаторами, заданиями и наградами входят в выпуск как прежде.

@@ -4,7 +4,7 @@ using System.Windows.Media;
 
 namespace Minecraft;
 
-/// <summary>Equal-width responsive columns; an addon group always stays intact.</summary>
+/// <summary>Equal-width responsive columns with optional full-width section headings.</summary>
 public sealed class LibraryColumnsPanel : Panel
 {
     public static readonly DependencyProperty MinimumColumnWidthProperty = DependencyProperty.Register(
@@ -33,10 +33,14 @@ public sealed class LibraryColumnsPanel : Panel
     public bool UniformItemHeight { get => (bool)GetValue(UniformItemHeightProperty); set => SetValue(UniformItemHeightProperty, value); }
     private readonly List<Rect> _rectangles = [];
 
+    internal static PackLibraryHeading? GetHeading(UIElement child) =>
+        (child as ContentPresenter)?.Content as PackLibraryHeading;
+
     protected override Size MeasureOverride(Size availableSize)
     {
         var width = double.IsFinite(availableSize.Width) ? availableSize.Width : MinimumColumnWidth;
-        var columns = Math.Min(Math.Max(1, InternalChildren.Count), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
+        var itemCount = InternalChildren.Cast<UIElement>().Count(child => GetHeading(child) is null);
+        var columns = Math.Min(Math.Max(1, itemCount), Math.Max(1, (int)((width + Gap) / (MinimumColumnWidth + Gap))));
         var cell = double.IsFinite(FixedColumnWidth) ? Math.Min(width, FixedColumnWidth) :
             Math.Max(0, (width - Gap * (columns - 1)) / columns);
         // Fixed-size overview cards keep their first column at the left edge,
@@ -46,19 +50,31 @@ public sealed class LibraryColumnsPanel : Panel
         var rowGap = double.IsFinite(RowGap) ? RowGap : Gap;
         _rectangles.Clear();
         var index = 0;
-        foreach (UIElement child in InternalChildren) child.Measure(new Size(cell, double.PositiveInfinity));
-        var uniformHeight = UniformItemHeight
-            ? InternalChildren.Cast<UIElement>().Select(child => child.DesiredSize.Height).DefaultIfEmpty(0).Max() : 0;
+        var uniformHeight = 0d;
         foreach (UIElement child in InternalChildren)
         {
+            if (GetHeading(child) is { } heading)
+                child.Measure(new Size(width, heading.Text is null ? 0 : double.PositiveInfinity));
+            else
+            {
+                child.Measure(new Size(cell, double.PositiveInfinity));
+                if (UniformItemHeight) uniformHeight = Math.Max(uniformHeight, child.DesiredSize.Height);
+            }
+        }
+        foreach (UIElement child in InternalChildren)
+        {
+            if (GetHeading(child) is { } heading)
+            {
+                var headingTop = heights.Max();
+                var headingHeight = heading.Text is null ? 0 : child.DesiredSize.Height;
+                _rectangles.Add(new Rect(left, headingTop, width, headingHeight));
+                Array.Fill(heights, headingTop + (heading.Text is null ? 0 : headingHeight + rowGap));
+                index = 0;
+                continue;
+            }
             var height = UniformItemHeight ? uniformHeight : child.DesiredSize.Height;
             var column = BalanceHeight ? Array.IndexOf(heights, heights.Min()) : index % columns;
-            var top = BalanceHeight ? heights[column] : heights.Take(columns).Max();
-            if (!BalanceHeight)
-            {
-                if (column == 0 && index != 0) top = heights.Max();
-                else if (column != 0) top = _rectangles[index - column].Top;
-            }
+            var top = BalanceHeight ? heights[column] : column == 0 ? heights.Max() : _rectangles[^column].Top;
             _rectangles.Add(new Rect(left + column * (cell + Gap), top, cell, height));
             heights[column] = top + height + rowGap;
             index++;

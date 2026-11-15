@@ -37,7 +37,12 @@ public sealed class LibraryStartupRefreshTests
             fixture.ReleaseRemaining();
             PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3,
                 "The complete overview was not revealed in the already open library.");
-            Assert.Equal(3, fixture.Cards.Items.Count);
+            Assert.Collection(fixture.Cards.Items.Cast<object>(),
+                item => Assert.Equal("Первые", Assert.IsType<PackLibraryHeading>(item).Text),
+                item => Assert.Equal("last", Assert.IsType<CatalogPack>(item).Entry.Id),
+                item => Assert.Equal("first", Assert.IsType<CatalogPack>(item).Entry.Id),
+                item => Assert.Equal("Другие", Assert.IsType<PackLibraryHeading>(item).Text),
+                item => Assert.Equal("second", Assert.IsType<CatalogPack>(item).Entry.Id));
             Assert.True(fixture.Catalog.IsOverviewReady);
             Assert.True(fixture.Catalog.IsReady);
         });
@@ -52,7 +57,7 @@ public sealed class LibraryStartupRefreshTests
             fixture.WaitForBundleRequests();
             fixture.ReleaseRemaining();
             PumpUntil(() => fixture.Library.IsOverviewReady, "The complete overview was not published.");
-            var first = fixture.Cards.Items.Cast<CatalogPack>().Single(pack => pack.Entry.Id == "first");
+            var first = fixture.Cards.Items.OfType<CatalogPack>().Single(pack => pack.Entry.Id == "first");
             fixture.Library.ShowDetails(first);
             PumpUntil(() => fixture.Queue.PendingKeys.Length == 0, "The foreground detail page was not prepared.");
             var host = Assert.IsType<ContentControl>(fixture.Library.FindName("DetailHost"));
@@ -75,10 +80,10 @@ public sealed class LibraryStartupRefreshTests
             }).ToArray();
             foreach (var pack in replacement) pack.BuildTree();
             fixture.Library.SetCatalog(replacement);
-            Assert.Equal(3, fixture.Cards.Items.Count);
+            Assert.Equal(3, fixture.Cards.Items.OfType<CatalogPack>().Count());
             Assert.Same(page, host.Content);
             Assert.Same(scroll, fixture.Library.FindName("DetailScroll"));
-            Assert.Same(first, fixture.Cards.Items.Cast<CatalogPack>().Single(pack => pack.Entry.Id == "first"));
+            Assert.Same(first, fixture.Cards.Items.OfType<CatalogPack>().Single(pack => pack.Entry.Id == "first"));
             Assert.Equal(offset, scroll.VerticalOffset, 2);
             Assert.True(parent.IsExpanded);
         });
@@ -215,14 +220,14 @@ public sealed class LibraryStartupRefreshTests
             using var archive = new ZipArchive(seed, ZipArchiveMode.Read);
             using var stream = archive.GetEntry("preview.jpg")!.Open();
             using var image = new MemoryStream(); stream.CopyTo(image);
-            entries = [Add("first", "First pack", "First-Pack", image.ToArray()),
-                Add("second", "Second pack", "Second-Pack", image.ToArray()),
-                Add("last", "Last pack", "Last-Pack", image.ToArray())];
+            entries = [Add("last", "Last pack", "Last-Pack", "Первые", image.ToArray()),
+                Add("second", "Second pack", "Second-Pack", "Другие", image.ToArray()),
+                Add("first", "First pack", "First-Pack", "Первые", image.ToArray())];
         }
 
-        private CatalogSource Add(string id, string name, string repository, byte[] preview)
+        private CatalogSource Add(string id, string name, string repository, string group, byte[] preview)
         {
-            var entry = new CatalogSource(id, name, new PackSyncSource("LibraryStartupFixture", repository, "rolling"));
+            var entry = new CatalogSource(id, name, new PackSyncSource("LibraryStartupFixture", repository, "rolling")) { LibraryGroup = group };
             using var output = new MemoryStream();
             using (var archive = new ZipArchive(output, ZipArchiveMode.Create, true))
             {

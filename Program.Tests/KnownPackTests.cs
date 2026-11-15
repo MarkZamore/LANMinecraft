@@ -88,10 +88,12 @@ public sealed class KnownPackTests
         Assert.NotEmpty(snapshot);
         Assert.Equal(snapshot.Length, sources.Length);
         Assert.Equal(sources.Length, known.Count);
+        Assert.Contains(sources, source => source.LibraryGroup is not null);
         for (var index = 0; index < snapshot.Length; index++)
         {
             var entry = snapshot[index];
             Assert.Equal(entry.GetProperty("id").GetString(), sources[index].Id);
+            Assert.Equal(entry.TryGetProperty("libraryGroup", out var group) ? group.GetString() : null, sources[index].LibraryGroup);
             var path = entry.TryGetProperty("installationPath", out var installation)
                 ? installation.GetString() : entry.GetProperty("relativePath").GetString();
             Assert.Equal(WorldLocations.CanonicalBuildPath(path), sources[index].RelativePath);
@@ -103,15 +105,11 @@ public sealed class KnownPackTests
     }
 
     [Fact]
-    public void TheBuiltInPackIsTheFirstOne()
+    public void TheDefaultPackKeepsItsExplicitSourceWhenTheIndexIsReordered()
     {
-        Assert.NotEmpty(PortablePackSyncService.KnownPacks);
-        Assert.Equal(
-            PortablePackSyncService.DefaultPackRelativePath,
-            PortablePackSyncService.KnownPacks[0].RelativePath);
-        Assert.Equal(
-            PortablePackSyncService.DefaultPackSource,
-            PortablePackSyncService.KnownPacks[0].Source);
+        var defaultPack = Assert.Single(PortablePackSyncService.KnownPacks,
+            pack => pack.RelativePath == PortablePackSyncService.DefaultPackRelativePath);
+        Assert.Equal(PortablePackSyncService.DefaultPackSource, defaultPack.Source);
     }
 
     [Fact]
