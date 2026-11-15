@@ -326,7 +326,8 @@ public sealed partial class PackCatalogService
     public IReadOnlyList<CatalogPack> PacksForDisplay(AppSettings settings)
     {
         lock (_gate)
-            return Packs.Where(pack => HasOnlineCatalog || PackMembership.Contains(settings, pack.Entry.RelativePath)).ToArray();
+            return IsStaged || HasOnlineCatalog ? Packs :
+                Packs.Where(pack => PackMembership.Contains(settings, pack.Entry.RelativePath)).ToArray();
     }
     public IReadOnlyList<CatalogPack> Packs
     {
@@ -515,8 +516,13 @@ public sealed partial class PackCatalogService
                 _manifests[Key(entry.Source)] = cached.Manifest;
                 if (presentation && IsCurrentEntry(entry))
                 {
-                    PromoteEffectiveSource(entry);
-                    if (pack is not null) _packs[entry.RelativePath] = pack;
+                    var current = _sources.First(source => source.Id == entry.Id &&
+                        source.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
+                    if (!IsStaged || entry.Source == current.Source || entry.Source == _effectiveSources[entry.RelativePath].Source)
+                    {
+                        PromoteEffectiveSource(entry with { LibraryGroup = current.LibraryGroup });
+                        if (pack is not null) _packs[entry.RelativePath] = pack.WithLibraryGroup(current.LibraryGroup);
+                    }
                 }
             }
         }
@@ -747,7 +753,7 @@ public sealed partial class PackCatalogService
             else
                 _packs.Remove(path);
         }
-        if (IsStaged) ReconcileOverviewMembership();
+        if (IsStaged) PublishOverviewSnapshot();
     }
 
     private bool IsCurrentEntry(CatalogSource entry) => _sources.Any(current => current.Id == entry.Id &&

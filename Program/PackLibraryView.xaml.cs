@@ -42,7 +42,7 @@ public partial class PackLibraryView : UserControl
             if (!overviewLoading && !overviewPrepared && !disposed) ScheduleOverview();
         }
     }
-    public bool IsOverviewReady => !disposed && !overviewLoading && overviewPrepared;
+    public bool IsOverviewReady => !disposed && !overviewLoading && (overviewPrepared || IsVisible);
     public bool IsOverviewPreparing => !disposed && overviewPreparing;
     public Func<string, bool>? IsAdded { get; set; }
     public bool CanChangeMembership { get; set; } = true;
@@ -57,7 +57,13 @@ public partial class PackLibraryView : UserControl
         SizeChanged += (_, _) => InvalidateMeasurements();
         IsVisibleChanged += (_, _) =>
         {
-            if (!IsVisible && _selected is not null) Preloader?.Forget(Key(_selected));
+            if (IsVisible) Preloader?.Forget("library-overview");
+            else
+            {
+                if (_selected is not null) Preloader?.Forget(Key(_selected));
+                if (!overviewPrepared) ScheduleOverview();
+            }
+            UpdateOverviewVisibility();
         };
         UpdateOverviewVisibility();
     }
@@ -110,7 +116,7 @@ public partial class PackLibraryView : UserControl
     }
     private void ScheduleOverview()
     {
-        if (disposed || overviewLoading) return;
+        if (disposed || overviewLoading || IsVisible) return;
         Preloader?.Forget("library-overview");
         var version = ++overviewGeneration;
         overviewPreparing = true;

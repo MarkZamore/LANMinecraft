@@ -40,10 +40,12 @@ public partial class BuildRemovalConfirmationDialog : Window
     /// <summary>Asks, and answers Keep for a dialog closed any other way.</summary>
     internal static BuildRemovalConfirmationDialog Prepared() => new("");
 
-    public static BuildRemovalAnswer Ask(Window? owner, string buildName)
+    public static BuildRemovalAnswer Ask(Window? owner, string buildName, bool canDeleteFiles)
     {
         var dialog = DialogPreloadCache.Take(() => new BuildRemovalConfirmationDialog(buildName));
         dialog.QuestionText.Text = $"Что сделать со сборкой {buildName}?";
+        dialog.BuildOnlyButton.IsEnabled = canDeleteFiles;
+        dialog.WithWorldsButton.IsEnabled = canDeleteFiles;
         if (owner is not null && owner.IsLoaded) dialog.Owner = owner;
         dialog.ShowDialog();
         return dialog.Answer;

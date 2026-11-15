@@ -18,24 +18,27 @@ namespace Minecraft.Tests;
 public sealed class LibraryStartupRefreshTests
 {
     [Fact]
-    public void EarlyOpenPublishesTheCompleteOverviewTogetherAfterTheBatchIsReady()
+    public void EarlyOpenShowsAvailableCardAndMembershipBeforeOtherCardsFinish()
     {
         OnUi(() =>
         {
             using var fixture = new LibraryFixture();
-            Assert.Empty(fixture.Cards.Items);
             fixture.WaitForBundleRequests();
-            fixture.Host.Release("First-Pack");
-            PumpUntil(() => fixture.Catalog.Find("First pack") is not null,
-                "The first verified model did not finish behind the publication barrier.");
-            Assert.False(fixture.Library.IsOverviewReady);
-            Assert.Empty(fixture.VisibleCards());
             Assert.Empty(fixture.Cards.Items);
-            Assert.Equal(Visibility.Visible, fixture.Library.Visibility);
-            Assert.False(fixture.Catalog.IsOverviewReady);
+            fixture.Host.Release("First-Pack");
+            PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 1,
+                "The verified card did not render while the remaining bundles were blocked.");
+            Assert.Equal(Visibility.Collapsed, Assert.IsType<TextBlock>(fixture.Library.FindName("CatalogLoadingText")).Visibility);
+            Assert.True(fixture.Catalog.IsOverviewReady);
             Assert.False(fixture.LibraryPreparation.IsCompleted);
+            var first = Assert.Single(fixture.Cards.Items.OfType<CatalogPack>());
+            fixture.Library.ShowDetails(first);
+            var membership = Assert.IsType<Button>(fixture.Library.FindName("MembershipButton"));
+            Assert.True(membership.IsEnabled);
+            Assert.Equal("Добавить", membership.Content);
+            fixture.Library.ShowCatalog();
             fixture.ReleaseRemaining();
-            PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3,
+            PumpUntil(() => fixture.Catalog.IsReady && fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3,
                 "The complete overview was not revealed in the already open library.");
             Assert.Collection(fixture.Cards.Items.Cast<object>(),
                 item => Assert.Equal("Первые", Assert.IsType<PackLibraryHeading>(item).Text),
@@ -56,7 +59,7 @@ public sealed class LibraryStartupRefreshTests
             using var fixture = new LibraryFixture();
             fixture.WaitForBundleRequests();
             fixture.ReleaseRemaining();
-            PumpUntil(() => fixture.Library.IsOverviewReady, "The complete overview was not published.");
+            PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3, "The complete overview was not published.");
             var first = fixture.Cards.Items.OfType<CatalogPack>().Single(pack => pack.Entry.Id == "first");
             fixture.Library.ShowDetails(first);
             PumpUntil(() => fixture.Queue.PendingKeys.Length == 0, "The foreground detail page was not prepared.");
@@ -97,7 +100,7 @@ public sealed class LibraryStartupRefreshTests
             using var fixture = new LibraryFixture();
             fixture.WaitForBundleRequests();
             fixture.ReleaseRemaining();
-            PumpUntil(() => fixture.Library.IsOverviewReady, "The complete overview was not published.");
+            PumpUntil(() => fixture.Library.IsOverviewReady && fixture.VisibleCards().Length == 3, "The complete overview was not published.");
             Task.Run(fixture.Notify).GetAwaiter().GetResult();
             Assert.Equal(1, fixture.PendingRefresh);
             fixture.StopAndDisposeLibrary();
@@ -139,6 +142,7 @@ public sealed class LibraryStartupRefreshTests
             var paths = new AppPaths(root);
             paths.Ensure();
             Catalog = new PackCatalogService(paths, new Logger(paths.LogFile), Host.Client, stagedStartup: true);
+            Catalog.InitializeIndexAsync(lifetime.Token).GetAwaiter().GetResult();
             controls = WindowCanvasTests.LoadWindow();
             controls.WindowStartupLocation = WindowStartupLocation.Manual;
             controls.Left = -32000; controls.Top = -32000;
@@ -154,6 +158,8 @@ public sealed class LibraryStartupRefreshTests
                 if (typeof(FrameworkElement).IsAssignableFrom(field.FieldType) && controls.FindName(field.Name) is FrameworkElement element)
                     field.SetValue(owner, element);
             Set("_settings", new AppSettings());
+            Set("_paths", paths);
+            Set("_settingsService", new SettingsService(paths));
             Set("_catalog", Catalog);
             Set("_catalogLifetimeCts", lifetime);
             Set("_preload", Queue);

@@ -14,6 +14,7 @@ public sealed partial class PackCatalogService
     private readonly Dictionary<string, Task<string>> _remoteManifestTasks = new(StringComparer.OrdinalIgnoreCase);
     private Task? _indexStartup;
     internal Action<IReadOnlyList<CatalogSource>>? MigrateStartupIndex { get; set; }
+    internal Func<Action, CancellationToken, Task>? DispatchIndexUpdateAsync { get; set; }
     private bool _indexBudgetExpired;
     private Task? _libraryStartup;
     private IReadOnlyList<CatalogPack> _overviewSnapshot = Array.Empty<CatalogPack>();
@@ -21,7 +22,7 @@ public sealed partial class PackCatalogService
 
     public bool IsStaged { get; }
     public bool IsIndexReady { get; private set; }
-    /// <summary>A complete cache batch or a completed fresh presentation pass has been published.</summary>
+    /// <summary>The overview has cards to show or is known to be empty.</summary>
     public bool IsOverviewReady { get { lock (_gate) return !IsStaged || _overviewReady; } }
     /// <summary>Published on the worker thread when a presentation snapshot changes.</summary>
     public event Action? PresentationChanged;
@@ -69,7 +70,7 @@ public sealed partial class PackCatalogService
         token.ThrowIfCancellationRequested();
         if (entries is not null)
         {
-            if (MigrateStartupIndex is { } migrate)
+            if (MigrateStartupIndex is not null)
             {
                 // Persist the checked paths before moving data. The next startup
                 // must be able to resume even when the network is unavailable.
@@ -80,12 +81,19 @@ public sealed partial class PackCatalogService
                     AtomicFile.WriteAllTextIfChanged(Path.Combine(_cache, "catalog.json"),
                         JsonSerializer.Serialize(snapshot, JsonOptions));
                 }
-                migrate(entries);
             }
-            lock (_gate)
+            if (DispatchIndexUpdateAsync is { } dispatch)
+                await dispatch(ApplyIndex, token).ConfigureAwait(false);
+            else ApplyIndex();
+
+            void ApplyIndex()
             {
-                ReplaceIndex(entries);
-                HasOnlineCatalog = true;
+                MigrateStartupIndex?.Invoke(entries);
+                lock (_gate)
+                {
+                    ReplaceIndex(entries);
+                    HasOnlineCatalog = true;
+                }
             }
         }
         lock (_gate) IsIndexReady = true;
@@ -315,24 +323,13 @@ public sealed partial class PackCatalogService
 
     private async Task PrepareLibraryCoreAsync(CancellationToken token)
     {
+        var startupEntries = Sources.ToDictionary(entry => entry.RelativePath, StringComparer.OrdinalIgnoreCase);
+        LoadOverviewCache(startupEntries.Values, token);
+
         await InitializeIndexAsync(token).ConfigureAwait(false);
-        // Only advertised packs need presentation. Custom source markers are
-        // read on selection, independently of unrelated library preparation.
         var candidates = Sources;
-        // Load every checked fallback before starting unrelated network work.
-        // A complete cached/embedded overview can be shown as one batch while
-        // the fresh manifests or bundles are still waiting on the network.
-        foreach (var entry in candidates)
-        {
-            token.ThrowIfCancellationRequested();
-            CatalogSource effective;
-            lock (_gate) effective = _effectiveSources.GetValueOrDefault(entry.RelativePath) ?? entry;
-            LoadStagedSeed(entry);
-            LoadCachedEntry(effective, token: token);
-            if (effective.Source != entry.Source) LoadCachedEntry(entry, token: token);
-        }
-        token.ThrowIfCancellationRequested();
-        if (PublishOverviewSnapshot(requireComplete: true)) PresentationChanged?.Invoke();
+        LoadOverviewCache(candidates.Where(entry => !startupEntries.TryGetValue(entry.RelativePath, out var previous) ||
+            previous.Id != entry.Id || previous.Source != entry.Source), token);
         using var parallel = new SemaphoreSlim(4);
         try
         {
@@ -353,9 +350,7 @@ public sealed partial class PackCatalogService
                 lock (_gate)
                 {
                     IsReady = true;
-                    // Only now may unavailable presentation be omitted: every
-                    // advertised candidate has completed its fresh attempt.
-                    changed = PublishOverviewSnapshot(requireComplete: false);
+                    changed = PublishOverviewSnapshot();
                 }
             }
             SaveStagedIndex();
@@ -402,10 +397,7 @@ public sealed partial class PackCatalogService
             {
                 PromoteEffectiveSource(entry);
                 if (pack is not null) _packs[entry.RelativePath] = pack;
-                // The first overview is a complete batch. After that barrier,
-                // each verified replacement can refresh the open library while
-                // unrelated requests are still waiting, retaining other models.
-                if (_overviewReady) presentationChanged = PublishOverviewSnapshot(requireComplete: false);
+                presentationChanged = PublishOverviewSnapshot();
             }
         }
         try { AtomicFile.WriteAllTextIfChanged(CachePath(entry.Source), JsonSerializer.Serialize(new CachedEntry { Entry = entry, Manifest = raw, Bundle = bundle }, JsonOptions)); }
@@ -414,12 +406,32 @@ public sealed partial class PackCatalogService
         if (presentationChanged) PresentationChanged?.Invoke();
     }
 
-    private bool PublishOverviewSnapshot(bool requireComplete)
+    private void LoadOverviewCache(IEnumerable<CatalogSource> entries, CancellationToken token)
+    {
+        foreach (var entry in entries)
+        {
+            token.ThrowIfCancellationRequested();
+            CatalogSource effective;
+            lock (_gate)
+            {
+                if (!IsCurrentEntry(entry)) continue;
+                effective = _effectiveSources[entry.RelativePath];
+            }
+            LoadStagedSeed(entry);
+            if (effective.Source != entry.Source) LoadCachedEntry(effective, token: token);
+            LoadCachedEntry(entry, token: token);
+        }
+        token.ThrowIfCancellationRequested();
+        if (PublishOverviewSnapshot()) PresentationChanged?.Invoke();
+    }
+
+    private bool PublishOverviewSnapshot()
     {
         lock (_gate)
         {
             var next = OrderedOverview();
-            if (requireComplete && next.Length != _sources.Count) return false;
+            var ready = next.Length > 0 || _sources.Count == 0 || IsReady;
+            if (!ready && !_overviewReady) return false;
             // Preserve identity for unchanged verified bytes, including any
             // cached detail expansion state owned by the published model.
             for (var index = 0; index < next.Length; index++)
@@ -428,22 +440,11 @@ public sealed partial class PackCatalogService
                 next[index] = _overviewSnapshot.FirstOrDefault(previous => previous.Entry == candidate.Entry &&
                     candidate.ContentIdentity.Length > 0 && previous.ContentIdentity == candidate.ContentIdentity) ?? candidate;
             }
-            var changed = !_overviewReady || !_overviewSnapshot.SequenceEqual(next);
-            _overviewSnapshot = Array.AsReadOnly(next);
-            _overviewReady = true;
+            var changed = ready != _overviewReady || !_overviewSnapshot.SequenceEqual(next);
+            if (changed) _overviewSnapshot = Array.AsReadOnly(next);
+            _overviewReady = ready;
             return changed;
         }
-    }
-
-    private void ReconcileOverviewMembership()
-    {
-        // Called under _gate when the authoritative index changes. Even an
-        // otherwise incomplete replacement must never keep withdrawn cards.
-        var previous = _overviewSnapshot.ToDictionary(pack => pack.Entry.RelativePath, pack => pack.Entry.Id,
-            StringComparer.OrdinalIgnoreCase);
-        var retained = OrderedOverview().Where(pack => previous.GetValueOrDefault(pack.Entry.RelativePath) == pack.Entry.Id).ToArray();
-        _overviewSnapshot = Array.AsReadOnly(retained);
-        _overviewReady = retained.Length == _sources.Count;
     }
 
     private void LoadStagedSeed(CatalogSource entry)
@@ -456,7 +457,8 @@ public sealed partial class PackCatalogService
             using var bytes = new MemoryStream();
             stream.CopyTo(bytes);
             var pack = DecodeBundle(entry, bytes.ToArray(), null);
-            lock (_gate) if (IsCurrentEntry(entry)) _packs.TryAdd(entry.RelativePath, pack);
+            lock (_gate) if (IsCurrentEntry(entry))
+                _packs.TryAdd(entry.RelativePath, pack.WithLibraryGroup(_effectiveSources[entry.RelativePath].LibraryGroup));
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library fallback: " + ex.Message); }
     }

@@ -118,7 +118,7 @@
       FullyQualifiedName=Minecraft.Tests.DesignTokensTests.AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.PreparationAndRunningGameLeaveCatalogueAndDetailsScrollable|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarIsAutomaticWhenItsContentDoesNotOverflow|
-      FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.EarlyOpenPublishesTheCompleteOverviewTogetherAfterTheBatchIsReady|
+      FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.EarlyOpenShowsAvailableCardAndMembershipBeforeOtherCardsFinish|
       FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.RepeatedAtomicSnapshotsKeepTheOpenDetailPageAndItsState|
       FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.QueuedPresentationRefreshDoesNotRepopulateDisposedControlsAfterShutdownStarts|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.TheLayout_KeepsTwoColumnsAndEveryExpandedControlReachable|
@@ -306,9 +306,9 @@
       FullyQualifiedName=Minecraft.Tests.BugReportAcknowledgementTests.RejectedOrMissingAcknowledgementsCannotConfirmDelivery|
       FullyQualifiedName=Minecraft.Tests.BugReportAcknowledgementTests.ADisconnectedReceiverCannotConfirmDelivery|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.CheckedCachePublishesTogetherThenEachFreshCardUpdatesWithoutWaitingForOtherRequests|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.UnknownCardsStayHiddenUntilEveryAttemptCompletesWithoutBlockingSelectedLaunch|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.NewCardsAppearAsTheyVerifyWithoutBlockingSelectedLaunch|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.AuthoritativeRemovalOrEmptyIndexNeverRepublishesOldCardsOrDeletesInstalledData|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.DamagedCachedBundleCannotPublishAnIncompleteOverviewBeforeFreshAttemptsFinish|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.DamagedCachedBundleDoesNotHideValidCachedCards|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.EmbeddedOverviewPublishesAllCardsBeforeFreshMetadataReturns|
       FullyQualifiedName=Minecraft.Tests.LibraryOverviewPreparationTests.CollapsedOverviewWarmsAsOneBatchWithoutConstructingUnopenedDetailPages|
       FullyQualifiedName=Minecraft.Tests.LibraryOverviewPreparationTests.RemovingAnOpenPackPrunesItsPageEvenWhileTheNextOverviewIsLoading|

@@ -127,7 +127,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
     }
 
     [Fact]
-    public async Task UnknownCardsStayHiddenUntilEveryAttemptCompletesWithoutBlockingSelectedLaunch()
+    public async Task NewCardsAppearAsTheyVerifyWithoutBlockingSelectedLaunch()
     {
         using var host = new OverviewHost();
         var first = host.Add("first", "First pack", "First-Pack");
@@ -149,17 +149,18 @@ public sealed class PackCatalogOverviewTests : IDisposable
 
             firstGate.Release.TrySetResult();
             await UntilAsync(() => catalog.Find(first.RelativePath) is not null);
+            await UntilAsync(() => publications.Count == 1);
             Assert.Equal("First pack", catalog.GetDisplayName(first.RelativePath));
-            Assert.False(catalog.IsOverviewReady);
-            Assert.Empty(catalog.Packs);
-            Assert.Empty(catalog.PacksForDisplay(new AppSettings()));
-            Assert.Empty(publications);
+            Assert.True(catalog.IsOverviewReady);
+            Assert.Equal(first.Id, Assert.Single(catalog.Packs).Entry.Id);
+            Assert.Equal(first.Id, Assert.Single(catalog.PacksForDisplay(new AppSettings())).Entry.Id);
+            Assert.False(preparing.IsCompleted);
 
             secondGate.Release.TrySetResult();
             await preparing.WaitAsync(Deadline);
             Assert.True(catalog.IsOverviewReady);
             Assert.Equal(2, catalog.Packs.Count);
-            Assert.Equal(2, Assert.Single(publications).Length);
+            Assert.Equal(new[] { 1, 2 }, publications.Select(batch => batch.Length));
         }
         finally
         {
@@ -185,12 +186,26 @@ public sealed class PackCatalogOverviewTests : IDisposable
         File.WriteAllText(installed, "installed bytes"); File.WriteAllText(world, "world bytes");
         host.Index = empty ? [] : [retained];
 
+        var indexGate = host.BlockIndex();
         var catalog = Staged(host);
-        await catalog.InitializeIndexAsync().WaitAsync(Deadline);
+        var index = catalog.InitializeIndexAsync();
+        var preparing = catalog.PrepareLibraryAsync();
+        try
+        {
+            await indexGate.Requested.Task.WaitAsync(Deadline);
+            await UntilAsync(() => catalog.PacksForDisplay(new AppSettings()).Count == 2);
+            Assert.True(catalog.IsOverviewReady);
+            Assert.False(catalog.IsIndexReady);
+            Assert.False(index.IsCompleted);
+        }
+        finally { indexGate.Release.TrySetResult(); }
+
+        await index.WaitAsync(Deadline);
         Assert.True(catalog.IsWithdrawn(removed.RelativePath));
         Assert.DoesNotContain(catalog.Packs, pack => pack.Entry.Id == removed.Id);
-        if (empty) { Assert.True(catalog.IsOverviewReady); Assert.Empty(catalog.Packs); }
-        await catalog.PrepareLibraryAsync().WaitAsync(Deadline);
+        Assert.True(catalog.IsOverviewReady);
+        if (empty) Assert.Empty(catalog.Packs);
+        await preparing.WaitAsync(Deadline);
         Assert.Equal(empty ? 0 : 1, catalog.Packs.Count);
         Assert.DoesNotContain(catalog.Packs, pack => pack.Entry.Id == removed.Id);
 
@@ -208,7 +223,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
     }
 
     [Fact]
-    public async Task DamagedCachedBundleCannotPublishAnIncompleteOverviewBeforeFreshAttemptsFinish()
+    public async Task DamagedCachedBundleDoesNotHideValidCachedCards()
     {
         using var host = new OverviewHost();
         var first = host.Add("first", "First pack", "First-Pack");
@@ -232,9 +247,9 @@ public sealed class PackCatalogOverviewTests : IDisposable
             await gate.Requested.Task.WaitAsync(Deadline);
             Assert.NotNull(catalog.Find(second.RelativePath));
             Assert.Null(catalog.Find(first.RelativePath));
-            Assert.False(catalog.IsOverviewReady);
-            Assert.Empty(catalog.Packs);
-            Assert.Empty(publications);
+            Assert.True(catalog.IsOverviewReady);
+            Assert.Equal(second.Id, Assert.Single(catalog.Packs).Entry.Id);
+            Assert.Single(Assert.Single(publications));
 
             gate.Release.TrySetResult();
             await preparing.WaitAsync(Deadline);
@@ -338,6 +353,8 @@ public sealed class PackCatalogOverviewTests : IDisposable
         private readonly HashSet<string> _corrupt = new(StringComparer.Ordinal);
         internal CatalogSource[] Index = [];
         internal bool Offline;
+        private Gate? _indexGate;
+        internal Gate BlockIndex() => _indexGate = new Gate();
         internal HttpClient Client { get; }
 
         internal OverviewHost()
@@ -393,7 +410,14 @@ public sealed class PackCatalogOverviewTests : IDisposable
             var uri = request.RequestUri!;
             if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
             if (uri.AbsolutePath.EndsWith("/catalog.json", StringComparison.Ordinal))
+            {
+                if (_indexGate is { } gate)
+                {
+                    gate.Requested.TrySetResult();
+                    await gate.Release.Task.WaitAsync(token);
+                }
                 return Reply(HttpStatusCode.OK, JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 1, packs = Index }, Json));
+            }
             string? repository;
             lock (_gate) repository = _manifests.Keys.FirstOrDefault(repo => uri.AbsolutePath.Contains("/" + repo + "/", StringComparison.Ordinal));
             if (repository is null) return Reply(HttpStatusCode.NotFound, []);

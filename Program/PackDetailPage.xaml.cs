@@ -121,7 +121,7 @@ public partial class PackDetailPage : UserControl, IDisposable
         MembershipButton.Content = added ? "Убрать" : "Добавить";
         MembershipButton.Style = TryFindResource(added ? typeof(Button) : "LibraryAddButtonStyle") as Style;
         MembershipButton.IsEnabled = enabled;
-        MembershipButton.ToolTip = enabled ? null : "Дождитесь завершения игры, подготовки или передачи мира.";
+        MembershipButton.ToolTip = enabled ? null : "Дождитесь загрузки настроек, завершения игры, подготовки или передачи мира.";
     }
     private void ReturnCatalog_Click(object sender, RoutedEventArgs e) => ReturnRequested?.Invoke();
     private void Membership_Click(object sender, RoutedEventArgs e) => MembershipRequested?.Invoke(pack);

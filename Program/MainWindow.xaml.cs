@@ -1610,21 +1610,10 @@ public partial class MainWindow : Window
         RefreshUi();
     }
 
-    /// <summary>
-    /// Takes the selected build off the machine, once the player has said so in
-    /// as many words.
-    /// </summary>
-    /// <remarks>
-    /// The plan is worked out twice on purpose. The first is for the question -
-    /// how many worlds there are, and whether a Java goes with it - and is made
-    /// with the worlds kept, so nothing about asking can delete anything. The
-    /// second is made after the answer, because "вместе с мирами" adds a folder
-    /// the first plan deliberately did not name.
-    /// </remarks>
     private void DeleteBuildButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
-        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build || !build.IsInstalled) return;
+        if (BuildComboBox.SelectedItem is not ClientBuildViewModel build ||
+            !build.IsInstalled || !CanDeletePackFiles(build.RelativePath)) return;
         RemoveBuild(build.RelativePath, build.Name, installed: true);
     }
 
@@ -1644,22 +1633,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var removal = new BuildRemovalService(_paths, _packHash, _logger);
-        BuildRemovalService.RemovalPlan plan;
-        try
-        {
-            plan = removal.Plan(build.RelativePath, worldsToo: false);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or InvalidOperationException or ArgumentException)
-        {
-            RequireLogger().Warn($"Build removal could not be planned for {build.RelativePath}: {ex.Message}");
-            SetState("Не удалось прочитать, из чего состоит сборка");
-            return;
-        }
-
-        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name);
-        if (answer == BuildRemovalAnswer.Keep) return;
+        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name, CanDeletePackFiles(relativePath));
+        if (answer == BuildRemovalAnswer.Keep || !CanChangeLibrary || _catalog?.IsWithdrawn(relativePath) == true) return;
         if (TryRemoveBuildFromList(_settings, build.RelativePath, answer))
         {
             _settingsService.Save(_settings);
@@ -1670,8 +1645,28 @@ public partial class MainWindow : Window
             return;
         }
 
-        var worldsToo = answer == BuildRemovalAnswer.WithWorlds;
-        var outcome = removal.Remove(worldsToo ? removal.Plan(build.RelativePath, worldsToo: true) : plan);
+        // A modal dialog pumps the dispatcher. Check again before touching files.
+        if (!CanDeletePackFiles(relativePath))
+        {
+            SetState("Дождитесь завершения игры, обновления сборки или передачи мира.");
+            return;
+        }
+
+        var removal = new BuildRemovalService(_paths, _packHash, _logger);
+        BuildRemovalService.RemovalPlan plan;
+        try
+        {
+            plan = removal.Plan(build.RelativePath, worldsToo: answer == BuildRemovalAnswer.WithWorlds);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidOperationException or ArgumentException)
+        {
+            RequireLogger().Warn($"Build removal could not be planned for {build.RelativePath}: {ex.Message}");
+            SetState("Не удалось прочитать, из чего состоит сборка");
+            return;
+        }
+
+        var outcome = removal.Remove(plan);
         PackMembership.Remove(_settings, build.RelativePath);
         BuildRemovalService.Forget(_settings, build.RelativePath);
         _settingsService.Save(_settings);
@@ -3169,8 +3164,9 @@ public partial class MainWindow : Window
         // The delete button belongs to a build that is actually on the disk:
         // a name the list only offers has nothing to remove, and a game that is
         // running is holding the very files this would delete.
-        var installed = BuildComboBox.SelectedItem is ClientBuildViewModel selected && selected.IsInstalled;
-        DeleteBuildButton.IsEnabled = installed && CanChangeLibrary;
+        var selected = BuildComboBox.SelectedItem as ClientBuildViewModel;
+        var installed = selected is { IsInstalled: true };
+        DeleteBuildButton.IsEnabled = installed && CanDeletePackFiles(selected!.RelativePath);
         DeleteBuildButton.ToolTip = !installed
             ? "Эта сборка ещё не скачана"
             : _minecraftRunning
@@ -3243,8 +3239,11 @@ public partial class MainWindow : Window
         { _logger?.Warn($"Could not open mod project page: {ex.Message}"); }
     }
 
-    private bool CanChangeLibrary => !_busy && !_minecraftRunning && !_minecraftPreparing && !_transferActive &&
-        _catalog?.IsReady == true && (_launcherDataByPack?.Values.All(task => task.IsCompleted) ?? _launcherDataRefresh.IsCompleted);
+    private bool CanChangeLibrary => !_shutdownStarted && !_busy && !_minecraftRunning && !_minecraftPreparing &&
+        !_transferActive && _paths is not null && _settings is not null && _settingsService is not null && _catalog is not null;
+
+    private bool CanDeletePackFiles(string path) => CanChangeLibrary && _catalog?.IsIndexReady == true &&
+        _launcherDataByPack?.GetValueOrDefault(path)?.IsCompleted != false;
 
     private bool SelectedBuildIsReady => _catalog is { } catalog &&
         BuildComboBox.SelectedItem is ClientBuildViewModel build && catalog.IsLaunchReady(build.RelativePath);
@@ -3322,6 +3321,8 @@ public partial class MainWindow : Window
                 migration.Apply(_settings!, entries, _settingsService!.Save);
             ApplyRenames(index.Sources);
             index.MigrateStartupIndex = ApplyRenames;
+            // Publish new paths in the same dispatcher turn as the migration's settings edits.
+            index.DispatchIndexUpdateAsync = (apply, cancel) => Dispatcher.InvokeAsync(apply, DispatcherPriority.Background, cancel).Task;
             return index;
         }, token);
         if (_shutdownStarted) return;
@@ -3336,7 +3337,8 @@ public partial class MainWindow : Window
         _preload?.Enqueue("build-menu", 10, BuildComboBox.Prepare());
         _logger?.Info($"Список сборок готов: {StartupTrace.Elapsed} мс от запуска процесса.");
         _ = PrepareSelectedLaunchAsync();
-        if (_libraryVisible) { StartLibraryPreparation(); RefreshLibraryCatalog(); }
+        StartLibraryPreparation();
+        if (_libraryVisible) RefreshLibraryCatalog();
         StartupTrace.Mark("каталог из кеша");
         await Task.Run(() => catalog.InitializeIndexAsync(token), token);
         if (_shutdownStarted) return;
@@ -3410,12 +3412,10 @@ public partial class MainWindow : Window
     {
         if (_catalog is not null && _settings is not null)
         {
-            // The service publishes complete, authority-filtered overview batches.
-            // An early foreground request sees loading rather than partial cards.
             if (PublishPackDisplayNames()) RefreshBuilds();
+            LibraryView.CanChangeMembership = CanChangeLibrary;
             LibraryView.Preloader = _preload;
             LibraryView.SetCatalog(_catalog.PacksForDisplay(_settings), isLoading: !_catalog.IsOverviewReady);
-            if (_libraryVisible) _preload?.Promote("library-overview");
         }
     }
 
@@ -3441,7 +3441,6 @@ public partial class MainWindow : Window
         if (visible)
         {
             StartLibraryPreparation();
-            _preload?.Promote("library-overview");
             RefreshLibraryCatalog();
             LibraryView.ShowCatalog();
             LibraryView.Visibility = Visibility.Visible;
