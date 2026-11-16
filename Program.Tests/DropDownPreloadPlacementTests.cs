@@ -118,6 +118,10 @@ public sealed class DropDownPreloadPlacementTests
             var list = (ListBox)dropdown.FindName("ItemsList");
             Assert.True(list.IsVisible && list.ActualWidth > 1 && list.ActualHeight > 1, description);
             Assert.NotEmpty(list.Items);
+            Assert.Equal(ScrollBarVisibility.Disabled, ScrollViewer.GetHorizontalScrollBarVisibility(list));
+            var scroll = Assert.IsAssignableFrom<ScrollViewer>(VisualTreeHelper.GetChild(list, 0) is Decorator border ? border.Child : VisualTreeHelper.GetChild(list, 0));
+            Assert.Equal(Visibility.Collapsed, scroll.ComputedHorizontalScrollBarVisibility);
+            Assert.Equal(Visibility.Visible, scroll.ComputedVerticalScrollBarVisibility);
             Assert.Same(dropdown.ItemsSource, list.ItemsSource);
             Assert.Same(dropdown.ItemTemplate, list.ItemTemplate);
             Assert.Same(dropdown.SelectedItem, list.SelectedItem);
