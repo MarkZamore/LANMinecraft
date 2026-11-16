@@ -417,12 +417,38 @@ public sealed partial class PackCatalogService
                 if (!IsCurrentEntry(entry)) continue;
                 effective = _effectiveSources[entry.RelativePath];
             }
+            if (!LoadCachedOverviewCard(entry) && effective.Source != entry.Source)
+                LoadCachedOverviewCard(effective);
             LoadStagedSeed(entry);
-            if (effective.Source != entry.Source) LoadCachedEntry(effective, token: token);
-            LoadCachedEntry(entry, token: token);
         }
         token.ThrowIfCancellationRequested();
         if (PublishOverviewSnapshot()) PresentationChanged?.Invoke();
+    }
+
+    private bool LoadCachedOverviewCard(CatalogSource entry)
+    {
+        try
+        {
+            var cached = ReadCache(entry);
+            if (cached is null || DecodeCachedCard(entry, cached) is not { } pack) return false;
+
+            // A card only needs the verified library bundle. GameManifestAsync separately
+            // checks the selected pack's manifest and filesystem before allowing play.
+            lock (_gate)
+            {
+                var current = _sources.FirstOrDefault(candidate => candidate.Id == entry.Id &&
+                    candidate.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
+                if (current is null || (entry.Source != current.Source && entry.Source != _effectiveSources[entry.RelativePath].Source))
+                    return false;
+                _packs[entry.RelativePath] = pack.WithLibraryGroup(current.LibraryGroup);
+            }
+            return true;
+        }
+        catch (Exception ex) when (IsRecoverable(ex))
+        {
+            _logger.Warn("Library cache " + entry.RelativePath + ": " + ex.Message);
+            return false;
+        }
     }
 
     private bool PublishOverviewSnapshot()

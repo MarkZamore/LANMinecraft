@@ -16,7 +16,7 @@ $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
 if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
-$caseBudget = if ($WithAdapters) { 711 } else { 637 }
+$caseBudget = if ($WithAdapters) { 712 } else { 638 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments

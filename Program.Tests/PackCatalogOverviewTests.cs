@@ -261,6 +261,30 @@ public sealed class PackCatalogOverviewTests : IDisposable
     }
 
     [Fact]
+    public async Task CachedCardRemainsVisibleWhenGameManifestCannotBeUsedForLaunch()
+    {
+        using var host = new OverviewHost();
+        var entry = host.Add("first", "First pack", "First-Pack");
+        host.Index = [entry];
+        await new PackCatalogService(_paths, _logger, host.Client).RefreshOnceAsync().WaitAsync(Deadline);
+
+        var cacheFile = Directory.GetFiles(Path.Combine(_paths.Launcher, "Library"), "*.json")
+            .Single(path => Path.GetFileName(path) != "catalog.json");
+        var cached = JsonNode.Parse(File.ReadAllText(cacheFile))!;
+        var manifest = JsonNode.Parse(cached["manifest"]!.GetValue<string>())!;
+        manifest["schemaVersion"] = 999;
+        cached["manifest"] = manifest.ToJsonString();
+        File.WriteAllText(cacheFile, cached.ToJsonString());
+
+        host.Offline = true;
+        var catalog = Staged(host);
+        await catalog.PrepareLibraryAsync().WaitAsync(Deadline);
+        Assert.Equal(entry.Id, Assert.Single(catalog.PacksForDisplay(new AppSettings())).Entry.Id);
+        await Assert.ThrowsAsync<IOException>(() => catalog.EnsureLaunchReadyAsync(entry.RelativePath).WaitAsync(Deadline));
+        Assert.False(catalog.IsLaunchReady(entry.RelativePath));
+    }
+
+    [Fact]
     public async Task EmbeddedOverviewPublishesAllCardsBeforeFreshMetadataReturns()
     {
         using var host = new OverviewHost();

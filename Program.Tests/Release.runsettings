@@ -309,6 +309,7 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.NewCardsAppearAsTheyVerifyWithoutBlockingSelectedLaunch|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.AuthoritativeRemovalOrEmptyIndexNeverRepublishesOldCardsOrDeletesInstalledData|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.DamagedCachedBundleDoesNotHideValidCachedCards|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.CachedCardRemainsVisibleWhenGameManifestCannotBeUsedForLaunch|
       FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.EmbeddedOverviewPublishesAllCardsBeforeFreshMetadataReturns|
       FullyQualifiedName=Minecraft.Tests.LibraryOverviewPreparationTests.CollapsedOverviewWarmsAsOneBatchWithoutConstructingUnopenedDetailPages|
       FullyQualifiedName=Minecraft.Tests.LibraryOverviewPreparationTests.RemovingAnOpenPackPrunesItsPageEvenWhileTheNextOverviewIsLoading|

@@ -502,31 +502,31 @@ public sealed partial class PackCatalogService
             var cached = ReadCache(entry);
             if (cached is null) return;
             PortablePackSyncService.ValidateSnapshot(cached.Manifest, _paths.CombineUnderPacks(entry.RelativePath), token);
-            CatalogPack? pack = null;
-            using var doc = JsonDocument.Parse(cached.Manifest);
-            if (presentation && doc.RootElement.TryGetProperty("library", out var descriptor))
-            {
-                if (cached.Bundle is null || !VerifyHash(cached.Bundle, descriptor)) throw new InvalidDataException("Corrupt library cache.");
-                var revision = doc.RootElement.GetProperty("revision").GetString();
-                if (descriptor.GetProperty("revision").GetString() != revision) throw new InvalidDataException("Corrupt library cache revision.");
-                pack = DecodeBundle(entry, cached.Bundle, revision);
-            }
+            var pack = presentation ? DecodeCachedCard(entry, cached) : null;
             lock (_gate)
             {
                 _manifests[Key(entry.Source)] = cached.Manifest;
                 if (presentation && IsCurrentEntry(entry))
                 {
-                    var current = _sources.First(source => source.Id == entry.Id &&
-                        source.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
-                    if (!IsStaged || entry.Source == current.Source || entry.Source == _effectiveSources[entry.RelativePath].Source)
-                    {
-                        PromoteEffectiveSource(entry with { LibraryGroup = current.LibraryGroup });
-                        if (pack is not null) _packs[entry.RelativePath] = pack.WithLibraryGroup(current.LibraryGroup);
-                    }
+                    PromoteEffectiveSource(entry);
+                    if (pack is not null) _packs[entry.RelativePath] = pack;
                 }
             }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library cache " + entry.RelativePath + ": " + ex.Message); }
+    }
+
+    private static CatalogPack? DecodeCachedCard(CatalogSource entry, CachedEntry cached)
+    {
+        using var document = JsonDocument.Parse(cached.Manifest);
+        var manifest = document.RootElement;
+        if (!manifest.TryGetProperty("library", out var descriptor)) return null;
+        if (cached.Bundle is null || !VerifyHash(cached.Bundle, descriptor))
+            throw new InvalidDataException("Corrupt library cache.");
+        var revision = manifest.GetProperty("revision").GetString();
+        if (string.IsNullOrWhiteSpace(revision) || descriptor.GetProperty("revision").GetString() != revision)
+            throw new InvalidDataException("Corrupt library cache revision.");
+        return DecodeBundle(entry, cached.Bundle, revision);
     }
 
     private CachedEntry? ReadCache(CatalogSource entry)
