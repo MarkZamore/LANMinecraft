@@ -1,44 +1,38 @@
-# Published app binary
-/Minecraft.exe
-
-# Portable runtime data: packs, worlds, personal files, generated server/runtime
+# Portable launcher and local pack sources
+/LANMinecraft.exe
 /Minecraft/
+/LocalSources/
+/settings.json
+/logs/
+/hs_err_pid*.log
+/replay_pid*.log
 
-# Program build output
-/Program/bin/
-/Program/obj/
-/Program/Build/
+# Launcher, tools and test build output
 /Program/**/bin/
 /Program/**/obj/
+/Program/Build/
 /Program/publish/
+/Program/*_wpftmp.csproj
 /Program.Tests/bin/
 /Program.Tests/obj/
+/tools/**/bin/
+/tools/**/obj/
+__pycache__/
+*.pyc
 
-# IDE/user files
+# GitHub release staging, local probes and test evidence
+/artifacts/
+/.playwright-mcp/
+/Program.Tests/TestResults/
+/Program.Tests/PortabilityAudit/Artifacts/
+
+# Visual Studio user state
 /.vs/
-/.vscode/
 /Program/.vs/
 *.user
 *.suo
 
-# Local binaries/installers and archives
-*.exe
-*.msi
-*.7z
-*.zip
-!Program/LibrarySeed/*.zip
-!Program.Tests/Fixtures/LanRedirect/upstream-fixtures.zip
-__pycache__/
-*.pyc
-
-# Logs and local settings outside the ignored portable runtime
-*.log
-*.log.gz
-settings.json
-# ...but the world migration wrote its own log, and that one is a document.
-!LL8-migration/apply.log
-
-# Account/session/credential material
+# Private credentials and local player/session data
 *.token
 *.session
 *.credential
@@ -47,35 +41,29 @@ settings.json
 *.key
 *.pem
 *.pfx
-*token*.json
-*session*.json
-*credential*.json
-*auth*.json
-*account*.json
-*login*.json
-**/launcher_profiles.json
-**/usercache.json
-**/usernamecache.json
+token.json
+tokens.json
+session.json
+credentials.json
+credential.json
+auth.json
+account.json
+accounts.json
+login.json
+*.token.json
+*.tokens.json
+*.session.json
+*.credential.json
+*.credentials.json
+*.auth.json
+*.account.json
+*.login.json
+launcher_profiles.json
+usercache.json
+usernamecache.json
 
-# Mojang-distributed Minecraft jars
+# Mojang-distributed Minecraft client and server JARs
 **/libraries/com/mojang/minecraft/
 **/*minecraft*client*.jar
 **/*minecraft*server*.jar
-**/server.jar
-Program/*_wpftmp.csproj
-
-# Snapshots the Playwright MCP browser writes while it is driven from here.
-.playwright-mcp/
-
-# Test run artefacts
-Program.Tests/TestResults/
-
-# Generated local measurements, probe sessions and release staging.
-/artifacts/
-
-# Private Process Monitor captures and disposable audit installations
-/Program.Tests/PortabilityAudit/Artifacts/
-
-# Functional audit host build output
-/tools/**/bin/
-/tools/**/obj/
+server.jar
