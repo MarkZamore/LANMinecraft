@@ -116,7 +116,7 @@ def read_mods(data, jar_name, depth=0, loader=None):
                 break
         fabric = None
         if not result and loader not in ("forge", "neoforge") and "fabric.mod.json" in names:
-            doc = json.loads(archive.read("fabric.mod.json"))
+            doc = read_fabric_metadata(archive)
             fabric = doc
             result.append({"id": doc["id"], "name": doc.get("name", doc["id"]),
                            "version": str(doc.get("version", "")), "isLoadedMod": True, "_depth": depth})
@@ -242,13 +242,13 @@ def read_native_mods(pack, runtime, shipped):
     return mods
 
 
-def read_forge_fabric_metadata(archive):
+def read_fabric_metadata(archive):
     text = archive.read("fabric.mod.json").decode("utf-8-sig")
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # The selected Forge compatibility loader accepts a literal newline in
-        # a Fabric description. Keep other fields subject to strict JSON.
+        # Fabric loaders accept literal newlines in a mod description.
+        # Keep other fields subject to strict JSON.
         text, count = re.subn(r'("description"\s*:\s*")((?:[^"\\]|\\.)*)(")',
                               lambda match: match[1] + match[2].replace("\r", r"\r").replace("\n", r"\n") + match[3],
                               text, flags=re.DOTALL)
@@ -268,7 +268,7 @@ def read_forge_fabric_mod(pack, minecraft_version, actual_hashes, loaded):
     native_name = pathlib.PurePosixPath(source).stem
     for path in [*nested, None]:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            metadata = read_forge_fabric_metadata(archive)
+            metadata = read_fabric_metadata(archive)
             if path is not None:
                 if not any(row.get("file") == path for row in metadata.get("jars", [])):
                     raise ValueError("Forge Fabric inventory points to an undeclared nested JAR")

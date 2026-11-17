@@ -34,6 +34,19 @@ class LibraryPublisherTests(unittest.TestCase):
                 records = read_mods(universal.getvalue(), "universal.jar", loader=loader)
                 self.assertEqual(["fabric_base", "fabric_child"], [record["id"] for record in records])
 
+    def test_fabric_allows_literal_line_breaks_in_descriptions_only(self):
+        for field in ("description", "name"):
+            with self.subTest(field=field):
+                jar = io.BytesIO()
+                with zipfile.ZipFile(jar, "w") as archive:
+                    archive.writestr("fabric.mod.json", '{"id":"test","version":"1","'
+                                     + field + '":"First line\nSecond line"}')
+                if field == "description":
+                    self.assertEqual("test", read_mods(jar.getvalue(), "test.jar", loader="fabric")[0]["id"])
+                else:
+                    with self.assertRaises(json.JSONDecodeError):
+                        read_mods(jar.getvalue(), "test.jar", loader="fabric")
+
     def test_forge_bootstrap_declares_its_embedded_mod_in_the_manifest(self):
         nested = io.BytesIO()
         with zipfile.ZipFile(nested, "w") as archive:
