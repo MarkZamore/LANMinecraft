@@ -208,7 +208,8 @@ public partial class MainWindow : Window
                 gameIsRunning: () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _removingPackFiles) ||
                     _minecraft is { IsClientPreparing: true } or { IsClientRunning: true },
                 isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true,
-                reportProgress: UpdateMaintenanceProgress);
+                reportProgress: UpdateMaintenanceProgress,
+                reportActivity: UpdateMaintenanceActivity);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();

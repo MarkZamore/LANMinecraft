@@ -12,7 +12,8 @@ internal sealed class LauncherMaintenance(
     Action<LauncherMaintenanceRun> sweep,
     Func<bool>? gameIsRunning = null,
     Func<string, bool>? isPackInUse = null,
-    Action<int>? reportProgress = null)
+    Action<int>? reportProgress = null,
+    Action<bool>? reportActivity = null)
 {
     // Keep the existing service filename so upgrades have only one durable record.
     internal const string CompletionFileName = ".launcher-maintenance.utc";
@@ -165,6 +166,7 @@ internal sealed class LauncherMaintenance(
         var returned = false;
         try
         {
+            reportActivity?.Invoke(true);
             Checkpoint(token);
             if (_lastReportedProgress is null or 100) PublishProgress(0);
             if (_progress is null) RemoveInterruptedWrites(Checkpoint, token);
@@ -192,6 +194,7 @@ internal sealed class LauncherMaintenance(
         finally
         {
             SaveIfDirty();
+            reportActivity?.Invoke(false);
             if (loweredIo) _ = SetThreadPriority(GetCurrentThread(), 0x00020000); // THREAD_MODE_BACKGROUND_END
             lock (_gate)
             {

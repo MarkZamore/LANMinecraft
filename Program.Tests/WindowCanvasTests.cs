@@ -845,7 +845,14 @@ public sealed class WindowCanvasTests
             Set("MaintenancePercentageText", percentage);
             Set("_maintenancePercent", 0);
             Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+            Set("_maintenanceActive", true);
+            Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+            Set("_maintenancePercent", 1);
+            Refresh();
             Assert.Equal(Visibility.Visible, progress.Visibility);
+            Set("_maintenancePercent", 0);
             Set("_playRequested", true);
             Refresh();
             Assert.Equal(Visibility.Collapsed, progress.Visibility);
@@ -862,6 +869,11 @@ public sealed class WindowCanvasTests
             Refresh();
             Assert.Equal(Visibility.Visible, progress.Visibility);
             Assert.Equal("74%)", percentage.Text);
+            Set("_maintenanceActive", false);
+            Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+            Set("_maintenanceActive", true);
+            Refresh();
             LayoutWindow(window, client);
             var percentageLeft = Bounds(percentage, footer).Left;
             Assert.InRange(Bounds(label, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);

@@ -258,6 +258,9 @@ public sealed class LauncherMaintenanceTests : IDisposable
         var reports = new List<int>();
         var deferred = new TaskCompletionSource<int[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var finished = new TaskCompletionSource<int[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var activity = new System.Collections.Concurrent.ConcurrentQueue<bool>();
+        var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var maintenance = Create(run =>
         {
             run.PlanSteps(["service", "pack:Busy", "pack:Other"]);
@@ -275,6 +278,11 @@ public sealed class LauncherMaintenanceTests : IDisposable
         {
             reports.Add(value);
             if (value == 100) finished.TrySetResult(reports.ToArray());
+        }, reportActivity: active =>
+        {
+            activity.Enqueue(active);
+            if (!active && Volatile.Read(ref playing) != 0) paused.TrySetResult();
+            if (!active && Volatile.Read(ref playing) == 0) stopped.TrySetResult();
         });
 
         try
@@ -284,12 +292,16 @@ public sealed class LauncherMaintenanceTests : IDisposable
             Assert.Equal([0, 33, 66], partialReports);
             Assert.True(File.Exists(ProgressPath));
             Assert.False(finished.Task.IsCompleted);
+            await paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal([true, false], activity.ToArray());
 
             Volatile.Write(ref playing, 0);
             maintenance.ObserveGameState();
             var finalReports = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal([0, 33, 66, 99, 100], finalReports);
             Assert.False(File.Exists(ProgressPath));
+            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal([true, false, true, false], activity.ToArray());
         }
         finally { maintenance.Stop(); }
     }
@@ -329,8 +341,8 @@ public sealed class LauncherMaintenanceTests : IDisposable
     private string ProgressPath => Path.Combine(_paths.Launcher, LauncherMaintenance.CompletionFileName);
 
     private LauncherMaintenance Create(Action<LauncherMaintenanceRun> sweep, Func<bool>? gameIsRunning = null,
-        Func<string, bool>? isPackInUse = null, Action<int>? reportProgress = null) =>
-        new(_paths, new Logger(_paths.LogFile), sweep, gameIsRunning, isPackInUse, reportProgress);
+        Func<string, bool>? isPackInUse = null, Action<int>? reportProgress = null, Action<bool>? reportActivity = null) =>
+        new(_paths, new Logger(_paths.LogFile), sweep, gameIsRunning, isPackInUse, reportProgress, reportActivity);
 
     private static async Task WaitUntilAsync(Func<bool> test)
     {

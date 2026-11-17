@@ -12,7 +12,7 @@ namespace Minecraft;
 
 public sealed class PortableGameInstaller : IGameInstaller
 {
-    private const int MaximumParallelDownloads = 4;
+    internal int MaximumParallelDownloads { get; init; } = 64;
     private const int DownloadBlockBytes = 64 * 1024;
     private readonly HttpClient _httpClient;
     private readonly string _runtimeRoot;
