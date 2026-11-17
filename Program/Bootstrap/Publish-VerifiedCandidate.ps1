@@ -48,6 +48,53 @@ function Invoke-CandidateGh {
     return $result
 }
 
+function Assert-CandidateCiJobs([object[]]$Jobs) {
+    $legacy = $Jobs.name -ccontains 'release'
+    if ($legacy -and ($Jobs.name -cmatch '^(verify|build|publish)$')) {
+        throw 'The candidate has ambiguous legacy and parallel release jobs.'
+    }
+    $required = if ($legacy) {
+        @{
+            release = @{
+                'Test and publish' = 'success'; 'Create delta and update manifest' = 'success'
+                'Verify release contents' = 'success'; 'Prepare exact candidate' = 'success'; 'Upload exact candidate' = 'success'
+            }
+        }
+    }
+    else {
+        @{
+            verify = @{ 'Run Release tests' = 'success' }
+            build = @{
+                'Build portable EXE' = 'success'; 'Create delta and update manifest' = 'success'
+                'Verify release contents' = 'success'; 'Upload release assets' = 'success'
+            }
+            publish = @{
+                # The jobs API can report success for a continued scan failure.
+                # The workflow's artifact-upload condition checks its original outcome.
+                'Scan portable host' = @('success', 'failure'); 'Publish latest release' = 'failure'
+                'Prepare exact candidate' = 'success'; 'Upload exact candidate' = 'success'
+            }
+        }
+    }
+
+    foreach ($jobName in $required.Keys) {
+        $found = @($Jobs | Where-Object name -CEQ $jobName)
+        if ($found.Count -ne 1 -or $found[0].status -cne 'completed') {
+            throw "The candidate has no unambiguous completed CI job: $jobName"
+        }
+        if (!$legacy) {
+            $expectedConclusion = if ($jobName -ceq 'publish') { 'failure' } else { 'success' }
+            if ($found[0].conclusion -cne $expectedConclusion) { throw "Unexpected CI candidate job conclusion: $jobName" }
+        }
+        foreach ($stepName in $required[$jobName].Keys) {
+            $steps = @($found[0].steps | Where-Object name -CEQ $stepName)
+            if ($steps.Count -ne 1 -or $steps[0].conclusion -cnotin $required[$jobName][$stepName]) {
+                throw "Unexpected or missing CI candidate step in ${jobName}: $stepName"
+            }
+        }
+    }
+}
+
 function Assert-OrdinaryTree([string]$Root) {
     $pending = [Collections.Generic.Stack[string]]::new(); $pending.Push($Root)
     while ($pending.Count) {
@@ -96,12 +143,7 @@ try {
         $run.event -ne 'push' -or $run.head_branch -ne 'main' -or $run.workflow_id -ne $workflow.id -or
         $run.status -ne 'completed' -or [int]$run.run_attempt -ne $RunAttempt) { throw 'GitHub run is not the approved completed main release workflow/attempt.' }
     $jobs = Invoke-CandidateGh api "repos/$Repository/actions/runs/$RunId/jobs?filter=latest&per_page=100" | ConvertFrom-Json
-    $releaseJobs = @($jobs.jobs | Where-Object name -eq 'release')
-    if ($releaseJobs.Count -ne 1) { throw 'The candidate has no unambiguous release job.' }
-    foreach ($name in @('Test and publish','Create delta and update manifest','Verify release contents','Prepare exact candidate','Upload exact candidate')) {
-        $steps = @($releaseJobs[0].steps | Where-Object name -eq $name)
-        if ($steps.Count -ne 1 -or $steps[0].conclusion -ne 'success') { throw ('Required CI candidate step did not succeed: ' + $name) }
-    }
+    Assert-CandidateCiJobs $jobs.jobs
     $artifactName = "portable-host-candidate-$RunId-$RunAttempt"
     $artifacts = Invoke-CandidateGh api "repos/$Repository/actions/runs/$RunId/artifacts?per_page=100" | ConvertFrom-Json
     $candidateArtifacts = @($artifacts.artifacts | Where-Object name -eq $artifactName)

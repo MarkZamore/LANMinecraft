@@ -14,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GhRetry.ps1')
 . (Join-Path $PSScriptRoot 'HostedDefenderPolicy.ps1')
 . (Join-Path $PSScriptRoot 'CompressedHistoryRelease.ps1')
+. (Join-Path $PSScriptRoot 'ReleaseBase.ps1')
 $assetRoot = [IO.Path]::GetFullPath($AssetDirectory, (Get-Location).ProviderPath)
 $commit = $CommitSha.ToLowerInvariant()
 $locks = [Collections.Generic.List[IO.FileStream]]::new()
@@ -73,7 +74,24 @@ function Read-Latest {
         ($pointer.releaseNumber -eq $ReleaseNumber -and $pointer.commitSha -ne $commit)) {
         throw 'A newer or conflicting latest release already exists; refusing to replace it.'
     }
-    return $release
+    return $pointer
+}
+
+function Save-PreviousBase($Pointer) {
+    $directory = Join-Path $assetRoot ('.previous-base-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        $base = Get-ValidatedBase 'latest' $directory $Repository
+        if ($base.commitSha -ne $Pointer.commitSha -or $base.releaseNumber -ne $Pointer.releaseNumber -or
+            $base.sha256 -ne $Pointer.sha256 -or $base.sizeBytes -ne $Pointer.sizeBytes) {
+            throw 'The published delta base changed before it could be archived.'
+        }
+        & (Join-Path $PSScriptRoot 'Archive-PreviousBase.ps1') -ReleaseNumber $base.releaseNumber `
+            -ExecutablePath $base.executablePath -ManifestPath $base.manifestPath `
+            -CommitSha $base.commitSha -Repository $Repository
+    }
+    finally {
+        if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
+    }
 }
 
 try {
@@ -148,6 +166,18 @@ try {
         [void](Invoke-CheckedGh release create latest @assetPaths $manifestPath --repo $Repository --target $commit --latest --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
     else {
+        $compressedHistory = Test-CompressedHistoryRelease $ReleaseNumber $latest
+        if ($latest.commitSha -ne $commit -and ($patches.Count -gt 0 -or $compressedHistory)) {
+            $matchingBase = @($patches | Where-Object {
+                $_.baseCommitSha -eq $latest.commitSha -and $_.baseReleaseNumber -eq $latest.releaseNumber -and
+                $_.baseSha256 -eq $latest.sha256
+            })
+            if (!$compressedHistory -and $matchingBase.Count -ne 1) {
+                throw 'The published release changed after the delta bases were captured.'
+            }
+            Save-PreviousBase $latest
+            Assert-PublicationHead
+        }
         [void](Invoke-CheckedGh release upload latest @assetPaths --repo $Repository --clobber)
         Assert-PublicationHead
         [void](Read-Latest)

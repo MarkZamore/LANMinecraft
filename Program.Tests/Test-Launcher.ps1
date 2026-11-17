@@ -9,14 +9,19 @@ param(
     [switch]$SkipPortableIdentityAdapter,
     [string]$HostPath,
     [string]$ResultsDirectory,
-    [string]$ValidateTrx
+    [string]$ValidateTrx,
+    [ValidateSet('Standard', 'Pipeline')][string]$ReleaseScope = 'Standard'
 )
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
+$settingsName = if ($ReleaseScope -eq 'Pipeline') { 'Release.Pipeline' } else { $Profile }
+$settingsPath = Join-Path $PSScriptRoot ($settingsName + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
 if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
-$caseBudget = if ($WithAdapters) { 754 } else { 680 }
+if ($ReleaseScope -eq 'Pipeline' -and ($Profile -ne 'Release' -or $WithAdapters)) {
+    throw '-ReleaseScope Pipeline requires -Profile Release without -WithAdapters.'
+}
+$caseBudget = if ($ReleaseScope -eq 'Pipeline') { 10 } elseif ($WithAdapters) { 754 } else { 680 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
@@ -52,8 +57,10 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$Cas
         @($results | Where-Object outcome -ne 'Passed').Count -ne 0) {
         throw 'Every selected release case must pass; failures and skipped cases reject the release.'
     }
-    # Keep the compact profile and the adapter union bounded. Detailed matrices
-    # stay in Full/AdaptersFull; narrow selectors reject the full suite.
+    if ($ReleaseScope -eq 'Pipeline' -and $results.Count -ne $CaseBudget) {
+        throw ('The pipeline profile must execute exactly ' + $CaseBudget + ' cases.')
+    }
+    # Keep the compact profile and the adapter union bounded.
     if ($results.Count -gt $CaseBudget) { throw ('The release profile exceeded its ' + $CaseBudget + '-case budget; review its selectors.') }
     $expected = [Collections.Generic.HashSet[string]]::new($Selectors, [StringComparer]::Ordinal)
     $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
@@ -81,11 +88,24 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$Cas
     return [pscustomobject]@{ Passed = $results.Count; Selectors = $Selectors.Count; Profile = 'Release' }
 }
 
+if ($Profile -eq 'Release' -or $ValidateTrx) {
+    $selectors = @(Read-ReleaseSelectors)
+    if ($ReleaseScope -eq 'Pipeline') {
+        $pipeline = @(Read-ReleaseSelectors $settingsName)
+        $outsideRelease = @($pipeline | Where-Object { $_ -cnotin $selectors })
+        if ($outsideRelease.Count -ne 0 -or $pipeline.Count -ge $selectors.Count) {
+            throw ('The pipeline profile must be a strict subset of Release. Unknown selectors: ' + ($outsideRelease -join ', '))
+        }
+        $selectors = $pipeline
+    }
+    elseif ($WithAdapters) {
+        $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique)
+    }
+}
+
 if ($ValidateTrx) {
     # Exercises the real guard against saved/synthetic results without a build,
     # process launch, environment override or test run.
-    $selectors = @(Read-ReleaseSelectors)
-    if ($WithAdapters) { $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique) }
     Assert-ReleaseResults ([IO.Path]::GetFullPath($ValidateTrx)) $selectors $caseBudget
     return
 }
@@ -110,9 +130,7 @@ try {
     }
 
     if ($Profile -eq 'Release') {
-        $selectors = @(Read-ReleaseSelectors)
         if ($WithAdapters) {
-            $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique)
             [xml]$combined = Get-Content -LiteralPath $settingsPath -Raw
             $combined.RunSettings.RunConfiguration.TestCaseFilter = ($selectors | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'
             $settingsPath = Join-Path $session 'ReleaseWithAdapters.runsettings'

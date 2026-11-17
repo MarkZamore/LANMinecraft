@@ -208,7 +208,9 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.ModAddonAndLibraryLinksOpenTheirOwnPagesWithoutChangingExpansion|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.UnsafeProjectPageCannotReplaceTheVerifiedCatalogue|
-      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.SharedJavaOutputs_AreBuiltSequentially_AndFailureStopsTheRelease|
+      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.BuildAndVerificationRunIndependently_AndBothGatePublication|
+      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.BuildCreatesDeltasBeforeStaging_AndPublishUsesThatArtifact|
+      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.PublicationRequiresScanEvidenceForTheStagedExecutable|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterLanAutoPublishTests.Modern_and_legacy_publish_keep_native_init_settings_and_one_session|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterNamedRuntimeTests.SharedStoreMappingsAndAuthlibFromOtherVersions_AreNotUsed|
       FullyQualifiedName=Minecraft.Tests.SelectedSkinHandoffTests.ASelectedSkin_KeepsItsBytesModelAndPlayerAcrossLauncherRestarts|

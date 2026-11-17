@@ -4,10 +4,8 @@ Keeps the executable this release replaces, so the release after next can
 still be a small delta for players who skipped one.
 
 .DESCRIPTION
-Runs beside the delta computation: this is upload bandwidth while that is
-processor, and neither waits on the other. The publish still waits on this -
-a base that was never archived is a chain that quietly breaks two releases
-later.
+Runs after release checks pass, before the publisher updates latest. The
+archive preserves a full base for players who skip one release.
 #>
 param(
     [Parameter(Mandatory = $true)][int]$ReleaseNumber,

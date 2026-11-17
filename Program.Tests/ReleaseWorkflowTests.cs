@@ -12,79 +12,86 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class ReleaseWorkflowTests
 {
-    [Theory]
-    [InlineData("none")]
-    [InlineData("tests")]
-    [InlineData("publish")]
-    public async Task SharedJavaOutputs_AreBuiltSequentially_AndFailureStopsTheRelease(string failure)
+    [Fact]
+    public void BuildAndVerificationRunIndependently_AndBothGatePublication()
     {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-        var step = workflow.Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
-            .Single(part => part.TrimStart().StartsWith("Test and publish\n", StringComparison.Ordinal)
-                || part.TrimStart().StartsWith("Test and publish\r\n", StringComparison.Ordinal));
-        var body = step[(step.IndexOf("run: |", StringComparison.Ordinal) + "run: |".Length)..];
-        body = string.Join('\n', Lines(body).Select(line => line.StartsWith("          ", StringComparison.Ordinal) ? line[10..] : line))
-            .Replace("${{ github.sha }}", new string('a', 40), StringComparison.Ordinal)
-            .Replace("${{ github.workspace }}", "$env:GITHUB_WORKSPACE", StringComparison.Ordinal);
-        var root = Path.Combine(Path.GetDirectoryName(FindRepositoryFile("Program.Tests", "TESTING.md"))!,
-            "TestResults", "ReleaseOrder", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(root, "Program.Tests"));
-        Directory.CreateDirectory(Path.Combine(root, "Program"));
-        try
+        var workflow = ReleaseWorkflow();
+        var build = WorkflowJob(workflow, "build");
+        var verify = WorkflowJob(workflow, "verify");
+        var publish = WorkflowJob(workflow, "publish");
+        Assert.Matches(@"(?m)^permissions:\r?\n  contents: read\r?$", workflow);
+        foreach (var job in new[] { build, verify })
         {
-            // Execute the actual workflow body with stand-ins that contend for
-            // the shared Java output. Publishing must see a completed test run.
-            File.WriteAllText(Path.Combine(root, "Program.Tests", "Test-Launcher.ps1"), """
-                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'tests-start'
-                $jar = [IO.File]::Open((Join-Path $PWD 'agent.jar'), 'OpenOrCreate', 'ReadWrite', 'None')
-                try { Start-Sleep -Milliseconds 300 } finally { $jar.Dispose() }
-                if ($env:RELEASE_ORDER_FAILURE -eq 'tests') { throw 'Injected test failure' }
-                Set-Content -LiteralPath (Join-Path $PWD 'tests-complete') -Value 'done'
-                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'tests-end'
-                $global:LASTEXITCODE = 0
-                """);
-            File.WriteAllText(Path.Combine(root, "Program", "Publish.ps1"), """
-                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'publish-start'
-                if (-not (Test-Path -LiteralPath (Join-Path $PWD 'tests-complete'))) {
-                    throw 'Publishing overlapped the test build'
-                }
-                $jar = [IO.File]::Open((Join-Path $PWD 'agent.jar'), 'Open', 'ReadWrite', 'None')
-                $jar.Dispose()
-                if ($env:RELEASE_ORDER_FAILURE -eq 'publish') { $global:LASTEXITCODE = 9; return }
-                Add-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'publish-end'
-                $global:LASTEXITCODE = 0
-                """);
-            var script = Path.Combine(root, "step.ps1");
-            File.WriteAllText(script, "$global:LASTEXITCODE = 0\n" + body
-                + "\nAdd-Content -LiteralPath $env:RELEASE_ORDER_LOG -Value 'finished'\n");
-            var log = Path.Combine(root, "order.log");
-            var start = new ProcessStartInfo(FindShell())
-            {
-                WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script }) start.ArgumentList.Add(argument);
-            start.Environment["GITHUB_WORKSPACE"] = root;
-            start.Environment["RELEASE_NUMBER"] = "393";
-            start.Environment["RELEASE_ORDER_LOG"] = log;
-            start.Environment["RELEASE_ORDER_FAILURE"] = failure;
-            using var process = Process.Start(start)!;
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await process.WaitForExitAsync(timeout.Token); }
-            catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
-            var output = await stdout + await stderr;
-            Assert.True(failure == "none" ? process.ExitCode == 0 : process.ExitCode != 0, output);
-            var expected = failure switch
-            {
-                "tests" => new[] { "tests-start" },
-                "publish" => ["tests-start", "tests-end", "publish-start"],
-                _ => ["tests-start", "tests-end", "publish-start", "publish-end", "finished"]
-            };
-            Assert.Equal(expected, File.ReadAllLines(log));
+            Assert.Matches(@"(?m)^    runs-on: windows-latest\r?$", job);
+            Assert.Contains("uses: actions/checkout@", job, StringComparison.Ordinal);
+            Assert.DoesNotMatch(@"(?m)^    needs:", job);
+            Assert.DoesNotMatch(@"(?m)^ +continue-on-error:", job);
+            Assert.DoesNotContain("Publish-LatestRelease.ps1", job, StringComparison.Ordinal);
+            Assert.DoesNotContain("Archive-PreviousBase.ps1", job, StringComparison.Ordinal);
+            Assert.DoesNotContain("contents: write", job, StringComparison.Ordinal);
         }
-        finally { TempTree.Delete(root); }
+
+        Assert.Contains("Program\\Publish.ps1", build, StringComparison.Ordinal);
+        Assert.DoesNotContain("Test-Launcher.ps1", build, StringComparison.Ordinal);
+        Assert.Contains("Test-Launcher.ps1", verify, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^\s*& .*Test-Launcher\.ps1 -Profile Release (?!-ReleaseScope\b)", verify);
+        Assert.DoesNotContain("Program\\Publish.ps1", verify, StringComparison.Ordinal);
+
+        var needs = Regex.Match(publish, @"(?m)^    needs: \[([^\]\r\n]+)\]\r?$");
+        Assert.True(needs.Success, "Publication must declare its prerequisite jobs.");
+        var prerequisites = needs.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries);
+        Assert.Contains("build", prerequisites);
+        Assert.Contains("verify", prerequisites);
+        // GitHub's default success condition rejects failed, cancelled and
+        // skipped prerequisites. Do not override it to publish anyway.
+        Assert.DoesNotMatch(@"(?m)^    (?:if|continue-on-error):", publish);
+        Assert.Contains("contents: write", publish, StringComparison.Ordinal);
+        Assert.Contains("Publish-LatestRelease.ps1", publish, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildCreatesDeltasBeforeStaging_AndPublishUsesThatArtifact()
+    {
+        var workflow = ReleaseWorkflow();
+        var build = WorkflowJob(workflow, "build");
+        var buildSteps = WorkflowSteps(build);
+        var package = Assert.Single(buildSteps, step => step.Contains("Program\\Publish.ps1", StringComparison.Ordinal));
+        var deltas = Assert.Single(buildSteps, step => step.Contains("DeltaPatchTool.dll", StringComparison.Ordinal));
+        var upload = Assert.Single(buildSteps, step => step.Contains("uses: actions/upload-artifact@", StringComparison.Ordinal));
+        Assert.Equal(Array.IndexOf(buildSteps, package) + 1, Array.IndexOf(buildSteps, deltas));
+        Assert.True(Array.IndexOf(buildSteps, deltas) < Array.IndexOf(buildSteps, upload));
+        Assert.Contains("create $basePath $exe $patch", deltas, StringComparison.Ordinal);
+        Assert.Contains("apply $basePath $patch $roundTrip", deltas, StringComparison.Ordinal);
+        Assert.Contains("$roundTripHash -ne $hash", deltas, StringComparison.Ordinal);
+        Assert.Contains("name: release-assets", upload, StringComparison.Ordinal);
+        Assert.Contains("if-no-files-found: error", upload, StringComparison.Ordinal);
+        Assert.Contains("artifacts/LANMinecraft.exe", upload, StringComparison.Ordinal);
+        Assert.Contains("artifacts/update.json", upload, StringComparison.Ordinal);
+        Assert.Contains("artifacts/LANMinecraft*.bsdiff", upload, StringComparison.Ordinal);
+        Assert.Contains("asset-id: ${{ steps.assets.outputs.artifact-id }}", build, StringComparison.Ordinal);
+
+        var publishSteps = WorkflowSteps(WorkflowJob(workflow, "publish"));
+        var download = Assert.Single(publishSteps, step => step.Contains("uses: actions/download-artifact@", StringComparison.Ordinal));
+        var release = Assert.Single(publishSteps, step => step.Contains("Publish-LatestRelease.ps1", StringComparison.Ordinal));
+        Assert.Contains("artifact-ids: ${{ needs.build.outputs.asset-id }}", download, StringComparison.Ordinal);
+        Assert.Contains("merge-multiple: true", download, StringComparison.Ordinal);
+        Assert.DoesNotContain("run-id:", download, StringComparison.Ordinal);
+        Assert.True(Array.IndexOf(publishSteps, download) < Array.IndexOf(publishSteps, release));
+    }
+
+    [Fact]
+    public void PublicationRequiresScanEvidenceForTheStagedExecutable()
+    {
+        var steps = WorkflowSteps(WorkflowJob(ReleaseWorkflow(), "publish"));
+        var download = Assert.Single(steps, step => step.Contains("uses: actions/download-artifact@", StringComparison.Ordinal));
+        var scan = Assert.Single(steps, step => step.Contains("Test-PortableHostAntivirus.ps1", StringComparison.Ordinal));
+        var release = Assert.Single(steps, step => step.Contains("Publish-LatestRelease.ps1", StringComparison.Ordinal));
+        Assert.True(Array.IndexOf(steps, download) < Array.IndexOf(steps, scan));
+        Assert.True(Array.IndexOf(steps, scan) < Array.IndexOf(steps, release));
+        Assert.Contains("-ExecutablePath", scan, StringComparison.Ordinal);
+        Assert.Contains("LANMinecraft.exe", scan, StringComparison.Ordinal);
+        Assert.Contains("-AntivirusEvidencePath", release, StringComparison.Ordinal);
+        Assert.Contains("-Publish", release, StringComparison.Ordinal);
     }
 
     /// <summary>gh is called through the helper, never on its own.</summary>
@@ -119,15 +126,16 @@ public sealed class ReleaseWorkflowTests
     [Fact]
     public void TheSdkDownload_IsOnlyAFallback()
     {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-        var setup = workflow.Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
-            .Single(step => step.Contains("actions/setup-dotnet", StringComparison.Ordinal));
-
-        Assert.Contains("if:", setup, StringComparison.Ordinal);
-        Assert.Contains("preinstalled", setup, StringComparison.Ordinal);
-        // global.json decides which of the installed SDKs is used, so the
-        // fallback download and the preinstalled one agree on the version.
-        Assert.Contains("global-json-file: global.json", setup, StringComparison.Ordinal);
+        var workflow = ReleaseWorkflow();
+        foreach (var job in new[] { "build", "verify" })
+        {
+            var setup = Assert.Single(WorkflowSteps(WorkflowJob(workflow, job)),
+                step => step.Contains("actions/setup-dotnet", StringComparison.Ordinal));
+            Assert.Contains("if:", setup, StringComparison.Ordinal);
+            Assert.Contains("preinstalled", setup, StringComparison.Ordinal);
+            // global.json keeps the fallback and the preinstalled SDK aligned.
+            Assert.Contains("global-json-file: global.json", setup, StringComparison.Ordinal);
+        }
         var globalJson = File.ReadAllText(FindRepositoryFile("global.json"));
         Assert.Contains("\"rollForward\": \"latestFeature\"", globalJson, StringComparison.Ordinal);
         Assert.Contains("10.0.", globalJson, StringComparison.Ordinal);
@@ -362,6 +370,17 @@ public sealed class ReleaseWorkflowTests
     /// <summary>The text as lines, whichever way the file ends them.</summary>
     private static IEnumerable<string> Lines(string text) =>
         text.Split('\n').Select(line => line.TrimEnd('\r'));
+
+    private static string ReleaseWorkflow() => File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
+
+    private static string WorkflowJob(string workflow, string name)
+    {
+        var match = Regex.Match(workflow, $@"(?ms)^  {Regex.Escape(name)}:\r?\n(.*?)(?=^  [\w-]+:\r?$|\z)");
+        Assert.True(match.Success, $"The workflow does not define the {name} job.");
+        return match.Groups[1].Value;
+    }
+
+    private static string[] WorkflowSteps(string job) => Regex.Split(job, @"(?m)(?=^      - )")[1..];
 
     /// <summary>Every PowerShell the release runs: the steps live in the YAML.</summary>
     private static IEnumerable<string> ReleaseScripts()
