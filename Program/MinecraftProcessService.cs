@@ -942,14 +942,15 @@ public sealed class MinecraftProcessService
                 NoticeOverlay.ProcessExited(processId);
                 CleanupJavaTemporaryDirectory(packRelativePath);
             }
-            if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
-            {
-                NotifyClientRunningChanged(false);
-            }
+            var clientRemoved = _activeClientProcesses.TryRemove(processId, out _);
             if (confirmedExited)
             {
                 try { ClientSessionEnded?.Invoke(packRelativePath); }
                 catch (Exception ex) { _logger.Warn($"Minecraft exit listener failed: {ex.Message}"); }
+            }
+            if (clientRemoved && _activeClientProcesses.IsEmpty)
+            {
+                NotifyClientRunningChanged(false);
             }
         }
     }

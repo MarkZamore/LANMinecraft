@@ -548,13 +548,21 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <TextBlock Grid.Row="0"
-                Grid.Column="0"
-                Grid.ColumnSpan="1"
+            <StackPanel Grid.Row="0" Grid.Column="0"
                 HorizontalAlignment="Left"
                 VerticalAlignment="Center"
-                x:Name="FooterMotto"
-                Text="Лучше TLauncher" />
+                Orientation="Horizontal">
+                <TextBlock x:Name="FooterMotto" Text="Лучше TLauncher" Margin="{StaticResource Gap.Right1}" />
+                <StackPanel x:Name="MaintenanceProgressFooter" Orientation="Horizontal" Visibility="Collapsed">
+                    <TextBlock x:Name="MaintenanceLabelText" Text="(Уборка" />
+                    <Grid VerticalAlignment="Center">
+                        <TextBlock Text="..." Visibility="Hidden" />
+                        <TextBlock x:Name="MaintenanceDotsText" Text="." />
+                    </Grid>
+                    <TextBlock x:Name="MaintenancePercentageText" Margin="{StaticResource Gap.Left2}" />
+                </StackPanel>
+                <TextBlock x:Name="MaintenanceCompletedText" Text="(Уборка завершена)" Visibility="Collapsed" />
+            </StackPanel>
             <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions">
                 <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right1}">
                     <Grid.ColumnDefinitions>

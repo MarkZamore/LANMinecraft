@@ -81,8 +81,10 @@ public sealed class SteamBootstrapTests : IDisposable
     [Fact]
     public async Task StartAsync_WithoutSteamRunning_ReportsItAndKeepsWorking()
     {
-        var api = new FakeSteamApi { SteamRunning = false, InitializeSucceeds = false };
+        var api = new FakeSteamApi { LocalClientProcessRunning = false, SteamRunning = false, InitializeSucceeds = false };
         await using var service = new SteamClientService(api);
+        var published = new List<SteamClientStatus>();
+        service.StatusChanged += (_, status) => published.Add(status);
 
         var status = await service.StartAsync(CancellationToken.None);
 
@@ -90,7 +92,9 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.False(status.IsReady);
         Assert.Contains("Steam не запущен", status.Message, StringComparison.Ordinal);
         Assert.False(api.Initialized);
-        Assert.Equal(1, api.InitializeCount);
+        Assert.Same(status, await service.StartAsync(CancellationToken.None));
+        Assert.Single(published);
+        Assert.Equal(0, api.InitializeCount);
     }
 
     [Fact]
@@ -320,6 +324,7 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.True((await service.StartAsync(CancellationToken.None)).IsReady);
 
         // The player closes Steam.
+        api.LocalClientProcessRunning = false;
         api.SteamRunning = false;
         api.InitializeSucceeds = false;
         api.LoggedOn = false;
@@ -327,16 +332,20 @@ public sealed class SteamBootstrapTests : IDisposable
         var afterLoss = await service.StartAsync(CancellationToken.None);
         Assert.False(afterLoss.IsReady);
         Assert.Equal(SteamAvailability.SteamNotRunning, afterLoss.Availability);
-        Assert.Equal(2, api.InitializeCount); // The unavailable client was still probed through real Init.
+        Assert.Equal(1, api.InitializeCount);
+        Assert.Equal(1, api.ShutdownCount);
+        Assert.Same(afterLoss, await service.StartAsync(CancellationToken.None));
+        Assert.Equal(1, api.InitializeCount);
 
-        // ...starts it again, and the same button now reconnects.
+        // ...starts it again, and the next automatic check reconnects.
+        api.LocalClientProcessRunning = true;
         api.SteamRunning = true;
         api.InitializeSucceeds = true;
         api.LoggedOn = true;
         var recovered = await service.StartAsync(CancellationToken.None);
         Assert.True(recovered.IsReady);
         Assert.Equal(76561198000000001UL, recovered.SteamId64);
-        Assert.Equal(3, api.InitializeCount);
+        Assert.Equal(2, api.InitializeCount);
     }
 
     /// <summary>
@@ -607,6 +616,7 @@ public sealed class SteamBootstrapTests : IDisposable
 internal sealed class FakeSteamApi : ISteamApiFacade
 {
     public Exception? InitializeFailure { get; set; }
+    public bool LocalClientProcessRunning { get; set; } = true;
     public bool SteamRunning { get; set; }
     public bool InitializeSucceeds { get; set; } = true;
     public bool LoggedOn { get; set; }
@@ -618,6 +628,8 @@ internal sealed class FakeSteamApi : ISteamApiFacade
     public bool RelayInitialized { get; private set; }
     public int InitializeCount { get; private set; }
     public int ShutdownCount { get; private set; }
+
+    public bool HasLocalClientProcess() => LocalClientProcessRunning;
 
     public bool Initialize(out string failureReason)
     {

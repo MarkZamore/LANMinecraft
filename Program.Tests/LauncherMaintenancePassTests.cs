@@ -18,25 +18,58 @@ public sealed class LauncherMaintenancePassTests : IDisposable
         var otherFile = WritePack(packs[1]);
         var logger = new Logger(_paths.LogFile);
         var sync = new PortablePackSyncService(_paths, logger);
-        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var maintenance = new LauncherMaintenance(_paths, logger, () => false, run =>
+        var enteringPack = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstPass = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resumeSweep = new ManualResetEventSlim();
+        var packChecks = 0;
+        var playing = 0;
+        var maintenance = new LauncherMaintenance(_paths, logger, run =>
         {
             try { LauncherMaintenancePass.Run(_paths, logger, sync, run); }
-            finally { finished.TrySetResult(); }
-        }, gameIsRunning: () => true, isPackInUse: path => path.Equals(packs[0].RelativePath, StringComparison.OrdinalIgnoreCase));
+            finally { firstPass.TrySetResult(); }
+        }, gameIsRunning: () => Volatile.Read(ref playing) != 0, isPackInUse: path =>
+        {
+            if (!path.Equals(packs[0].RelativePath, StringComparison.OrdinalIgnoreCase)) return false;
+            if (Interlocked.Increment(ref packChecks) == 2)
+            {
+                enteringPack.TrySetResult();
+                if (!resumeSweep.Wait(TimeSpan.FromSeconds(10))) throw new OperationCanceledException();
+            }
+            return Volatile.Read(ref playing) != 0;
+        }, reportProgress: percent =>
+        {
+            if (percent == 100) completed.TrySetResult();
+        });
 
         try
         {
-            maintenance.ObserveIdle(true);
-            await finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            maintenance.RequestPack(packs[0].RelativePath);
+            maintenance.Start();
+            await enteringPack.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Volatile.Write(ref playing, 1);
+            maintenance.ObserveGameState();
+            resumeSweep.Set();
+            await firstPass.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.True(File.Exists(runningFile));
             Assert.False(File.Exists(otherFile));
             var marker = Path.Combine(_paths.Launcher, LauncherMaintenance.CompletionFileName);
             var saved = JsonSerializer.Deserialize<LauncherMaintenanceProgress>(File.ReadAllText(marker));
             Assert.NotNull(saved);
             Assert.Contains(packs[0].RelativePath, saved.DeferredPacks);
+            Assert.False(completed.Task.IsCompleted);
+
+            Volatile.Write(ref playing, 0);
+            maintenance.ObserveGameState();
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(runningFile));
+            Assert.False(File.Exists(marker));
         }
-        finally { maintenance.Stop(); }
+        finally
+        {
+            maintenance.Stop();
+            resumeSweep.Set();
+        }
     }
 
     private string WritePack(PortablePackSyncService.KnownPack pack)

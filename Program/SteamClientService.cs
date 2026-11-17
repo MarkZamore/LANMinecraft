@@ -145,6 +145,18 @@ public sealed class SteamClientService : IAsyncDisposable
             // A session waiting for Steam's servers is still a session: the
             // pump brings it back by itself, or gives up and says so.
             if (current.Availability == SteamAvailability.Reconnecting && pumpAlive) return current;
+
+            // InitEx can load the installed Steam client DLL and hold Windows'
+            // loader lock even when no Steam client process is running.
+            if (!_api.HasLocalClientProcess())
+            {
+                if (_pump is not null || current.Availability is not (SteamAvailability.NotStarted or SteamAvailability.SteamNotRunning))
+                    TearDownApi("Steam завершил работу.");
+                return current.Availability == SteamAvailability.SteamNotRunning
+                    ? current
+                    : Publish(new SteamClientStatus(SteamAvailability.SteamNotRunning, 0, string.Empty, SteamNotRunningMessage));
+            }
+
             // A status of Ready is only trustworthy while Steam is still
             // there; if it went away, this call is the recovery path.
             if (current.IsReady && IsSteamAlive()) return current;

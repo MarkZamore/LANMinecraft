@@ -9,7 +9,6 @@ namespace Minecraft;
 internal sealed class LauncherMaintenance(
     AppPaths paths,
     Logger logger,
-    Func<bool> foregroundIsActive,
     Action<LauncherMaintenanceRun> sweep,
     Func<bool>? gameIsRunning = null,
     Func<string, bool>? isPackInUse = null,
@@ -23,14 +22,17 @@ internal sealed class LauncherMaintenance(
     private static readonly TimeSpan YieldBetweenSlices = TimeSpan.FromMilliseconds(75);
     private static readonly TimeSpan GameSlice = TimeSpan.FromMilliseconds(8);
     private static readonly TimeSpan GameYield = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan CursorSaveInterval = TimeSpan.FromSeconds(1);
     private readonly object _gate = new();
     private readonly HashSet<string> _pendingPacks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _protectedPacks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _waitingForProtectedPacks = new(StringComparer.OrdinalIgnoreCase);
     private bool _fullPassPending = true;
     private bool _deferredWork;
-    private bool _mayStart;
-    private bool _wasReady;
+    private bool _ready;
+    private bool _needsPass = true;
     private bool _observedGame;
-    private bool _started;
+    private LauncherMaintenanceProgress? _progress;
     private bool _reportedCheckpointError;
     private int? _lastReportedProgress;
     private CancellationTokenSource? _current;
@@ -45,56 +47,101 @@ internal sealed class LauncherMaintenance(
         {
             if (_stopped) return;
             _pendingPacks.Add(relativePath);
-            _mayStart = true;
+            RequestPass();
         }
     }
 
-    internal void ObserveIdle(bool ready)
+    internal void Start()
     {
-        ready = ready && !foregroundIsActive();
+        lock (_gate)
+        {
+            _ready = true;
+            _observedGame = gameIsRunning?.Invoke() == true;
+            StartPendingPass();
+        }
+    }
+
+    internal void ObserveGameState()
+    {
         var hasGame = gameIsRunning?.Invoke() == true;
         lock (_gate)
         {
-            if (_stopped) return;
-            if (!ready)
-            {
-                _wasReady = false;
-                if (_current is not null) _ = _current.CancelAsync();
-                return;
-            }
-            if (!_wasReady || _observedGame != hasGame) _mayStart = true;
-            _wasReady = true;
+            if (_observedGame == hasGame) return;
             _observedGame = hasGame;
-            if (!_mayStart || _current is not null ||
-                (!_fullPassPending && !_deferredWork && _pendingPacks.Count == 0))
-                return;
-
-            _mayStart = false;
-            var cleanupInterruptedWrites = !_started;
-            _started = true;
-            var fullPass = _fullPassPending;
-            var pending = _pendingPacks.ToArray();
-            _pendingPacks.Clear();
-            var cancellation = new CancellationTokenSource();
-            _current = cancellation;
-            var worker = new Thread(() => Run(fullPass, hasGame, cleanupInterruptedWrites, pending, cancellation))
-            {
-                IsBackground = true,
-                Name = "Launcher storage maintenance",
-                Priority = ThreadPriority.BelowNormal
-            };
-            worker.Start();
+            if (!hasGame) RequestPass();
         }
     }
 
-    internal void Interrupt()
+    internal void ResumeDeferredWork()
     {
         lock (_gate)
         {
-            if (_current is null) return;
-            _mayStart = true;
-            _ = _current.CancelAsync();
+            RequestPass();
         }
+    }
+
+    internal IDisposable ProtectPack(string path)
+    {
+        lock (_gate) _protectedPacks[path] = _protectedPacks.GetValueOrDefault(path) + 1;
+        return new PackUse(this, path);
+    }
+
+    private sealed class PackUse(LauncherMaintenance owner, string path) : IDisposable
+    {
+        private LauncherMaintenance? _owner = owner;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _owner, null) is not { } maintenance) return;
+            lock (maintenance._gate)
+            {
+                var remaining = maintenance._protectedPacks[path] - 1;
+                if (remaining == 0)
+                {
+                    maintenance._protectedPacks.Remove(path);
+                    if (maintenance._waitingForProtectedPacks.Remove(path)) maintenance.RequestPass();
+                }
+                else maintenance._protectedPacks[path] = remaining;
+            }
+        }
+    }
+
+    private bool IsPackProtected(string path)
+    {
+        lock (_gate)
+        {
+            if (_protectedPacks.ContainsKey(path))
+            {
+                _waitingForProtectedPacks.Add(path);
+                return true;
+            }
+        }
+        return isPackInUse?.Invoke(path) ?? (gameIsRunning?.Invoke() == true);
+    }
+
+    private void RequestPass()
+    {
+        _needsPass = true;
+        StartPendingPass();
+    }
+
+    private void StartPendingPass()
+    {
+        if (_stopped || !_ready || !_needsPass || _current is not null ||
+            (!_fullPassPending && !_deferredWork && _pendingPacks.Count == 0)) return;
+
+        _needsPass = false;
+        var fullPass = _fullPassPending;
+        var pending = _pendingPacks.ToArray();
+        _pendingPacks.Clear();
+        var cancellation = new CancellationTokenSource();
+        _current = cancellation;
+        new Thread(() => Run(fullPass, pending, cancellation))
+        {
+            IsBackground = true,
+            Name = "Launcher storage maintenance",
+            Priority = ThreadPriority.BelowNormal
+        }.Start();
     }
 
     internal void Stop()
@@ -106,22 +153,24 @@ internal sealed class LauncherMaintenance(
         }
     }
 
-    private void Run(bool fullPass, bool hasGame, bool cleanupInterruptedWrites, string[] pending,
-        CancellationTokenSource cancellation)
+    private void Run(bool fullPass, string[] pending, CancellationTokenSource cancellation)
     {
         var loweredIo = SetThreadPriority(GetCurrentThread(), 0x00010000); // THREAD_MODE_BACKGROUND_BEGIN
         var token = cancellation.Token;
         var sliceStart = Stopwatch.GetTimestamp();
+        var hasGame = gameIsRunning?.Invoke() == true;
         LauncherMaintenanceRun? pass = null;
+        var lastSave = Stopwatch.GetTimestamp();
+        var checkpointDirty = false;
         var returned = false;
         try
         {
             Checkpoint(token);
             if (_lastReportedProgress is null or 100) PublishProgress(0);
-            if (cleanupInterruptedWrites) RemoveInterruptedWrites(Checkpoint, token);
-            var progress = ReadProgress();
-            pass = new LauncherMaintenanceRun(fullPass, hasGame, pending, isPackInUse, progress,
-                () => WriteProgress(progress), Checkpoint, token, PublishProgress);
+            if (_progress is null) RemoveInterruptedWrites(Checkpoint, token);
+            var progress = _progress ??= ReadProgress();
+            pass = new LauncherMaintenanceRun(fullPass, () => gameIsRunning?.Invoke() == true, pending, IsPackProtected, progress,
+                Persist, Checkpoint, token, PublishProgress);
             foreach (var pack in pending)
                 pass.RequeuePack(pack);
             sweep(pass);
@@ -129,6 +178,7 @@ internal sealed class LauncherMaintenance(
             if (!pass.HasDeferredWork)
             {
                 MaintenancePath.TryDelete(paths, ProgressPath, directory: false);
+                _progress = null;
                 PublishProgress(100);
             }
             returned = true;
@@ -137,10 +187,11 @@ internal sealed class LauncherMaintenance(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or
                                    JsonException or InvalidOperationException or ArgumentException or NotSupportedException)
         {
-            logger.Warn($"Launcher storage maintenance did not finish: {ex.Message}");
+            TryLogWarning($"Launcher storage maintenance did not finish: {ex.Message}");
         }
         finally
         {
+            SaveIfDirty();
             if (loweredIo) _ = SetThreadPriority(GetCurrentThread(), 0x00020000); // THREAD_MODE_BACKGROUND_END
             lock (_gate)
             {
@@ -154,26 +205,36 @@ internal sealed class LauncherMaintenance(
                     _pendingPacks.UnionWith(pending);
                     _deferredWork = true;
                 }
-                if (ReferenceEquals(_current, cancellation)) _current = null;
+                _current = null;
+                StartPendingPass();
             }
             cancellation.Dispose();
+        }
+
+        void Persist(bool force)
+        {
+            checkpointDirty = true;
+            if (force || Stopwatch.GetElapsedTime(lastSave) >= CursorSaveInterval)
+                SaveIfDirty();
+        }
+
+        void SaveIfDirty()
+        {
+            if (!checkpointDirty || _progress is null) return;
+            lastSave = Stopwatch.GetTimestamp();
+            checkpointDirty = !WriteProgress(_progress);
         }
 
         void Checkpoint(CancellationToken caller)
         {
             caller.ThrowIfCancellationRequested();
-            ThrowIfForegroundChanged();
-            if (Stopwatch.GetElapsedTime(sliceStart) < (hasGame ? GameSlice : Slice)) return;
-            token.WaitHandle.WaitOne(hasGame ? GameYield : YieldBetweenSlices);
-            ThrowIfForegroundChanged();
-            sliceStart = Stopwatch.GetTimestamp();
-        }
-
-        void ThrowIfForegroundChanged()
-        {
             token.ThrowIfCancellationRequested();
-            if (foregroundIsActive() || (gameIsRunning?.Invoke() == true) != hasGame)
-                throw new OperationCanceledException(token);
+            if (Stopwatch.GetElapsedTime(sliceStart) < (hasGame ? GameSlice : Slice)) return;
+            hasGame = gameIsRunning?.Invoke() == true;
+            token.WaitHandle.WaitOne(hasGame ? GameYield : YieldBetweenSlices);
+            caller.ThrowIfCancellationRequested();
+            token.ThrowIfCancellationRequested();
+            sliceStart = Stopwatch.GetTimestamp();
         }
     }
 
@@ -223,28 +284,52 @@ internal sealed class LauncherMaintenance(
         static bool IsStepName(string? name) => name is { Length: > 0 and <= 256 } && !name.Any(char.IsControl);
     }
 
-    private void WriteProgress(LauncherMaintenanceProgress progress)
+    private bool WriteProgress(LauncherMaintenanceProgress progress)
     {
         if (!MaintenancePath.TryRead(paths, paths.Launcher, out var folderAttributes) ||
-            !folderAttributes.HasFlag(FileAttributes.Directory)) return;
+            !folderAttributes.HasFlag(FileAttributes.Directory)) return false;
         var path = ProgressPath;
-        try
-        {
-            _ = File.GetAttributes(path);
-            if (!MaintenancePath.TryRead(paths, path, out var attributes) || attributes.HasFlag(FileAttributes.Directory)) return;
-        }
-        catch (FileNotFoundException) { }
+        var temporaryPath = Path.Combine(paths.Launcher, $".{CompletionFileName}.{Guid.NewGuid():N}.tmp");
+        var created = false;
         try
         {
             var bytes = JsonSerializer.SerializeToUtf8Bytes(progress);
-            if (bytes.Length <= MaximumProgressBytes) AtomicFile.WriteAllBytes(path, bytes);
+            if (bytes.Length > MaximumProgressBytes) return false;
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                created = true;
+                stream.Write(bytes);
+            }
+            try
+            {
+                _ = File.GetAttributes(path);
+                if (!MaintenancePath.TryRead(paths, path, out var attributes) || attributes.HasFlag(FileAttributes.Directory)) return false;
+            }
+            catch (FileNotFoundException) { }
+            // An unsuccessful rename leaves the previous checkpoint readable.
+            File.Move(temporaryPath, path, overwrite: true);
+            created = false;
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (_reportedCheckpointError) return;
-            logger.Warn($"Could not save storage maintenance progress: {ex.Message}");
-            _reportedCheckpointError = true;
+            if (!_reportedCheckpointError)
+            {
+                _reportedCheckpointError = true;
+                TryLogWarning($"Could not save storage maintenance progress: {ex.Message}");
+            }
+            return false;
         }
+        finally
+        {
+            if (created) MaintenancePath.TryDelete(paths, temporaryPath, directory: false);
+        }
+    }
+
+    private void TryLogWarning(string message)
+    {
+        try { logger.Warn(message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     private void RemoveInterruptedWrites(Action<CancellationToken> checkpoint, CancellationToken token)
@@ -281,11 +366,11 @@ internal sealed record LauncherMaintenanceProgress(
 /// <summary>Records validated units of work without making the UI save a checkpoint.</summary>
 internal sealed class LauncherMaintenanceRun(
     bool fullPass,
-    bool gameIsRunning,
+    Func<bool> gameIsRunning,
     IReadOnlyList<string> requestedPacks,
-    Func<string, bool>? isPackInUse,
+    Func<string, bool> isPackInUse,
     LauncherMaintenanceProgress progress,
-    Action persist,
+    Action<bool> persist,
     Action<CancellationToken> checkpoint,
     CancellationToken token,
     Action<int> reportProgress)
@@ -294,13 +379,13 @@ internal sealed class LauncherMaintenanceRun(
     private HashSet<string>? _plannedSteps;
     private int _completedPlannedSteps;
     internal bool FullPass => fullPass;
-    internal bool GameIsRunning => gameIsRunning;
+    internal bool GameIsRunning => gameIsRunning();
     internal IReadOnlyList<string> RequestedPacks => requestedPacks;
     internal IReadOnlyList<string> PriorityPacks => progress.DeferredPacks.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     internal CancellationToken Token => token;
     internal bool HasDeferredWork => _idleStepsPending || progress.DeferredPacks.Count != 0;
 
-    internal bool IsPackInUse(string relativePath) => isPackInUse?.Invoke(relativePath) ?? GameIsRunning;
+    internal bool IsPackInUse(string relativePath) => isPackInUse(relativePath);
     internal void Checkpoint(CancellationToken caller) => checkpoint(caller);
 
     internal void PlanSteps(IEnumerable<string> keys)
@@ -320,7 +405,7 @@ internal sealed class LauncherMaintenanceRun(
         Checkpoint(token);
         progress.CompletedSteps.Add(key);
         progress.Cursors.Remove(key);
-        persist();
+        persist(true);
         if (_plannedSteps?.Contains(key) == true)
         {
             _completedPlannedSteps++;
@@ -345,18 +430,18 @@ internal sealed class LauncherMaintenanceRun(
     internal void DeferPack(string relativePath)
     {
         if (PackCatalogService.ValidFolder(relativePath) && progress.DeferredPacks.Add(relativePath))
-            persist();
+            persist(true);
     }
 
     internal void RequeuePack(string relativePath)
     {
         var reset = progress.CompletedSteps.Remove("pack:" + relativePath);
-        if (progress.DeferredPacks.Add(relativePath) || reset) persist();
+        if (progress.DeferredPacks.Add(relativePath) || reset) persist(true);
     }
 
     internal void CompletePack(string relativePath)
     {
-        if (progress.DeferredPacks.Remove(relativePath)) persist();
+        if (progress.DeferredPacks.Remove(relativePath)) persist(true);
     }
 
     internal string? Cursor(string step) => progress.Cursors.GetValueOrDefault(step);
@@ -366,6 +451,6 @@ internal sealed class LauncherMaintenanceRun(
         Checkpoint(token);
         if (position is not { Length: > 0 and <= 16384 } || Cursor(step) == position) return;
         progress.Cursors[step] = position;
-        persist();
+        persist(false);
     }
 }

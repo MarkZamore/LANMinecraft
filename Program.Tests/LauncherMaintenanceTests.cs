@@ -26,27 +26,27 @@ public sealed class LauncherMaintenanceTests : IDisposable
         });
         try
         {
-            maintenance.ObserveIdle(false);
             Assert.False(started.Task.IsCompleted);
             Assert.True(File.Exists(interruptedWrite));
 
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             Assert.True(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)));
             await WaitUntilAsync(() => !File.Exists(ProgressPath));
             Assert.False(File.Exists(interruptedWrite));
             Assert.True(File.Exists(unrelatedTemporaryFile));
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             Assert.Equal(1, Volatile.Read(ref invocations));
         }
         finally { maintenance.Stop(); }
     }
 
     [Fact]
-    public async Task ForegroundAndShutdownDoNotWaitForAnInFlightFilesystemOperation()
+    public async Task GameTransitionsDoNotCancelAnInFlightOperationAndShutdownDoesNotWait()
     {
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var finished = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var resume = new ManualResetEventSlim();
+        var playing = 0;
         var maintenance = Create(run =>
         {
             started.TrySetResult(run.Token);
@@ -61,15 +61,20 @@ public sealed class LauncherMaintenanceTests : IDisposable
                 finished.TrySetResult(true);
                 throw;
             }
-        });
+        }, gameIsRunning: () => Volatile.Read(ref playing) != 0);
         try
         {
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             var token = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            maintenance.Interrupt(); // Play can proceed before the filesystem operation returns.
-            Assert.True(token.IsCancellationRequested);
+            Volatile.Write(ref playing, 1);
+            maintenance.ObserveGameState();
+            Assert.False(token.IsCancellationRequested);
+            Volatile.Write(ref playing, 0);
+            maintenance.ObserveGameState();
+            Assert.False(token.IsCancellationRequested);
             Assert.False(finished.Task.IsCompleted);
             maintenance.Stop();
+            Assert.True(token.IsCancellationRequested);
             Assert.False(finished.Task.IsCompleted);
             resume.Set();
             Assert.True(await finished.Task.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -104,7 +109,7 @@ public sealed class LauncherMaintenanceTests : IDisposable
 
         try
         {
-            first.ObserveIdle(true);
+            first.Start();
             Assert.True(await marked.Task.WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.Single(Directory.GetFiles(_paths.Launcher, "*launcher-maintenance*"));
             first.Stop();
@@ -128,7 +133,7 @@ public sealed class LauncherMaintenanceTests : IDisposable
         });
         try
         {
-            restarted.ObserveIdle(true);
+            restarted.Start();
             var work = await resumed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal("mods/partial.jar", work.Cursor);
             Assert.Equal("Managed", Assert.Single(work.Deferred));
@@ -136,6 +141,33 @@ public sealed class LauncherMaintenanceTests : IDisposable
             await WaitUntilAsync(() => !File.Exists(ProgressPath));
         }
         finally { restarted.Stop(); }
+    }
+
+    [Fact]
+    public async Task ACheckpointOpenWithoutDeleteSharingPreservesThePreviousCheckpoint()
+    {
+        var original = JsonSerializer.Serialize(new LauncherMaintenanceProgress(1, UpdateService.CurrentReleaseNumber,
+            ["completed"], [], new Dictionary<string, string> { ["partial"] = "mods/old.jar" }));
+        File.WriteAllText(ProgressPath, original);
+        using var held = new FileStream(ProgressPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var writeAttempted = new TaskCompletionSource<(string Checkpoint, string[] TemporaryFiles)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var maintenance = Create(run =>
+        {
+            run.RunStep("another-step", () => { });
+            run.DeferStep("partial");
+            writeAttempted.TrySetResult((File.ReadAllText(ProgressPath),
+                Directory.GetFiles(_paths.Launcher, $".{LauncherMaintenance.CompletionFileName}.*.tmp")));
+        });
+
+        try
+        {
+            maintenance.Start();
+            var attempt = await writeAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(original, attempt.Checkpoint);
+            Assert.Empty(attempt.TemporaryFiles);
+        }
+        finally { maintenance.Stop(); }
     }
 
     [Fact]
@@ -168,24 +200,19 @@ public sealed class LauncherMaintenanceTests : IDisposable
         try
         {
             maintenance.RequestPack("In game");
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             Assert.True(await deferred.Task.WaitAsync(TimeSpan.FromSeconds(5)));
             for (var attempt = 0; attempt < 10; attempt++)
             {
-                maintenance.ObserveIdle(true);
+                maintenance.ObserveGameState();
                 await Task.Delay(15);
             }
             Assert.Equal(1, Volatile.Read(ref launches));
             Assert.True(File.Exists(ProgressPath));
 
             Volatile.Write(ref playing, 0);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (!completed.Task.IsCompleted)
-            {
-                maintenance.ObserveIdle(true);
-                await Task.Delay(15, timeout.Token);
-            }
-            Assert.True(await completed.Task.WaitAsync(timeout.Token));
+            maintenance.ObserveGameState();
+            Assert.True(await completed.Task.WaitAsync(TimeSpan.FromSeconds(5)));
             await WaitUntilAsync(() => !File.Exists(ProgressPath));
             Assert.Equal(2, Volatile.Read(ref launches));
         }
@@ -214,7 +241,7 @@ public sealed class LauncherMaintenanceTests : IDisposable
 
         try
         {
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             var status = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal([0, 50, 99, 100], status.Values);
             Assert.False(status.CheckpointExists);
@@ -252,20 +279,15 @@ public sealed class LauncherMaintenanceTests : IDisposable
 
         try
         {
-            maintenance.ObserveIdle(true);
+            maintenance.Start();
             var partialReports = await deferred.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal([0, 33, 66], partialReports);
             Assert.True(File.Exists(ProgressPath));
             Assert.False(finished.Task.IsCompleted);
 
             Volatile.Write(ref playing, 0);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (!finished.Task.IsCompleted)
-            {
-                maintenance.ObserveIdle(true);
-                await Task.Delay(15, timeout.Token);
-            }
-            var finalReports = await finished.Task.WaitAsync(timeout.Token);
+            maintenance.ObserveGameState();
+            var finalReports = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal([0, 33, 66, 99, 100], finalReports);
             Assert.False(File.Exists(ProgressPath));
         }
@@ -308,7 +330,7 @@ public sealed class LauncherMaintenanceTests : IDisposable
 
     private LauncherMaintenance Create(Action<LauncherMaintenanceRun> sweep, Func<bool>? gameIsRunning = null,
         Func<string, bool>? isPackInUse = null, Action<int>? reportProgress = null) =>
-        new(_paths, new Logger(_paths.LogFile), () => false, sweep, gameIsRunning, isPackInUse, reportProgress);
+        new(_paths, new Logger(_paths.LogFile), sweep, gameIsRunning, isPackInUse, reportProgress);
 
     private static async Task WaitUntilAsync(Func<bool> test)
     {

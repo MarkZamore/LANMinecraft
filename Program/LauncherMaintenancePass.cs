@@ -6,9 +6,10 @@ internal static class LauncherMaintenancePass
 {
     private const string SharedRuntimeStep = "shared-runtime";
     private const string JavaRuntimeStep = "java-runtime";
+    private sealed class WorkDeferredException : OperationCanceledException { }
 
     internal static void Run(AppPaths paths, Logger logger, PortablePackSyncService sync,
-        LauncherMaintenanceRun run)
+        LauncherMaintenanceRun run, Func<bool>? updating = null)
     {
         var removed = 0;
         var token = run.Token;
@@ -53,13 +54,15 @@ internal static class LauncherMaintenancePass
                 run.RunStep(key, () =>
                 {
                     removed += ManagedPackCleanup.Run(paths, sync, pack, CheckPack, token, out var managed,
-                        run.Cursor(key), position => run.SaveCursor(key, position));
+                        run.Cursor(key), position => run.SaveCursor(key, position), () => !run.IsPackInUse(pack));
                     if (managed && MaintenancePath.TryRead(paths, paths.CombineUnderInstances(pack), out var instance) &&
                         instance.HasFlag(FileAttributes.Directory))
                         LogCleanupService.RetainRecentSessionDiagnostics(paths.CombineUnderInstances(pack), () => CheckPack(token));
+                    CheckPack(token);
                 });
                 run.CompletePack(pack);
             }
+            catch (WorkDeferredException) { run.DeferPack(pack); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or
                                        System.Text.Json.JsonException or ArgumentException or InvalidOperationException or NotSupportedException)
             {
@@ -70,7 +73,7 @@ internal static class LauncherMaintenancePass
             void CheckPack(CancellationToken caller)
             {
                 run.Checkpoint(caller);
-                if (run.IsPackInUse(pack)) throw new OperationCanceledException(token);
+                if (run.IsPackInUse(pack)) throw new WorkDeferredException();
             }
         }
 
@@ -78,31 +81,42 @@ internal static class LauncherMaintenancePass
         {
             var key = ServiceStep(step);
             var safeDuringGame = LauncherStorageCleanup.CanRunDuringGame(step);
-            if (safeDuringGame) run.RunStep(key, Sweep);
-            else WithoutGame(key, Sweep);
+            WhenAvailable(key, IsAvailable, Sweep);
+
+            bool IsAvailable() => (safeDuringGame || !run.GameIsRunning) &&
+                (step != LauncherStorageCleanupStep.UpdateTransfers || updating?.Invoke() != true);
 
             void Sweep()
             {
                 var completedEntries = 0;
-                LauncherStorageCleanup.RunStep(paths, logger, step, safeDuringGame ? Check : CheckWithoutGame, IsManagedPack,
+                LauncherStorageCleanup.RunStep(paths, logger, step, CheckStep, IsManagedPack,
                     run.Cursor(key), position =>
                     {
                         if (++completedEntries % 64 == 0) run.SaveCursor(key, position);
                     });
             }
+
+            void CheckStep()
+            {
+                Check();
+                if (!IsAvailable()) throw new WorkDeferredException();
+            }
         }
 
-        void WithoutGame(string key, Action work)
+        void WithoutGame(string key, Action work) => WhenAvailable(key, () => !run.GameIsRunning, work);
+
+        void WhenAvailable(string key, Func<bool> available, Action work)
         {
-            if (run.GameIsRunning) run.DeferStep(key);
-            else run.RunStep(key, work);
+            if (!available()) { run.DeferStep(key); return; }
+            try { run.RunStep(key, work); }
+            catch (WorkDeferredException) { run.DeferStep(key); }
         }
 
         void Check() => run.Checkpoint(token);
         void CheckWithoutGame()
         {
             Check();
-            if (run.GameIsRunning) throw new OperationCanceledException(token);
+            if (run.GameIsRunning) throw new WorkDeferredException();
         }
         bool IsManagedPack(string pack)
         {

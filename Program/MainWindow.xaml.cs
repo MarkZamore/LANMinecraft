@@ -111,7 +111,7 @@ public partial class MainWindow : Window
     private ChangelogPager? _changelogPager;
     private readonly ObservableCollection<ChangelogEntryViewModel> _changelogShown = [];
     private bool _startupComplete;
-    private bool _storageMaintenanceReady;
+    private bool _removingPackFiles;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
     private bool _playRequested;
@@ -133,6 +133,7 @@ public partial class MainWindow : Window
     {
         Icon = LauncherWindowIcon.Image;
         InitializeComponent();
+        InitializeMaintenanceStatus();
         ToolTipService.SetShowOnDisabled(PlayButton, true);
         SmoothScrollingController.Attach(BodyScroll);
         SmoothScrollingController.Attach(ChangelogScroll);
@@ -151,9 +152,6 @@ public partial class MainWindow : Window
         LibraryView.MembershipRequested += ChangeLibraryMembership;
         LibraryView.ModPageRequested += OpenModPage;
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
-        PreviewMouseDown += (_, _) => _maintenance?.Interrupt();
-        PreviewMouseWheel += (_, _) => _maintenance?.Interrupt();
-        PreviewKeyDown += (_, _) => _maintenance?.Interrupt();
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
@@ -167,7 +165,6 @@ public partial class MainWindow : Window
             // instead of waiting for the next launch to notice.
             RefreshControlsPresetStatus();
             RefreshUi();
-            _maintenance?.ObserveIdle(CanRunStorageMaintenance());
             if (!_shutdownStarted && _steamClient is { } steam && _steamConnectionTask.IsCompleted &&
                 SteamRecoveryPolicy.ShouldConnect(steam.Status, IsIdentityBound))
             {
@@ -207,11 +204,9 @@ public partial class MainWindow : Window
             var log = _logger;
             var packSync = _packSync;
             _maintenance = new LauncherMaintenance(paths, log,
-                () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _updateBusy) ||
-                    Volatile.Read(ref _busy) || Volatile.Read(ref _bugReportSending) ||
-                    _transfer?.IsOperationActive == true || _minecraft?.IsClientPreparing == true,
-                run => LauncherMaintenancePass.Run(paths, log, packSync, run),
-                gameIsRunning: () => _minecraft?.IsClientRunning == true,
+                run => LauncherMaintenancePass.Run(paths, log, packSync, run, () => Volatile.Read(ref _updateBusy)),
+                gameIsRunning: () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _removingPackFiles) ||
+                    _minecraft is { IsClientPreparing: true } or { IsClientRunning: true },
                 isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true,
                 reportProgress: UpdateMaintenanceProgress);
             _worldMetadata = new WorldMetadataService();
@@ -334,13 +329,12 @@ public partial class MainWindow : Window
             RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
             _uiTimer.Start();
+            _maintenance.Start();
             StartupTrace.Mark("интерфейс");
             _logger.Info("Minecraft portable launcher started.");
             _startupFinished = true;
             ReportStartupTrace();
             await RefreshPackHashAsync(_lifetimeCts.Token);
-            _storageMaintenanceReady = true;
-            _maintenance.ObserveIdle(CanRunStorageMaintenance());
             await StartNetworkingAsync();
             _startupComplete = true;
         }
@@ -378,6 +372,7 @@ public partial class MainWindow : Window
         if (_shutdownStarted) return;
         var canInstallUpdate = !GameNeedsLauncher;
         _shutdownStarted = true;
+        StopMaintenanceStatus();
         _maintenance?.Stop();
         _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
@@ -757,7 +752,6 @@ public partial class MainWindow : Window
         if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient) return;
 
         _bugReportSending = true;
-        _maintenance?.Interrupt();
         // The button goes down for the length of the send, the way it comes back
         // up in the finally below: one report at a time, and a second press
         // while the first is in flight is a press that does nothing.
@@ -1175,15 +1169,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UpdateMaintenanceProgress(int percent) => PostToUi(() =>
-    {
-        if (!_shutdownStarted) FooterMotto.Text = FormatMaintenanceStatus(percent);
-    });
-
-    internal static string FormatMaintenanceStatus(int percent) => percent == 100
-        ? "Лучше TLauncher (Уборка завершена)"
-        : $"Лучше TLauncher (Уборка {percent}%)";
-
     /// <summary>
     /// Reconciles the window with the friends Steam currently reports. The VPN
     /// era merged one announcement at a time; presence arrives as a whole list,
@@ -1284,6 +1269,7 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientRunningChanged(bool isRunning)
     {
+        _maintenance?.ObserveGameState();
         PostToUi(() =>
         {
             _minecraftRunning = isRunning;
@@ -1344,6 +1330,7 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientPreparingChanged(bool isPreparing)
     {
+        _maintenance?.ObserveGameState();
         PostToUi(() =>
         {
             _minecraftPreparing = isPreparing;
@@ -1355,8 +1342,10 @@ public partial class MainWindow : Window
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
+        using var packUse = BuildComboBox.SelectedItem is ClientBuildViewModel selected
+            ? _maintenance?.ProtectPack(selected.RelativePath) : null;
         _playRequested = true;
-        _maintenance?.Interrupt();
+        _maintenance?.ObserveGameState();
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1460,6 +1449,7 @@ public partial class MainWindow : Window
         finally
         {
             _playRequested = false;
+            _maintenance?.ObserveGameState();
             _minecraftPreparing = _minecraft?.IsClientPreparing == true;
             RefreshUi();
             RestartWhenGameEnds();
@@ -1513,7 +1503,6 @@ public partial class MainWindow : Window
             return Task.CompletedTask;
         var pack = _settings.ClientRelativePath;
         if (!PackCatalogService.ValidFolder(pack)) return Task.CompletedTask;
-        _maintenance?.Interrupt();
         var previous = _launcherDataByPack.GetValueOrDefault(pack, Task.CompletedTask);
         _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
         _launcherDataByPack[pack] = _launcherDataRefresh;
@@ -1527,6 +1516,7 @@ public partial class MainWindow : Window
             await previous;
             if (_catalogStartup is not null) await _catalogStartup;
             if (_packSync is null || !CanRefreshLauncherDataFor(pack)) return;
+            using var packUse = _maintenance?.ProtectPack(pack);
             if (_catalog is { } catalog) await catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token);
             if (!CanRefreshLauncherDataFor(pack)) return;
             if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token), _lifetimeCts.Token) &&
@@ -1635,7 +1625,6 @@ public partial class MainWindow : Window
     private void RemoveBuild(string relativePath, string name, bool installed)
     {
         if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
-        _maintenance?.Interrupt();
         var build = new ClientBuildViewModel { RelativePath = relativePath, Name = name, FullPath = _paths.CombineUnderPacks(relativePath), IsInstalled = installed };
         if (!installed)
         {
@@ -1668,31 +1657,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        var removal = new BuildRemovalService(_paths, _packHash, _logger);
-        BuildRemovalService.RemovalPlan plan;
-        try
+        using var packUse = _maintenance?.ProtectPack(build.RelativePath);
+        _removingPackFiles = true;
+        _maintenance?.ObserveGameState();
+        BuildRemovalService.RemovalOutcome? outcome;
+        try { outcome = RemoveInstalledPackFiles(build.RelativePath, answer); }
+        finally
         {
-            plan = removal.Plan(build.RelativePath, worldsToo: answer == BuildRemovalAnswer.WithWorlds);
+            _removingPackFiles = false;
+            _maintenance?.ObserveGameState();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or InvalidOperationException or ArgumentException)
-        {
-            RequireLogger().Warn($"Build removal could not be planned for {build.RelativePath}: {ex.Message}");
-            SetState("Не удалось прочитать, из чего состоит сборка");
-            return;
-        }
-
-        BuildRemovalService.RemovalOutcome outcome;
-        try
-        {
-            outcome = removal.Remove(plan);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            RequireLogger().Warn($"Build removal could not finish for {build.RelativePath}: {ex.Message}");
-            SetState("Не удалось удалить сборку. Если лаунчер готовит игру, дождитесь завершения подготовки.");
-            return;
-        }
+        if (outcome is not { } removed) return;
         PackMembership.Remove(_settings, build.RelativePath);
         BuildRemovalService.Forget(_settings, build.RelativePath);
         _settingsService.Save(_settings);
@@ -1700,14 +1675,42 @@ public partial class MainWindow : Window
         RefreshBuilds();
         RefreshControlsPresetStatus();
         RefreshUi();
-        SetState(outcome.Complete
+        SetState(removed.Complete
             ? $"Сборка удалена: {build.Name}" +
-              (outcome.Worlds > 0 ? $", {BuildRemovalConfirmationDialog.Worlds(outcome.Worlds)}" : "") +
-              (outcome.Java.Count > 0 ? $", Java {string.Join(", ", outcome.Java)}" : "")
+              (removed.Worlds > 0 ? $", {BuildRemovalConfirmationDialog.Worlds(removed.Worlds)}" : "") +
+              (removed.Java.Count > 0 ? $", Java {string.Join(", ", removed.Java)}" : "")
             // A part that would not go is almost always the game or an
             // explorer window holding a file open, and saying which folder
             // stayed is the difference between closing it and reinstalling.
-            : $"Сборка удалена не полностью - осталось: {string.Join(", ", outcome.Kept)}");
+            : $"Сборка удалена не полностью - осталось: {string.Join(", ", removed.Kept)}");
+    }
+
+    private BuildRemovalService.RemovalOutcome? RemoveInstalledPackFiles(string relativePath, BuildRemovalAnswer answer)
+    {
+        var removal = new BuildRemovalService(RequirePaths(), _packHash, _logger);
+        BuildRemovalService.RemovalPlan plan;
+        try
+        {
+            plan = removal.Plan(relativePath, worldsToo: answer == BuildRemovalAnswer.WithWorlds);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidOperationException or ArgumentException)
+        {
+            RequireLogger().Warn($"Build removal could not be planned for {relativePath}: {ex.Message}");
+            SetState("Не удалось прочитать, из чего состоит сборка");
+            return null;
+        }
+
+        try
+        {
+            return removal.Remove(plan);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            RequireLogger().Warn($"Build removal could not finish for {relativePath}: {ex.Message}");
+            SetState("Не удалось удалить сборку. Если лаунчер готовит игру, дождитесь завершения подготовки.");
+            return null;
+        }
     }
 
     internal static bool TryRemoveBuildFromList(AppSettings settings, string relativePath, BuildRemovalAnswer answer)
@@ -2399,7 +2402,6 @@ public partial class MainWindow : Window
     {
         var activeChanged = _transferActive != progress.IsActive;
         _transferActive = progress.IsActive;
-        if (progress.IsActive && activeChanged) _maintenance?.Interrupt();
         SetProgressActivity(TransferProgressBar, progress.IsActive);
         if (!progress.IsActive)
         {
@@ -2685,7 +2687,6 @@ public partial class MainWindow : Window
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _updateBusy = true;
-                    _maintenance?.Interrupt();
                     _updateRate.Reset();
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 0;
@@ -2770,6 +2771,7 @@ public partial class MainWindow : Window
                 {
                     if (!retryingCheck) _updateDotsTimer?.Stop();
                     _updateBusy = false;
+                    _maintenance?.ResumeDeferredWork();
                     RefreshUi();
                     RestartWhenGameEnds();
                 });
@@ -2799,7 +2801,6 @@ public partial class MainWindow : Window
         if (_updateBusy || _restartAfterUpdateOnExit || _preparedUpdate is null) return;
 
         _updateBusy = true;
-        _maintenance?.Interrupt();
         RefreshUi();
         try
         {
@@ -2830,6 +2831,7 @@ public partial class MainWindow : Window
         finally
         {
             _updateBusy = false;
+            _maintenance?.ResumeDeferredWork();
             RefreshUi();
             RestartWhenGameEnds();
         }
@@ -2839,12 +2841,6 @@ public partial class MainWindow : Window
     // service takes over. Dispatcher callbacks only reflect UI state.
     private bool GameNeedsLauncher =>
         _playRequested || _minecraft is { IsClientPreparing: true } or { IsClientRunning: true };
-
-    private bool CanRunStorageMaintenance() => _framePainted && _storageMaintenanceReady && !_shutdownStarted &&
-        !_busy && !_playRequested && !_minecraftPreparing && _minecraft?.IsClientPreparing != true && !_transferActive &&
-        _transfer?.IsOperationActive != true && !_updateBusy && !_bugReportSending &&
-        _catalogStartup?.IsCompletedSuccessfully == true &&
-        _selectedLaunchPreparation.IsCompleted && _launcherDataByPack.Values.All(task => task.IsCompleted);
 
     private void ShowPreparedUpdate(int release)
     {
@@ -3091,7 +3087,6 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         _busy = true;
-        _maintenance?.Interrupt();
         RefreshUi();
         try
         {
@@ -3305,7 +3300,6 @@ public partial class MainWindow : Window
             return _selectedLaunchPreparation;
         _selectedLaunchPath = path;
         _selectedLaunchError = null;
-        _maintenance?.Interrupt();
         var generation = ++_selectedLaunchGeneration;
         RefreshUi();
         return _selectedLaunchPreparation = PrepareSelectedLaunchCoreAsync(catalog, path, generation);
@@ -3313,6 +3307,7 @@ public partial class MainWindow : Window
 
     private async Task PrepareSelectedLaunchCoreAsync(PackCatalogService catalog, string path, int generation)
     {
+        using var packUse = _maintenance?.ProtectPack(path);
         var token = _catalogLifetimeCts.Token;
         try
         {

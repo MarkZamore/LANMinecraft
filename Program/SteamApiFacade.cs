@@ -1,4 +1,6 @@
-﻿using Steamworks;
+﻿using System.ComponentModel;
+using System.Diagnostics;
+using Steamworks;
 
 namespace Minecraft;
 
@@ -19,6 +21,8 @@ public sealed record SteamFriendInfo(
 /// </summary>
 public interface ISteamApiFacade
 {
+    /// <summary>Checks for a local client without loading Steam's native libraries.</summary>
+    bool HasLocalClientProcess() => true;
     bool Initialize(out string failureReason);
     void Shutdown();
     void RunCallbacks();
@@ -81,6 +85,37 @@ public sealed class SteamworksApiFacade : ISteamApiFacade
     private Callback<SteamServerConnectFailure_t>? _serverConnectFailure;
 
     public event Action<SteamServerConnectionChange>? ServerConnectionChanged;
+
+    public bool HasLocalClientProcess()
+    {
+        Process[] processes = [];
+        try
+        {
+            using var current = Process.GetCurrentProcess();
+            var sessionId = current.SessionId;
+            processes = Process.GetProcessesByName("steam");
+            foreach (var process in processes)
+            {
+                try
+                {
+                    if (process.SessionId == sessionId && !process.HasExited) return true;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+                {
+                    // The process can exit before we open it.
+                }
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
+        finally
+        {
+            foreach (var process in processes) process.Dispose();
+        }
+    }
 
     public bool Initialize(out string failureReason)
     {

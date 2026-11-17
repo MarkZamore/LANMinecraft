@@ -777,18 +777,39 @@ public sealed class WindowCanvasTests
             var window = LoadWindow();
             var footer = Element<Grid>(window, "FooterGrid");
             var motto = Element<TextBlock>(window, "FooterMotto");
+            var progress = Element<StackPanel>(window, "MaintenanceProgressFooter");
+            var label = Element<TextBlock>(window, "MaintenanceLabelText");
+            var dots = Element<TextBlock>(window, "MaintenanceDotsText");
+            var percentage = Element<TextBlock>(window, "MaintenancePercentageText");
+            var completed = Element<TextBlock>(window, "MaintenanceCompletedText");
+            var actions = Element<Grid>(window, "FooterActions");
             Assert.Equal("Лучше TLauncher", motto.Text);
-            foreach (var (percent, expected) in new[] { (16, "Уборка 16%"), (100, "Уборка завершена") })
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+            Assert.Equal(Visibility.Collapsed, completed.Visibility);
+            Assert.Equal("(Уборка", label.Text);
+            Assert.Equal(".", dots.Text);
+            Assert.Equal("(Уборка завершена)", completed.Text);
+
+            progress.Visibility = Visibility.Visible;
+            percentage.Text = "74%)";
+            var client = new Size(804, 521);
+            LayoutWindow(window, client);
+            var percentageLeft = Bounds(percentage, footer).Left;
+            Assert.InRange(Bounds(label, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);
+            foreach (var frame in new[] { ".", "..", "...", "." })
             {
-                motto.Text = MainWindow.FormatMaintenanceStatus(percent);
-                Assert.Equal($"Лучше TLauncher ({expected})", motto.Text);
-                LayoutWindow(window, new Size(804, 521));
-                var visible = Bounds(motto, footer);
-                Assert.True(visible.Right <= Bounds(Element<Grid>(window, "FooterActions"), footer).Left + 0.5);
-                var full = new TextBlock { Text = motto.Text, FontFamily = motto.FontFamily, FontSize = motto.FontSize };
-                full.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-                Assert.True(motto.ActualWidth >= full.DesiredSize.Width - 0.5);
+                dots.Text = frame;
+                LayoutWindow(window, client);
+                Assert.Equal(percentageLeft, Bounds(percentage, footer).Left, 3);
+                Assert.InRange(percentageLeft - Bounds(dots, footer).Right, 7.5, 8.5);
+                Assert.True(Bounds(percentage, footer).Right <= Bounds(actions, footer).Left + 0.5);
             }
+
+            progress.Visibility = Visibility.Collapsed;
+            completed.Visibility = Visibility.Visible;
+            LayoutWindow(window, client);
+            Assert.InRange(Bounds(completed, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);
+            Assert.True(Bounds(completed, footer).Right <= Bounds(actions, footer).Left + 0.5);
             return true;
         });
     }

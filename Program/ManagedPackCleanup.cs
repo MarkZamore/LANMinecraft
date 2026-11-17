@@ -58,7 +58,7 @@ internal static class ManagedPackCleanup
 
     internal static int Run(AppPaths paths, PortablePackSyncService sync, string packRelativePath,
         Action<CancellationToken> checkpoint, CancellationToken token, out bool managed,
-        string? resumeCursor = null, Action<string>? saveCursor = null)
+        string? resumeCursor = null, Action<string>? saveCursor = null, Func<bool>? canMutate = null)
     {
         var proof = sync.ReadCleanupProof(paths, packRelativePath, checkpoint, token);
         managed = false;
@@ -113,7 +113,7 @@ internal static class ManagedPackCleanup
                         // Directory deletion is intentionally non-recursive. It succeeds only after
                         // every removable child is gone and any protected subtree still keeps it.
                         if (MaintenancePath.TryDelete(paths, entry, directoryEntry,
-                            () => !token.IsCancellationRequested && proof.IsCurrent(paths))) removed++;
+                            () => !token.IsCancellationRequested && proof.IsCurrent(paths) && canMutate?.Invoke() != false)) removed++;
                     }
                     if (!atResumeBoundary && saveCursor is not null && ++visitedSinceSave >= EntriesPerCheckpoint)
                     {
