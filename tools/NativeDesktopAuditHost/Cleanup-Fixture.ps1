@@ -5,10 +5,13 @@ $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $boundary = [IO.Path]::GetFullPath((Join-Path $repository 'artifacts/agent-runs'))
 $run = [IO.Path]::GetFullPath($RunDirectory).TrimEnd('\','/')
+$name = [IO.Path]::GetFileName($run)
+$legacy = $name -match '^native-desktop-host-tests-[0-9a-f]{32}$'
 if ([IO.Path]::GetDirectoryName($run) -cne $boundary -or
-    [IO.Path]::GetFileName($run) -notmatch '^native-desktop-host-tests-[0-9a-f]{32}$') { throw 'Not an isolated native fixture.' }
+    (!$legacy -and $name -notmatch '^n-[0-9a-f]{8}$')) { throw 'Not an isolated native fixture.' }
 $record = Get-Content -LiteralPath (Join-Path $run 'RUN.json') -Raw | ConvertFrom-Json
 if ($record.owner -cne 'NativePortableHostTests') { throw 'Unexpected fixture owner.' }
+if (!$legacy -and ($record.fixtureId -cnotmatch '^[0-9a-f]{32}$' -or $name -cne ('n-'+$record.fixtureId.Substring(0,8)))) { throw 'Native fixture identity mismatch.' }
 $ancestor = [IO.DirectoryInfo]::new($run)
 while ($ancestor -and $ancestor.FullName.Length -ge $repository.Length) {
     if ($ancestor.Exists -and ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Fixture ancestor is a reparse entry.' }
@@ -33,11 +36,13 @@ while ($pending.Count) {
     }
 }
 $actions = [Collections.Generic.List[string]]::new()
-foreach ($name in @('payload','native-build','native-update-build','installation Я 日本語','inherited-temp')) {
+$directories = if ($legacy) { @('payload','native-build','native-update-build','installation Я 日本語','inherited-temp') }
+    else { @('payload','native-build','native-update-build','Minecraft','inherited-temp','held-minecraft','junction-target','unrelated cwd') }
+foreach ($name in $directories) {
     $target = [IO.Path]::GetFullPath((Join-Path $run $name))
     if (!$target.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'Escaped cleanup target.' }
     if (!(Test-Path -LiteralPath $target -PathType Container)) { continue }
-    foreach ($relative in @('host-build.json','native-build.log','Minecraft/Launcher/bootstrap.log')) {
+    foreach ($relative in @('host-build.json','native-build.log','Minecraft/Launcher/bootstrap.log','Launcher/bootstrap.log')) {
         $evidence = Join-Path $target $relative
         if (Test-Path -LiteralPath $evidence -PathType Leaf) {
             Copy-Item -LiteralPath $evidence -Destination (Join-Path $run ($name+'-'+[IO.Path]::GetFileName($evidence))) -Force
@@ -45,6 +50,15 @@ foreach ($name in @('payload','native-build','native-update-build','installation
     }
     Remove-Item -LiteralPath $target -Recurse -Force
     $actions.Add("Removed owned recoverable directory $name.")
+}
+if (!$legacy) {
+    foreach ($file in [IO.Directory]::EnumerateFiles($run)) {
+        $leaf = [IO.Path]::GetFileName($file)
+        if ($leaf -cnotin @('LANMinecraft.exe','updater-probe.exe','Лаунчер с пробелом.exe','invalid-component-descriptor.exe','outside-copy.dll') -and
+            $leaf -cnotmatch '^malformed-[0-9a-f]{32}\.exe$') { continue }
+        Remove-Item -LiteralPath $file -Force
+        $actions.Add("Removed owned generated file $leaf.")
+    }
 }
 [IO.File]::WriteAllText((Join-Path $run 'cleanup.json'),($actions | ConvertTo-Json)+"`n",[Text.UTF8Encoding]::new($false))
 Write-Output 'Native fixture bulk cleanup completed.'

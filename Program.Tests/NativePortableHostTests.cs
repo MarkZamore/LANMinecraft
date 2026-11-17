@@ -676,20 +676,34 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
     private int run;
     private readonly List<(int Id, DateTime StartUtc, string Executable)> ownedProcesses = [];
     private readonly DateTime createdUtc = DateTime.UtcNow;
+    private readonly string fixtureId;
 
     public NativePortableHostFixture()
     {
-        Root = Path.Combine(Repository, "artifacts", "agent-runs", "native-desktop-host-tests-" + Guid.NewGuid().ToString("N"));
-        Installation = Path.Combine(Root, "installation Я 日本語");
-        for (var ancestor = new DirectoryInfo(Root); ancestor is not null && ancestor.FullName.Length >= Repository.Length; ancestor = ancestor.Parent)
+        var boundary = Path.Combine(Repository, "artifacts", "agent-runs");
+        for (var ancestor = new DirectoryInfo(boundary); ancestor is not null && ancestor.FullName.Length >= Repository.Length; ancestor = ancestor.Parent)
             if (ancestor.Exists) Assert.False((ancestor.Attributes & FileAttributes.ReparsePoint) != 0);
-        Directory.CreateDirectory(Installation);
-        File.WriteAllText(Path.Combine(Root, "RUN.json"), JsonSerializer.Serialize(new
+        Directory.CreateDirectory(boundary);
+        string? selectedRoot = null;
+        string? selectedId = null;
+        for (var attempt = 0; attempt < 16; attempt++)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            var candidate = Path.Combine(boundary, "n-" + id[..8]);
+            if (CreateFixtureDirectory(candidate, IntPtr.Zero)) { selectedRoot = candidate; selectedId = id; break; }
+            var error = Marshal.GetLastWin32Error();
+            if (error is not (80 or 183)) throw new Win32Exception(error);
+        }
+        Root = selectedRoot ?? throw new IOException("Could not allocate a fresh isolated native fixture.");
+        fixtureId = selectedId!;
+        Installation = Root;
+        using var marker = new FileStream(Path.Combine(Root, "RUN.json"), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(marker, new
         {
             owner = "NativePortableHostTests", purpose = "Isolated native external-desktop regression fixture",
-            createdUtc, expectedBytes = 1024L * 1024 * 1024, deleteByUtc = createdUtc.AddHours(4),
+            fixtureId, createdUtc, expectedBytes = 1024L * 1024 * 1024, deleteByUtc = createdUtc.AddHours(4),
             requiredResults = new[] { "run-*.json", "native-build-host-build.json", "cleanup.json", "component-requests.json" }
-        }));
+        });
     }
 
     public async Task InitializeAsync()
@@ -824,8 +838,10 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         // including failed or externally retained evidence, are never visited.
         var boundary = Path.GetFullPath(Path.Combine(Repository, "artifacts", "agent-runs"));
         Assert.Equal(boundary, Path.GetDirectoryName(Path.GetFullPath(Root)), ignoreCase: true);
-        Assert.StartsWith("native-desktop-host-tests-", Path.GetFileName(Root));
-        Assert.True(Guid.TryParseExact(Path.GetFileName(Root)["native-desktop-host-tests-".Length..], "N", out _));
+        Assert.True(Guid.TryParseExact(fixtureId, "N", out _));
+        Assert.Equal("n-" + fixtureId[..8], Path.GetFileName(Root));
+        using (var marker = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Root, "RUN.json"))))
+            Assert.Equal(fixtureId, marker.RootElement.GetProperty("fixtureId").GetString());
         Assert.False((File.GetAttributes(Root) & FileAttributes.ReparsePoint) != 0);
         var actions = new List<string>();
         try
@@ -862,7 +878,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
                     new { request.Kind, request.Range, request.Attempt, request.Status, request.BytesSent })));
             }
         }
-        foreach (var name in new[] { "native-build", "native-update-build", "payload", Path.GetFileName(Installation), "inherited-temp" })
+        foreach (var name in new[] { "native-build", "native-update-build", "payload", "Minecraft", "inherited-temp", "held-minecraft", "junction-target", "unrelated cwd" })
         {
             var directory = Path.Combine(Root, name);
             AssertInsideRoot(directory);
@@ -874,7 +890,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
                     actions.Add("Kept " + name + " because a reparse entry is present.");
                     continue;
                 }
-                foreach (var relative in new[] { "host-build.json", "native-build.log", Path.Combine("Minecraft", "Launcher", "bootstrap.log") })
+                foreach (var relative in new[] { "host-build.json", "native-build.log", Path.Combine("Launcher", "bootstrap.log") })
                 {
                     var evidence = Path.Combine(directory, relative);
                     if (File.Exists(evidence)) File.Copy(evidence, Path.Combine(Root, name + "-" + Path.GetFileName(evidence)), overwrite: true);
@@ -886,6 +902,17 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
             {
                 actions.Add("Kept " + name + ": " + error.GetType().Name + ".");
             }
+        }
+        foreach (var file in Directory.EnumerateFiles(Root))
+        {
+            var name = Path.GetFileName(file);
+            var malformed = name.StartsWith("malformed-", StringComparison.Ordinal) && name.EndsWith(".exe", StringComparison.Ordinal) &&
+                Guid.TryParseExact(name["malformed-".Length..^4], "N", out _);
+            if (!malformed && name is not ("LANMinecraft.exe" or "updater-probe.exe" or "Лаунчер с пробелом.exe" or "invalid-component-descriptor.exe" or "outside-copy.dll")) continue;
+            AssertInsideRoot(file);
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) { actions.Add("Kept linked fixture file " + name + "."); continue; }
+            try { File.Delete(file); actions.Add("Removed owned generated file " + name + "."); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { actions.Add("Kept " + name + ": " + error.GetType().Name + "."); }
         }
         File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
         Packet = [];
@@ -1088,6 +1115,10 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
 
     [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathName(string longPath, [Out] char[] shortPath, uint size);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateFixtureDirectory(string path, IntPtr securityAttributes);
 
     private static string NormalizePath(string path)
     {

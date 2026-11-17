@@ -213,7 +213,7 @@ struct PreparedDependency
     Handle lease;
     std::vector<Handle> files;
     std::wstring penEntry;
-    std::wstring longestEntry;
+    std::wstring longestNativeEntry;
 };
 
 std::wstring DesktopPenEntry(const Packet& packet)
@@ -232,11 +232,93 @@ std::wstring DesktopPenEntry(const Packet& packet)
     return found;
 }
 
-std::wstring LongestRuntimeEntry(const Packet& packet)
+void ReadPeBytes(HANDLE file, std::uint64_t size, std::uint64_t offset, void* output, DWORD count)
 {
+    if (offset > size || count > size - offset) throw Failure(L"Invalid runtime PE bounds");
+    LARGE_INTEGER position{}; position.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(file, position, nullptr, FILE_BEGIN)) Fail(L"Seek verified runtime PE");
+    DWORD read = 0;
+    if (!ReadFile(file, output, count, &read, nullptr)) Fail(L"Read verified runtime PE");
+    if (read != count) throw Failure(L"Truncated verified runtime PE");
+}
+
+bool IsNativeRuntimePe(HANDLE file, std::uint64_t size)
+{
+    if (size < sizeof(WORD)) return false;
+    WORD magic = 0; ReadPeBytes(file, size, 0, &magic, sizeof(magic));
+    if (magic != IMAGE_DOS_SIGNATURE) return false;
+    IMAGE_DOS_HEADER dos{}; ReadPeBytes(file, size, 0, &dos, sizeof(dos));
+    if (dos.e_lfanew < static_cast<LONG>(sizeof(dos))) throw Failure(L"Invalid runtime PE header offset");
+    const auto nt = static_cast<std::uint64_t>(dos.e_lfanew);
+    DWORD signature = 0; ReadPeBytes(file, size, nt, &signature, sizeof(signature));
+    if (signature != IMAGE_NT_SIGNATURE) throw Failure(L"Invalid runtime PE signature");
+    IMAGE_FILE_HEADER coff{}; ReadPeBytes(file, size, nt + sizeof(signature), &coff, sizeof(coff));
+    if (coff.NumberOfSections == 0 || coff.NumberOfSections > 96) throw Failure(L"Invalid runtime PE section count");
+    const auto optionalOffset = nt + sizeof(signature) + sizeof(coff);
+    if (coff.SizeOfOptionalHeader > size || optionalOffset > size - coff.SizeOfOptionalHeader)
+        throw Failure(L"Invalid runtime PE optional header bounds");
+    ReadPeBytes(file, size, optionalOffset, &magic, sizeof(magic));
+    const std::size_t directoryOffset = magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? 112 : magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC ? 96 : 0;
+    if (directoryOffset == 0 || coff.SizeOfOptionalHeader < directoryOffset) throw Failure(L"Invalid runtime PE optional header");
+    DWORD directoryCount = 0;
+    ReadPeBytes(file, size, optionalOffset + directoryOffset - sizeof(DWORD), &directoryCount, sizeof(directoryCount));
+    if (directoryCount <= IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR) return true;
+    const auto cliOffset = directoryOffset + IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR * sizeof(IMAGE_DATA_DIRECTORY);
+    if (coff.SizeOfOptionalHeader < cliOffset + sizeof(IMAGE_DATA_DIRECTORY)) throw Failure(L"Invalid runtime PE CLR directory");
+    IMAGE_DATA_DIRECTORY cli{}; ReadPeBytes(file, size, optionalOffset + cliOffset, &cli, sizeof(cli));
+    if (cli.VirtualAddress == 0 && cli.Size == 0) return true;
+    if (cli.VirtualAddress == 0 || cli.Size < 72) throw Failure(L"Invalid runtime PE CLR header");
+
+    std::vector<IMAGE_SECTION_HEADER> sections(coff.NumberOfSections);
+    ReadPeBytes(file, size, optionalOffset + coff.SizeOfOptionalHeader, sections.data(),
+        static_cast<DWORD>(sections.size() * sizeof(IMAGE_SECTION_HEADER)));
+    DWORD headersSize = 0;
+    ReadPeBytes(file, size, optionalOffset + 60, &headersSize, sizeof(headersSize));
+    const auto locate = [&](DWORD rva, DWORD count)
+    {
+        std::uint64_t found = 0; bool present = false;
+        if (rva < headersSize && count <= headersSize - rva) { found = rva; present = true; }
+        for (const auto& section : sections)
+        {
+            if (rva < section.VirtualAddress) continue;
+            const auto delta = static_cast<std::uint64_t>(rva) - section.VirtualAddress;
+            if (delta >= std::max(section.Misc.VirtualSize, section.SizeOfRawData)) continue;
+            if (present || delta > section.SizeOfRawData || count > section.SizeOfRawData - delta)
+                throw Failure(L"Ambiguous or truncated runtime PE CLR address");
+            found = static_cast<std::uint64_t>(section.PointerToRawData) + delta; present = true;
+        }
+        if (!present || found > size || count > size - found) throw Failure(L"Invalid runtime PE CLR address");
+        return found;
+    };
+    std::array<DWORD, 18> cor{};
+    ReadPeBytes(file, size, locate(cli.VirtualAddress, sizeof(cor)), cor.data(), sizeof(cor));
+    if (cor[0] < sizeof(cor) || cor[0] > cli.Size) throw Failure(L"Invalid runtime PE CLR header size");
+    constexpr DWORD IlOnly = 0x1, NativeEntryPoint = 0x10;
+    if ((cor[4] & NativeEntryPoint) != 0) return true;
+    if ((cor[4] & IlOnly) != 0) return false;
+    // ReadyToRun has native code but the CLR maps it, unlike a mixed-mode PE
+    // loaded through Win32. Its CLI ManagedNativeHeader begins with RTR\0.
+    if (cor[16] != 0 && cor[17] >= 16)
+    {
+        std::array<DWORD, 4> readyToRun{};
+        ReadPeBytes(file, size, locate(cor[16], cor[17]), readyToRun.data(), sizeof(readyToRun));
+        if (readyToRun[0] == 0x00525452 && (readyToRun[1] & 0xFFFF) != 0) return false;
+    }
+    return true;
+}
+
+std::wstring LongestNativeRuntimeEntry(const Packet& packet, const std::vector<Handle>& files, PreparationProgress& progress)
+{
+    if (files.size() != packet.files.size()) throw Failure(L"Incomplete verified runtime PE inventory");
     std::wstring longest;
-    for (const auto& entry : packet.files)
-        if (entry.path.size() > longest.size()) longest = entry.path;
+    for (std::size_t index = 0; index < packet.files.size(); ++index)
+    {
+        progress.CheckCancelled();
+        const auto& entry = packet.files[index];
+        if (IsNativeRuntimePe(files[index].get(), entry.length) && entry.path.size() > longest.size()) longest = entry.path;
+    }
+    if (longest.empty()) throw Failure(L"The desktop runtime is missing its native PE components");
+    Log(L"Longest verified native runtime path: " + longest);
     return longest;
 }
 
@@ -470,10 +552,11 @@ PreparedDependency PrepareDependency(Directories& directories, const Dependency&
         const auto bytes = ReadBytes(saved.get(), dependency.manifestSize);
         const auto packet = ParsePacket(bytes.data(), bytes.size(), dependency.size, false, false);
         if (packet.entry != dependency.entry) throw Failure(L"Bootstrap dependency entry differs from its pin");
-        if (dependency.kind == 1) { prepared.penEntry = DesktopPenEntry(packet); prepared.longestEntry = LongestRuntimeEntry(packet); }
+        if (dependency.kind == 1) prepared.penEntry = DesktopPenEntry(packet);
         PreparePacketFiles(directories, prepared.root, packet, prepared.files, false, progress);
         if (prepared.files.size() == packet.files.size())
         {
+            if (dependency.kind == 1) prepared.longestNativeEntry = LongestNativeRuntimeEntry(packet, prepared.files, progress);
             prepared.files.push_back(std::move(saved));
             Log(L"Reusing verified bootstrap dependency " + dependency.kindName + L" " + dependency.id);
             return prepared;
@@ -487,7 +570,7 @@ PreparedDependency PrepareDependency(Directories& directories, const Dependency&
     {
         const auto bytes = DownloadPacket(directories, dependency, parent, partial, progress);
         const auto packet = ParsePacket(bytes.data(), bytes.size(), dependency.size, false, true);
-        if (dependency.kind == 1) { prepared.penEntry = DesktopPenEntry(packet); prepared.longestEntry = LongestRuntimeEntry(packet); }
+        if (dependency.kind == 1) prepared.penEntry = DesktopPenEntry(packet);
         if (packet.entry != dependency.entry || dependency.manifestSize > bytes.size() ||
             HashBytes(bytes.data(), static_cast<std::size_t>(dependency.manifestSize)) != dependency.manifestDigest)
             throw Failure(L"Bootstrap dependency manifest differs from its pin");
@@ -495,6 +578,7 @@ PreparedDependency PrepareDependency(Directories& directories, const Dependency&
         if (HeaderSize + tableLength != dependency.manifestSize) throw Failure(L"Invalid bootstrap manifest prefix size");
         progress.CheckCancelled(); progress.Stage(L"Проверяем и подготавливаем файлы");
         PreparePacketFiles(directories, prepared.root, packet, prepared.files, true, progress);
+        if (dependency.kind == 1) prepared.longestNativeEntry = LongestNativeRuntimeEntry(packet, prepared.files, progress);
         auto checkedManifest = PublishCheckedMetadata(directories, parent, manifest.path, bytes.data(), static_cast<std::size_t>(dependency.manifestSize));
         if (!checkedManifest) throw Failure(L"Published bootstrap manifest failed verification");
         prepared.files.push_back(std::move(checkedManifest));
@@ -551,7 +635,7 @@ struct HostingRuntime
 HostingRuntime SelectHostingRuntime(Directories& directories, const PreparedDependency& runtime)
 {
     const auto full = PublicPath(directories.Absolute(runtime.root));
-    if (HostedPath(full, runtime.longestEntry).size() < MAX_PATH) return { full, {} };
+    if (HostedPath(full, runtime.longestNativeEntry).size() < MAX_PATH) return { full, {} };
     const DWORD length = GetShortPathNameW(full.c_str(), nullptr, 0);
     if (length == 0 || length > 32768)
         throw Failure(L"Слишком длинный путь к папке лаунчера. Переместите всю папку лаунчера ближе к корню диска и запустите его снова.", ERROR_FILENAME_EXCED_RANGE);
@@ -560,7 +644,7 @@ HostingRuntime SelectHostingRuntime(Directories& directories, const PreparedDepe
     if (written == 0 || written >= buffer.size())
         throw Failure(L"Слишком длинный путь к папке лаунчера. Подходящее короткое имя недоступно. Переместите всю папку ближе к корню диска и запустите его снова.", ERROR_FILENAME_EXCED_RANGE);
     const std::wstring shortened(buffer.data(), written);
-    if (HostedPath(shortened, runtime.longestEntry).size() >= MAX_PATH)
+    if (HostedPath(shortened, runtime.longestNativeEntry).size() >= MAX_PATH)
         throw Failure(L"Слишком длинный путь к папке лаунчера. Переместите всю папку лаунчера ближе к корню диска и запустите его снова.", ERROR_FILENAME_EXCED_RANGE);
     Handle alias(CreateFileW(LongPath(shortened).c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
         FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
