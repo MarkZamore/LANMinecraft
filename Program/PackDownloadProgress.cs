@@ -49,6 +49,11 @@ internal sealed class PackDownloadProgress
         ArgumentNullException.ThrowIfNull(progress);
         lock (_gate)
         {
+            if (progress.Stage == RuntimePreparationStage.RepairingPackStructure)
+            {
+                _output?.Report(progress);
+                return;
+            }
             // Each scope reports its absolute retained bytes. A discarded
             // partial file can retract credit; a repeated report cannot add it.
             if (!scope.Complete && progress.TotalBytes > 0)

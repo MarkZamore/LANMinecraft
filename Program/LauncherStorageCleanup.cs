@@ -2,6 +2,21 @@ using System.IO;
 
 namespace Minecraft;
 
+internal enum LauncherStorageCleanupStep
+{
+    ServiceRoot,
+    LauncherRoot,
+    PersonalRoot,
+    LauncherArchives,
+    AbandonedPlans,
+    UpdateTransfers,
+    DeprecatedFiles,
+    PrivateRuntimes,
+    PortableExtraction,
+    LaunchArguments,
+    PortableRuntimeCache
+}
+
 internal static class LauncherStorageCleanup
 {
     private static readonly TimeSpan AbandonedAfter = TimeSpan.FromDays(1);
@@ -36,21 +51,57 @@ internal static class LauncherStorageCleanup
 
     internal static int Run(AppPaths paths, Logger? logger, Action checkpoint, Func<string, bool> isManagedPack)
     {
-        var cutoff = DateTime.UtcNow - AbandonedAfter;
-        DeprecatedFileCleanupService.Run(paths, logger, checkpoint, isManagedPack);
-        StructureCleanupService.Run(paths, logger, checkpoint, isManagedPack);
-        var removed = SweepRoot(paths, paths.Service, ServiceEntries, cutoff, checkpoint);
-        removed += SweepRoot(paths, paths.Launcher, LauncherEntries, cutoff, checkpoint);
-        removed += SweepRoot(paths, paths.Personal, PersonalEntries, cutoff, checkpoint, isPersonalRoot: true);
-        removed += PortablePackSyncService.CleanupAbandonedPlans(paths, paths.Launcher, cutoff,
-            _ => checkpoint(), CancellationToken.None);
-        removed += SweepAbandonedUpdateTransfers(paths, cutoff, checkpoint);
-        LogCleanupService.PruneLauncherArchives(paths, checkpoint);
-        LogCleanupService.PrunePortableExtractionCache(paths, checkpoint);
-        JavaLaunchArgumentFile.CleanupStale(paths, checkpoint);
-        PortableRuntimeCache.CleanupIdle(paths, checkpoint);
+        var removed = Enum.GetValues<LauncherStorageCleanupStep>()
+            .Sum(step => RunStep(paths, logger, step, checkpoint, isManagedPack));
         if (removed > 0) logger?.Info($"Launcher storage cleanup removed {removed} entries.");
         return removed;
+    }
+
+    internal static bool CanRunDuringGame(LauncherStorageCleanupStep step) => step is
+        LauncherStorageCleanupStep.ServiceRoot or LauncherStorageCleanupStep.LauncherRoot or
+        LauncherStorageCleanupStep.PersonalRoot or LauncherStorageCleanupStep.LauncherArchives or
+        LauncherStorageCleanupStep.AbandonedPlans;
+
+    internal static int RunStep(AppPaths paths, Logger? logger, LauncherStorageCleanupStep step,
+        Action checkpoint, Func<string, bool> isManagedPack, string? resumeAfter = null, Action<string>? completedEntry = null)
+    {
+        checkpoint();
+        var cutoff = DateTime.UtcNow - AbandonedAfter;
+        switch (step)
+        {
+            case LauncherStorageCleanupStep.ServiceRoot:
+                return SweepRoot(paths, paths.Service, ServiceEntries, cutoff, checkpoint, resumeAfter, completedEntry);
+            case LauncherStorageCleanupStep.LauncherRoot:
+                return SweepRoot(paths, paths.Launcher, LauncherEntries, cutoff, checkpoint, resumeAfter, completedEntry);
+            case LauncherStorageCleanupStep.PersonalRoot:
+                return SweepRoot(paths, paths.Personal, PersonalEntries, cutoff, checkpoint, resumeAfter, completedEntry,
+                    isPersonalRoot: true);
+            case LauncherStorageCleanupStep.LauncherArchives:
+                LogCleanupService.PruneLauncherArchives(paths, checkpoint);
+                break;
+            case LauncherStorageCleanupStep.AbandonedPlans:
+                return PortablePackSyncService.CleanupAbandonedPlans(paths, paths.Launcher, cutoff,
+                    _ => checkpoint(), CancellationToken.None);
+            case LauncherStorageCleanupStep.UpdateTransfers:
+                return SweepAbandonedUpdateTransfers(paths, cutoff, checkpoint);
+            case LauncherStorageCleanupStep.DeprecatedFiles:
+                DeprecatedFileCleanupService.Run(paths, logger, checkpoint, isManagedPack);
+                break;
+            case LauncherStorageCleanupStep.PrivateRuntimes:
+                return StructureCleanupService.Run(paths, logger, checkpoint, isManagedPack);
+            case LauncherStorageCleanupStep.PortableExtraction:
+                LogCleanupService.PrunePortableExtractionCache(paths, checkpoint);
+                break;
+            case LauncherStorageCleanupStep.LaunchArguments:
+                JavaLaunchArgumentFile.CleanupStale(paths, checkpoint);
+                break;
+            case LauncherStorageCleanupStep.PortableRuntimeCache:
+                PortableRuntimeCache.CleanupIdle(paths, checkpoint);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(step));
+        }
+        return 0;
     }
 
     private static int SweepAbandonedUpdateTransfers(AppPaths paths, DateTime cutoff, Action checkpoint)
@@ -92,10 +143,10 @@ internal static class LauncherStorageCleanup
     }
 
     private static int SweepRoot(AppPaths paths, string root, HashSet<string> kept, DateTime cutoff,
-        Action checkpoint, bool isPersonalRoot = false)
+        Action checkpoint, string? resumeAfter, Action<string>? completedEntry, bool isPersonalRoot = false)
     {
         var removed = 0;
-        foreach (var entry in ReadEntries(paths, root, checkpoint))
+        foreach (var entry in ReadOrderedEntries(paths, root, checkpoint))
         {
             var name = Path.GetFileName(entry);
             if (kept.Contains(name) || IsProtected(name) ||
@@ -106,9 +157,51 @@ internal static class LauncherStorageCleanup
             // AtomicFile publishes these by rename. Recent temporary files can
             // still belong to a writer whose operation does not involve Play.
             DateTime? expiry = IsAtomicTemporaryFile(name) ? cutoff : null;
-            removed += DeleteTree(paths, entry, checkpoint, expiry);
+            Walk(entry, name, expiry, depth: 0);
         }
         return removed;
+
+        void Walk(string path, string relative, DateTime? expiry, int depth)
+        {
+            if (depth > 128 || IsProtected(Path.GetFileName(path)) ||
+                resumeAfter is not null && CompareInVisitOrder(relative, resumeAfter) < 0) return;
+
+            checkpoint();
+            if (MaintenancePath.TryRead(paths, path, out var attributes))
+            {
+                var directory = (attributes & FileAttributes.Directory) != 0;
+                if (directory)
+                    foreach (var child in ReadOrderedEntries(paths, path, checkpoint))
+                        Walk(child, relative + "/" + Path.GetFileName(child), expiry, depth + 1);
+
+                if (expiry is null || IsOlderThan(path, directory, expiry.Value))
+                {
+                    checkpoint();
+                    if (MaintenancePath.TryDelete(paths, path, directory)) removed++;
+                }
+            }
+            completedEntry?.Invoke(relative);
+        }
+    }
+
+    private static IEnumerable<string> ReadOrderedEntries(AppPaths paths, string directory, Action checkpoint) =>
+        ReadEntries(paths, directory, checkpoint).Order(StringComparer.OrdinalIgnoreCase);
+
+    // Children are completed before their directory. Compare by name segment
+    // so punctuation in sibling names cannot move them across the cursor.
+    private static int CompareInVisitOrder(ReadOnlySpan<char> left, ReadOnlySpan<char> right)
+    {
+        while (true)
+        {
+            var leftSlash = left.IndexOf('/');
+            var rightSlash = right.IndexOf('/');
+            var order = left[..(leftSlash < 0 ? left.Length : leftSlash)]
+                .CompareTo(right[..(rightSlash < 0 ? right.Length : rightSlash)], StringComparison.OrdinalIgnoreCase);
+            if (order != 0) return order;
+            if (leftSlash < 0 || rightSlash < 0) return (rightSlash >= 0).CompareTo(leftSlash >= 0);
+            left = left[(leftSlash + 1)..];
+            right = right[(rightSlash + 1)..];
+        }
     }
 
     private static bool IsAtomicTemporaryFile(string name) => name.Length > 38 &&

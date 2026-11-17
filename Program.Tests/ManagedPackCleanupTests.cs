@@ -114,6 +114,34 @@ public sealed class ManagedPackCleanupTests : IDisposable
     }
 
     [Fact]
+    public void InterruptedSweepResumesAfterItsSavedBoundary()
+    {
+        var directory = Install(_entry, _entry.Source, completeLauncher: true);
+        for (var index = 0; index < 80; index++) Write(directory, $"a/batch-{index:D3}.tmp");
+        var last = Write(directory, "z/remaining.tmp");
+        string? cursor = null;
+
+        Assert.Throws<OperationCanceledException>(() => ManagedPackCleanup.Run(_paths, Service(), _entry.RelativePath,
+            static _ => { }, CancellationToken.None, out _, saveCursor: saved =>
+            {
+                cursor = saved;
+                throw new OperationCanceledException();
+            }));
+        Assert.NotNull(cursor);
+        Assert.True(File.Exists(last));
+        var discoveredAfterCheckpoint = Write(directory, "a/000-new.tmp");
+
+        ManagedPackCleanup.Run(_paths, Service(), _entry.RelativePath, static _ => { }, CancellationToken.None,
+            out var managed, resumeCursor: cursor);
+
+        Assert.True(managed);
+        Assert.True(File.Exists(discoveredAfterCheckpoint));
+        Assert.False(File.Exists(last));
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(directory, "a"), "batch-*.tmp"));
+        Assert.Equal(2, Sweep(_entry.RelativePath));
+    }
+
+    [Fact]
     public void AbandonedPlanCleanupSkipsActiveAndUnmarkedDirectories()
     {
         const string ownerFile = ".pack-sync-plan-owner";

@@ -779,17 +779,24 @@ public sealed class PortablePackSyncServiceTests : IDisposable
         var staleStage = Path.Combine(packDir, ".pack-sync-stage", "deadbeef", "assets");
         Directory.CreateDirectory(staleStage);
         File.WriteAllText(Path.Combine(staleStage, "junk.bin"), "junk");
+        var pending = Path.Combine(packDir, PortablePackSyncService.ApplyPendingFileName);
+        File.WriteAllText(pending, "{\"schemaVersion\":1,\"revision\":\"rev-1\"}");
         File.Delete(LivePath(packDir, mod.Path));
 
         var handler = CreateReleaseHandler(release);
         using var httpClient = new HttpClient(handler);
-        var result = await CreateService(httpClient).SyncAsync(DefaultPack, null, CancellationToken.None);
+        var reports = new SynchronousProgress();
+        var result = await CreateService(httpClient).SyncAsync(DefaultPack, reports, CancellationToken.None);
 
         Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
         Assert.Equal(1, result.FilesChanged);
         AssertFileContent(packDir, mod);
         AssertFileContent(packDir, packManifest);
         Assert.Empty(Directory.EnumerateFileSystemEntries(packDir, ".pack-sync-stage*"));
+        Assert.False(File.Exists(pending));
+        var recovery = reports.Reports.Where(report => report.Stage == RuntimePreparationStage.RepairingPackStructure).ToArray();
+        Assert.Null(recovery[0].Fraction);
+        Assert.Equal(1d, recovery[^1].Fraction);
     }
 
     [Fact]

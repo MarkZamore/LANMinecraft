@@ -539,9 +539,10 @@ public sealed partial class PortablePackSyncService
         EnsureGameStopped(packRelativePath);
         TryDeleteLegacyApplyStage(packDir);
         var hadManifest = PackManifestService.HasManifest(packDir);
+        var repairingStructure = IsUpdatePending(packDir);
         progress?.Report(new RuntimePreparationProgress(
-            RuntimePreparationStage.SyncingPack,
-            "Проверка сборки"));
+            repairingStructure ? RuntimePreparationStage.RepairingPackStructure : RuntimePreparationStage.SyncingPack,
+            repairingStructure ? "Восстанавливаем файлы сборки" : "Проверка сборки"));
 
         ValidatedManifest manifest;
         try
@@ -730,6 +731,8 @@ public sealed partial class PortablePackSyncService
         PreparedSyncState? prepared = null)
     {
         var statePath = Path.Combine(packDir, SyncStateFileName);
+        var pendingPath = Path.Combine(packDir, ApplyPendingFileName);
+        var repairProgress = File.Exists(pendingPath) ? progress : null;
         PackSyncDiff diff;
         try
         {
@@ -748,8 +751,10 @@ public sealed partial class PortablePackSyncService
             diff.ChangedPaths.Count == 0 &&
             diff.Extras.Count == 0)
         {
+            ReportStructureRepair(repairProgress, 0);
             WriteSyncState(statePath, packDir, manifest);
-            File.Delete(Path.Combine(packDir, ApplyPendingFileName));
+            File.Delete(pendingPath);
+            ReportStructureRepair(repairProgress, 1);
             progress?.Report(new RuntimePreparationProgress(
                 RuntimePreparationStage.SyncingPack,
                 "Сборка актуальна",
@@ -804,11 +809,12 @@ public sealed partial class PortablePackSyncService
                         EnsureGameStopped(Path.GetRelativePath(_paths.Packs, packDir));
                         if (prepared is not null)
                             RequireUnchangedDownloadPlan(prepared.Diff, ComputeDiff(packDir, statePath, manifest, token));
+                        ReportStructureRepair(repairProgress, 0);
                         AtomicFile.WriteAllText(
-                            Path.Combine(packDir, ApplyPendingFileName),
+                            pendingPath,
                             JsonSerializer.Serialize(new { schemaVersion = 1, revision = manifest.Revision }, JsonOptions));
                         ApplyChanges(
-                            packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token);
+                            packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token, repairProgress);
                         // Inside the same try as the files they describe. Once
                         // ApplyChanges returns, the pack on disk is the new
                         // revision; a state file still naming the old one would
@@ -817,7 +823,8 @@ public sealed partial class PortablePackSyncService
                         // this update took away.
                         WriteSyncState(statePath, packDir, manifest);
                         WriteSourceMarker(packDir, source);
-                        File.Delete(Path.Combine(packDir, ApplyPendingFileName));
+                        File.Delete(pendingPath);
+                        ReportStructureRepair(repairProgress, 1);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                                    or NotSupportedException)
@@ -1399,8 +1406,11 @@ public sealed partial class PortablePackSyncService
         IReadOnlyList<string> extras,
         string stageAssets,
         string stageExtract,
-        CancellationToken token)
+        CancellationToken token,
+        IProgress<RuntimePreparationProgress>? repairProgress)
     {
+        var repaired = 0;
+        var total = changedPaths.Count + extras.Count + 1;
         foreach (var path in changedPaths)
         {
             if (IsPackManifestPath(path)) continue;
@@ -1409,6 +1419,7 @@ public sealed partial class PortablePackSyncService
                 packDir,
                 path,
                 ResolveStagedSource(manifest.AssetByCoveredPath[path], stageAssets, stageExtract, path));
+            ReportApplied();
         }
 
         foreach (var extra in extras)
@@ -1417,6 +1428,7 @@ public sealed partial class PortablePackSyncService
             var livePath = Path.Combine(packDir, extra.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(livePath)) File.Delete(livePath);
             DeleteEmptyParents(Path.GetDirectoryName(livePath), packDir);
+            ReportApplied();
         }
 
         foreach (var path in changedPaths)
@@ -1427,8 +1439,18 @@ public sealed partial class PortablePackSyncService
                 packDir,
                 path,
                 ResolveStagedSource(manifest.AssetByCoveredPath[path], stageAssets, stageExtract, path));
+            ReportApplied();
+        }
+
+        void ReportApplied()
+        {
+            if (repairProgress is not null && (++repaired % 64 == 0 || repaired == total - 1))
+                ReportStructureRepair(repairProgress, (double)repaired / total);
         }
     }
+
+    private static void ReportStructureRepair(IProgress<RuntimePreparationProgress>? progress, double fraction) =>
+        progress?.Report(new(RuntimePreparationStage.RepairingPackStructure, "Восстанавливаем файлы сборки", fraction));
 
     private static string ResolveStagedSource(
         ValidatedAsset asset,

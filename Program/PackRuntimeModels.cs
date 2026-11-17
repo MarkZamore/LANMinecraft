@@ -53,7 +53,8 @@ public enum RuntimePreparationStage
     InstallingLoader,
     Verifying,
     Ready,
-    Failed
+    Failed,
+    RepairingPackStructure
 }
 
 /// <summary>

@@ -40,6 +40,7 @@ public sealed partial class PackRuntimeService : IDisposable
     private readonly Logger _logger;
     private readonly HttpClient _httpClient;
     private readonly PortableJavaRuntimeService _javaRuntime;
+    private readonly PortablePackSyncService? _packSync;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<PackLoaderKind, IPackLoaderProvider> _providers;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
@@ -52,12 +53,14 @@ public sealed partial class PackRuntimeService : IDisposable
         AppPaths paths,
         Logger logger,
         HttpClient? httpClient = null,
-        PortableJavaRuntimeService? javaRuntime = null)
+        PortableJavaRuntimeService? javaRuntime = null,
+        PortablePackSyncService? packSync = null)
     {
         _paths = paths;
         _logger = logger;
         _httpClient = httpClient ?? PortableHttpClient.Shared;
         _javaRuntime = javaRuntime ?? new PortableJavaRuntimeService(paths, logger, _httpClient);
+        _packSync = packSync;
         IPackLoaderProvider[] providers =
         [
             new VanillaLoaderProvider(),
@@ -108,7 +111,7 @@ public sealed partial class PackRuntimeService : IDisposable
         {
             throw new FileNotFoundException("The client jar declared by portable-pack.json is missing.", sourceClientJar);
         }
-        RejectUnexpectedMinecraftJars(packDirectory, sourceClientJar);
+        await RepairOrRejectUnexpectedMinecraftJarsAsync(packDirectory, sourceClientJar, progress, token).ConfigureAwait(false);
 
         var runtimeRoot = _paths.CombineUnderRuntimes(packRelativePath);
         var temporaryRoot = Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads", SafePackName(packRelativePath));
@@ -819,12 +822,14 @@ public sealed partial class PackRuntimeService : IDisposable
         }
     }
 
-    private static void RejectUnexpectedMinecraftJars(string packDirectory, string selectedClientJar)
+    private async Task RepairOrRejectUnexpectedMinecraftJarsAsync(string packDirectory, string selectedClientJar,
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
     {
         var selected = selectedClientJar.Length == 0 ? "" : Path.GetFullPath(selectedClientJar);
         var unexpected = Directory.EnumerateFiles(packDirectory, "*.jar", SearchOption.AllDirectories)
             .Where(path =>
             {
+                token.ThrowIfCancellationRequested();
                 var relative = Path.GetRelativePath(packDirectory, path).Replace('\\', '/');
                 var name = Path.GetFileName(path);
                 return !string.Equals(Path.GetFullPath(path), selected, StringComparison.OrdinalIgnoreCase) &&
@@ -834,15 +839,15 @@ public sealed partial class PackRuntimeService : IDisposable
                         name.StartsWith("minecraft-", StringComparison.OrdinalIgnoreCase) &&
                         (name.Contains("-client", StringComparison.OrdinalIgnoreCase) ||
                          name.Contains("-server", StringComparison.OrdinalIgnoreCase)));
-            })
-            .Take(10)
-            .ToArray();
-        if (unexpected.Length > 0)
-        {
-            throw new InvalidDataException(
-                "Pack contains unexpected Minecraft client/server jar files:" + Environment.NewLine +
-                string.Join(Environment.NewLine, unexpected));
-        }
+            });
+        var blockers = (_packSync is null ? unexpected.Take(10) : unexpected).ToArray();
+        if (blockers.Length == 0) return;
+        if (_packSync is { } sync && await Task.Run(
+                () => ManagedPackCleanup.TryRemoveLaunchBlockers(_paths, sync, packDirectory, blockers, progress, token), token)
+            .ConfigureAwait(false)) return;
+        throw new InvalidDataException(
+            "Pack contains unexpected Minecraft client/server jar files:" + Environment.NewLine +
+            string.Join(Environment.NewLine, blockers.Take(10)));
     }
 
     private static string SafePackName(string packRelativePath)

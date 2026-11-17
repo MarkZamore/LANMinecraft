@@ -6,23 +6,67 @@ namespace Minecraft;
 
 internal static class ManagedPackCleanup
 {
+    private const int EntriesPerCheckpoint = 64;
+
     internal static bool IsManagedPack(AppPaths paths, PortablePackSyncService sync, string packRelativePath,
         Action<CancellationToken>? checkpoint = null, CancellationToken token = default) =>
         sync.ReadCleanupProof(paths, packRelativePath, checkpoint ?? (static _ => { }), token) is not null;
+
+    /// <summary>Removes only files that the caller's existing launch validation rejects.</summary>
+    internal static bool TryRemoveLaunchBlockers(AppPaths paths, PortablePackSyncService sync, string packDirectory,
+        IReadOnlyList<string> blockers, IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+    {
+        var pack = Path.GetRelativePath(paths.Packs, packDirectory);
+        var proof = sync.ReadCleanupProof(paths, pack, static cancellation => cancellation.ThrowIfCancellationRequested(), token);
+        if (proof is null || new ClientPresenceService(paths).ReadLiveSessions().Any(session =>
+                string.Equals(session.PackRelativePath, pack, StringComparison.OrdinalIgnoreCase))) return false;
+
+        // Validate the entire collection before removing any of it. A fresh manifest or
+        // user content under a protected name cannot be overruled by an older inventory.
+        foreach (var path in blockers)
+        {
+            token.ThrowIfCancellationRequested();
+            var relative = Path.GetRelativePath(proof.Directory, path).Replace('\\', '/');
+            if (Path.IsPathRooted(relative) || relative.Split('/').Any(name => name is "." or ".." ||
+                    MaintenancePath.IsProtectedAssetName(name) || PortablePackSyncService.IsProtectedCleanupRoot(name)) ||
+                proof.Files.Contains(relative) || proof.Directories.Contains(relative) ||
+                !MaintenancePath.TryRead(paths, path, out var attributes) || attributes.HasFlag(FileAttributes.Directory))
+                return false;
+        }
+
+        progress?.Report(new(RuntimePreparationStage.RepairingPackStructure, "Убираем файлы сборки", 0));
+        for (var index = 0; index < blockers.Count; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            var path = blockers[index];
+            if (!MaintenancePath.TryDelete(paths, path, directory: false,
+                () => !token.IsCancellationRequested && proof.IsCurrent(paths)))
+            {
+                token.ThrowIfCancellationRequested();
+                return false;
+            }
+            if ((index + 1) % EntriesPerCheckpoint == 0 || index + 1 == blockers.Count)
+                progress?.Report(new(RuntimePreparationStage.RepairingPackStructure, "Убираем файлы сборки",
+                    (double)(index + 1) / blockers.Count));
+        }
+        return true;
+    }
 
     internal static int Run(AppPaths paths, PortablePackSyncService sync, string packRelativePath,
         Action<CancellationToken> checkpoint, CancellationToken token) =>
         Run(paths, sync, packRelativePath, checkpoint, token, out _);
 
     internal static int Run(AppPaths paths, PortablePackSyncService sync, string packRelativePath,
-        Action<CancellationToken> checkpoint, CancellationToken token, out bool managed)
+        Action<CancellationToken> checkpoint, CancellationToken token, out bool managed,
+        string? resumeCursor = null, Action<string>? saveCursor = null)
     {
         var proof = sync.ReadCleanupProof(paths, packRelativePath, checkpoint, token);
         managed = false;
         if (proof is null) return 0;
         var removed = 0;
-        Walk(proof.Directory, "", depth: 0);
-        if (proof.IsCurrent(paths))
+        var visitedSinceSave = 0;
+        var resume = ReadCursor(resumeCursor, proof);
+        if (Walk(proof.Directory, "", depth: 0, onResumePath: resume.Length != 0) && proof.IsCurrent(paths))
         {
             removed += PortablePackSyncService.CleanupAbandonedPlans(paths, proof.Directory,
                 DateTime.UtcNow.AddDays(-1), checkpoint, token);
@@ -30,18 +74,27 @@ internal static class ManagedPackCleanup
         }
         return removed;
 
-        bool Walk(string directory, string relativeDirectory, int depth)
+        bool Walk(string directory, string relativeDirectory, int depth, bool onResumePath)
         {
-            if (depth > 128) return false;
-            var changed = false;
+            if (depth > 128) return true;
             try
             {
                 if (!MaintenancePath.TryRead(paths, directory, out var folderAttributes) ||
-                    !folderAttributes.HasFlag(FileAttributes.Directory)) return false;
+                    !folderAttributes.HasFlag(FileAttributes.Directory)) return true;
+                var entries = new List<string>();
                 foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
                 {
                     checkpoint(token);
+                    entries.Add(entry);
+                }
+                entries.Sort(StringComparer.Ordinal);
+                foreach (var entry in entries)
+                {
+                    checkpoint(token);
                     var name = Path.GetFileName(entry);
+                    var order = onResumePath ? StringComparer.Ordinal.Compare(name, resume[depth]) : 1;
+                    if (order < 0) continue;
+                    var atResumeBoundary = order == 0 && depth + 1 == resume.Length;
                     if (MaintenancePath.IsProtectedAssetName(name) ||
                         depth == 0 && PortablePackSyncService.IsProtectedCleanupRoot(name)) continue;
                     var relative = depth == 0 ? name : relativeDirectory + "/" + name;
@@ -49,27 +102,51 @@ internal static class ManagedPackCleanup
                         continue;
                     if (!MaintenancePath.TryRead(paths, entry, out var attributes)) continue;
                     var directoryEntry = attributes.HasFlag(FileAttributes.Directory);
-                    var changedBelow = directoryEntry && Walk(entry, relative, depth + 1);
-                    var keep = directoryEntry
-                        ? !changedBelow || proof.Directories.Contains(relative) || proof.Files.Contains(relative)
-                        : proof.Files.Contains(relative) || proof.Directories.Contains(relative);
-                    if (!keep)
+                    if (directoryEntry && !atResumeBoundary && !Walk(entry, relative, depth + 1, order == 0))
+                        return false;
+                    if (!proof.Files.Contains(relative) && !proof.Directories.Contains(relative))
                     {
                         checkpoint(token);
                         // A source, sync state or partial metadata publication changed during the walk.
-                        if (!proof.IsCurrent(paths)) return changed;
+                        if (!proof.IsCurrent(paths)) return false;
                         token.ThrowIfCancellationRequested();
-                        if (!MaintenancePath.TryDelete(paths, entry, directoryEntry,
-                            () => !token.IsCancellationRequested && proof.IsCurrent(paths))) continue;
-                        removed++;
-                        changed = true;
+                        // Directory deletion is intentionally non-recursive. It succeeds only after
+                        // every removable child is gone and any protected subtree still keeps it.
+                        if (MaintenancePath.TryDelete(paths, entry, directoryEntry,
+                            () => !token.IsCancellationRequested && proof.IsCurrent(paths))) removed++;
+                    }
+                    if (!atResumeBoundary && saveCursor is not null && ++visitedSinceSave >= EntriesPerCheckpoint)
+                    {
+                        visitedSinceSave = 0;
+                        saveCursor(JsonSerializer.Serialize(new CleanupCursor(relative, proof.Source, proof.State,
+                            proof.LauncherMetadataExists, proof.LauncherMetadata)));
                     }
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            return changed;
+            return true;
         }
     }
+
+    private static string[] ReadCursor(string? cursor, PortablePackSyncService.CleanupProof proof)
+    {
+        if (string.IsNullOrEmpty(cursor)) return [];
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<CleanupCursor>(cursor);
+            if (parsed?.RelativePath is not { Length: > 0 } relative || parsed.Source != proof.Source ||
+                parsed.State != proof.State || parsed.LauncherMetadataExists != proof.LauncherMetadataExists ||
+                parsed.LauncherMetadata != proof.LauncherMetadata) return [];
+            var parts = relative.Split('/');
+            return parts.Length <= 129 && parts.All(part => part.Length > 0 && part is not "." and not ".." &&
+                part.IndexOfAny(Path.GetInvalidFileNameChars()) < 0) ? parts : [];
+        }
+        catch (JsonException) { return []; }
+    }
+
+    private sealed record CleanupCursor(string RelativePath, PortablePackSyncService.CleanupStamp Source,
+        PortablePackSyncService.CleanupStamp State, bool LauncherMetadataExists,
+        PortablePackSyncService.CleanupStamp? LauncherMetadata);
 }
 
 public sealed partial class PortablePackSyncService

@@ -110,6 +110,59 @@ public sealed class LauncherStorageCleanupTests : IDisposable
         Assert.Single(Directory.GetFiles(_paths.Personal, "logs-*.log"));
     }
 
+    [Fact]
+    public void RootSweepResumesWithinTheSameDirectoryAndRechecksItsBoundary()
+    {
+        var directory = Path.Combine(_paths.Service, "unused");
+        var before = Path.Combine(directory, "alpha.bin");
+        var boundary = Path.Combine(directory, "beta.bin");
+        var after = Path.Combine(directory, "gamma.bin");
+        var sibling = Path.Combine(_paths.Service, "unused.extra");
+        foreach (var path in new[] { before, boundary, after, sibling }) Write(path);
+
+        string? cursor = null;
+        Assert.Throws<OperationCanceledException>(() => LauncherStorageCleanup.RunStep(_paths, null,
+            LauncherStorageCleanupStep.ServiceRoot, static () => { }, static _ => false, completedEntry: entry =>
+            {
+                if (entry != "unused/beta.bin") return;
+                cursor = entry;
+                throw new OperationCanceledException();
+            }));
+        Assert.False(File.Exists(before));
+        Assert.False(File.Exists(boundary));
+        Assert.True(File.Exists(after));
+        Assert.True(File.Exists(sibling));
+
+        Write(before);
+        Write(boundary);
+        LauncherStorageCleanup.RunStep(_paths, null, LauncherStorageCleanupStep.ServiceRoot,
+            static () => { }, static _ => false, resumeAfter: cursor);
+
+        Assert.True(File.Exists(before));
+        Assert.False(File.Exists(boundary));
+        Assert.False(File.Exists(after));
+        Assert.False(File.Exists(sibling));
+    }
+
+    [Fact]
+    public void PlayingAllowsIndependentStepsAndKeepsPackDataAndRuntimeCopies()
+    {
+        var stray = Path.Combine(_paths.Service, "old.txt");
+        var managed = Path.Combine(_paths.Packs, "Running pack", "unlisted.txt");
+        var runtime = Path.Combine(_paths.Runtimes, "Running pack", "assets", "copy.dat");
+        var shared = Path.Combine(_paths.Launcher, "Shared", "assets", "asset.dat");
+        var gameLogs = Path.Combine(_paths.Instances, "Running pack", "logs", "latest.log");
+        foreach (var path in new[] { stray, managed, runtime, shared, gameLogs }) Write(path);
+        File.SetLastWriteTimeUtc(gameLogs, DateTime.UtcNow.AddDays(-10));
+
+        foreach (var step in Enum.GetValues<LauncherStorageCleanupStep>().Where(LauncherStorageCleanup.CanRunDuringGame))
+            LauncherStorageCleanup.RunStep(_paths, null, step, static () => { }, _ =>
+                throw new InvalidOperationException("Independent maintenance must not read running pack state."));
+
+        Assert.False(File.Exists(stray));
+        Assert.All(new[] { managed, runtime, shared, gameLogs }, path => Assert.True(File.Exists(path), path));
+    }
+
     public void Dispose() => TempTree.Delete(_paths.Root);
 
     private int Run() => LauncherStorageCleanup.Run(_paths, null, static () => { }, static _ => false);

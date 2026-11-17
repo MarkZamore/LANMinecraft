@@ -111,6 +111,7 @@ public partial class MainWindow : Window
     private ChangelogPager? _changelogPager;
     private readonly ObservableCollection<ChangelogEntryViewModel> _changelogShown = [];
     private bool _startupComplete;
+    private bool _storageMaintenanceReady;
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
     private bool _playRequested;
@@ -206,8 +207,12 @@ public partial class MainWindow : Window
             var log = _logger;
             var packSync = _packSync;
             _maintenance = new LauncherMaintenance(paths, log,
-                () => _transfer?.IsOperationActive == true || _minecraft is { IsClientRunning: true } or { IsClientPreparing: true },
-                (full, pending, checkpoint, token) => LauncherMaintenancePass.Run(paths, log, packSync, full, pending, checkpoint, token));
+                () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _updateBusy) ||
+                    Volatile.Read(ref _busy) || Volatile.Read(ref _bugReportSending) ||
+                    _transfer?.IsOperationActive == true || _minecraft?.IsClientPreparing == true,
+                run => LauncherMaintenancePass.Run(paths, log, packSync, run),
+                gameIsRunning: () => _minecraft?.IsClientRunning == true,
+                isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
@@ -265,12 +270,12 @@ public partial class MainWindow : Window
             _peerNotices = new PeerNoticeService(this, _logger, () => _minecraft?.GetNoticeWindow() ?? IntPtr.Zero);
             _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
             _packInstances = new PackInstanceService(_paths, _logger);
-            _packRuntimes = new PackRuntimeService(_paths, _logger);
+            _packRuntimes = new PackRuntimeService(_paths, _logger, packSync: _packSync);
             _waypointSync = new WaypointSyncService(_paths, _logger, RequireWorldMetadata(), _peerTransport);
             _skinService = new SkinService(_paths, _logger, _peerTransport);
             _identityRegistry = new PortableIdentityRegistryService(_paths, _logger);
             await _skinService.StartAsync(_lifetimeCts.Token);
-            _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry);
+            _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry, packSync: _packSync);
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientSessionEnded += pack => _maintenance?.RequestPack(pack);
@@ -333,6 +338,8 @@ public partial class MainWindow : Window
             _startupFinished = true;
             ReportStartupTrace();
             await RefreshPackHashAsync(_lifetimeCts.Token);
+            _storageMaintenanceReady = true;
+            _maintenance.ObserveIdle(CanRunStorageMaintenance());
             await StartNetworkingAsync();
             _startupComplete = true;
         }
@@ -2580,6 +2587,7 @@ public partial class MainWindow : Window
     {
         var busy = progress.Stage is RuntimePreparationStage.Checking or
             RuntimePreparationStage.SyncingPack or
+            RuntimePreparationStage.RepairingPackStructure or
             RuntimePreparationStage.Downloading or
             RuntimePreparationStage.InstallingJava or
             RuntimePreparationStage.InstallingLoader or
@@ -2588,6 +2596,7 @@ public partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         var isByteStage = progress.Stage is RuntimePreparationStage.SyncingPack or
+            RuntimePreparationStage.RepairingPackStructure or
             RuntimePreparationStage.Downloading or
             RuntimePreparationStage.InstallingJava;
         // Keyed by what is being fetched, so the measured rate starts again
@@ -2819,10 +2828,10 @@ public partial class MainWindow : Window
     private bool GameNeedsLauncher =>
         _playRequested || _minecraft is { IsClientPreparing: true } or { IsClientRunning: true };
 
-    private bool CanRunStorageMaintenance() => _framePainted && _startupComplete && !_shutdownStarted &&
-        !_busy && !GameNeedsLauncher && !_minecraftRunning && !_minecraftPreparing && !_transferActive &&
+    private bool CanRunStorageMaintenance() => _framePainted && _storageMaintenanceReady && !_shutdownStarted &&
+        !_busy && !_playRequested && !_minecraftPreparing && _minecraft?.IsClientPreparing != true && !_transferActive &&
         _transfer?.IsOperationActive != true && !_updateBusy && !_bugReportSending &&
-        _catalogStartup?.IsCompletedSuccessfully == true && _libraryStartup?.IsCompleted != false &&
+        _catalogStartup?.IsCompletedSuccessfully == true &&
         _selectedLaunchPreparation.IsCompleted && _launcherDataByPack.Values.All(task => task.IsCompleted);
 
     private void ShowPreparedUpdate(int release)

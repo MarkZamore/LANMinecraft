@@ -105,6 +105,19 @@ public sealed class PlayButtonCaptionTests
         return captions;
     }
 
+    [Fact]
+    public void RequiredRepairCaptionFitsWithAndWithoutKnownProgress()
+    {
+        var pending = new RuntimePreparationProgress(RuntimePreparationStage.RepairingPackStructure, "");
+        var waiting = PlayButtonCaption.For(pending, 0);
+        Assert.Equal("Восстановление сборки", waiting);
+        EveryCaption_FitsInsideTheButton(waiting);
+        var download = pending with { Fraction = 0.99, DownloadedBytes = JustUnderAGigabyte - 1, TotalBytes = JustUnderAGigabyte };
+        var progress = PlayButtonCaption.For(download, FastDownload);
+        Assert.StartsWith(waiting, progress, StringComparison.Ordinal);
+        EveryCaption_FitsInsideTheButton(progress);
+    }
+
     [Theory]
     [MemberData(nameof(EveryCaption))]
     public void EveryCaption_FitsInsideTheButton(string caption)

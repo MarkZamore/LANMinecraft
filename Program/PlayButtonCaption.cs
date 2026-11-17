@@ -23,6 +23,9 @@ internal static class PlayButtonCaption
             RuntimePreparationStage.SyncingPack when moving =>
                 WithBytes("Сборка", progress, bytesPerSecond),
             RuntimePreparationStage.SyncingPack => "Проверка",
+            RuntimePreparationStage.RepairingPackStructure when moving =>
+                WithBytes("Восстановление сборки", progress, bytesPerSecond),
+            RuntimePreparationStage.RepairingPackStructure => "Восстановление сборки",
             RuntimePreparationStage.Downloading or RuntimePreparationStage.InstallingJava when moving =>
                 WithBytes(progress.Message, progress, bytesPerSecond),
             _ => progress.Message

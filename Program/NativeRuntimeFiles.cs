@@ -15,7 +15,8 @@ internal sealed class NativeRuntimeFiles : IDisposable
 
     internal string ExecutablePath { get; }
 
-    internal static NativeRuntimeFiles Open(string packDirectory, PackRuntimeDescriptor descriptor, CancellationToken token)
+    internal static NativeRuntimeFiles Open(string packDirectory, PackRuntimeDescriptor descriptor, CancellationToken token,
+        AppPaths? paths = null, PortablePackSyncService? sync = null, IProgress<RuntimePreparationProgress>? progress = null)
     {
         var runtime = descriptor.NativeRuntime ?? throw new ArgumentException("A native runtime is required.", nameof(descriptor));
         if (!OperatingSystem.IsWindows() || RuntimeInformation.OSArchitecture is not Architecture.X64)
@@ -51,7 +52,14 @@ internal sealed class NativeRuntimeFiles : IDisposable
                 token.ThrowIfCancellationRequested();
                 result.OpenVerified(root, file);
             }
-            result.CheckContents(root, Path.Combine(root, PackManifestService.NativePayloadRoot), token);
+            var extras = paths is not null && sync is not null ? new List<string>() : null;
+            result.CheckContents(root, Path.Combine(root, PackManifestService.NativePayloadRoot), token, extras);
+            if (extras is { Count: > 0 })
+            {
+                if (!ManagedPackCleanup.TryRemoveLaunchBlockers(paths!, sync!, root, extras, progress, token))
+                    throw Unexpected(extras[0]);
+                result.CheckContents(root, Path.Combine(root, PackManifestService.NativePayloadRoot), token, extras: null);
+            }
             if (PortablePackSyncService.IsUpdatePending(root))
                 throw new InvalidDataException("The native payload changed during preparation. Retry Play.");
             return result;
@@ -85,7 +93,7 @@ internal sealed class NativeRuntimeFiles : IDisposable
         _files.Add(file.Path);
     }
 
-    private void CheckContents(string root, string directory, CancellationToken token)
+    private void CheckContents(string root, string directory, CancellationToken token, List<string>? extras)
     {
         if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("Native payload cannot contain filesystem links.");
@@ -96,11 +104,17 @@ internal sealed class NativeRuntimeFiles : IDisposable
             if ((attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Native payload cannot contain filesystem links.");
             if ((attributes & FileAttributes.Directory) != 0)
-                CheckContents(root, path, token);
+                CheckContents(root, path, token, extras);
             else if (!_files.Contains(Path.GetRelativePath(root, path).Replace('\\', '/')))
-                throw new InvalidDataException($"Unexpected file in the native payload: {Path.GetFileName(path)}");
+            {
+                if (extras is null) throw Unexpected(path);
+                extras.Add(path);
+            }
         }
     }
+
+    private static InvalidDataException Unexpected(string path) =>
+        new($"Unexpected file in the native payload: {Path.GetFileName(path)}");
 
     public void Dispose()
     {

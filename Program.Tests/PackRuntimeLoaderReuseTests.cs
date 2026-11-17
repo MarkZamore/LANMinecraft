@@ -75,6 +75,49 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
     }
 
     [Fact]
+    public async Task OnlyVerifiedLibraryJavaLaunchBlockersAreRepaired()
+    {
+        var entry = PackCatalogService.SeedSources().First();
+        var descriptor = CreatePack(entry.RelativePath, MinecraftVersion, "fabric", FabricVersion);
+        var folder = _paths.CombineUnderPacks(entry.RelativePath);
+        string[] managed = [PackManifestService.ManifestFileName];
+        WriteJson(Path.Combine(folder, PortablePackSyncService.SyncStateFileName), new
+        {
+            schemaVersion = 1, revision = "fixture", files = managed.ToDictionary(relative => relative, relative =>
+            {
+                var bytes = File.ReadAllBytes(Path.Combine(folder, relative));
+                return new { sizeBytes = bytes.Length, sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)) };
+            })
+        });
+        var profile = CreateProfiles(MinecraftVersion, FabricProfile);
+        CreateLegacyState(entry.RelativePath, descriptor, FabricProfile, profile);
+        CreateJava(descriptor);
+        var blocker = WriteFile(Path.Combine(folder, "server.jar"), "retired");
+        var cosmetic = WriteFile(Path.Combine(folder, "old-readme.txt"), "cosmetic");
+        var reports = new RecordedProgress();
+        using var http = new HttpClient(_handler, disposeHandler: false);
+        var logger = new Logger(_paths.LogFile);
+        using var service = new PackRuntimeService(_paths, logger, http,
+            packSync: new PortablePackSyncService(_paths, logger, http));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.PrepareAsync(entry.RelativePath, reports, CancellationToken.None));
+        Assert.True(File.Exists(blocker));
+        Assert.Empty(reports.Reports);
+
+        WriteJson(Path.Combine(folder, PortablePackSyncService.SourceMarkerFileName), new
+        {
+            schemaVersion = 1, entry.Source.Owner, entry.Source.Repo, entry.Source.Tag
+        });
+        var ready = await service.PrepareAsync(entry.RelativePath, reports, CancellationToken.None);
+        Assert.Equal(FabricProfile, ready.ProfileId);
+        Assert.False(File.Exists(blocker));
+        Assert.True(File.Exists(cosmetic));
+        var repair = reports.Reports.Where(report => report.Stage == RuntimePreparationStage.RepairingPackStructure);
+        Assert.Equal(new double?[] { 0, 1 }, repair.Select(report => report.Fraction));
+        Assert.Equal(0, _handler.RequestCount);
+    }
+
+    [Fact]
     public async Task NeoForgeReceiptChecksGeneratedOutputEvenWithOriginalSizeAndTimestamp()
     {
         var installed = CreatePack("First personal pack", NeoForgeMinecraft, "neoforge", NeoForgeVersion);
@@ -234,6 +277,12 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
     }
 
     private sealed record ProfileFixture(string Client, string[] Files);
+
+    private sealed class RecordedProgress : IProgress<RuntimePreparationProgress>
+    {
+        internal List<RuntimePreparationProgress> Reports { get; } = [];
+        public void Report(RuntimePreparationProgress value) => Reports.Add(value);
+    }
 
     private sealed class OfflineHandler : HttpMessageHandler
     {

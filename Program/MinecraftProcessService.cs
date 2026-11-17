@@ -285,6 +285,7 @@ public sealed class MinecraftProcessService
     private readonly WorldPlayerProfileService _playerProfiles;
     private readonly PackInstanceService _packInstances;
     private readonly PackRuntimeService _packRuntimes;
+    private readonly PortablePackSyncService? _packSync;
     private readonly ManagedComponentService _managedComponents;
     private readonly WaypointSyncService _waypointSync;
     private readonly SkinService _skinService;
@@ -292,13 +293,21 @@ public sealed class MinecraftProcessService
     private readonly MinecraftWindowPlacementService _gameWindowPlacement;
     private readonly MeasuredMemoryStore _measuredMemory;
     public GameNoticeOverlayService NoticeOverlay { get; }
-    private readonly ConcurrentDictionary<int, byte> _activeClientProcesses = new();
+    private readonly ConcurrentDictionary<int, string> _activeClientProcesses = new();
     private int _clientPreparing;
     private string _lastJavaPath = "";
     private string _lastGameVersion = "";
     private string _lastProfileId = "";
 
     public bool IsClientRunning => !_activeClientProcesses.IsEmpty;
+
+    internal bool IsPackInUse(string relativePath, PackCatalogService? catalog)
+    {
+        if (!IsClientRunning) return false;
+        var path = catalog?.InstallationPathFor(relativePath) ?? relativePath;
+        return _activeClientProcesses.Any(session => string.Equals(path,
+            catalog?.InstallationPathFor(session.Value) ?? session.Value, StringComparison.OrdinalIgnoreCase));
+    }
     internal IntPtr GetNoticeWindow()
     {
         var renderer = NoticeOverlay.GetGameWindow();
@@ -342,7 +351,8 @@ public sealed class MinecraftProcessService
         WaypointSyncService waypointSync,
         SkinService skinService,
         PortableIdentityRegistryService identityRegistry,
-        ManagedComponentService? managedComponents = null)
+        ManagedComponentService? managedComponents = null,
+        PortablePackSyncService? packSync = null)
     {
         _paths = paths;
         _logger = logger;
@@ -353,6 +363,7 @@ public sealed class MinecraftProcessService
         _playerProfiles = playerProfiles;
         _packInstances = packInstances;
         _packRuntimes = packRuntimes;
+        _packSync = packSync;
         _managedComponents = managedComponents ?? new ManagedComponentService(paths, logger);
         _waypointSync = waypointSync;
         _skinService = skinService;
@@ -702,7 +713,7 @@ public sealed class MinecraftProcessService
     {
         var runtime = descriptor.NativeRuntime!;
         progress?.Report(new(RuntimePreparationStage.Verifying, "Проверка файлов игры"));
-        NativeRuntimeFiles? files = await Task.Run(() => NativeRuntimeFiles.Open(packDir, descriptor, token), token)
+        NativeRuntimeFiles? files = await Task.Run(() => NativeRuntimeFiles.Open(packDir, descriptor, token, _paths, _packSync, progress), token)
             .ConfigureAwait(false);
         try
         {
@@ -784,7 +795,7 @@ public sealed class MinecraftProcessService
 
             var processId = process.Id;
             _presence.Remember(process, packRelativePath, nativeExecutable);
-            if (_activeClientProcesses.TryAdd(processId, 0) && _activeClientProcesses.Count == 1)
+            if (_activeClientProcesses.TryAdd(processId, packRelativePath) && _activeClientProcesses.Count == 1)
                 NotifyClientRunningChanged(true);
 
             // The monitor owns the Process object from here on.
@@ -1439,7 +1450,7 @@ public sealed class MinecraftProcessService
             {
                 continue;
             }
-            if (!_activeClientProcesses.TryAdd(session.ProcessId, 0)) { process.Dispose(); continue; }
+            if (!_activeClientProcesses.TryAdd(session.ProcessId, session.PackRelativePath)) { process.Dispose(); continue; }
             adopted++;
             _logger.Info($"A game started by an earlier launcher is still running (process {session.ProcessId}, {session.PackRelativePath}).");
             var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
