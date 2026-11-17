@@ -110,7 +110,7 @@ public sealed class WindowCanvasTests
             var caret = window.FindResource("Brush.TextCaret");
             Assert.Same(caret, nickname.CaretBrush);
             Assert.Same(caret, Element<TextBox>(window, "BugReportMessageTextBox").CaretBrush);
-            Assert.Equal("Выберите сборку в библиотеке", placeholder.Text);
+            Assert.Equal("Сборки в библиотеке", placeholder.Text);
             var text = new FormattedText(placeholder.Text, System.Globalization.CultureInfo.InvariantCulture,
                 placeholder.FlowDirection, new Typeface(placeholder.FontFamily, placeholder.FontStyle,
                     placeholder.FontWeight, placeholder.FontStretch), placeholder.FontSize, placeholder.Foreground,
@@ -123,6 +123,39 @@ public sealed class WindowCanvasTests
                 Assert.Equal(Element<Button>(window, "PlayButton").ActualHeight, section.ActualHeight, 3);
             }
             Assert.True(Element<ScrollViewer>(window, "BodyScroll").ScrollableHeight <= 0.5);
+            return true;
+        });
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(1.5)]
+    [InlineData(2)]
+    public void BugReport_FirstLineSharesThePlaceholderBaseline(double scale)
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var dpi = new DpiScale(scale, scale);
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi((Visual)window.Content, dpi);
+            ExpandSections(window);
+            var size = new Size(1104, 761);
+            LayoutWindow(window, size);
+
+            var hint = Element<TextBlock>(window, "BugReportPlaceholderText");
+            var report = Element<TextBox>(window, "BugReportMessageTextBox");
+            Assert.Equal(Visibility.Visible, hint.Visibility);
+            var hintBaseline = hint.TranslatePoint(new Point(0, hint.BaselineOffset), report).Y;
+            report.Text = hint.Text;
+            LayoutWindow(window, size);
+            var firstLine = report.GetRectFromCharacterIndex(0);
+            Assert.False(firstLine.IsEmpty);
+            var text = new FormattedText(report.Text, System.Globalization.CultureInfo.InvariantCulture,
+                report.FlowDirection, new Typeface(report.FontFamily, report.FontStyle, report.FontWeight, report.FontStretch),
+                report.FontSize, report.Foreground, dpi.PixelsPerDip);
+            var baselineDifference = Math.Abs(firstLine.Top + text.Baseline - hintBaseline);
+            Assert.InRange(baselineDifference, 0, 1 / scale + 0.001);
             return true;
         });
     }

@@ -100,7 +100,8 @@ public sealed class BugReportPanelTests
         var markup = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml"));
         var hint = Between(markup, "<TextBlock x:Name=\"BugReportPlaceholderText\"", "</TextBlock>");
 
-        Assert.Contains("Margin=\"{StaticResource Pad.FieldText}\"", hint, StringComparison.Ordinal);
+        Assert.Contains("Margin=\"{Binding Padding, ElementName=BugReportMessageTextBox}\"", hint, StringComparison.Ordinal);
+        Assert.Contains("BorderThickness=\"{Binding BorderThickness, ElementName=BugReportMessageTextBox}\"", markup, StringComparison.Ordinal);
 
         // And the field lays its text out once, not twice: handing the padding
         // to the scroll viewer as well pushed the typing off the hint.

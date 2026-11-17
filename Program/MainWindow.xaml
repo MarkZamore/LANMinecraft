@@ -180,7 +180,7 @@
                                     ItemTemplate="{StaticResource BuildItemTemplate}"
                                     SelectionChanged="BuildComboBox_SelectionChanged" />
                                 <TextBlock x:Name="BuildPlaceholderText"
-                                    Text="Выберите сборку в библиотеке"
+                                    Text="Сборки в библиотеке"
                                     Style="{StaticResource PlaceholderTextStyle}"
                                     Visibility="Collapsed" />
                             </Grid>
@@ -410,7 +410,7 @@
                                     Margin="{StaticResource Gap.Above2}" />
                                 <Grid Grid.Column="1">
                                     <TextBox x:Name="BugReportMessageTextBox"
-                                        Padding="{StaticResource Pad.Text}"
+                                        Padding="{StaticResource Pad.FieldText}"
                                         CaretBrush="{StaticResource Brush.TextCaret}"
                                         AcceptsReturn="True"
                                         TextWrapping="Wrap"
@@ -419,26 +419,28 @@
                                         MaxLength="4000"
                                         MinHeight="{StaticResource Size.TextArea}"
                                         Height="{StaticResource Size.TextArea}" />
-                                    <TextBlock x:Name="BugReportPlaceholderText"
-                                        Text="Что случилось (необязательно)"
-                                        VerticalAlignment="Top"
-                                        IsHitTestVisible="False"
-                                        Margin="{StaticResource Pad.FieldText}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers>
-                                                    <MultiDataTrigger>
-                                                        <MultiDataTrigger.Conditions>
-                                                            <Condition Binding="{Binding Text, ElementName=BugReportMessageTextBox}" Value="" />
-                                                            <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=BugReportMessageTextBox}" Value="False" />
-                                                        </MultiDataTrigger.Conditions>
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                    </MultiDataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <Border BorderThickness="{Binding BorderThickness, ElementName=BugReportMessageTextBox}"
+                                            IsHitTestVisible="False">
+                                        <TextBlock x:Name="BugReportPlaceholderText"
+                                            Text="Что случилось (необязательно)"
+                                            VerticalAlignment="Top"
+                                            Margin="{Binding Padding, ElementName=BugReportMessageTextBox}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource PlaceholderTextStyle}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <MultiDataTrigger>
+                                                            <MultiDataTrigger.Conditions>
+                                                                <Condition Binding="{Binding Text, ElementName=BugReportMessageTextBox}" Value="" />
+                                                                <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=BugReportMessageTextBox}" Value="False" />
+                                                            </MultiDataTrigger.Conditions>
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </MultiDataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Border>
                                 </Grid>
                             </Grid>
                         </Grid>
