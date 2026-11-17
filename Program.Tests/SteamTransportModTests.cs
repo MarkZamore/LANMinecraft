@@ -85,10 +85,35 @@ public sealed class SteamTransportModTests
             Assert.Equal(1, build.MinimumMinecraftVersion[0]);
             Assert.InRange(build.MinimumMinecraftVersion[1], 7, 16);
         });
-        Assert.Equal(50, SteamTransportCatalog.SupersededBuilds.Count);
-        Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.0.jar", StringComparison.Ordinal)));
-        Assert.Equal(19, SteamTransportCatalog.SupersededBuilds.Count(build => build.FileName.EndsWith("-v0.3.2.jar", StringComparison.Ordinal)));
-        Assert.Equal(50, SteamTransportCatalog.SupersededBuilds.Select(build => build.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        var history = SteamTransportCatalog.SupersededBuilds;
+        Assert.All(history, build =>
+        {
+            Assert.Equal(ManagedComponentService.E4steamComponentId, build.Id);
+            Assert.True(build.SizeBytes > 0);
+            Assert.True(build.FileId > 0);
+            Assert.Matches("^[a-f0-9]{64}$", build.Sha256);
+            var uri = Assert.Single(build.DownloadUris);
+            Assert.Equal("https", uri.Scheme);
+            Assert.Equal("github.com", uri.Host);
+            Assert.True(uri.IsDefaultPort);
+            Assert.Empty(uri.UserInfo);
+            Assert.Empty(uri.Query);
+            Assert.Empty(uri.Fragment);
+            var parts = Uri.UnescapeDataString(uri.AbsolutePath).Split('/', StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal(6, parts.Length);
+            Assert.Contains(parts[0], new[] { "MarkZamore", "Kamilhik" });
+            Assert.Equal("e4steam", parts[1]);
+            Assert.Equal("releases", parts[2]);
+            Assert.Equal("download", parts[3]);
+            Assert.NotEqual("latest", parts[4]);
+            Assert.Equal(build.FileName, parts[5]);
+        });
+        Assert.Equal(19, history.Count(build => build.FileName.EndsWith("-v0.3.0.jar", StringComparison.Ordinal)));
+        Assert.Equal(19, history.Count(build => build.FileName.EndsWith("-v0.3.2.jar", StringComparison.Ordinal)));
+        Assert.Equal(history.Count, history.Select(build =>
+            (build.FileName.ToLowerInvariant(), build.SizeBytes, build.Sha256)).Distinct().Count());
+        Assert.All(history.GroupBy(build => build.FileId), group =>
+            Assert.Single(group.Select(build => build.Sha256).Distinct(StringComparer.Ordinal)));
         foreach (var build in SteamTransportCatalog.Builds.Where(build => build.Version == "0.3.2"))
         {
             var previous = Assert.Single(SteamTransportCatalog.SupersededBuilds, old => old.FileName == build.FileName);
