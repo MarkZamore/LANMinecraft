@@ -169,6 +169,16 @@
       }
     },
     {
+      "id": "minecraft-25",
+      "relativePath": "Better Vanilla",
+      "libraryGroup": "Мало модов",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Better-Vanilla",
+        "tag": "pack-latest"
+      }
+    },
+    {
       "id": "minecraft-11",
       "relativePath": "Hide and Hunt",
       "libraryGroup": "Мало модов",
