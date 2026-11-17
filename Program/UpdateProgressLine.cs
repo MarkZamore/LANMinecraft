@@ -1,4 +1,4 @@
-﻿namespace Minecraft;
+namespace Minecraft;
 
 /// <summary>
 /// The line written across the launcher's own update bar.
@@ -47,9 +47,6 @@ internal static class UpdateProgressLine
 
     /// <summary>A requested update that will install when Minecraft exits.</summary>
     public static string WaitForGame(int release) => $"Обновление {release} после выхода из игры";
-
-    /// <summary>A patch being folded into the executable, which moves no bytes.</summary>
-    public static string Applying(int release) => $"Применение обновления {release}";
 
     /// <summary>Decided on, before the first byte has landed.</summary>
     public static string Starting(int release) => $"Обновление {release}: скачивается";

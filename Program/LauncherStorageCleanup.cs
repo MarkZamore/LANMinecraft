@@ -133,8 +133,9 @@ internal static class LauncherStorageCleanup
     {
         if (name.Equals(UpdateService.ExecutableAssetName + ".download", StringComparison.OrdinalIgnoreCase) ||
             name.Equals(UpdateService.ExecutableAssetName + ".new", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals(UpdateService.DeltaPatchAssetName + ".download", StringComparison.OrdinalIgnoreCase)) return true;
+            name.Equals("LANMinecraft.bsdiff.download", StringComparison.OrdinalIgnoreCase)) return true;
 
+        // Migration-only names from clients that downloaded binary patches.
         const string prefix = "LANMinecraft.from-";
         const string suffix = ".bsdiff.download";
         return name.Length > prefix.Length + suffix.Length &&

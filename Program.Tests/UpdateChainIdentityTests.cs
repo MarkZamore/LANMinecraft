@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -14,7 +16,6 @@ public sealed class UpdateChainIdentityTests
     public void UpdateChainConstants_NameTheLauncherItInstalls()
     {
         Assert.Equal("LANMinecraft.exe", UpdateService.ExecutableAssetName);
-        Assert.Equal("LANMinecraft.bsdiff", UpdateService.DeltaPatchAssetName);
         Assert.Equal("LANMinecraft.exe.candidate", UpdateService.InstallCandidateFileName);
         Assert.Equal("LANMinecraft.exe.bak", UpdateService.InstallBackupFileName);
         Assert.Equal("LANMinecraft", UpdateService.RepositoryName);
@@ -32,40 +33,44 @@ public sealed class UpdateChainIdentityTests
     }
 
     [Fact]
-    public void ValidateManifest_RejectsADeltaThatPatchesSomethingElse()
+    public void DeserializeManifest_IgnoresLegacyDeltaMetadata()
     {
-        var manifest = ValidManifest();
-        manifest.DeltaPatches = [NewDelta("something-else.bsdiff")];
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var json = JsonSerializer.SerializeToNode(ValidManifest(), options)!;
+        json["deltaPatches"] = new JsonArray
+        {
+            new JsonObject { ["assetName"] = "obsolete.bsdiff", ["algorithm"] = "obsolete" }
+        };
+        var manifest = JsonSerializer.Deserialize<UpdateManifest>(json.ToJsonString(), options)!;
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => UpdateService.ValidateManifest(manifest));
-        Assert.Contains("unexpected delta asset name", exception.Message);
+        UpdateService.ValidateManifest(manifest);
+        Assert.Equal(UpdateService.ExecutableAssetName, manifest.AssetName);
+        Assert.Equal(new string('e', 64), manifest.Sha256);
+        Assert.False(JsonSerializer.SerializeToNode(manifest, options)!.AsObject().ContainsKey("deltaPatches"));
     }
 
     [Fact]
     public void ValidateManifest_AcceptsTheShapeTheBuildPublishes()
     {
         var manifest = ValidManifest();
-        manifest.DeltaPatches =
-        [
-            NewDelta(UpdateService.DeltaPatchAssetName),
-            NewDelta("LANMinecraft.from-40.bsdiff", baseSha: new string('f', 64))
-        ];
-
         UpdateService.ValidateManifest(manifest);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var json = JsonSerializer.SerializeToNode(manifest, options)!;
+        Assert.False(json.AsObject().ContainsKey("deltaPatches"));
+        // The published v2 contract already defaults an omitted list to empty.
+        var legacy = JsonSerializer.Deserialize<LegacyV2Manifest>(json.ToJsonString(), options)!;
+        Assert.Equal(UpdateService.ManifestSchemaVersion, legacy.SchemaVersion);
+        Assert.Equal(manifest.AssetName, legacy.AssetName);
+        Assert.Empty(legacy.DeltaPatches);
     }
 
-    private static DeltaPatchManifest NewDelta(string assetName, string? baseSha = null) => new()
+    private sealed class LegacyV2Manifest
     {
-        Algorithm = UpdateService.DeltaPatchAlgorithm,
-        AlgorithmVersion = UpdateService.DeltaPatchAlgorithmVersion,
-        BaseReleaseNumber = 41,
-        BaseCommitSha = new string('b', 40),
-        BaseSha256 = baseSha ?? new string('c', 64),
-        AssetName = assetName,
-        Sha256 = new string('d', 64),
-        SizeBytes = 1024
-    };
+        public LegacyV2Manifest() { }
+        public int SchemaVersion { get; set; }
+        public string AssetName { get; set; } = "";
+        public List<JsonElement> DeltaPatches { get; set; } = [];
+    }
 
     private static UpdateManifest ValidManifest() => new()
     {

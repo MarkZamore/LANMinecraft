@@ -16,7 +16,7 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <!-- The dependency audit is in Directory.Build.props, shared with the
-         tests and the delta tool. -->
+         tests. -->
     <NoWarn>$(NoWarn);CA1822</NoWarn>
     <InformationalVersion Condition="'$(SourceRevisionId)' != ''">$(Version)+$(SourceRevisionId)</InformationalVersion>
   </PropertyGroup>
@@ -67,7 +67,6 @@
          steam-native component; this package supplies the managed API only. -->
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
-    <PackageReference Include="BsDiff" Version="1.1.0" />
   </ItemGroup>
 
   <Target Name="UseFinalWpfAssemblyForPublish"
@@ -103,17 +102,18 @@
     <EmbeddedResource Include="LibrarySeed\catalog.json" LogicalName="Minecraft.Library.catalog.json" />
     <EmbeddedResource Include="Resources\pack-display-names.json" LogicalName="Minecraft.PackDisplayNames.json" />
     <EmbeddedResource Include="LibrarySeed\*.zip" LogicalName="Minecraft.Library.%(Filename)%(Extension)" />
+    <!-- Ignore generated outputs from nested tools, including removed projects. -->
+    <Compile Remove="**\bin\**;**\obj\**" />
+    <EmbeddedResource Remove="**\bin\**;**\obj\**" />
+    <None Remove="**\bin\**;**\obj\**" />
+    <Page Remove="**\bin\**;**\obj\**" />
     <Compile Remove="Build\**" />
-    <Compile Remove="Patch\**" />
     <Compile Remove="publish\**" />
     <EmbeddedResource Remove="Build\**" />
-    <EmbeddedResource Remove="Patch\**" />
     <EmbeddedResource Remove="publish\**" />
     <None Remove="Build\**" />
-    <None Remove="Patch\**" />
     <None Remove="publish\**" />
     <Page Remove="Build\**" />
-    <Page Remove="Patch\**" />
     <Page Remove="publish\**" />
   </ItemGroup>
 

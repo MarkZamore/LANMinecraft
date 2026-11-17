@@ -49,31 +49,20 @@ function Invoke-CandidateGh {
 }
 
 function Assert-CandidateCiJobs([object[]]$Jobs) {
-    $legacy = $Jobs.name -ccontains 'release'
-    if ($legacy -and ($Jobs.name -cmatch '^(verify|build|publish)$')) {
-        throw 'The candidate has ambiguous legacy and parallel release jobs.'
+    if ($Jobs.name -ccontains 'release') {
+        throw 'The candidate has an unsupported legacy release job.'
     }
-    $required = if ($legacy) {
-        @{
-            release = @{
-                'Test and publish' = 'success'; 'Create delta and update manifest' = 'success'
-                'Verify release contents' = 'success'; 'Prepare exact candidate' = 'success'; 'Upload exact candidate' = 'success'
-            }
+    $required = @{
+        verify = @{ 'Run Release tests' = 'success' }
+        build = @{
+            'Build portable EXE' = 'success'; 'Create update manifest' = 'success'
+            'Verify release contents' = 'success'; 'Upload release assets' = 'success'
         }
-    }
-    else {
-        @{
-            verify = @{ 'Run Release tests' = 'success' }
-            build = @{
-                'Build portable EXE' = 'success'; 'Create delta and update manifest' = 'success'
-                'Verify release contents' = 'success'; 'Upload release assets' = 'success'
-            }
-            publish = @{
-                # The jobs API can report success for a continued scan failure.
-                # The workflow's artifact-upload condition checks its original outcome.
-                'Scan portable host' = @('success', 'failure'); 'Publish latest release' = 'failure'
-                'Prepare exact candidate' = 'success'; 'Upload exact candidate' = 'success'
-            }
+        publish = @{
+            # The jobs API can report success for a continued scan failure.
+            # The workflow's artifact-upload condition checks its original outcome.
+            'Scan portable host' = @('success', 'failure'); 'Publish latest release' = 'failure'
+            'Prepare exact candidate' = 'success'; 'Upload exact candidate' = 'success'
         }
     }
 
@@ -82,10 +71,8 @@ function Assert-CandidateCiJobs([object[]]$Jobs) {
         if ($found.Count -ne 1 -or $found[0].status -cne 'completed') {
             throw "The candidate has no unambiguous completed CI job: $jobName"
         }
-        if (!$legacy) {
-            $expectedConclusion = if ($jobName -ceq 'publish') { 'failure' } else { 'success' }
-            if ($found[0].conclusion -cne $expectedConclusion) { throw "Unexpected CI candidate job conclusion: $jobName" }
-        }
+        $expectedConclusion = if ($jobName -ceq 'publish') { 'failure' } else { 'success' }
+        if ($found[0].conclusion -cne $expectedConclusion) { throw "Unexpected CI candidate job conclusion: $jobName" }
         foreach ($stepName in $required[$jobName].Keys) {
             $steps = @($found[0].steps | Where-Object name -CEQ $stepName)
             if ($steps.Count -ne 1 -or $steps[0].conclusion -cnotin $required[$jobName][$stepName]) {
@@ -188,7 +175,7 @@ try {
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName
             if ($name -in @('assets/','antivirus/')) { continue }
-            if ($name -cnotmatch '^(?:candidate\.json|antivirus/scan\.json|assets/(?:LANMinecraft\.exe|update\.json|LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff))$' -or
+            if ($name -cnotmatch '^(?:candidate\.json|antivirus/scan\.json|assets/(?:LANMinecraft\.exe|update\.json))$' -or
                 -not $paths.Add($name) -or $entry.Length -lt 0 -or $entry.Length -gt 512MB -or
                 $unpackedBytes -gt 2GB - $entry.Length) { throw 'Candidate ZIP contains an unsafe, duplicate or oversized entry.' }
             $unpackedBytes += $entry.Length

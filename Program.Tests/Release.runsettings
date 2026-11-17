@@ -194,7 +194,7 @@
       FullyQualifiedName=Minecraft.Tests.FluentControlMotionTests.SectionMotion_ReversesSafelyAndRestoresAutomaticHeight|
       FullyQualifiedName=Minecraft.Tests.LibraryTreeMotionTests.AddonReveal_ReversesWithoutJumpAndRestoresAutomaticLayoutAfterNavigation|
       FullyQualifiedName=Minecraft.Tests.RenderingStartupTests.TheBuiltRuntimeConfiguration_DisablesDirtyRectanglesBeforeWpfCachesTheSwitch|
-      FullyQualifiedName=Minecraft.Tests.FunctionalAuditTests.Updater_FullDeltaFallbackCancellationInstallRestartAndRollback|
+      FullyQualifiedName=Minecraft.Tests.FunctionalAuditTests.Updater_FullDownloadCancellationInstallRestartAndRollback|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.Repeated_settings_loads_and_saves_do_not_rewrite_current_settings|
       FullyQualifiedName=Minecraft.Tests.PersistenceWriteTests.An_actual_settings_change_is_saved|
       FullyQualifiedName=Minecraft.Tests.CatalogSourceMarkerTests.AutomaticOldMarkerFollowsOnlyVerifiedSourceAndSurvivesOfflineRestartBeforeSync|
@@ -217,7 +217,7 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.ModAddonAndLibraryLinksOpenTheirOwnPagesWithoutChangingExpansion|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.UnsafeProjectPageCannotReplaceTheVerifiedCatalogue|
       FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.BuildAndVerificationRunIndependently_AndBothGatePublication|
-      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.BuildCreatesDeltasBeforeStaging_AndPublishUsesThatArtifact|
+      FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.BuildCreatesFullUpdateBeforeStaging_AndPublishUsesThatArtifact|
       FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.PublicationRequiresScanEvidenceForTheStagedExecutable|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterLanAutoPublishTests.Modern_and_legacy_publish_keep_native_init_settings_and_one_session|
       FullyQualifiedName=Minecraft.Tests.IdentityAdapterNamedRuntimeTests.SharedStoreMappingsAndAuthlibFromOtherVersions_AreNotUsed|
@@ -477,6 +477,9 @@
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.CorruptExternalDownloadStaysUnpublishedUntilNativeRetryVerifiesThePinnedBytes|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.DamagedExternalRuntimeIsRepairedFromThePinnedSource|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.PreparationUiKeepsControlsReadableThroughProgrammaticDpiChanges|
-      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.InvalidExternalDependencyDescriptorsAreRejectedBeforeDownload</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.PreparationUiStartsCompactlyAndDoesNotRedrawUnchangedFailureState|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.InvalidExternalDependencyDescriptorsAreRejectedBeforeDownload|
+      FullyQualifiedName=Minecraft.Tests.UpdateChainIdentityTests.DeserializeManifest_IgnoresLegacyDeltaMetadata|
+      FullyQualifiedName=Minecraft.Tests.UpdateChainIdentityTests.ValidateManifest_AcceptsTheShapeTheBuildPublishes</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

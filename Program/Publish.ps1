@@ -5,7 +5,7 @@
     [switch]$NoRestore,
     # Leaves bin/obj in place. Locally they are swept so the checkout stays
     # clean; on a build agent the checkout is thrown away, the sweep only costs
-    # seconds, and the delta tool built alongside is needed by the next step.
+    # seconds, and the resulting build metadata is needed by later checks.
     [switch]$KeepBuildOutput,
     [string]$StagingDirectory = ''
 )
@@ -177,8 +177,8 @@ try {
     # external components and runs the entry point in its own STA process.
     & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$managedPayload" -p:SelfContained=false $desktopVersionProperty -p:RollForward=Disable -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
-    foreach ($runtimeFile in @('hostfxr.dll','coreclr.dll','hostpolicy.dll','PresentationFramework.dll')) {
-        if (Test-Path -LiteralPath (Join-Path $managedPayload $runtimeFile)) { throw ('Runtime files must remain outside the EXE: ' + $runtimeFile) }
+    foreach ($runtimeFile in @('hostfxr.dll','coreclr.dll','hostpolicy.dll','PresentationFramework.dll','BsDiff.dll')) {
+        if (Test-Path -LiteralPath (Join-Path $managedPayload $runtimeFile)) { throw ('Unexpected file in the application payload: ' + $runtimeFile) }
     }
 
     $executable = Join-Path $PublishDir "LANMinecraft.exe"

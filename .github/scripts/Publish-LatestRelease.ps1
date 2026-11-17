@@ -14,13 +14,12 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GhRetry.ps1')
 . (Join-Path $PSScriptRoot 'HostedDefenderPolicy.ps1')
 . (Join-Path $PSScriptRoot 'CompressedHistoryRelease.ps1')
-. (Join-Path $PSScriptRoot 'ReleaseBase.ps1')
 $assetRoot = [IO.Path]::GetFullPath($AssetDirectory, (Get-Location).ProviderPath)
 $commit = $CommitSha.ToLowerInvariant()
 $locks = [Collections.Generic.List[IO.FileStream]]::new()
 
 function Get-CheckedFile([string]$Name) {
-    if ($Name -notmatch '^(?:LANMinecraft\.exe|update\.json|LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff)$') { throw ('Unsafe release asset: ' + $Name) }
+    if ($Name -notmatch '^(?:LANMinecraft\.exe|update\.json)$') { throw ('Unsafe release asset: ' + $Name) }
     $path = Join-Path $assetRoot $Name
     $attributes = [IO.File]::GetAttributes($path)
     if (($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -ne 0) { throw ('Release asset is not an ordinary file: ' + $Name) }
@@ -77,25 +76,6 @@ function Read-Latest {
     return $pointer
 }
 
-function Save-PreviousBase($Pointer) {
-    $directory = Join-Path $assetRoot ('.previous-base-' + [Guid]::NewGuid().ToString('N'))
-    try {
-        $base = Get-ValidatedBase 'latest' $directory $Repository
-        if ($base.commitSha -ne $Pointer.commitSha -or $base.releaseNumber -ne $Pointer.releaseNumber -or
-            $base.sha256 -ne $Pointer.sha256 -or $base.sizeBytes -ne $Pointer.sizeBytes) {
-            throw 'The published delta base changed before it could be archived.'
-        }
-        # Actions cannot create a tag at a historical workflow-changing commit.
-        # The archive's executable identity remains in its verified manifest.
-        & (Join-Path $PSScriptRoot 'Archive-PreviousBase.ps1') -ReleaseNumber $base.releaseNumber `
-            -ExecutablePath $base.executablePath -ManifestPath $base.manifestPath `
-            -CommitSha $base.commitSha -TagTargetCommitSha $commit -Repository $Repository
-    }
-    finally {
-        if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }
-    }
-}
-
 try {
     if (([IO.File]::GetAttributes($assetRoot) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Release asset root is a reparse point.' }
     $manifestPath = Get-CheckedFile 'update.json'
@@ -111,18 +91,6 @@ try {
     $assetPaths.Add($exe)
     $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     [void]$expected.Add('LANMinecraft.exe'); [void]$expected.Add('update.json')
-    $patches = @($manifest.deltaPatches)
-    if ($patches.Count -gt 2) { throw 'Too many release delta patches.' }
-    foreach ($patch in $patches) {
-        if ($patch.algorithm -ne 'bsdiff' -or $patch.algorithmVersion -ne 1 -or
-            $patch.assetName -notmatch '^LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$' -or
-            $patch.baseCommitSha -notmatch '^[a-fA-F0-9]{40}$' -or $patch.baseSha256 -notmatch '^[a-fA-F0-9]{64}$' -or
-            [int]$patch.baseReleaseNumber -lt 1 -or [int]$patch.baseReleaseNumber -ge $ReleaseNumber -or
-            -not $expected.Add([string]$patch.assetName)) { throw 'Invalid or duplicate delta patch identity.' }
-        $path = Get-CheckedFile $patch.assetName
-        Assert-HashSize $path $patch
-        $assetPaths.Add($path)
-    }
     $files = @([IO.Directory]::EnumerateFiles($assetRoot, '*', [IO.SearchOption]::TopDirectoryOnly))
     if ($files.Count -ne $expected.Count -or @($files | Where-Object { -not $expected.Contains([IO.Path]::GetFileName($_)) }).Count) { throw 'Unexpected or missing release files.' }
     if (-not $Publish) {
@@ -168,18 +136,6 @@ try {
         [void](Invoke-CheckedGh release create latest @assetPaths $manifestPath --repo $Repository --target $commit --latest --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
     else {
-        $compressedHistory = Test-CompressedHistoryRelease $ReleaseNumber $latest
-        if ($latest.commitSha -ne $commit -and ($patches.Count -gt 0 -or $compressedHistory)) {
-            $matchingBase = @($patches | Where-Object {
-                $_.baseCommitSha -eq $latest.commitSha -and $_.baseReleaseNumber -eq $latest.releaseNumber -and
-                $_.baseSha256 -eq $latest.sha256
-            })
-            if (!$compressedHistory -and $matchingBase.Count -ne 1) {
-                throw 'The published release changed after the delta bases were captured.'
-            }
-            Save-PreviousBase $latest
-            Assert-PublicationHead
-        }
         [void](Invoke-CheckedGh release upload latest @assetPaths --repo $Repository --clobber)
         Assert-PublicationHead
         [void](Read-Latest)
@@ -191,11 +147,6 @@ try {
         }
         [void](Invoke-CheckedGh release edit latest --repo $Repository --target $commit --title 'Latest LANMinecraft.exe' --notes $releaseNotes)
     }
-    $archiveTags = (Invoke-CheckedGh release list --repo $Repository --limit 100 --json tagName | ConvertFrom-Json).tagName |
-        Where-Object { $_ -match '^update-base-([1-9][0-9]*)$' -and
-            [int]($_ -replace '^update-base-', '') -lt $ReleaseNumber } |
-        Sort-Object { [int]($_ -replace '^update-base-', '') } -Descending
-    foreach ($tag in @($archiveTags | Select-Object -Skip 2)) { [void](Invoke-CheckedGh release delete $tag --repo $Repository --cleanup-tag --yes) }
     Write-Host ("Published verified release $ReleaseNumber ($commit).")
 }
 finally { foreach ($held in $locks) { $held.Dispose() } }

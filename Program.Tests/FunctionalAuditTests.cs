@@ -2,8 +2,8 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
-using BsDiff;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -192,65 +192,73 @@ public sealed class FunctionalAuditTests
     }
 
     [FunctionalAuditFact]
-    public async Task Updater_FullDeltaFallbackCancellationInstallRestartAndRollback()
+    public async Task Updater_FullDownloadCancellationInstallRestartAndRollback()
     {
         using var scenario = Begin("updater-download-install");
         var host = RequiredEnvironment("LANMINECRAFT_FUNCTIONAL_AUDIT_HOST");
         Assert.True(File.Exists(host), "Publish the audit host before running the integration audit.");
         var newBytes = File.ReadAllBytes(host);
         var oldBytes = newBytes.ToArray();
-        // IMAGE_DOS_HEADER.e_res is reserved and ignored by the Windows loader.
-        // Change one reserved byte to give the real patch a distinct base image.
+        // Reserved DOS bytes do not affect loading. Keep the installed image
+        // distinct so the real replacement/rollback paths prove which bytes survive.
         oldBytes[0x1c] ^= 1;
-        using var patchStream = new MemoryStream();
-        BinaryPatch.Create(oldBytes, newBytes, patchStream);
-        var patchBytes = patchStream.ToArray();
 
-        foreach (var kind in new[] { "full", "delta", "delta-fallback", "cancel" })
+        foreach (var kind in new[] { "full", "legacy-manifest", "bad-sha", "bad-size", "cancel" })
         {
             var paths = Paths("update-download-" + kind);
             var current = Path.Combine(paths.Root, UpdateService.ExecutableAssetName);
             File.WriteAllBytes(current, oldBytes);
             var manifest = Manifest(newBytes);
-            var delta = new DeltaPatchManifest
+            var manifestJson = JsonSerializer.SerializeToNode(manifest, JsonOptions)!;
+            if (kind == "legacy-manifest")
             {
-                AlgorithmVersion = UpdateService.DeltaPatchAlgorithmVersion,
-                BaseReleaseNumber = 1, BaseCommitSha = new string('a', 40), BaseSha256 = Hash(oldBytes),
-                Sha256 = Hash(patchBytes), SizeBytes = patchBytes.Length
-            };
-            manifest.DeltaPatches = [delta];
-            var actualPatch = kind == "delta-fallback" ? new byte[patchBytes.Length] : patchBytes;
+                // Historical patch metadata is ignored; no patch is requested or applied.
+                manifestJson["deltaPatches"] = JsonSerializer.SerializeToNode(new[]
+                {
+                    new { algorithm = "bsdiff", assetName = "LANMinecraft.bsdiff", baseCommitSha = new string('a', 40) }
+                });
+            }
+            var payload = kind == "bad-size" ? newBytes[..^1] : newBytes.ToArray();
+            if (kind == "bad-sha") payload[0x1c] ^= 1;
             using var cancellation = new CancellationTokenSource();
             var requests = new List<string>();
             using var client = new HttpClient(new ResponseHandler(request =>
             {
                 var name = Path.GetFileName(request.RequestUri!.AbsolutePath);
                 requests.Add(name);
+                if (name == UpdateService.ManifestAssetName)
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = new StringContent(manifestJson.ToJsonString(), Encoding.UTF8, "application/json") };
+                Assert.Equal(UpdateService.ExecutableAssetName, name);
                 if (kind == "cancel") cancellation.Cancel();
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new ByteArrayContent(name.EndsWith(".bsdiff", StringComparison.Ordinal) ? actualPatch : newBytes)
-                };
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
             }));
             var service = new UpdateService(paths, new Logger(paths.LogFile), client,
                 currentCommitSha: new string('a', 40), currentExecutablePath: current);
-            var update = UpdateCheckResult.Available(manifest,
-                new Uri("https://github.com/MarkZamore/LANMinecraft/releases/download/latest/LANMinecraft.exe"),
-                kind.StartsWith("delta", StringComparison.Ordinal) ? delta : null,
-                kind.StartsWith("delta", StringComparison.Ordinal)
-                    ? new Uri("https://github.com/MarkZamore/LANMinecraft/releases/download/latest/LANMinecraft.bsdiff") : null);
+            var update = kind == "legacy-manifest"
+                ? await service.CheckAsync(cancellation.Token)
+                : UpdateCheckResult.Available(manifest,
+                    new Uri("https://github.com/MarkZamore/LANMinecraft/releases/download/latest/LANMinecraft.exe"));
             if (kind == "cancel")
             {
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(
                     () => service.DownloadUpdateAsync(update, null, cancellation.Token));
                 Assert.Empty(Directory.EnumerateFiles(Path.Combine(paths.Personal, "Updates"), "*.download"));
             }
+            else if (kind is "bad-sha" or "bad-size")
+            {
+                await Assert.ThrowsAnyAsync<InvalidOperationException>(
+                    () => service.DownloadUpdateAsync(update, null, cancellation.Token));
+                Assert.Null(service.TryGetPreparedUpdate());
+                Assert.Empty(Directory.EnumerateFiles(Path.Combine(paths.Personal, "Updates"), "*.download"));
+                Assert.Equal(oldBytes, File.ReadAllBytes(current));
+            }
             else
             {
                 var prepared = await service.DownloadUpdateAsync(update, null, cancellation.Token);
                 Assert.Equal(newBytes, File.ReadAllBytes(prepared.ExecutablePath));
                 Assert.NotNull(service.TryGetPreparedUpdate());
-                Assert.Equal(kind == "delta" ? 1 : kind == "delta-fallback" ? 2 : 1, requests.Count);
+                Assert.Equal(kind == "legacy-manifest" ? 2 : 1, requests.Count);
             }
             Mark("update-download-pass", new { kind, requests });
         }

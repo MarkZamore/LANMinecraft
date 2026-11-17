@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -7,19 +7,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
-using BsDiff;
 
 namespace Minecraft;
 
-public sealed partial class UpdateService
+public sealed class UpdateService
 {
     public const string RepositoryOwner = "MarkZamore";
     public const string RepositoryName = "LANMinecraft";
     public const string ReleaseTag = "latest";
     public const string ExecutableAssetName = "LANMinecraft.exe";
     public const string ManifestAssetName = "update.json";
-    public const string DeltaPatchAssetName = "LANMinecraft.bsdiff";
     /// <summary>
     /// The shape of update.json, which CI writes for every launcher that might
     /// read it - including builds older than the one that produced it. It is
@@ -27,9 +24,6 @@ public sealed partial class UpdateService
     /// an installed launcher unable to parse its own update manifest.
     /// </summary>
     public const int ManifestSchemaVersion = 2;
-    public const string DeltaPatchAlgorithm = "bsdiff";
-    public const int DeltaPatchAlgorithmVersion = 1;
-    public const int MaximumDeltaPatches = 2;
     public const string InstallJournalFileName = "install-journal.json";
     public const string InstallScriptFileName = "apply-update.ps1";
     public const string InstallCandidateFileName = "LANMinecraft.exe.candidate";
@@ -194,18 +188,9 @@ public sealed partial class UpdateService
                     return evaluation;
                 }
 
-                Uri? deltaPatchDownloadUrl = null;
-                var deltaPatch = await FindMatchingDeltaPatchAsync(manifest, token).ConfigureAwait(false);
-                if (deltaPatch is not null)
-                {
-                    deltaPatchDownloadUrl = BuildReleaseAssetUri(deltaPatch.AssetName);
-                }
-
                 return UpdateCheckResult.Available(
                     manifest,
-                    BuildReleaseAssetUri(manifest.AssetName),
-                    deltaPatch,
-                    deltaPatchDownloadUrl);
+                    BuildReleaseAssetUri(manifest.AssetName));
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -239,79 +224,11 @@ public sealed partial class UpdateService
         ValidateGitHubDownloadUri(update.ExecutableDownloadUrl);
         ValidateManifest(update.Manifest);
 
-        if (update.DeltaPatchDownloadUrl is not null && update.DeltaPatch is not null)
-        {
-            try
-            {
-                return await DownloadAndApplyDeltaAsync(
-                    update.Manifest,
-                    update.DeltaPatch,
-                    update.DeltaPatchDownloadUrl,
-                    progress,
-                    token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"Delta update failed; downloading the full executable instead: {ex.Message}");
-                CleanupDeltaArtifacts(GetUpdatesDirectory(create: false));
-            }
-        }
-
         return await DownloadFullUpdateAsync(
             update.Manifest,
             update.ExecutableDownloadUrl,
             progress,
             token).ConfigureAwait(false);
-    }
-
-    private async Task<PreparedUpdate> DownloadAndApplyDeltaAsync(
-        UpdateManifest manifest,
-        DeltaPatchManifest delta,
-        Uri downloadUri,
-        IProgress<UpdatePreparationProgress>? progress,
-        CancellationToken token)
-    {
-        ValidateGitHubDownloadUri(downloadUri);
-        var updatesDir = GetUpdatesDirectory(create: true);
-        var patchPath = Path.Combine(updatesDir, $"{delta.AssetName}.download");
-        var reconstructedPath = Path.Combine(updatesDir, $"{ExecutableAssetName}.new");
-        CleanupDeltaArtifacts(updatesDir);
-
-        try
-        {
-            await DownloadFileAsync(
-                downloadUri,
-                patchPath,
-                delta.SizeBytes,
-                delta.Sha256,
-                "delta patch",
-                progress,
-                token).ConfigureAwait(false);
-
-            token.ThrowIfCancellationRequested();
-            progress?.Report(new UpdatePreparationProgress(UpdatePreparationStage.ApplyingDelta, null));
-            var currentExe = GetCurrentExecutablePath();
-            await Task.Run(
-                () => ApplyDeltaPatch(currentExe, patchPath, reconstructedPath, delta.BaseSha256),
-                token).ConfigureAwait(false);
-            token.ThrowIfCancellationRequested();
-
-            ValidateDownloadedFile(reconstructedPath, manifest);
-            var readyPath = StorePreparedUpdate(reconstructedPath, manifest, updatesDir);
-            DeleteFileIfExists(patchPath);
-            progress?.Report(new UpdatePreparationProgress(UpdatePreparationStage.Ready, 1d));
-            return new PreparedUpdate(manifest, readyPath);
-        }
-        catch
-        {
-            DeleteFileIfExists(patchPath);
-            DeleteFileIfExists(reconstructedPath);
-            throw;
-        }
     }
 
     private async Task<PreparedUpdate> DownloadFullUpdateAsync(
@@ -429,50 +346,6 @@ public sealed partial class UpdateService
         }
     }
 
-    private static void ApplyDeltaPatch(
-        string currentExecutablePath,
-        string patchPath,
-        string outputPath,
-        string expectedBaseSha256)
-    {
-        var actualBaseSha256 = HashFile(currentExecutablePath);
-        if (!string.Equals(actualBaseSha256, expectedBaseSha256, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("The current executable changed before the delta patch was applied.");
-        }
-
-        DeleteFileIfExists(outputPath);
-        using var oldFile = new FileStream(
-            currentExecutablePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            1024 * 1024,
-            FileOptions.SequentialScan);
-        using var output = new FileStream(
-            outputPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            1024 * 1024,
-            FileOptions.SequentialScan | FileOptions.WriteThrough);
-        BinaryPatch.Apply(oldFile, () => File.OpenRead(patchPath), output);
-        output.Flush(flushToDisk: true);
-    }
-
-    private static void CleanupDeltaArtifacts(string updatesDir)
-    {
-        if (string.IsNullOrWhiteSpace(updatesDir)) return;
-        if (Directory.Exists(updatesDir))
-        {
-            foreach (var path in Directory.EnumerateFiles(updatesDir, "*.bsdiff.download", SearchOption.TopDirectoryOnly))
-            {
-                DeleteFileIfExists(path);
-            }
-        }
-        DeleteFileIfExists(Path.Combine(updatesDir, $"{ExecutableAssetName}.new"));
-    }
-
     private string GetCurrentExecutablePath()
     {
         var path = _currentExecutablePath ?? Environment.ProcessPath ?? Path.Combine(_paths.Root, ExecutableAssetName);
@@ -481,36 +354,6 @@ public sealed partial class UpdateService
             throw new FileNotFoundException("The current executable was not found.", path);
         }
         return path;
-    }
-
-    private async Task<DeltaPatchManifest?> FindMatchingDeltaPatchAsync(
-        UpdateManifest manifest,
-        CancellationToken token)
-    {
-        try
-        {
-            var candidates = manifest.DeltaPatches
-                .Where(delta => string.Equals(
-                    NormalizeSha(delta.BaseCommitSha),
-                    _currentCommitSha,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            if (candidates.Length == 0) return null;
-
-            var currentExe = GetCurrentExecutablePath();
-            var actualSha = await Task.Run(() => HashFile(currentExe), token).ConfigureAwait(false);
-            return candidates.FirstOrDefault(delta =>
-                string.Equals(actualSha, delta.BaseSha256, StringComparison.OrdinalIgnoreCase));
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn($"The current executable could not be checked for a delta update: {ex.Message}");
-            return null;
-        }
     }
 
     public void StartInstall(PreparedUpdate prepared, UpdateInstallMode mode)
@@ -692,7 +535,6 @@ public sealed partial class UpdateService
 
     public static void ValidateManifest(UpdateManifest manifest)
     {
-        manifest.DeltaPatches ??= [];
         if (manifest.SchemaVersion != ManifestSchemaVersion)
         {
             throw new InvalidOperationException("Update manifest schema is not supported.");
@@ -722,74 +564,6 @@ public sealed partial class UpdateService
         if (sha256.Length != 64 || sha256.Any(character => !Uri.IsHexDigit(character)))
         {
             throw new InvalidOperationException("Update manifest contains an invalid SHA-256.");
-        }
-
-        if (manifest.DeltaPatches.Count > MaximumDeltaPatches)
-        {
-            throw new InvalidOperationException("Update manifest contains too many delta patches.");
-        }
-        foreach (var delta in manifest.DeltaPatches)
-        {
-            ValidateDeltaPatchManifest(delta, manifest.CommitSha);
-        }
-        if (manifest.DeltaPatches
-            .GroupBy(delta => NormalizeSha(delta.BaseSha256), StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.Count() > 1))
-        {
-            throw new InvalidOperationException("Update manifest contains duplicate delta bases.");
-        }
-    }
-
-    private static void ValidateDeltaPatchManifest(DeltaPatchManifest delta, string targetCommitSha)
-    {
-        if (!string.Equals(delta.Algorithm, DeltaPatchAlgorithm, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Update manifest contains an unsupported delta algorithm.");
-        }
-        if (delta.AlgorithmVersion != DeltaPatchAlgorithmVersion)
-        {
-            throw new InvalidOperationException("Update manifest contains an unsupported delta algorithm version.");
-        }
-        if (string.IsNullOrWhiteSpace(delta.BaseCommitSha) ||
-            string.Equals(NormalizeSha(delta.BaseCommitSha), NormalizeSha(targetCommitSha), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Update manifest contains an invalid delta base commit.");
-        }
-        if (!IsSafeDeltaAssetName(delta.AssetName))
-        {
-            throw new InvalidOperationException("Update manifest contains an unexpected delta asset name.");
-        }
-        if (delta.BaseReleaseNumber < 1)
-        {
-            throw new InvalidOperationException("Update manifest contains an invalid delta base release number.");
-        }
-        if (delta.SizeBytes <= 0)
-        {
-            throw new InvalidOperationException("Update manifest contains an invalid delta size.");
-        }
-        ValidateSha256(delta.BaseSha256, "delta base");
-        ValidateSha256(delta.Sha256, "delta patch");
-    }
-
-    /// <summary>
-    /// A patch asset is downloaded and applied to this executable, so its name
-    /// has to be one this build publishes: the direct patch, or a patch from a
-    /// numbered older release. Anything else names somebody else's file.
-    /// </summary>
-    private static bool IsSafeDeltaAssetName(string? assetName) =>
-        !string.IsNullOrWhiteSpace(assetName) &&
-        string.Equals(Path.GetFileName(assetName), assetName, StringComparison.Ordinal) &&
-        DeltaAssetNamePattern().IsMatch(assetName);
-
-    [GeneratedRegex(@"^LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$", RegexOptions.CultureInvariant)]
-    private static partial Regex DeltaAssetNamePattern();
-
-    private static void ValidateSha256(string? value, string description)
-    {
-        var sha256 = value?.Trim() ?? string.Empty;
-        if (sha256.Length != 64 || sha256.Any(character => !Uri.IsHexDigit(character)))
-        {
-            throw new InvalidOperationException($"Update manifest contains an invalid {description} SHA-256.");
         }
     }
 
@@ -1136,25 +910,11 @@ public sealed class UpdateManifest
     public string AssetName { get; set; } = UpdateService.ExecutableAssetName;
     public string Sha256 { get; set; } = "";
     public long SizeBytes { get; set; }
-    public List<DeltaPatchManifest> DeltaPatches { get; set; } = [];
-}
-
-public sealed class DeltaPatchManifest
-{
-    public string Algorithm { get; set; } = UpdateService.DeltaPatchAlgorithm;
-    public int AlgorithmVersion { get; set; }
-    public int BaseReleaseNumber { get; set; }
-    public string BaseCommitSha { get; set; } = "";
-    public string BaseSha256 { get; set; } = "";
-    public string AssetName { get; set; } = UpdateService.DeltaPatchAssetName;
-    public string Sha256 { get; set; } = "";
-    public long SizeBytes { get; set; }
 }
 
 public enum UpdatePreparationStage
 {
     Downloading,
-    ApplyingDelta,
     Ready
 }
 
@@ -1201,15 +961,11 @@ public sealed class UpdateCheckResult
         bool isUpdateAvailable,
         UpdateManifest? manifest,
         Uri? executableDownloadUrl,
-        DeltaPatchManifest? deltaPatch,
-        Uri? deltaPatchDownloadUrl,
         string message)
     {
         IsUpdateAvailable = isUpdateAvailable;
         Manifest = manifest;
         ExecutableDownloadUrl = executableDownloadUrl;
-        DeltaPatch = deltaPatch;
-        DeltaPatchDownloadUrl = deltaPatchDownloadUrl;
         Message = message;
     }
 
@@ -1223,19 +979,15 @@ public sealed class UpdateCheckResult
     public bool IsUnavailable { get; private init; }
     public UpdateManifest? Manifest { get; }
     public Uri? ExecutableDownloadUrl { get; }
-    public DeltaPatchManifest? DeltaPatch { get; }
-    public Uri? DeltaPatchDownloadUrl { get; }
     public string Message { get; }
 
-    public static UpdateCheckResult UpToDate(string message = "") => new(false, null, null, null, null, message);
+    public static UpdateCheckResult UpToDate(string message = "") => new(false, null, null, message);
 
     public static UpdateCheckResult Unavailable(string message) =>
-        new(false, null, null, null, null, message) { IsUnavailable = true };
+        new(false, null, null, message) { IsUnavailable = true };
 
     public static UpdateCheckResult Available(
         UpdateManifest manifest,
-        Uri? executableDownloadUrl,
-        DeltaPatchManifest? deltaPatch = null,
-        Uri? deltaPatchDownloadUrl = null) =>
-        new(true, manifest, executableDownloadUrl, deltaPatch, deltaPatchDownloadUrl, "");
+        Uri? executableDownloadUrl) =>
+        new(true, manifest, executableDownloadUrl, "");
 }

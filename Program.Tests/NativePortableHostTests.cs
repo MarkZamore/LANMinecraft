@@ -596,6 +596,41 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     }
 
     [Fact]
+    public async Task PreparationUiStartsCompactlyAndDoesNotRedrawUnchangedFailureState()
+    {
+        var observations = new List<object>();
+        foreach (var show in new[] { ProcessWindowStyle.Normal, ProcessWindowStyle.Maximized, ProcessWindowStyle.Minimized })
+        {
+            fixture.Server.ResetFaults();
+            fixture.RemoveExternalCache("desktop-runtime");
+            fixture.Server.FaultKind = "desktop-runtime";
+            fixture.Server.Fault = NativeDesktopFault.HttpFailureOnce;
+            using var process = fixture.Start(windowStyle: show);
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try
+            {
+                var window = await NativeDesktopPreparationUi.Wait(process, NativeDesktopPreparationUi.RetryReady);
+                observations.Add(new { callerWindowStyle = show.ToString(),
+                    initial = NativeDesktopPreparationUi.AssertInitialCompact(process, window),
+                    idle = NativeDesktopPreparationUi.AssertIdleDoesNotMutateControls(process, window) });
+                NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Cancel);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.Equal(1223, process.ExitCode);
+                Assert.Equal("", (await output).Trim());
+                Assert.Contains("LANMinecraft bootstrap cancelled", await error, StringComparison.Ordinal);
+            }
+            finally
+            {
+                fixture.Server.ResetFaults();
+                if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+                await Task.WhenAll(output, error);
+            }
+        }
+        File.WriteAllText(Path.Combine(fixture.Root, "native-preparation-compact-idle.json"), JsonSerializer.Serialize(observations));
+    }
+
+    [Fact]
     public async Task PreparationUiKeepsControlsReadableThroughProgrammaticDpiChanges()
     {
         var layouts = new List<object>();
@@ -613,9 +648,13 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             {
                 var window = await NativeDesktopPreparationUi.Wait(process,
                     afterError ? NativeDesktopPreparationUi.RetryReady : NativeDesktopPreparationUi.HasProgressMetrics);
-                foreach (var dpi in new[] { 96, 144, 192 })
-                    layouts.Add(new { state = afterError ? "retryable-error" : "active-transfer",
-                        layout = NativeDesktopPreparationUi.AssertLayout(process, window, dpi) });
+                foreach (var errorCode in afterError ? new[] { 0, 5, 112 } : new[] { -1 })
+                {
+                    if (afterError) NativeDesktopPreparationUi.ErrorText(process, window, errorCode);
+                    foreach (var dpi in new[] { 96, 120, 144, 192 })
+                        layouts.Add(new { state = afterError ? "retryable-error" : "active-transfer", errorCode,
+                            layout = NativeDesktopPreparationUi.AssertLayout(process, window, dpi) });
+                }
                 NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Cancel);
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
                 Assert.Equal(1223, process.ExitCode);
@@ -992,10 +1031,11 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         Assert.True(process.ExitCode == 0, $"Native fixture {name} failed ({process.ExitCode}); see {Root}. {log[^Math.Min(log.Length, 3000)..]}");
     }
 
-    public Process Start(string? executable = null, string? cwd = null, string[]? arguments = null, bool allowPowerShell = false)
+    public Process Start(string? executable = null, string? cwd = null, string[]? arguments = null, bool allowPowerShell = false,
+        ProcessWindowStyle windowStyle = ProcessWindowStyle.Normal)
     {
         var start = new ProcessStartInfo(executable ?? Executable) { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = cwd ?? Root };
+            RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = cwd ?? Root, WindowStyle = windowStyle };
         foreach (var argument in arguments ?? ["--rendering-probe"]) start.ArgumentList.Add(argument);
         // The private pinned runtime must work without an installed dotnet/runtime
         // on PATH. Do not spoof Windows Known Folders or the user's profile.

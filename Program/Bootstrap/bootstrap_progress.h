@@ -156,7 +156,8 @@ private:
     static constexpr COLORREF Muted = RGB(197, 197, 197);
     static constexpr COLORREF Surface = RGB(25, 25, 25);
     static constexpr COLORREF Primary = RGB(71, 181, 128);
-    static constexpr DWORD WindowStyle = WS_OVERLAPPEDWINDOW;
+    static constexpr DWORD WindowStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+    static constexpr DWORD WindowExtendedStyle = WS_EX_COMPOSITED;
     PreparationState state_;
     std::thread worker_;
     std::function<void(PreparationProgress&)> work_;
@@ -179,13 +180,38 @@ private:
     double speed_ = 0;
     int percent_ = 0;
     bool determinate_ = false;
+    ULONGLONG renderedAt_ = 0;
+    std::wstring shownStage_;
+    std::wstring shownMetrics_;
+    std::wstring shownProgress_;
+    bool cancelEnabled_ = true;
+    bool retryEnabled_ = false;
+    bool retryVisible_ = false;
+    bool changingDpi_ = false;
+    int layoutWidth_ = 0;
+    int layoutHeight_ = 0;
+    UINT layoutDpi_ = 0;
+#if defined(LANMINECRAFT_BOOTSTRAP_TEST_SOURCES)
+    std::uint64_t mutations_ = 0;
+    std::uint64_t draws_ = 0;
+    std::uint64_t erases_ = 0;
+#endif
 
     int Scale(int value) const { return MulDiv(value, static_cast<int>(dpi_), 96); }
     SIZE MinimumOuter() const
     {
-        RECT area{ 0, 0, Scale(420), Scale(260) };
-        AdjustWindowRectExForDpi(&area, WindowStyle, FALSE, 0, dpi_);
+        RECT area{ 0, 0, Scale(336), Scale(200) };
+        const auto extended = window_ ? static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE)) : WindowExtendedStyle;
+        AdjustWindowRectExForDpi(&area, WindowStyle, FALSE, extended, dpi_);
         return SIZE{ area.right - area.left, area.bottom - area.top };
+    }
+    static std::wstring ErrorMessage(unsigned long code)
+    {
+        if (code == ERROR_DISK_FULL || code == ERROR_HANDLE_DISK_FULL)
+            return L"Недостаточно места для файлов лаунчера. Освободите место и повторите попытку.";
+        if (code == ERROR_ACCESS_DENIED || code == ERROR_SHARING_VIOLATION)
+            return L"Нет доступа к файлам лаунчера. Проверьте папку и повторите попытку.";
+        return L"Не удалось загрузить файлы. Проверьте интернет и повторите попытку.";
     }
     void StartWorker()
     {
@@ -198,7 +224,7 @@ private:
         }
         state_.cancelled.store(false); state_.done.store(false);
         errorShown_ = false;
-        lastStage_ = UINT64_MAX; sampledAt_ = 0; speed_ = 0;
+        lastStage_ = UINT64_MAX; sampledAt_ = 0; renderedAt_ = 0; speed_ = 0;
         worker_ = std::thread([this]
         {
             PreparationProgress progress(state_);
@@ -209,11 +235,7 @@ private:
                 Log(L"Preparation attempt failed: " + error.text());
                 std::lock_guard<std::mutex> lock(state_.gate);
                 state_.failure = std::current_exception(); state_.retryable = true;
-                if (error.code() == ERROR_DISK_FULL || error.code() == ERROR_HANDLE_DISK_FULL)
-                    state_.error = L"Недостаточно места для файлов лаунчера. Освободите место и повторите попытку.";
-                else if (error.code() == ERROR_ACCESS_DENIED || error.code() == ERROR_SHARING_VIOLATION)
-                    state_.error = L"Нет доступа к файлам лаунчера. Проверьте папку и повторите попытку.";
-                else state_.error = L"Не удалось загрузить файлы. Проверьте интернет и повторите попытку.";
+                state_.error = ErrorMessage(error.code());
             }
             catch (...)
             {
@@ -229,6 +251,8 @@ private:
         if (window_) DestroyWindow(window_);
         window_ = nullptr;
         heading_ = stage_ = metrics_ = progress_ = cancel_ = retry_ = nullptr;
+        shownStage_.clear(); shownMetrics_.clear(); shownProgress_.clear();
+        layoutWidth_ = layoutHeight_ = 0; layoutDpi_ = 0;
     }
     HFONT UiFont(int height, int weight)
     {
@@ -258,13 +282,13 @@ private:
         font_ = UiFont(14, FW_NORMAL);
         headingFont_ = UiFont(18, FW_SEMIBOLD);
         for (auto control : { heading_, stage_, metrics_, progress_, cancel_, retry_ })
-            if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(control == heading_ ? headingFont_ : font_), TRUE);
+            if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(control == heading_ ? headingFont_ : font_), FALSE);
         if (previous) DeleteObject(previous);
         if (previousHeading) DeleteObject(previousHeading);
     }
-    HWND Child(const wchar_t* type, const wchar_t* text, DWORD style, int id)
+    HWND Child(const wchar_t* type, const wchar_t* text, DWORD style, int id, bool visible = true)
     {
-        auto child = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 0, 0, window_,
+        auto child = CreateWindowExW(0, type, text, WS_CHILD | (visible ? WS_VISIBLE : 0) | style, 0, 0, 0, 0, window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
         if (!child) Fail(L"Create preparation control");
         return child;
@@ -281,56 +305,70 @@ private:
         type.hIcon = LoadIconW(type.hInstance, MAKEINTRESOURCEW(1));
         type.hbrBackground = canvas_;
         if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) Fail(L"Register preparation window");
-        RECT area{ 0, 0, Scale(520), Scale(280) };
-        AdjustWindowRectExForDpi(&area, WindowStyle, FALSE, 0, dpi_);
-        const int width = area.right - area.left, height = area.bottom - area.top;
+        const auto initial = MinimumOuter();
+        const int width = initial.cx, height = initial.cy;
         POINT cursor{}; GetCursorPos(&cursor);
         MONITORINFO monitor{ sizeof(monitor) };
         GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &monitor);
         const int x = monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - width) / 2;
         const int y = monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - height) / 2;
-        window_ = CreateWindowExW(0, type.lpszClassName, L"LANMinecraft", WindowStyle,
+        window_ = CreateWindowExW(WindowExtendedStyle, type.lpszClassName, L"LANMinecraft", WindowStyle,
             x, y, width, height, nullptr, nullptr, type.hInstance, this);
         if (!window_) Fail(L"Create preparation window");
         const auto actualDpi = GetDpiForWindow(window_);
-        if (actualDpi && actualDpi != dpi_)
-        {
-            dpi_ = actualDpi;
-            RECT initial{ 0, 0, Scale(520), Scale(280) };
-            AdjustWindowRectExForDpi(&initial, WindowStyle, FALSE, 0, dpi_);
-            const int adjustedWidth = initial.right - initial.left, adjustedHeight = initial.bottom - initial.top;
-            SetWindowPos(window_, nullptr,
-                monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - adjustedWidth) / 2,
-                monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - adjustedHeight) / 2,
-                adjustedWidth, adjustedHeight, SWP_NOZORDER | SWP_NOACTIVATE);
-        }
+        if (actualDpi) dpi_ = actualDpi;
+        // Windows may add nonclient extended styles during creation. Measure
+        // the resulting frame as well as the actual monitor DPI while hidden.
+        const auto adjusted = MinimumOuter();
+        const int adjustedWidth = adjusted.cx, adjustedHeight = adjusted.cy;
+        if (!SetWindowPos(window_, nullptr,
+            monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - adjustedWidth) / 2,
+            monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - adjustedHeight) / 2,
+            adjustedWidth, adjustedHeight, SWP_NOZORDER | SWP_NOACTIVATE)) Fail(L"Size preparation window");
         const int dark = 1; DwmSetWindowAttribute(window_, 20, &dark, sizeof(dark));
         heading_ = Child(L"STATIC", L"Подготавливаем первый запуск", SS_LEFT, HeadingId);
         stage_ = Child(L"STATIC", L"", SS_LEFT, StageId);
         metrics_ = Child(L"STATIC", L"", SS_LEFT, MetricsId);
         progress_ = Child(L"STATIC", L"", SS_OWNERDRAW, ProgressId);
         cancel_ = Child(L"BUTTON", L"Отмена", WS_TABSTOP | BS_OWNERDRAW, IDCANCEL);
-        retry_ = Child(L"BUTTON", L"Повторить", WS_TABSTOP | BS_OWNERDRAW, IDRETRY);
-        ShowWindow(retry_, SW_HIDE);
-        EnableWindow(retry_, FALSE);
+        retry_ = Child(L"BUTTON", L"Повторить", WS_TABSTOP | BS_OWNERDRAW | WS_DISABLED, IDRETRY, false);
+        cancelEnabled_ = true; retryEnabled_ = retryVisible_ = false;
         Fonts(); Layout(); UpdateControls();
-        ShowWindow(window_, SW_SHOWNORMAL); UpdateWindow(window_); SetFocus(cancel_);
+        // ShowWindow's first invocation can honor STARTUPINFO's maximized or
+        // minimized state. The preparation dialog always starts compact and
+        // normal, with its children and monitor-specific fonts already ready.
+        if (!SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW)) Fail(L"Show preparation window");
+        UpdateWindow(window_);
+        SetFocus(retryVisible_ ? retry_ : cancel_);
         SetTimer(window_, 1, 100, nullptr);
     }
     void Layout()
     {
-        if (!window_ || !heading_) return;
+        if (!window_ || !heading_ || changingDpi_) return;
         RECT client{}; GetClientRect(window_, &client);
-        const int edge = Scale(24), width = std::max(1, static_cast<int>(client.right) - edge * 2);
+        if (layoutWidth_ == client.right && layoutHeight_ == client.bottom && layoutDpi_ == dpi_) return;
+        layoutWidth_ = client.right; layoutHeight_ = client.bottom; layoutDpi_ = dpi_;
+        const int edge = Scale(16), width = std::max(1, static_cast<int>(client.right) - edge * 2);
         const int bottom = client.bottom - edge - Scale(36);
-        MoveWindow(heading_, edge, edge, width, Scale(28), TRUE);
-        MoveWindow(stage_, edge, edge + Scale(36), width, Scale(40), TRUE);
-        MoveWindow(metrics_, edge, edge + Scale(84), width, Scale(40), TRUE);
-        MoveWindow(progress_, edge, edge + Scale(136), width, Scale(8), TRUE);
         const int buttonWidth = Scale(112);
-        MoveWindow(cancel_, client.right - edge - buttonWidth, bottom, buttonWidth, Scale(36), TRUE);
-        MoveWindow(retry_, client.right - edge - buttonWidth * 2 - Scale(8), bottom, buttonWidth, Scale(36), TRUE);
-        InvalidateRect(window_, nullptr, TRUE);
+        auto batch = BeginDeferWindowPos(6);
+        if (!batch) Fail(L"Begin preparation layout");
+        const auto place = [&](HWND child, int x, int y, int w, int h)
+        {
+            batch = DeferWindowPos(batch, child, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+            if (!batch) Fail(L"Place preparation control");
+        };
+        place(heading_, edge, Scale(16), width, Scale(28));
+        place(stage_, edge, Scale(48), width, Scale(40));
+        place(metrics_, edge, Scale(96), width, Scale(20));
+        place(progress_, edge, Scale(128), width, Scale(8));
+        place(cancel_, client.right - edge - buttonWidth, bottom, buttonWidth, Scale(36));
+        place(retry_, client.right - edge - buttonWidth * 2 - Scale(8), bottom, buttonWidth, Scale(36));
+        if (!EndDeferWindowPos(batch)) Fail(L"Finish preparation layout");
+        // The parent fills only its clipped paint region. Descendant buffering
+        // presents the whole layout together without an exposed erase frame.
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
     }
     static std::wstring Amount(double bytes)
     {
@@ -338,6 +376,34 @@ private:
         if (bytes >= 1024 * 1024) text << std::fixed << std::setprecision(1) << bytes / (1024 * 1024) << L" МБ";
         else text << std::fixed << std::setprecision(0) << bytes / 1024 << L" КБ";
         auto value = text.str(); std::replace(value.begin(), value.end(), L'.', L','); return value;
+    }
+    void Changed() noexcept
+    {
+#if defined(LANMINECRAFT_BOOTSTRAP_TEST_SOURCES)
+        ++mutations_;
+#endif
+    }
+    void SetText(HWND child, std::wstring& previous, const std::wstring& next)
+    {
+        if (previous == next) return;
+        if (!SetWindowTextW(child, next.c_str())) Fail(L"Update preparation text");
+        previous = next;
+        Changed();
+    }
+    void SetEnabled(HWND child, bool& previous, bool next)
+    {
+        if (previous == next) return;
+        EnableWindow(child, next ? TRUE : FALSE);
+        previous = next;
+        Changed();
+    }
+    void SetRetryVisible(bool visible)
+    {
+        if (retryVisible_ == visible) return;
+        if (!SetWindowPos(retry_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+            (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW))) Fail(L"Update preparation retry visibility");
+        retryVisible_ = visible;
+        Changed();
     }
     void UpdateControls()
     {
@@ -351,33 +417,47 @@ private:
             downloaded = state_.downloaded; total = state_.total; version = state_.stageVersion;
             retryable = state_.retryable && static_cast<bool>(state_.failure);
         }
-        const bool failed = state_.done.load() && retryable && !state_.cancelled.load();
+        const bool cancelled = state_.cancelled.load();
+        const bool failed = state_.done.load() && retryable && !cancelled;
         const auto now = GetTickCount64();
-        if (version != lastStage_ || !sampledAt_ || downloaded < lastBytes_ || (!determinate_ && total > 0))
+        const bool stageChanged = version != lastStage_;
+        if (stageChanged || !sampledAt_ || downloaded < lastBytes_ || (!determinate_ && total > 0))
         { lastStage_ = version; lastBytes_ = downloaded; sampledAt_ = now; speed_ = 0; }
-        else if (now - sampledAt_ >= 250)
+        else if (!failed && !cancelled && now - sampledAt_ >= 250)
         {
             const double measured = (downloaded - lastBytes_) * 1000.0 / static_cast<double>(now - sampledAt_);
             speed_ = speed_ == 0 ? measured : speed_ * 0.65 + measured * 0.35;
             lastBytes_ = downloaded; sampledAt_ = now;
         }
-        determinate_ = total > 0;
-        percent_ = determinate_ ? static_cast<int>(std::min<std::uint64_t>(100, downloaded * 100 / total)) : 0;
-        const auto progress = determinate_ ? std::to_wstring(percent_) + L"%" : L"";
-        std::wstring metrics;
-        if (determinate_)
-            metrics = progress + L" · " + Amount(static_cast<double>(downloaded)) + L" / " +
-                Amount(static_cast<double>(total)) + L" · " + Amount(speed_) + L"/с";
-        SetWindowTextW(stage_, state_.cancelled.load() ? L"Отменяем подготовку…" : failed ? error.c_str() : stage.c_str());
-        SetWindowTextW(metrics_, metrics.c_str());
-        SetWindowTextW(progress_, progress.c_str());
-        EnableWindow(cancel_, state_.cancelled.load() ? FALSE : TRUE);
-        ShowWindow(retry_, failed ? SW_SHOW : SW_HIDE);
-        EnableWindow(retry_, failed ? TRUE : FALSE);
+        if (failed || cancelled) speed_ = 0;
+        const bool stateChanged = retryVisible_ != failed || cancelEnabled_ != !cancelled;
+        SetText(stage_, shownStage_, cancelled ? L"Отменяем подготовку…" : failed ? error : stage);
+        SetEnabled(cancel_, cancelEnabled_, !cancelled);
+        SetRetryVisible(failed);
+        SetEnabled(retry_, retryEnabled_, failed);
+        // Worker notifications can arrive thousands of times per second.
+        // Render ordinary byte changes at most ten times per second, while
+        // stage, cancellation and error transitions remain immediate.
+        if (!renderedAt_ || stageChanged || stateChanged || now - renderedAt_ >= 100)
+        {
+            const bool determinate = total > 0;
+            const int percent = determinate ? static_cast<int>(std::min<std::uint64_t>(100, downloaded * 100 / total)) : 0;
+            const auto progress = determinate ? std::to_wstring(percent) + L"%" : L"";
+            std::wstring metrics;
+            if (determinate)
+                metrics = progress + L" · " + Amount(static_cast<double>(downloaded)) + L" / " +
+                    Amount(static_cast<double>(total)) + L" · " + Amount(speed_) + L"/с";
+            SetText(metrics_, shownMetrics_, metrics);
+            SetText(progress_, shownProgress_, progress);
+            if (determinate_ != determinate || percent_ != percent)
+            {
+                determinate_ = determinate; percent_ = percent;
+                InvalidateRect(progress_, nullptr, FALSE);
+                Changed();
+            }
+            renderedAt_ = now;
+        }
         if (failed && !errorShown_) { errorShown_ = true; SetFocus(retry_); }
-        InvalidateRect(progress_, nullptr, FALSE);
-        InvalidateRect(cancel_, nullptr, FALSE);
-        InvalidateRect(retry_, nullptr, FALSE);
     }
     void Retry()
     {
@@ -388,6 +468,9 @@ private:
     }
     LRESULT Draw(const DRAWITEMSTRUCT& item)
     {
+#if defined(LANMINECRAFT_BOOTSTRAP_TEST_SOURCES)
+        ++draws_;
+#endif
         auto fill = [&](COLORREF color, const RECT& area)
         {
             SetDCBrushColor(item.hDC, color);
@@ -428,6 +511,26 @@ private:
         switch (message)
         {
 #if defined(LANMINECRAFT_BOOTSTRAP_TEST_SOURCES)
+        case WM_APP + 0x52:
+            // Scalar counters only, for the exact owned process. No GDI or
+            // process-private pointer crosses the test message boundary.
+            if (wparam == 0) return static_cast<LRESULT>(self->mutations_);
+            if (wparam == 1) return static_cast<LRESULT>(self->draws_);
+            if (wparam == 2) return static_cast<LRESULT>(self->erases_);
+            return -1;
+        case WM_APP + 0x53:
+        {
+            // Exercise the real user-facing error formatter without filling a
+            // disk or altering ACLs. An actual retryable failure is required.
+            if (wparam != 0 && wparam != ERROR_DISK_FULL && wparam != ERROR_ACCESS_DENIED) return -1;
+            {
+                std::lock_guard<std::mutex> lock(self->state_.gate);
+                if (!self->state_.done.load() || !self->state_.retryable || !self->state_.failure) return -1;
+                self->state_.error = ErrorMessage(static_cast<unsigned long>(wparam));
+            }
+            self->UpdateControls();
+            return 1;
+        }
         case WM_APP + 0x51:
         {
             // Scalar-only measurement for the owned test process. HFONT values
@@ -473,10 +576,14 @@ private:
             self->dpi_ = LOWORD(wparam) ? LOWORD(wparam) : 96;
             const auto suggested = reinterpret_cast<RECT*>(lparam);
             const auto minimum = self->MinimumOuter();
+            self->changingDpi_ = true;
             SetWindowPos(window, nullptr, suggested->left, suggested->top,
                 std::max(minimum.cx, suggested->right - suggested->left),
                 std::max(minimum.cy, suggested->bottom - suggested->top), SWP_NOZORDER | SWP_NOACTIVATE);
-            self->Fonts(); self->Layout(); return 0;
+            self->Fonts();
+            self->changingDpi_ = false;
+            self->layoutDpi_ = 0;
+            self->Layout(); return 0;
         }
         case WM_GETMINMAXINFO:
         {
@@ -495,6 +602,21 @@ private:
             SetBkColor(reinterpret_cast<HDC>(wparam), Canvas);
             SetTextColor(reinterpret_cast<HDC>(wparam), GetDlgCtrlID(reinterpret_cast<HWND>(lparam)) == MetricsId ? Muted : Text);
             return reinterpret_cast<LRESULT>(self->canvas_);
+        case WM_ERASEBKGND:
+#if defined(LANMINECRAFT_BOOTSTRAP_TEST_SOURCES)
+            ++self->erases_;
+#endif
+            // WM_PAINT fills the clipped region inside the composited frame.
+            // A separate background erase would expose an intermediate frame.
+            return 1;
+        case WM_PAINT:
+        {
+            PAINTSTRUCT paint{};
+            const auto dc = BeginPaint(window, &paint);
+            if (dc) FillRect(dc, &paint.rcPaint, self->canvas_);
+            EndPaint(window, &paint);
+            return 0;
+        }
         case WM_DRAWITEM: return self->Draw(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
         case WM_DESTROY: KillTimer(window, 1); self->window_ = nullptr; return 0;
         }

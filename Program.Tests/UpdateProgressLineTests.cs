@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -35,7 +35,6 @@ public class UpdateProgressLineTests
             lines.Add(UpdateProgressLine.UpToDate(release));
             lines.Add(UpdateProgressLine.Ready(release));
             lines.Add(UpdateProgressLine.WaitForGame(release));
-            lines.Add(UpdateProgressLine.Applying(release) + "...");
             lines.Add(UpdateProgressLine.Starting(release) + "...");
             lines.Add(UpdateProgressLine.DownloadFailed(release));
             foreach (var total in totals)
@@ -88,7 +87,6 @@ public class UpdateProgressLineTests
             UpdateProgressLine.UpToDate(release),
             UpdateProgressLine.Ready(release),
             UpdateProgressLine.WaitForGame(release),
-            UpdateProgressLine.Applying(release),
             UpdateProgressLine.Starting(release),
             UpdateProgressLine.DownloadFailed(release),
             UpdateProgressLine.Downloading(release, 1, 2, 1, null)

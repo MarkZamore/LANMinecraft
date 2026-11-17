@@ -2693,10 +2693,7 @@ public partial class MainWindow : Window
                         : 0d;
                     if (value.Stage == UpdatePreparationStage.Downloading && value.TotalBytes > 0)
                     {
-                        // Keyed on what is moving. One constant scope covered the
-                        // patch and the whole executable both, and the rate tracker
-                        // clamps a backward byte count to the last sample - so after
-                        // the second download started the line read 0 Б/с to the end.
+                        // Keep the measured rate scoped to this executable transfer.
                         var speed = _updateRate.Update(
                             value.DownloadedBytes, $"update:{value.TotalBytes}");
                         SetUpdateProgressCaption(UpdateProgressLine.Downloading(
@@ -2706,11 +2703,7 @@ public partial class MainWindow : Window
                             speed,
                             UpdateProgressLine.Estimate(value.DownloadedBytes, value.TotalBytes, speed)));
                     }
-                    else if (value.Stage == UpdatePreparationStage.ApplyingDelta)
-                    {
-                        _updateRate.Reset();
-                        SetUpdateProgressCaption(UpdateProgressLine.Applying(result.Manifest.ReleaseNumber), pending: true);
-                    }
+
                 });
                 var readyUpdate = await _updateService.DownloadUpdateAsync(result, progress, token);
                 token.ThrowIfCancellationRequested();

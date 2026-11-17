@@ -55,25 +55,30 @@ public sealed class ReleaseWorkflowTests
     }
 
     [Fact]
-    public void BuildCreatesDeltasBeforeStaging_AndPublishUsesThatArtifact()
+    public void BuildCreatesFullUpdateBeforeStaging_AndPublishUsesThatArtifact()
     {
         var workflow = ReleaseWorkflow();
         var build = WorkflowJob(workflow, "build");
         var buildSteps = WorkflowSteps(build);
         var package = Assert.Single(buildSteps, step => step.Contains("Program\\Publish.ps1", StringComparison.Ordinal));
-        var deltas = Assert.Single(buildSteps, step => step.Contains("DeltaPatchTool.dll", StringComparison.Ordinal));
+        var manifest = Assert.Single(buildSteps, step => step.Contains("- name: Create update manifest", StringComparison.Ordinal));
         var upload = Assert.Single(buildSteps, step => step.Contains("uses: actions/upload-artifact@", StringComparison.Ordinal));
-        Assert.Equal(Array.IndexOf(buildSteps, package) + 1, Array.IndexOf(buildSteps, deltas));
-        Assert.True(Array.IndexOf(buildSteps, deltas) < Array.IndexOf(buildSteps, upload));
-        Assert.Contains("create $basePath $exe $patch", deltas, StringComparison.Ordinal);
-        Assert.Contains("apply $basePath $patch $roundTrip", deltas, StringComparison.Ordinal);
-        Assert.Contains("$roundTripHash -ne $hash", deltas, StringComparison.Ordinal);
+        Assert.Equal(Array.IndexOf(buildSteps, package) + 1, Array.IndexOf(buildSteps, manifest));
+        Assert.True(Array.IndexOf(buildSteps, manifest) < Array.IndexOf(buildSteps, upload));
+        Assert.Contains("Get-FileHash -LiteralPath $exe -Algorithm SHA256", manifest, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion = 2", manifest, StringComparison.Ordinal);
+        Assert.Contains("assetName = 'LANMinecraft.exe'", manifest, StringComparison.Ordinal);
+        Assert.Contains("sha256 = $hash", manifest, StringComparison.Ordinal);
+        Assert.Contains("sizeBytes = $size", manifest, StringComparison.Ordinal);
+        Assert.DoesNotContain("deltaPatches", manifest, StringComparison.Ordinal);
         Assert.Contains("name: release-assets", upload, StringComparison.Ordinal);
         Assert.Contains("if-no-files-found: error", upload, StringComparison.Ordinal);
-        Assert.Contains("artifacts/LANMinecraft.exe", upload, StringComparison.Ordinal);
-        Assert.Contains("artifacts/update.json", upload, StringComparison.Ordinal);
-        Assert.Contains("artifacts/LANMinecraft*.bsdiff", upload, StringComparison.Ordinal);
+        Assert.Equal(new[] { "LANMinecraft.exe", "update.json" },
+            Regex.Matches(upload, @"(?m)^\s+artifacts/([^\r\n]+)\r?$")
+                .Select(match => match.Groups[1].Value.Trim()).ToArray());
         Assert.Contains("asset-id: ${{ steps.assets.outputs.artifact-id }}", build, StringComparison.Ordinal);
+        foreach (var obsolete in new[] { ".bsdiff", "DeltaPatchTool", "Capture-PreviousRelease.ps1", "Archive-PreviousBase.ps1", "DELTA_BASES_FILE" })
+            Assert.DoesNotContain(obsolete, build, StringComparison.Ordinal);
 
         var publishSteps = WorkflowSteps(WorkflowJob(workflow, "publish"));
         var download = Assert.Single(publishSteps, step => step.Contains("uses: actions/download-artifact@", StringComparison.Ordinal));
@@ -147,27 +152,6 @@ public sealed class ReleaseWorkflowTests
     }
 
     /// <summary>
-    /// The delta tool is built once, in Prepare, and then run from its own
-    /// assembly: dotnet run would rebuild it for each of the four invocations.
-    /// </summary>
-    [Fact]
-    public void TheDeltaTool_IsBuiltOnceAndRunFromItsAssembly()
-    {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-
-        var rebuilt = Lines(workflow)
-            .Where(line => !line.TrimStart().StartsWith('#'))
-            .Where(line => line.Contains("dotnet run", StringComparison.Ordinal))
-            .ToArray();
-        Assert.Empty(rebuilt);
-        Assert.Contains("DeltaPatchTool.dll", workflow, StringComparison.Ordinal);
-        Assert.Contains(
-            "dotnet build Program\\Patch\\DeltaPatchTool.csproj -c Release --no-restore",
-            workflow,
-            StringComparison.Ordinal);
-    }
-
-    /// <summary>
     /// The dependency audit lives in restore itself, for every project at once.
     /// It replaced a listing step that printed findings and passed anyway, so
     /// losing these properties would quietly lose the audit.
@@ -186,59 +170,6 @@ public sealed class ReleaseWorkflowTests
 
         var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
         Assert.DoesNotContain("--vulnerable", workflow, StringComparison.Ordinal);
-    }
-
-    /// <summary>
-    /// Work that does not need other work runs beside it. A background job in
-    /// PowerShell reports failure only in its state, so every one of them is
-    /// waited for and then asked how it went - a job whose error is never
-    /// received is a release that ships without the thing the job was doing.
-    /// </summary>
-    [Fact]
-    public void EveryBackgroundJob_IsWaitedForAndChecked()
-    {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-        var steps = workflow
-            .Split("      - name:", StringSplitOptions.RemoveEmptyEntries)
-            .Where(step => step.Contains("Start-Job", StringComparison.Ordinal))
-            .ToArray();
-
-        Assert.NotEmpty(steps);
-        foreach (var step in steps)
-        {
-            var title = Lines(step).First().Trim();
-            Assert.True(step.Contains("Wait-Job", StringComparison.Ordinal), $"{title} never waits");
-            Assert.True(step.Contains("Receive-Job", StringComparison.Ordinal), $"{title} never receives");
-            Assert.True(
-                step.Contains("State -eq 'Failed'", StringComparison.Ordinal),
-                $"{title} never asks whether the job failed");
-        }
-    }
-
-    /// <summary>
-    /// A script started as a background job is invoked as a file, not handed
-    /// over as text: Start-Job -FilePath leaves $PSScriptRoot empty, and the
-    /// scripts find the retry helper next to themselves.
-    /// </summary>
-    [Fact]
-    public void BackgroundScripts_KeepTheirOwnDirectory()
-    {
-        var workflow = File.ReadAllText(FindRepositoryFile(".github", "workflows", "release.yml"));
-
-        Assert.DoesNotContain("Start-Job -Name 'capture' -FilePath", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("-FilePath (Join-Path $env:GITHUB_WORKSPACE", workflow, StringComparison.Ordinal);
-        foreach (var script in new[] { "Capture-PreviousRelease.ps1", "Archive-PreviousBase.ps1" })
-        {
-            var text = File.ReadAllText(FindRepositoryFile(".github", "scripts", script));
-            Assert.Contains("$PSScriptRoot/GhRetry.ps1", text, StringComparison.Ordinal);
-            Assert.Contains("$env:GH_REPO", text, StringComparison.Ordinal);
-        }
-
-        var publisher = File.ReadAllText(FindRepositoryFile(".github", "scripts", "Publish-LatestRelease.ps1"));
-        var archiver = File.ReadAllText(FindRepositoryFile(".github", "scripts", "Archive-PreviousBase.ps1"));
-        Assert.Contains("-CommitSha $base.commitSha -TagTargetCommitSha $commit", publisher, StringComparison.Ordinal);
-        Assert.Contains("--target $TagTargetCommitSha", archiver, StringComparison.Ordinal);
-        Assert.Contains("Binary base for commit $CommitSha", archiver, StringComparison.Ordinal);
     }
 
     /// <summary>Every step that calls gh dot-sources the helper first.</summary>

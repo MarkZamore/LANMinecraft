@@ -140,8 +140,6 @@ jobs:
       - name: Prepare
         id: prepare
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           # A release is named after the commit it is built from: the number is
           # how many commits main carries, so a version in a bug report points
@@ -158,27 +156,6 @@ jobs:
                    "Add a '## $commitNumber' section with a line or two in Russian describing this commit, then push again.")
           }
 
-          # Three errands that do not need each other: fetching the releases a
-          # delta will be built against is network, restoring is disk, and the
-          # delta tool is a small build of its own. Together they cost what the
-          # slowest one costs.
-          $basesFile = Join-Path $env:RUNNER_TEMP 'minecraft-delta-bases.json'
-          $capture = Start-Job -Name 'capture' -ScriptBlock {
-            param($script, $commitNumber, $sha, $basesFile, $workDirectory, $repository)
-            & $script -CommitNumber $commitNumber -CommitSha $sha -BasesFile $basesFile `
-              -WorkDirectory $workDirectory -Repository $repository
-          } -ArgumentList (Join-Path $env:GITHUB_WORKSPACE '.github\scripts\Capture-PreviousRelease.ps1'),
-                          $commitNumber, '${{ github.sha }}', $basesFile, $env:RUNNER_TEMP,
-                          '${{ github.repository }}'
-          $tool = Start-Job -Name 'delta tool' -ScriptBlock {
-            param($workspace)
-            Set-Location -LiteralPath $workspace
-            & dotnet restore Program\Patch\DeltaPatchTool.csproj -p:Configuration=Release
-            if ($LASTEXITCODE -ne 0) { throw "The delta tool could not be restored." }
-            & dotnet build Program\Patch\DeltaPatchTool.csproj -c Release --no-restore
-            if ($LASTEXITCODE -ne 0) { throw "The delta tool could not be built." }
-          } -ArgumentList $env:GITHUB_WORKSPACE
-
           # Restore is also the dependency audit: NuGetAudit in
           # Directory.Build.props turns a vulnerable package, direct or
           # transitive, into a restore error.
@@ -187,27 +164,8 @@ jobs:
           & dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release -p:SelfContained=false "-p:RuntimeFrameworkVersion=$desktopVersion" -p:RollForward=Disable -p:UseAppHost=false
           if ($LASTEXITCODE -ne 0) { throw "The launcher could not be restored." }
 
-          $jobs = @($capture, $tool)
-          Wait-Job -Job $jobs | Out-Null
-          $captured = Receive-Job -Job $capture -ErrorAction Continue
-          Receive-Job -Job $tool -ErrorAction Continue
-          foreach ($job in $jobs) {
-            if ($job.State -eq 'Failed') {
-              throw "Preparing the release failed in '$($job.Name)': $($job.ChildJobs[0].JobStateInfo.Reason.Message)"
-            }
-          }
-          Remove-Job -Job $jobs
-
-          # The job answers with one object; anything else it printed is a
-          # diagnostic and not the answer.
-          $previous = @($captured) |
-            Where-Object { $null -ne $_ -and $null -ne $_.HasPrevious } |
-            Select-Object -Last 1
-          if ($null -eq $previous) { throw "The previous release could not be captured." }
-
-          "DELTA_BASES_FILE=$basesFile" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_NUMBER=$([int]$previous.ReleaseNumber)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "release-number=$([int]$previous.ReleaseNumber)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "RELEASE_NUMBER=$commitNumber" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "release-number=$commitNumber" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Build portable EXE
         shell: pwsh
@@ -222,7 +180,7 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) { throw "Building the portable EXE failed." }
 
-      - name: Create delta and update manifest
+      - name: Create update manifest
         shell: pwsh
         run: |
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
@@ -233,80 +191,6 @@ jobs:
 
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           $size = (Get-Item -LiteralPath $exe).Length
-          $bases = @(
-            Get-Content -LiteralPath $env:DELTA_BASES_FILE -Raw |
-              ConvertFrom-Json |
-              Where-Object { $null -ne $_ }
-          ) | Select-Object -First 2
-
-          # bsdiff over 66 MB is a minute of one core, and there are two bases
-          # and more than two cores. The tool was built in Prepare, so it is
-          # run straight from its assembly rather than through dotnet run,
-          # which would build it again for every invocation.
-          $tool = Join-Path $env:GITHUB_WORKSPACE 'Program\Patch\bin\Release\net10.0\DeltaPatchTool.dll'
-          if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
-            throw "The delta tool was not built: $tool"
-          }
-          $deltaJobs = @()
-          for ($index = 0; $index -lt $bases.Count; $index++) {
-            $base = $bases[$index]
-            $assetName = if ($index -eq 0) {
-              'LANMinecraft.bsdiff'
-            } else {
-              "LANMinecraft.from-$($base.releaseNumber).bsdiff"
-            }
-            $deltaJobs += Start-Job -Name "delta from $($base.releaseNumber)" -ScriptBlock {
-              param($tool, $basePath, $baseNumber, $exe, $patch, $roundTrip, $hash, $size)
-              & dotnet $tool create $basePath $exe $patch
-              if ($LASTEXITCODE -ne 0) { throw "Delta patch generation failed for release $baseNumber." }
-
-              & dotnet $tool apply $basePath $patch $roundTrip
-              if ($LASTEXITCODE -ne 0) { throw "Delta patch roundtrip failed for release $baseNumber." }
-
-              $roundTripHash = (Get-FileHash -LiteralPath $roundTrip -Algorithm SHA256).Hash.ToLowerInvariant()
-              $roundTripSize = (Get-Item -LiteralPath $roundTrip).Length
-              Remove-Item -LiteralPath $roundTrip -Force
-              if ($roundTripHash -ne $hash -or $roundTripSize -ne $size) {
-                throw "Delta patch from release $baseNumber does not reproduce the published executable."
-              }
-
-              return [pscustomobject]@{
-                sha256 = (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant()
-                sizeBytes = (Get-Item -LiteralPath $patch).Length
-              }
-            } -ArgumentList $tool, $base.executablePath, ([int]$base.releaseNumber), $exe,
-                            (Join-Path $artifactDir $assetName),
-                            (Join-Path $env:RUNNER_TEMP "LANMinecraft.delta-roundtrip-$($base.releaseNumber).exe"),
-                            $hash, $size
-          }
-
-          $deltaManifests = [System.Collections.Generic.List[object]]::new()
-          if ($deltaJobs.Count -gt 0) { Wait-Job -Job $deltaJobs | Out-Null }
-          for ($index = 0; $index -lt $deltaJobs.Count; $index++) {
-            $job = $deltaJobs[$index]
-            $patched = Receive-Job -Job $job -ErrorAction Continue
-            if ($job.State -eq 'Failed') {
-              throw "A delta patch failed in '$($job.Name)': $($job.ChildJobs[0].JobStateInfo.Reason.Message)"
-            }
-            $base = $bases[$index]
-            $assetName = if ($index -eq 0) {
-              'LANMinecraft.bsdiff'
-            } else {
-              "LANMinecraft.from-$($base.releaseNumber).bsdiff"
-            }
-            $deltaManifests.Add([ordered]@{
-              algorithm = 'bsdiff'
-              algorithmVersion = 1
-              baseReleaseNumber = [int]$base.releaseNumber
-              baseCommitSha = [string]$base.commitSha
-              baseSha256 = [string]$base.sha256
-              assetName = $assetName
-              sha256 = [string]$patched.sha256
-              sizeBytes = [long]$patched.sizeBytes
-            })
-          }
-          if ($deltaJobs.Count -gt 0) { Remove-Job -Job $deltaJobs }
-
           $manifest = [ordered]@{
             schemaVersion = 2
             commitSha = '${{ github.sha }}'
@@ -316,7 +200,6 @@ jobs:
             assetName = 'LANMinecraft.exe'
             sha256 = $hash
             sizeBytes = $size
-            deltaPatches = @($deltaManifests)
           }
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Encoding UTF8
 
@@ -330,22 +213,7 @@ jobs:
             throw "Update manifest is invalid."
           }
 
-          $patches = @($manifest.deltaPatches)
-          if ($patches.Count -gt 2) { throw "More than two delta patches were published." }
           $expected = @('LANMinecraft.exe', 'update.json')
-          foreach ($patch in $patches) {
-            if ($patch.algorithm -ne 'bsdiff' -or $patch.algorithmVersion -ne 1) {
-              throw "Delta manifest algorithm is invalid."
-            }
-            if ($patch.assetName -notmatch '^LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff$') {
-              throw "Delta asset name is invalid: $($patch.assetName)"
-            }
-            if (-not (Test-Path -LiteralPath (Join-Path $artifactDir $patch.assetName) -PathType Leaf)) {
-              throw "Delta manifest references a missing patch asset: $($patch.assetName)"
-            }
-            $expected += $patch.assetName
-          }
-          $expected = @($expected | Select-Object -Unique)
           $unexpected = $files.Name | Where-Object { $_ -notin $expected }
           $missing = $expected | Where-Object { $_ -notin $files.Name }
           if ($unexpected -or $missing -or $files.Count -ne $expected.Count) {
@@ -360,7 +228,6 @@ jobs:
           path: |
             artifacts/LANMinecraft.exe
             artifacts/update.json
-            artifacts/LANMinecraft*.bsdiff
           if-no-files-found: error
           retention-days: 2
           compression-level: 0
@@ -421,10 +288,9 @@ jobs:
           $antivirus = Join-Path $candidate 'antivirus'
           [void][IO.Directory]::CreateDirectory($assets)
           [void][IO.Directory]::CreateDirectory($antivirus)
-          $manifest = Get-Content -LiteralPath (Join-Path $artifactDir 'update.json') -Raw | ConvertFrom-Json
-          $names = @('LANMinecraft.exe', 'update.json') + @($manifest.deltaPatches | ForEach-Object assetName)
+          $names = @('LANMinecraft.exe', 'update.json')
           $inventory = @(foreach ($name in $names) {
-            if ($name -notmatch '^(?:LANMinecraft\.exe|update\.json|LANMinecraft(?:\.from-[1-9][0-9]*)?\.bsdiff)$') { throw 'Unsafe candidate asset name.' }
+            if ($name -notmatch '^(?:LANMinecraft\.exe|update\.json)$') { throw 'Unsafe candidate asset name.' }
             $source = Join-Path $artifactDir $name
             [IO.File]::Copy($source, (Join-Path $assets $name), $false)
             [ordered]@{ name = $name; sizeBytes = ([IO.FileInfo]::new($source)).Length; sha256 = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() }

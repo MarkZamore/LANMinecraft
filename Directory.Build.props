@@ -1,6 +1,6 @@
 <Project>
 
-  <!-- Every project here - the launcher, its tests and the delta tool - is
+  <!-- Every project here - the launcher and its tests - is
        audited by restore itself: a package with a known moderate or worse
        vulnerability, direct or transitive, fails the restore. This is the
        release's dependency audit; there is no separate listing step. -->

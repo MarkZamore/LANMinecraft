@@ -24,14 +24,13 @@ function New-CiJob([string]$Name, [string]$Conclusion, [string[]]$SuccessfulStep
 
 function New-ParallelJobs {
     New-CiJob verify success @('Run Release tests')
-    New-CiJob build success @('Build portable EXE', 'Create delta and update manifest', 'Verify release contents', 'Upload release assets')
+    New-CiJob build success @('Build portable EXE', 'Create update manifest', 'Verify release contents', 'Upload release assets')
     $publish = New-CiJob publish failure @('Scan portable host', 'Prepare exact candidate', 'Upload exact candidate')
     $publish.steps += [pscustomobject]@{ name = 'Publish latest release'; conclusion = 'failure' }
     $publish
 }
 
-$legacy = New-CiJob release failure @('Test and publish', 'Create delta and update manifest', 'Verify release contents', 'Prepare exact candidate', 'Upload exact candidate')
-Assert-CandidateCiJobs @($legacy)
+$legacy = New-CiJob release failure @('Test and publish', 'Create update manifest', 'Verify release contents', 'Prepare exact candidate', 'Upload exact candidate')
 Assert-CandidateCiJobs @(New-ParallelJobs)
 $failedScan = @(New-ParallelJobs)
 $failedScan[2].steps[0].conclusion = 'failure'
@@ -42,8 +41,12 @@ $cases = @(
     @{ Name = 'failed artifact upload'; Change = { param($jobs) $jobs[1].steps[-1].conclusion = 'failure'; $jobs } }
     @{ Name = 'duplicate build job'; Change = { param($jobs) $jobs + $jobs[1] } }
     @{ Name = 'missing build job'; Change = { param($jobs) $jobs[0], $jobs[2] } }
+    @{ Name = 'missing manifest step'; Change = { param($jobs) $jobs[1].steps[1].name = 'Another step'; $jobs } }
+    @{ Name = 'failed manifest creation'; Change = { param($jobs) $jobs[1].steps[1].conclusion = 'failure'; $jobs } }
+    @{ Name = 'duplicate manifest step'; Change = { param($jobs) $jobs[1].steps += $jobs[1].steps[1]; $jobs } }
     @{ Name = 'publication did not fail'; Change = { param($jobs) $jobs[2].steps[-1].conclusion = 'success'; $jobs } }
     @{ Name = 'fallback was not produced'; Change = { param($jobs) $jobs[2].steps[2].conclusion = 'skipped'; $jobs } }
+    @{ Name = 'legacy workflow layout'; Change = { param($jobs) $legacy } }
     @{ Name = 'mixed workflow layouts'; Change = { param($jobs) $jobs + $legacy } }
 )
 foreach ($case in $cases) {
@@ -53,4 +56,4 @@ foreach ($case in $cases) {
     catch { continue }
     throw ('Candidate provenance accepted ' + $case.Name + '.')
 }
-Write-Host ('Candidate provenance: ' + (3 + $cases.Count) + ' cases passed.')
+Write-Host ('Candidate provenance: ' + (2 + $cases.Count) + ' cases passed.')

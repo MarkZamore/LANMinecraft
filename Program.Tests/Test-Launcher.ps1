@@ -21,7 +21,7 @@ if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is support
 if ($ReleaseImpactPlan -and ($Profile -ne 'Release' -or $WithAdapters)) {
     throw '-ReleaseImpactPlan requires -Profile Release without -WithAdapters.'
 }
-$caseBudget = if ($WithAdapters) { 807 } else { 733 }
+$caseBudget = if ($WithAdapters) { 810 } else { 736 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
