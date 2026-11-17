@@ -3127,6 +3127,7 @@ public partial class MainWindow : Window
         if (_settings is null) return;
         if (_libraryVisible) RestoreLauncherVisibility();
 
+        RefreshMaintenanceStatus();
         RefreshPlayerIdentityDisplay();
         // Steam answers one question - who this player is - and only two
         // things in the window actually need the answer: a world can only be

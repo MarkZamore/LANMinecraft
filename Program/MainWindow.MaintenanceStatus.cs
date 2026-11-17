@@ -8,6 +8,7 @@ public partial class MainWindow
     private static readonly string[] MaintenanceDotFrames = [".", "..", "..."];
     private DispatcherTimer? _maintenanceDotsTimer;
     private int _maintenanceDotFrame;
+    private int _maintenancePercent = 100;
 
     private void InitializeMaintenanceStatus()
     {
@@ -20,11 +21,18 @@ public partial class MainWindow
     private void UpdateMaintenanceProgress(int percent) => PostToUi(() =>
     {
         if (_shutdownStarted) return;
-        var completed = percent == 100;
-        if (completed) _maintenanceDotFrame = 0;
-        else MaintenancePercentageText.Text = $"{percent}%)";
-        MaintenanceProgressFooter.Visibility = completed ? Visibility.Collapsed : Visibility.Visible;
+        _maintenancePercent = percent;
+        if (percent == 100) _maintenanceDotFrame = 0;
+        RefreshMaintenanceStatus();
     });
+
+    private void RefreshMaintenanceStatus()
+    {
+        var show = _maintenancePercent < 100 &&
+            (_maintenancePercent > 0 || !(_playRequested || _minecraftPreparing));
+        if (show) MaintenancePercentageText.Text = $"{_maintenancePercent}%)";
+        MaintenanceProgressFooter.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     private void RefreshMaintenanceDots()
     {

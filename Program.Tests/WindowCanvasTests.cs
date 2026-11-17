@@ -836,12 +836,32 @@ public sealed class WindowCanvasTests
             Assert.Equal("(Уборка", label.Text);
             Assert.Equal(".", dots.Text);
 
+            var launcher = (MainWindow)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
+            const System.Reflection.BindingFlags fields = System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+            void Set(string name, object value) => typeof(MainWindow).GetField(name, fields)!.SetValue(launcher, value);
+            void Refresh() => typeof(MainWindow).GetMethod("RefreshMaintenanceStatus", fields)!.Invoke(launcher, null);
+            Set("MaintenanceProgressFooter", progress);
+            Set("MaintenancePercentageText", percentage);
+            Set("_maintenancePercent", 0);
+            Refresh();
+            Assert.Equal(Visibility.Visible, progress.Visibility);
+            Set("_playRequested", true);
+            Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+            Set("_playRequested", false);
+            Set("_minecraftPreparing", true);
+            Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
+
             var client = new Size(804, 521);
             LayoutWindow(window, client);
             var idleMottoBounds = Bounds(motto, footer);
 
-            progress.Visibility = Visibility.Visible;
-            percentage.Text = "74%)";
+            Set("_maintenancePercent", 74);
+            Refresh();
+            Assert.Equal(Visibility.Visible, progress.Visibility);
+            Assert.Equal("74%)", percentage.Text);
             LayoutWindow(window, client);
             var percentageLeft = Bounds(percentage, footer).Left;
             Assert.InRange(Bounds(label, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);
@@ -854,7 +874,9 @@ public sealed class WindowCanvasTests
                 Assert.True(Bounds(percentage, footer).Right <= Bounds(actions, footer).Left + 0.5);
             }
 
-            progress.Visibility = Visibility.Collapsed;
+            Set("_maintenancePercent", 100);
+            Refresh();
+            Assert.Equal(Visibility.Collapsed, progress.Visibility);
             LayoutWindow(window, client);
             Assert.Same(motto, Assert.Single(mottoGroup.Children.Cast<UIElement>(), child => child.Visibility == Visibility.Visible));
             Assert.Equal(idleMottoBounds, Bounds(motto, footer));
