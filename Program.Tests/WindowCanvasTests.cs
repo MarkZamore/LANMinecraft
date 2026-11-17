@@ -781,18 +781,19 @@ public sealed class WindowCanvasTests
             var label = Element<TextBlock>(window, "MaintenanceLabelText");
             var dots = Element<TextBlock>(window, "MaintenanceDotsText");
             var percentage = Element<TextBlock>(window, "MaintenancePercentageText");
-            var completed = Element<TextBlock>(window, "MaintenanceCompletedText");
+            var mottoGroup = Assert.IsType<StackPanel>(motto.Parent);
             var actions = Element<Grid>(window, "FooterActions");
             Assert.Equal("Лучше TLauncher", motto.Text);
             Assert.Equal(Visibility.Collapsed, progress.Visibility);
-            Assert.Equal(Visibility.Collapsed, completed.Visibility);
             Assert.Equal("(Уборка", label.Text);
             Assert.Equal(".", dots.Text);
-            Assert.Equal("(Уборка завершена)", completed.Text);
+
+            var client = new Size(804, 521);
+            LayoutWindow(window, client);
+            var idleMottoBounds = Bounds(motto, footer);
 
             progress.Visibility = Visibility.Visible;
             percentage.Text = "74%)";
-            var client = new Size(804, 521);
             LayoutWindow(window, client);
             var percentageLeft = Bounds(percentage, footer).Left;
             Assert.InRange(Bounds(label, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);
@@ -806,10 +807,9 @@ public sealed class WindowCanvasTests
             }
 
             progress.Visibility = Visibility.Collapsed;
-            completed.Visibility = Visibility.Visible;
             LayoutWindow(window, client);
-            Assert.InRange(Bounds(completed, footer).Left - Bounds(motto, footer).Right, 3.5, 4.5);
-            Assert.True(Bounds(completed, footer).Right <= Bounds(actions, footer).Left + 0.5);
+            Assert.Same(motto, Assert.Single(mottoGroup.Children.Cast<UIElement>(), child => child.Visibility == Visibility.Visible));
+            Assert.Equal(idleMottoBounds, Bounds(motto, footer));
             return true;
         });
     }

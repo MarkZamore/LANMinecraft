@@ -24,7 +24,6 @@ public partial class MainWindow
         if (completed) _maintenanceDotFrame = 0;
         else MaintenancePercentageText.Text = $"{percent}%)";
         MaintenanceProgressFooter.Visibility = completed ? Visibility.Collapsed : Visibility.Visible;
-        MaintenanceCompletedText.Visibility = completed ? Visibility.Visible : Visibility.Collapsed;
     });
 
     private void RefreshMaintenanceDots()

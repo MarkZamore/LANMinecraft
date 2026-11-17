@@ -561,7 +561,6 @@
                     </Grid>
                     <TextBlock x:Name="MaintenancePercentageText" Margin="{StaticResource Gap.Left2}" />
                 </StackPanel>
-                <TextBlock x:Name="MaintenanceCompletedText" Text="(Уборка завершена)" Visibility="Collapsed" />
             </StackPanel>
             <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions">
                 <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right1}">
