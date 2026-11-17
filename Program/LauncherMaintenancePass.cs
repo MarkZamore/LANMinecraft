@@ -4,38 +4,50 @@ namespace Minecraft;
 
 internal static class LauncherMaintenancePass
 {
+    private const string SharedRuntimeStep = "shared-runtime";
+    private const string JavaRuntimeStep = "java-runtime";
+
     internal static void Run(AppPaths paths, Logger logger, PortablePackSyncService sync,
         LauncherMaintenanceRun run)
     {
         var removed = 0;
         var token = run.Token;
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pack in run.PriorityPacks.Concat(run.RequestedPacks)) VisitPack(pack);
+        var priorityPacks = run.PriorityPacks.Concat(run.RequestedPacks)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var visited = priorityPacks.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var packs = new List<string>();
+        var serviceSteps = run.FullPass ? Enum.GetValues<LauncherStorageCleanupStep>() : [];
 
+        if (run.FullPass && MaintenancePath.TryRead(paths, paths.Packs, out var attributes) &&
+            attributes.HasFlag(FileAttributes.Directory))
+        {
+            foreach (var directory in Directory.EnumerateDirectories(paths.Packs))
+            {
+                Check();
+                var pack = Path.GetFileName(directory);
+                if (PackCatalogService.ValidFolder(pack) && visited.Add(pack)) packs.Add(pack);
+            }
+        }
+        var plannedSteps = priorityPacks.Concat(packs).Select(PackStep).Concat(serviceSteps.Select(ServiceStep));
+        if (run.FullPass) plannedSteps = plannedSteps.Concat([SharedRuntimeStep, JavaRuntimeStep]);
+        run.PlanSteps(plannedSteps);
+
+        foreach (var pack in priorityPacks) VisitPack(pack);
         if (run.FullPass)
         {
-            foreach (var step in Enum.GetValues<LauncherStorageCleanupStep>()) VisitServiceStep(step);
-            if (MaintenancePath.TryRead(paths, paths.Packs, out var attributes) && attributes.HasFlag(FileAttributes.Directory))
-            {
-                foreach (var directory in Directory.EnumerateDirectories(paths.Packs))
-                {
-                    Check();
-                    VisitPack(Path.GetFileName(directory));
-                }
-            }
-            WithoutGame("shared-runtime", () => SharedRuntimeStore.SweepIdle(paths, logger, CheckWithoutGame));
-            WithoutGame("java-runtime", () => JavaRuntimeStorage.SweepUnusedSuperseded(paths, logger, CheckWithoutGame));
+            foreach (var step in serviceSteps) VisitServiceStep(step);
+            foreach (var pack in packs) VisitPack(pack);
+            WithoutGame(SharedRuntimeStep, () => SharedRuntimeStore.SweepIdle(paths, logger, CheckWithoutGame));
+            WithoutGame(JavaRuntimeStep, () => JavaRuntimeStorage.SweepUnusedSuperseded(paths, logger, CheckWithoutGame));
         }
         if (removed > 0) logger.Info($"Library pack maintenance removed {removed} unneeded item(s).");
 
         void VisitPack(string pack)
         {
             Check();
-            if (!visited.Add(pack)) return;
-            if (!PackCatalogService.ValidFolder(pack)) { run.CompletePack(pack); return; }
             if (run.IsPackInUse(pack)) { run.DeferPack(pack); return; }
 
-            var key = "pack:" + pack;
+            var key = PackStep(pack);
             try
             {
                 run.RunStep(key, () =>
@@ -64,7 +76,7 @@ internal static class LauncherMaintenancePass
 
         void VisitServiceStep(LauncherStorageCleanupStep step)
         {
-            var key = "service:" + step;
+            var key = ServiceStep(step);
             var safeDuringGame = LauncherStorageCleanup.CanRunDuringGame(step);
             if (safeDuringGame) run.RunStep(key, Sweep);
             else WithoutGame(key, Sweep);
@@ -98,4 +110,7 @@ internal static class LauncherMaintenancePass
             return ManagedPackCleanup.IsManagedPack(paths, sync, pack, run.Checkpoint, token);
         }
     }
+
+    private static string PackStep(string pack) => "pack:" + pack;
+    private static string ServiceStep(LauncherStorageCleanupStep step) => "service:" + step;
 }

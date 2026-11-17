@@ -314,7 +314,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Contains(
             document.Descendants(presentation + "TextBlock"),
             element => (string?)element.Attribute(x + "Name") == "SteamPersonaText" &&
-                (string?)element.Attribute("Text") == "нет подключения");
+                (string?)element.Attribute("Text") == "Нет подключения Steam");
         Assert.DoesNotContain(
             document.Descendants(presentation + "Button"),
             element =>

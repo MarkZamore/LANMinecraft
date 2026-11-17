@@ -49,6 +49,8 @@
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.ForegroundAndShutdownDoNotWaitForAnInFlightFilesystemOperation|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.InterruptedPassKeepsOneCursorAndResumesWithoutRepeatingCompletedWork|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.DeferredWorkSleepsUntilTheGameStateChanges|
+      FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.ProgressCountsDistinctCompletedStepsAndFinishesAfterRemovingCheckpoint|
+      FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.ProgressResumesFromSavedStepsAndWaitsForTheDeferredPack|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.AutomaticDeletionLeavesProtectedAssetsAndDoesNotFollowJunctions|
       FullyQualifiedName=Minecraft.Tests.LauncherStorageCleanupTests.UnknownEntriesGoAndKnownStateAndProtectedAssetsRemain|
       FullyQualifiedName=Minecraft.Tests.LauncherStorageCleanupTests.TempCleanupLeavesLiveInputsAndDeletesAbandonedAtomicFiles|
@@ -95,6 +97,7 @@
       FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.FailedNativeHandshake_AllowsTheNextAutomaticCheckToConnect|
       FullyQualifiedName=Minecraft.Tests.SteamRecoveryPolicyTests.AutomaticChecks_FollowLateStartSignOutAndAnotherAccount|
       FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.SteamStatus_RemainsReadableAndAlignedWithTheChangelog|
+      FullyQualifiedName=Minecraft.Tests.WindowCanvasTests.MaintenanceStatusFitsNextToTheMotto|
       FullyQualifiedName=Minecraft.Tests.SteamBootstrapTests.UnconfirmedFalseProcessHint_AuthenticatedApiStartsStaysReadyAndRetryIsANoop|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.MissingMod_IsDownloadedVerifiedAndInstalled|
       FullyQualifiedName=Minecraft.Tests.SteamTransportModTests.SupersededBuild_IsReplacedOnlyAfterVerifiedInstall|

@@ -212,7 +212,8 @@ public partial class MainWindow : Window
                     _transfer?.IsOperationActive == true || _minecraft?.IsClientPreparing == true,
                 run => LauncherMaintenancePass.Run(paths, log, packSync, run),
                 gameIsRunning: () => _minecraft?.IsClientRunning == true,
-                isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true);
+                isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true,
+                reportProgress: UpdateMaintenanceProgress);
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
@@ -1174,6 +1175,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void UpdateMaintenanceProgress(int percent) => PostToUi(() =>
+    {
+        if (!_shutdownStarted) FooterMotto.Text = FormatMaintenanceStatus(percent);
+    });
+
+    internal static string FormatMaintenanceStatus(int percent) => percent == 100
+        ? "Лучше TLauncher (Уборка завершена)"
+        : $"Лучше TLauncher (Уборка {percent}%)";
+
     /// <summary>
     /// Reconciles the window with the friends Steam currently reports. The VPN
     /// era merged one announcement at a time; presence arrives as a whole list,
@@ -2087,6 +2097,7 @@ public partial class MainWindow : Window
         if (settled)
         {
             SteamPersonaText.Text = status.PersonaName;
+            SteamStatusPrefix.Visibility = Visibility.Visible;
             SteamPersonaText.ToolTip = status.PersonaName;
             SteamPersonaText.Visibility = Visibility.Visible;
         }
@@ -2102,7 +2113,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void SetSteamMessage(string message)
     {
-        SteamPersonaText.Text = "нет подключения";
+        SteamStatusPrefix.Visibility = Visibility.Collapsed;
+        SteamPersonaText.Text = "Нет подключения Steam";
         SteamPersonaText.ToolTip = string.IsNullOrWhiteSpace(message) ? null : message;
         SteamPersonaText.Visibility = Visibility.Visible;
     }

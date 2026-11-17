@@ -12,7 +12,8 @@ internal sealed class LauncherMaintenance(
     Func<bool> foregroundIsActive,
     Action<LauncherMaintenanceRun> sweep,
     Func<bool>? gameIsRunning = null,
-    Func<string, bool>? isPackInUse = null)
+    Func<string, bool>? isPackInUse = null,
+    Action<int>? reportProgress = null)
 {
     // Keep the existing service filename so upgrades have only one durable record.
     internal const string CompletionFileName = ".launcher-maintenance.utc";
@@ -31,6 +32,7 @@ internal sealed class LauncherMaintenance(
     private bool _observedGame;
     private bool _started;
     private bool _reportedCheckpointError;
+    private int? _lastReportedProgress;
     private CancellationTokenSource? _current;
     private bool _stopped;
 
@@ -115,16 +117,20 @@ internal sealed class LauncherMaintenance(
         try
         {
             Checkpoint(token);
+            if (_lastReportedProgress is null or 100) PublishProgress(0);
             if (cleanupInterruptedWrites) RemoveInterruptedWrites(Checkpoint, token);
             var progress = ReadProgress();
             pass = new LauncherMaintenanceRun(fullPass, hasGame, pending, isPackInUse, progress,
-                () => WriteProgress(progress), Checkpoint, token);
+                () => WriteProgress(progress), Checkpoint, token, PublishProgress);
             foreach (var pack in pending)
                 pass.RequeuePack(pack);
             sweep(pass);
             Checkpoint(token);
             if (!pass.HasDeferredWork)
+            {
                 MaintenancePath.TryDelete(paths, ProgressPath, directory: false);
+                PublishProgress(100);
+            }
             returned = true;
         }
         catch (OperationCanceledException) { }
@@ -169,6 +175,13 @@ internal sealed class LauncherMaintenance(
             if (foregroundIsActive() || (gameIsRunning?.Invoke() == true) != hasGame)
                 throw new OperationCanceledException(token);
         }
+    }
+
+    private void PublishProgress(int value)
+    {
+        if (reportProgress is null || _lastReportedProgress == value) return;
+        _lastReportedProgress = value;
+        reportProgress(value);
     }
 
     private LauncherMaintenanceProgress ReadProgress()
@@ -274,9 +287,12 @@ internal sealed class LauncherMaintenanceRun(
     LauncherMaintenanceProgress progress,
     Action persist,
     Action<CancellationToken> checkpoint,
-    CancellationToken token)
+    CancellationToken token,
+    Action<int> reportProgress)
 {
     private bool _idleStepsPending;
+    private HashSet<string>? _plannedSteps;
+    private int _completedPlannedSteps;
     internal bool FullPass => fullPass;
     internal bool GameIsRunning => gameIsRunning;
     internal IReadOnlyList<string> RequestedPacks => requestedPacks;
@@ -286,6 +302,14 @@ internal sealed class LauncherMaintenanceRun(
 
     internal bool IsPackInUse(string relativePath) => isPackInUse?.Invoke(relativePath) ?? GameIsRunning;
     internal void Checkpoint(CancellationToken caller) => checkpoint(caller);
+
+    internal void PlanSteps(IEnumerable<string> keys)
+    {
+        checkpoint(token);
+        _plannedSteps = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _completedPlannedSteps = _plannedSteps.Count(progress.CompletedSteps.Contains);
+        ReportCompletedSteps();
+    }
 
     internal bool RunStep(string key, Action work)
     {
@@ -297,7 +321,18 @@ internal sealed class LauncherMaintenanceRun(
         progress.CompletedSteps.Add(key);
         progress.Cursors.Remove(key);
         persist();
+        if (_plannedSteps?.Contains(key) == true)
+        {
+            _completedPlannedSteps++;
+            ReportCompletedSteps();
+        }
         return true;
+    }
+
+    private void ReportCompletedSteps()
+    {
+        if (_plannedSteps is { Count: > 0 })
+            reportProgress(Math.Min(99, (int)(100L * _completedPlannedSteps / _plannedSteps.Count)));
     }
 
     internal void DeferStep(string key)

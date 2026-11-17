@@ -747,19 +747,48 @@ public sealed class WindowCanvasTests
             LayoutWindow(window, new Size(width, 521));
             var group = Element<Grid>(window, "SteamConnectionPanel");
             var status = Element<TextBlock>(window, "SteamPersonaText");
-            var label = group.Children.OfType<TextBlock>().Single(t => t.Text == "Steam:");
+            var label = Element<TextBlock>(window, "SteamStatusPrefix");
             Assert.Same(group, status.Parent);
-            Assert.Equal("нет подключения", status.Text);
+            Assert.Equal("Нет подключения Steam", status.Text);
+            Assert.Equal(Visibility.Collapsed, label.Visibility);
             var fullStatus = new TextBlock { Text = status.Text, FontFamily = status.FontFamily, FontSize = status.FontSize };
             fullStatus.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(status.ActualWidth >= fullStatus.DesiredSize.Width - 0.5, "The disconnected status must remain fully readable.");
-            Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 3.5, 4.5);
             var footer = Element<Grid>(window, "FooterActions");
             var root = Element<Grid>(window, "RootGrid");
             AssertWidthWithinOnePhysicalPixel(Bounds(Element<Border>(window, "SidePanelCard"), root).Left,
-                Bounds(label, root).Left, label);
+                Bounds(status, root).Left, status);
             Assert.Null(window.FindName("SidePanelToggleButton"));
             Assert.True(Bounds(group, footer).Right <= footer.ActualWidth + 0.5);
+
+            label.Visibility = Visibility.Visible;
+            status.Text = "Игрок";
+            LayoutWindow(window, new Size(width, 521));
+            Assert.InRange(Bounds(status, group).Left - Bounds(label, group).Right, 3.5, 4.5);
+            return true;
+        });
+    }
+
+    [Fact]
+    public void MaintenanceStatusFitsNextToTheMotto()
+    {
+        OnAStaThread(() =>
+        {
+            var window = LoadWindow();
+            var footer = Element<Grid>(window, "FooterGrid");
+            var motto = Element<TextBlock>(window, "FooterMotto");
+            Assert.Equal("Лучше TLauncher", motto.Text);
+            foreach (var (percent, expected) in new[] { (16, "Уборка 16%"), (100, "Уборка завершена") })
+            {
+                motto.Text = MainWindow.FormatMaintenanceStatus(percent);
+                Assert.Equal($"Лучше TLauncher ({expected})", motto.Text);
+                LayoutWindow(window, new Size(804, 521));
+                var visible = Bounds(motto, footer);
+                Assert.True(visible.Right <= Bounds(Element<Grid>(window, "FooterActions"), footer).Left + 0.5);
+                var full = new TextBlock { Text = motto.Text, FontFamily = motto.FontFamily, FontSize = motto.FontSize };
+                full.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                Assert.True(motto.ActualWidth >= full.DesiredSize.Width - 0.5);
+            }
             return true;
         });
     }

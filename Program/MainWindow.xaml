@@ -548,24 +548,23 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <StackPanel Grid.Row="0"
+            <TextBlock Grid.Row="0"
                 Grid.Column="0"
                 Grid.ColumnSpan="1"
-                Orientation="Horizontal"
                 HorizontalAlignment="Left"
                 VerticalAlignment="Center"
-                x:Name="FooterMotto">
-                <TextBlock Text="Лучше TLauncher" />
-            </StackPanel>
+                x:Name="FooterMotto"
+                Text="Лучше TLauncher" />
             <Grid Grid.Row="0" Grid.Column="2" Margin="{StaticResource Gap.None}" x:Name="FooterActions">
                 <Grid x:Name="SteamConnectionPanel" Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="{StaticResource Gap.Right1}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Steam:" Margin="{StaticResource Gap.Right1}" Grid.Column="0" />
+                    <TextBlock x:Name="SteamStatusPrefix" Text="Steam:" Visibility="Collapsed"
+                        Margin="{StaticResource Gap.Right1}" Grid.Column="0" />
                     <TextBlock x:Name="SteamPersonaText"
-                        Text="нет подключения"
+                        Text="Нет подключения Steam"
                         Grid.Column="1"
                         TextTrimming="CharacterEllipsis" />
                 </Grid>

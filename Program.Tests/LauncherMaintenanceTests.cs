@@ -193,6 +193,86 @@ public sealed class LauncherMaintenanceTests : IDisposable
     }
 
     [Fact]
+    public async Task ProgressCountsDistinctCompletedStepsAndFinishesAfterRemovingCheckpoint()
+    {
+        var reports = new List<int>();
+        var finished = new TaskCompletionSource<(int[] Values, bool CheckpointExists)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var maintenance = Create(run =>
+        {
+            run.PlanSteps(["service", "SERVICE", "pack:Example"]);
+            run.RunStep("unrelated", () => { });
+            run.RunStep("service", () => { });
+            run.RunStep("SERVICE", () => { });
+            run.SaveCursor("pack:Example", "a.jar");
+            run.RunStep("pack:Example", () => { });
+        }, reportProgress: value =>
+        {
+            reports.Add(value);
+            if (value == 100) finished.TrySetResult((reports.ToArray(), File.Exists(ProgressPath)));
+        });
+
+        try
+        {
+            maintenance.ObserveIdle(true);
+            var status = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal([0, 50, 99, 100], status.Values);
+            Assert.False(status.CheckpointExists);
+        }
+        finally { maintenance.Stop(); }
+    }
+
+    [Fact]
+    public async Task ProgressResumesFromSavedStepsAndWaitsForTheDeferredPack()
+    {
+        File.WriteAllText(ProgressPath, JsonSerializer.Serialize(new LauncherMaintenanceProgress(1,
+            UpdateService.CurrentReleaseNumber, ["service"], ["Busy"], [])));
+        var playing = 1;
+        var reports = new List<int>();
+        var deferred = new TaskCompletionSource<int[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource<int[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var maintenance = Create(run =>
+        {
+            run.PlanSteps(["service", "pack:Busy", "pack:Other"]);
+            run.RunStep("service", () => { });
+            run.RunStep("pack:Other", () => { });
+            if (run.GameIsRunning)
+            {
+                run.DeferPack("Busy");
+                deferred.TrySetResult(reports.ToArray());
+                return;
+            }
+            run.RunStep("pack:Busy", () => { });
+            run.CompletePack("Busy");
+        }, gameIsRunning: () => Volatile.Read(ref playing) != 0, reportProgress: value =>
+        {
+            reports.Add(value);
+            if (value == 100) finished.TrySetResult(reports.ToArray());
+        });
+
+        try
+        {
+            maintenance.ObserveIdle(true);
+            var partialReports = await deferred.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal([0, 33, 66], partialReports);
+            Assert.True(File.Exists(ProgressPath));
+            Assert.False(finished.Task.IsCompleted);
+
+            Volatile.Write(ref playing, 0);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (!finished.Task.IsCompleted)
+            {
+                maintenance.ObserveIdle(true);
+                await Task.Delay(15, timeout.Token);
+            }
+            var finalReports = await finished.Task.WaitAsync(timeout.Token);
+            Assert.Equal([0, 33, 66, 99, 100], finalReports);
+            Assert.False(File.Exists(ProgressPath));
+        }
+        finally { maintenance.Stop(); }
+    }
+
+    [Fact]
     public void AutomaticDeletionLeavesProtectedAssetsAndDoesNotFollowJunctions()
     {
         var outside = Path.Combine(_paths.Root, "outside");
@@ -227,8 +307,8 @@ public sealed class LauncherMaintenanceTests : IDisposable
     private string ProgressPath => Path.Combine(_paths.Launcher, LauncherMaintenance.CompletionFileName);
 
     private LauncherMaintenance Create(Action<LauncherMaintenanceRun> sweep, Func<bool>? gameIsRunning = null,
-        Func<string, bool>? isPackInUse = null) =>
-        new(_paths, new Logger(_paths.LogFile), () => false, sweep, gameIsRunning, isPackInUse);
+        Func<string, bool>? isPackInUse = null, Action<int>? reportProgress = null) =>
+        new(_paths, new Logger(_paths.LogFile), () => false, sweep, gameIsRunning, isPackInUse, reportProgress);
 
     private static async Task WaitUntilAsync(Func<bool> test)
     {
