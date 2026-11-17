@@ -107,14 +107,14 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         }
         // Java has nothing to do with the worlds: it goes if the build that
         // pinned it was the last one asking for it, either way round.
-        var (javaDirectories, java) = JavaNothingElseNeeds(build);
+        var java = JavaNothingElseNeeds(build);
         return new RemovalPlan(
             build,
             directories,
             worldsToo ? worldDirectories : [],
             worlds,
-            javaDirectories,
-            java);
+            java.Select(directory => directory.Path).ToArray(),
+            java.Select(directory => directory.MajorVersion).Distinct().Order().ToArray());
     }
 
     /// <summary>
@@ -147,6 +147,8 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
     /// <summary>Carries out a plan. Never throws for a folder that would not go.</summary>
     public RemovalOutcome Remove(RemovalPlan plan)
     {
+        using var sharedRuntime = SharedRuntimeGate.TryAcquire(_paths) ??
+            throw new InvalidOperationException("Another launcher is preparing the shared runtime.");
         var kept = new List<string>();
         var removed = 0;
         foreach (var directory in plan.Directories)
@@ -163,22 +165,30 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
             else kept.Add(worldDirectory);
         }
 
-        var javaRemoved = true;
-        foreach (var runtime in plan.JavaDirectories)
+        IReadOnlyList<int> java = [];
+        if (plan.JavaDirectories.Count > 0)
         {
-            if (RemoveTree(runtime)) continue;
-            kept.Add(runtime);
-            javaRemoved = false;
+            try
+            {
+                using var gate = JavaRuntimeStorage.TryAcquire(_paths);
+                if (gate is not null)
+                {
+                    // The concrete references may have changed since the window displayed the plan.
+                    var planned = plan.JavaDirectories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var removedJava = new SortedSet<int>();
+                    foreach (var runtime in JavaNothingElseNeeds(null).Where(directory => planned.Contains(directory.Path)))
+                    {
+                        if (RemoveTree(runtime.Path)) removedJava.Add(runtime.MajorVersion);
+                        else kept.Add(runtime.Path);
+                    }
+                    java = removedJava.ToArray();
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                _logger?.Warn($"Unused Java runtimes could not be removed: {ex.Message}");
+            }
         }
-
-        var java = javaRemoved ? plan.Java : [];
-
-        // The game itself is shared, so removing a build removes nothing of it
-        // directly: what goes is whatever no remaining build's runtime state
-        // still names. For the last build on a Minecraft version that is the
-        // whole of it - assets, libraries, the profile - and for a build that
-        // shared its version with another, nothing at all.
-        var shared = SharedRuntimeStore.Sweep(_paths, _logger);
 
         // The hash cache is keyed by pack folder, so an entry for a pack that is
         // gone can never be hit again - and a pack downloaded again under the
@@ -197,6 +207,10 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp", "Java"));
         TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp"));
 
+        // Releasing the preparation gate lets the sweep try to take it again.
+        // If preparation wins, cleanup can wait for a later run.
+        sharedRuntime.Dispose();
+        var shared = SharedRuntimeStore.Sweep(_paths, _logger);
         var outcome = new RemovalOutcome(removed, worlds, java, kept);
         _logger?.Info(
             $"Build removed: {plan.BuildRelativePath} - {removed} folder(s)" +
@@ -241,79 +255,17 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         yield return Under(Path.Combine(_paths.Personal, "Temp", "Java"), build);
     }
 
-    /// <summary>
-    /// The Java folders no build left on the disk would ask for, and the
-    /// feature releases they are.
-    /// </summary>
-    /// <remarks>
-    /// Worked out from the packs rather than from what is installed: a pack
-    /// says which Minecraft it is, and the Minecraft says which feature release
-    /// of Java runs it. Only folders the catalog itself would have made are
-    /// ever named, so anything else that has found its way under there is left
-    /// alone - a delete button is not the place to find out what it was.
-    /// </remarks>
-    private (IReadOnlyList<string> Directories, IReadOnlyList<int> Versions) JavaNothingElseNeeds(string build)
-    {
-        var needed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pack in EnumerateDirectoriesSafe(_paths.Packs))
-        {
-            var name = Path.GetFileName(pack);
-            if (string.Equals(name, build, StringComparison.OrdinalIgnoreCase)) continue;
-            needed.Add(JavaFor(pack));
-        }
-
-        // Both halves of an installed Java, because both are on the disk and
-        // the archive is the larger of the two: the unpacked JDK under
-        // JavaRuntimes, and the zip it came out of under ManagedComponents,
-        // which is kept so a repair does not download it again.
-        var installs = Path.Combine(_paths.JavaRuntimes, "runtime", "windows-x64");
-        var archives = Path.Combine(_paths.Launcher, "ManagedComponents", "java-runtime");
-        var directories = new List<string>();
-        var versions = new List<int>();
-        foreach (var release in JavaRuntimeCatalog.Releases)
-        {
-            if (needed.Contains(release.InstallDirectoryName)) continue;
-            var found = false;
-            foreach (var candidate in new[]
-                     {
-                         Path.Combine(installs, release.InstallDirectoryName),
-                         Path.Combine(archives, release.RuntimeId.Replace('+', '_'))
-                     })
-            {
-                if (!Directory.Exists(candidate)) continue;
-                directories.Add(candidate);
-                found = true;
-            }
-
-            if (found) versions.Add(release.MajorVersion);
-        }
-
-        return (directories, versions);
-    }
-
-    /// <summary>
-    /// Which Java a pack on the disk runs on, read from the pack rather than
-    /// from what it happens to have installed.
-    /// </summary>
-    /// <remarks>
-    /// A pack whose manifest will not parse counts as needing the launcher's
-    /// default rather than as needing nothing. Being wrong that way costs a
-    /// runtime folder that stays; being wrong the other way costs a working
-    /// build a three hundred megabyte download the next time it is opened.
-    /// </remarks>
-    private static string JavaFor(string packDirectory)
+    /// <summary>The owned Java installations and archives that no remaining pack needs.</summary>
+    private IReadOnlyList<JavaRuntimeStorage.OwnedDirectory> JavaNothingElseNeeds(string? build)
     {
         try
         {
-            return JavaRuntimeCatalog.RequiredFor(PackManifestService.Load(packDirectory)).InstallDirectoryName;
+            return JavaRuntimeStorage.ReadUnusedDirectories(_paths, build);
         }
-        // InvalidDataException is the one a bad manifest actually throws, and
-        // IOException does not cover it: it descends from SystemException.
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
-                                       or ArgumentException or FormatException or InvalidDataException
-                                       or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            return JavaRuntimeCatalog.RequiredFor(null).InstallDirectoryName;
+            _logger?.Warn($"Unused Java runtimes could not be inspected: {ex.Message}");
+            return [];
         }
     }
 

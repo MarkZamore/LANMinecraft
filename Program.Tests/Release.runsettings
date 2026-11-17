@@ -27,6 +27,8 @@
       FullyQualifiedName=Minecraft.Tests.LauncherReleaseAssetTests.UnverifiedApiContentCannotClaimTheLauncherIsUpToDate|FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.LongOutageContinuesUntilAConfirmedAnswerThenStops|
       FullyQualifiedName=Minecraft.Tests.UpdateCheckRetryTests.ClosingDuringTheRetryDelayCancelsWithoutAnotherRequest|FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.AWorldBehindAJunction_SurvivesTheBuildThatPointedAtIt|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.TheOtherBuildIsUntouched|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.RemovalWaitsForRuntimePreparationToFinish|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.PreparedRuntimeKeepsHistoricalJavaUntilUseEnds|
       FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.ANameThatTriesToLeaveItsFolder_RemovesNothing|
       FullyQualifiedName=Minecraft.Tests.ProfileFileTransactionRecoveryTests.AnInterruptedTransaction_SurvivesStartupCleanupAndIsRolledBack|
       FullyQualifiedName=Minecraft.Tests.ProfileFileTransactionRecoveryTests.ATransactionOwnedByARunningLauncher_IsLeftAlone|
@@ -38,6 +40,15 @@
       FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.DamagedObjectCannotReplaceAnExistingFlatFile|
       FullyQualifiedName=Minecraft.Tests.DerivedAssetLayoutTests.ALinkedDestinationCannotWriteIntoAnUnrelatedDirectory|
       FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.ADamagedStateStopsTheSweepEntirely|
+      FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.OwnedProfilesStayUntilTheirInstalledPackAndRuntimeReferencesAreGone|
+      FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.UnmarkedAndModifiedProfilesArePreserved|
+      FullyQualifiedName=Minecraft.Tests.SharedRuntimeStoreTests.APreparingRuntimeOrALiveGameDefersCleanup|
+      FullyQualifiedName=Minecraft.Tests.LoaderInstallationFilesTests.ForgeCanonicalizesVersionAndPinsUnsignedProfileOutputsByRecipe|
+      FullyQualifiedName=Minecraft.Tests.LoaderInstallationFilesTests.NeoForgeRequiresPatchedClientEvenWhenItsDigestIsNotInTheInstaller|
+      FullyQualifiedName=Minecraft.Tests.LoaderInstallationFilesTests.LegacyForgePinsTheInstallerEmbeddedCore|
+      FullyQualifiedName=Minecraft.Tests.PackRuntimeLoaderReuseTests.MatchingFabricDonorBecomesAnOfflineReceiptForAnotherPersonalPack|
+      FullyQualifiedName=Minecraft.Tests.PackRuntimeLoaderReuseTests.DifferentFabricVersionDoesNotReuseLegacyDonor|
+      FullyQualifiedName=Minecraft.Tests.PackRuntimeLoaderReuseTests.NeoForgeReceiptChecksGeneratedOutputEvenWithOriginalSizeAndTimestamp|
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.SwitchingBuilds_PointsTheLinkSomewhereElse_WithoutMovingAnything|
       FullyQualifiedName=Minecraft.Tests.SavesFolderTests.AWorldTheGameStillHasOpen_IsNotMovedYet|
       FullyQualifiedName=Minecraft.Tests.NbtStringCodecTests.AWorldNamedWithAnEmoji_SurvivesTheLauncherWritingIt|
@@ -80,6 +91,8 @@
       FullyQualifiedName=Minecraft.Tests.PortableJavaRuntimeServiceTests.TamperedArchive_FailsClosedAndLeavesNoInstall|
       FullyQualifiedName=Minecraft.Tests.PortableJavaRuntimeServiceTests.ArchiveEntryEscapingItsRoot_IsRejected|
       FullyQualifiedName=Minecraft.Tests.PortableJavaRuntimeServiceTests.DeletedExecutable_IsRepairedFromTheCachedArchiveWithoutNetwork|
+      FullyQualifiedName=Minecraft.Tests.PortableJavaRuntimeServiceTests.PreparingJava_PreservesUnownedDirectories|
+      FullyQualifiedName=Minecraft.Tests.PortableJavaRuntimeServiceTests.VerifiedLegacyRuntimeMovesToItsExactNameWithoutRestoringTheArchive|
       FullyQualifiedName=Minecraft.Tests.PortableJavaEnvironmentTests.Cancelling_a_real_child_waits_for_its_exit_before_removing_its_profile|
       FullyQualifiedName=Minecraft.Tests.PortableJavaEnvironmentTests.Disposing_a_live_helper_preserves_its_scope_and_the_loader_cannot_delete_its_parent|
       FullyQualifiedName=Minecraft.Tests.HeapTuningArgumentTests.EachListUnlocksBeforeItUsesAnExperimentalOption|

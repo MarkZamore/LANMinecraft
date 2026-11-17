@@ -125,6 +125,7 @@ public sealed class JavaRuntimeCatalogTests
         var installs = JavaRuntimeCatalog.Releases.Select(r => r.InstallDirectoryName).ToList();
         var caches = JavaRuntimeCatalog.Releases.Select(r => r.RuntimeId).ToList();
 
+        Assert.Equal(caches, installs);
         Assert.Equal(installs.Count, installs.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.Equal(caches.Count, caches.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.Equal(installs.Count, JavaRuntimeCatalog.InstallDirectoryNames.Count);

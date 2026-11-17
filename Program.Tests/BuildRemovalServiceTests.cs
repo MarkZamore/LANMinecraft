@@ -66,6 +66,23 @@ public sealed class BuildRemovalServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(world, "level.dat")));
     }
 
+    [Fact]
+    public void RemovalWaitsForRuntimePreparationToFinish()
+    {
+        Install(Build, "1.21.1");
+        var service = new BuildRemovalService(_paths);
+        var plan = service.Plan(Build, worldsToo: false);
+
+        using (SharedRuntimeGate.TryAcquire(_paths) ?? throw new IOException("Could not acquire preparation lock."))
+        {
+            Assert.Throws<InvalidOperationException>(() => service.Remove(plan));
+            Assert.True(Directory.Exists(_paths.CombineUnderPacks(Build)));
+        }
+
+        Assert.True(service.Remove(plan).Complete);
+        Assert.False(Directory.Exists(_paths.CombineUnderPacks(Build)));
+    }
+
     /// <summary>And with the worlds asked for, the world goes too.</summary>
     [Fact]
     public void WithTheWorlds_TheWorldsGo()
@@ -172,6 +189,35 @@ public sealed class BuildRemovalServiceTests : IDisposable
 
         service.Remove(plan);
         Assert.All(twentyOne, directory => Assert.True(Directory.Exists(directory)));
+    }
+
+    [Fact]
+    public void PreparedRuntimeKeepsHistoricalJavaUntilUseEnds()
+    {
+        Install(Build, "1.16.5");
+        Install(Other, "1.20.1");
+        const string oldId = "temurin-17.0.19+1";
+        var oldHome = Path.Combine(_paths.JavaRuntimes, "runtime", "windows-x64", oldId);
+        Write(Path.Combine(oldHome, ".portable-java.json"), JsonSerializer.Serialize(new
+        {
+            SchemaVersion = PortableJavaRuntimeService.MarkerCacheGeneration,
+            RuntimeId = oldId,
+            ArchiveSha256 = new string('0', 64),
+            JavaVersion = "17.0.19"
+        }));
+        var current = InstallJava("java-17", "temurin-17.0.20.1_1");
+        var state = Path.Combine(_paths.Runtimes, Other, ".portable-runtime.json");
+        Write(state, JsonSerializer.Serialize(new { javaRuntimeId = oldId }));
+
+        var service = new BuildRemovalService(_paths);
+        Assert.DoesNotContain(oldHome, service.Plan(Build, worldsToo: false).JavaDirectories);
+        PortableJavaRuntimeService.SweepUnusedSuperseded(_paths);
+        Assert.True(Directory.Exists(oldHome));
+
+        Write(state, JsonSerializer.Serialize(new { javaRuntimeId = Path.GetFileName(current[0]) }));
+        PortableJavaRuntimeService.SweepUnusedSuperseded(_paths);
+        Assert.False(Directory.Exists(oldHome));
+        Assert.All(current, directory => Assert.True(Directory.Exists(directory)));
     }
 
     /// <summary>
@@ -336,10 +382,16 @@ public sealed class BuildRemovalServiceTests : IDisposable
     /// <summary>Both halves of an installed Java: the unpacked JDK and the archive.</summary>
     private string[] InstallJava(string installName, string archiveName)
     {
-        var install = Path.Combine(_paths.JavaRuntimes, "runtime", "windows-x64", installName);
+        var pin = JavaRuntimeCatalog.Releases.Single(release => release.LegacyInstallDirectoryName == installName);
+        var install = Path.Combine(_paths.JavaRuntimes, "runtime", "windows-x64", pin.InstallDirectoryName);
         var archive = Path.Combine(_paths.Launcher, "ManagedComponents", "java-runtime", archiveName);
         Write(Path.Combine(install, "bin", "javaw.exe"), "exe");
-        Write(Path.Combine(archive, "jdk.zip"), "zip");
+        Write(Path.Combine(install, ".portable-java.json"), JsonSerializer.Serialize(new
+        {
+            SchemaVersion = PortableJavaRuntimeService.MarkerCacheGeneration,
+            pin.RuntimeId, pin.ArchiveSha256, pin.JavaVersion
+        }));
+        Write(Path.Combine(archive, pin.ArchiveFileName), "zip");
         return [install, archive];
     }
 

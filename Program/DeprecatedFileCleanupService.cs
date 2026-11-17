@@ -170,10 +170,13 @@ public static class DeprecatedFileCleanupService
         {
             var components = Path.Combine(build, "runtime", "windows-x64");
             if (!Directory.Exists(components)) continue;
+            try { JavaRuntimeStorage.RequireOrdinaryPath(paths, components); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
             foreach (var directory in EnumerateDirectories(components))
             {
-                if (JavaRuntimeCatalog.InstallDirectoryNames.Contains(
-                        Path.GetFileName(directory), StringComparer.OrdinalIgnoreCase))
+                if (JavaRuntimeCatalog.LegacyInstallDirectoryNames.Contains(
+                        Path.GetFileName(directory), StringComparer.OrdinalIgnoreCase) &&
+                    JavaRuntimeStorage.OrdinaryTree(directory) && !JavaRuntimeStorage.IsInUse(directory))
                 {
                     removed += TryDeleteDirectory(directory, logger);
                 }

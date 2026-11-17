@@ -115,7 +115,7 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     {
         Assert.Equal("temurin-21.0.12.1+1", PortableJavaRuntimeService.PinnedRuntimeId);
         Assert.Equal(21, PortableJavaRuntimeService.PinnedMajorVersion);
-        Assert.Equal("java-21", PortableJavaRuntimeService.InstallDirectoryName);
+        Assert.Equal(PortableJavaRuntimeService.PinnedRuntimeId, PortableJavaRuntimeService.InstallDirectoryName);
         Assert.Equal(
             "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
             PortableJavaRuntimeService.ArchiveFileName);
@@ -229,14 +229,10 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
     }
 
     /// <summary>
-    /// The runtimes share one folder, so a sweep has to know the difference
-    /// between a Java nothing pins any more and a Java another pack is about to
-    /// want. A machine that plays a 1.20.1 pack beside a 1.21.1 one keeps both;
-    /// a sweep that recognised only the runtime it was called about would
-    /// delete the other on every launch and fetch it again on the next.
+    /// Preparing one Java leaves sibling directories without verified ownership alone.
     /// </summary>
     [Fact]
-    public async Task ARuntimeAnotherPackNeeds_SurvivesTheSweepAndAStrayOneDoesNot()
+    public async Task PreparingJava_PreservesUnownedDirectories()
     {
         var archive = BuildArchive();
         var runtimeRoot = CreateRuntimeRoot();
@@ -247,16 +243,37 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         File.WriteAllText(Path.Combine(siblings, "java-11", "stale.txt"), "nothing pins this");
 
         using var httpClient = new HttpClient(new RecordingHandler(_ => Success(archive)));
-        // Twice: the sweep runs on the pass that finds the runtime already there.
+        // Exercise both installation and reuse.
         await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
         await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
 
         Assert.True(
             Directory.Exists(Path.Combine(siblings, "java-21")),
             "a catalogued runtime belongs to whichever pack needs it, not to this one");
-        Assert.False(
+        Assert.True(
             Directory.Exists(Path.Combine(siblings, "java-11")),
-            "a runtime nothing pins any more is still swept");
+            "a directory without an ownership marker must not be deleted");
+    }
+
+    [Fact]
+    public async Task VerifiedLegacyRuntimeMovesToItsExactNameWithoutRestoringTheArchive()
+    {
+        var archive = BuildArchive();
+        var runtimeRoot = CreateRuntimeRoot();
+        using var online = new HttpClient(new RecordingHandler(_ => Success(archive)));
+        var legacyService = CreateService(online, archive);
+        var old = await legacyService.EnsureAsync(runtimeRoot, null, CancellationToken.None);
+        File.Delete(legacyService.CachePath);
+
+        var offline = new RecordingHandler(_ => throw new InvalidOperationException("Unexpected network request."));
+        using var client = new HttpClient(offline);
+        var migrated = await CreateService(client, archive, installDirectoryName: TestRuntimeId)
+            .EnsureAsync(runtimeRoot, null, CancellationToken.None);
+
+        Assert.Equal(Path.Combine(Path.GetDirectoryName(old.JavaHome)!, TestRuntimeId), migrated.JavaHome);
+        Assert.False(Directory.Exists(old.JavaHome));
+        Assert.Equal("java", File.ReadAllText(migrated.JavaPath));
+        Assert.Empty(offline.RequestUris);
     }
 
     [Fact]
@@ -607,14 +624,15 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         IReadOnlyList<Uri>? downloadUris = null,
         bool verifyFlags = false,
         int javaMajorVersion = 25,
-        string javaVersion = TestJavaVersion)
+        string javaVersion = TestJavaVersion,
+        string? installDirectoryName = null)
     {
         Directory.CreateDirectory(_root);
         var pin = new JavaRuntimePin(
             javaMajorVersion,
             TestRuntimeId,
             javaVersion,
-            $"java-{javaMajorVersion}",
+            installDirectoryName ?? $"java-{javaMajorVersion}",
             "jdk-test.zip",
             ArchivePrefix,
             downloadUris ?? [new Uri("https://example.test/jdk-test.zip")],

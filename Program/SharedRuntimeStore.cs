@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Minecraft;
@@ -15,14 +16,15 @@ namespace Minecraft;
 /// same thing want the same bytes at the same path, so the second one finds it
 /// already there.
 ///
-/// What that costs is a store nobody owns. A build's runtime state lists every
-/// file that build needs, so the live set is the union of those lists and the
-/// garbage is everything else - and the garbage can only be collected by
-/// looking at every build at once, which is what <see cref="Sweep"/> does.
+/// Each build records the files it uses. The sweep consults all builds and
+/// only collects files in managed roots or explicitly recorded profile files.
 /// </remarks>
 public static class SharedRuntimeStore
 {
     private const string RuntimeStateFileName = ".portable-runtime.json";
+    private const string ProfileOwnerFileName = ".portable-profile-owner.json";
+    private const string LoaderReceiptFileName = ".portable-loader.json";
+    private static readonly JsonSerializerOptions OwnerJson = new(JsonSerializerDefaults.Web);
 
     /// <summary>Mojang's assets, addressed by content hash.</summary>
     public static string Assets(AppPaths paths) => Path.Combine(Root(paths), "assets");
@@ -39,45 +41,8 @@ public static class SharedRuntimeStore
     /// <summary>The flat asset layout the oldest versions read instead of the store.</summary>
     public static string Resources(AppPaths paths) => Path.Combine(Root(paths), "resources");
 
-    /// <summary>
-    /// The only parts of the store the sweep may take from.
-    /// </summary>
-    /// <remarks>
-    /// A measured restriction rather than a cautious one. Everything under
-    /// <c>assets</c> and <c>runtime</c> is fetched by name and reported as a
-    /// file of the version. Flat legacy copies are derived from its owned
-    /// asset index as well; CmlLib reports their objects but not these outputs.
-    ///
-    /// <c>libraries</c> and <c>versions</c> are not like that, and this is the
-    /// second time that has been proved on somebody's install. What a loader
-    /// installer produces is not downloaded and so is reported by nobody: the
-    /// NeoForge client and universal jars, the slim, srg and extra client jars,
-    /// the natives unpacked beside a profile. Release 331 tried to close the
-    /// gap by naming, from a version's own json, every library it lists - and
-    /// the file that actually matters is not in that list. NeoForge 21.1 never
-    /// names <c>net.neoforged:neoforge</c> anywhere in its profile: not in
-    /// <c>libraries</c>, not on the module path in <c>arguments.jvm</c>. FML
-    /// finds it on the disk at launch, by convention, and nothing written down
-    /// points at it.
-    ///
-    /// So the sweep took it. Twice: once before 331, once after, when the
-    /// condition that had held the sweep back turned itself off exactly as
-    /// designed. Three builds started with <c>neoforge</c> and <c>minecraft</c>
-    /// both <c>[MISSING]</c>, and neither could recover on its own, because a
-    /// file no state names is also a file no validation misses - the launcher
-    /// checked every one of the 4594 files it knew about, found them all, and
-    /// launched into the crash.
-    ///
-    /// The rule this leaves is the one the class was built on and should not
-    /// have been talked out of: the sweep may only take from a root where
-    /// "unnamed" provably means "unused". That is true of assets and of
-    /// Mojang's Java, and it is not true of these two - not with any amount of
-    /// reading version json, because the fact is not written there. Naming what
-    /// an installer produced would mean recording it at the moment it is
-    /// produced, and until something does, these roots are not swept at all.
-    /// They are also the small half of the store: assets are the bulk, and the
-    /// sweep still has them.
-    /// </remarks>
+    // Loader installers can create libraries their profile never mentions. Sweep
+    // profile files only with an ownership record and leave the Maven tree intact.
     private static readonly string[] AlwaysSweepable = ["assets", "runtime"];
 
     /// <summary>
@@ -93,132 +58,318 @@ public static class SharedRuntimeStore
         return paths.SharedRuntime;
     }
 
-    /// <summary>
-    /// Removes from the store every file no build's runtime state names, and
-    /// then the directories that leaves empty.
-    /// </summary>
-    /// <remarks>
-    /// Run after a build is removed, which is the moment files stop being
-    /// wanted, and again at startup for whatever an interrupted removal left.
-    ///
-    /// One state that cannot be read stops the whole sweep. That is not
-    /// caution for its own sake: the live set is built out of those files, and
-    /// a build whose needs are unknown counted as needing nothing is how a
-    /// sweep deletes the game out from under a perfectly good install. A
-    /// damaged state costs one build a rebuild, never all of them.
-    ///
-    /// No builds at all is the opposite case and is not a refusal: nothing is
-    /// used by anything, so the store goes, and the next install refills it.
-    /// </remarks>
-    /// <returns>How many files were removed.</returns>
-    public static int Sweep(AppPaths paths, Logger? logger = null)
+    /// <summary>Records the files verified during a successful runtime preparation.</summary>
+    internal static void RecordProfileOwnership(AppPaths paths, string profileId,
+        PackRuntimeDescriptor descriptor, IEnumerable<string> verifiedFiles, Logger? logger = null)
+    {
+        if (!ValidName(profileId) || !ValidName(descriptor.MinecraftVersion)) return;
+        var versions = Versions(paths);
+        var profileDirectory = Path.Combine(versions, profileId);
+        var ownerPath = Path.Combine(profileDirectory, ProfileOwnerFileName);
+        try
+        {
+            if (!IsOrdinaryUnder(paths.Root, Anchor(paths), directory: true) ||
+                !IsOrdinaryUnder(Anchor(paths), profileDirectory, directory: true)) return;
+            if (Exists(ownerPath) && ReadProfileOwner(profileDirectory) is null) return;
+
+            var files = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in verifiedFiles.Append(Path.Combine(profileDirectory, LoaderReceiptFileName)))
+            {
+                var full = Path.GetFullPath(path);
+                if (!IsOrdinaryUnder(profileDirectory, full, directory: false)) continue;
+                var relative = Path.GetRelativePath(profileDirectory, full).Replace(Path.DirectorySeparatorChar, '/');
+                if (!relative.Equals(ProfileOwnerFileName, StringComparison.OrdinalIgnoreCase))
+                    files[relative] = HashFile(full);
+            }
+
+            if (!files.ContainsKey(profileId + ".json")) return;
+            var isBase = profileId.Equals(descriptor.MinecraftVersion, StringComparison.OrdinalIgnoreCase);
+            var owner = new ProfileOwner(1, profileId, descriptor.MinecraftVersion,
+                isBase ? PackLoaderKind.Vanilla : descriptor.Loader.Type,
+                isBase ? null : PackRuntimeService.CanonicalLoaderVersion(descriptor), files);
+            AtomicFile.WriteAllTextIfChanged(ownerPath, JsonSerializer.Serialize(owner, OwnerJson));
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            logger?.Warn($"Could not record shared profile ownership ({ex.Message}): {profileId}");
+        }
+    }
+
+    /// <summary>Removes unused assets and proven launcher-owned profile files.</summary>
+    public static int Sweep(AppPaths paths, Logger? logger = null) =>
+        Sweep(paths, logger, () => new ClientPresenceService(paths, logger).ReadLiveSessions().Count != 0);
+
+    internal static int Sweep(AppPaths paths, Logger? logger, Func<bool> hasLiveGame)
     {
         ArgumentNullException.ThrowIfNull(paths);
         var root = Root(paths);
         if (!Directory.Exists(root)) return 0;
 
-        var anchor = Anchor(paths);
-        var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var statePath in EnumerateStates(paths))
-        {
-            // Unreadable is not empty. A state that will not parse is a build
-            // whose needs are unknown, and guessing them as "none" is how a
-            // sweep deletes the game out from under a perfectly good install.
-            if (!TryReadLiveFiles(statePath, anchor, live, Assets(paths), Resources(paths))) return 0;
-        }
-
-        // No builds at all is a different thing entirely, and it is the case
-        // this was asked for: with the last build gone nothing is used by
-        // anything, so the whole store goes. The next install refills it.
         var removed = 0;
-        foreach (var sweepable in AlwaysSweepable)
+        try
         {
-            var directory = Path.Combine(root, sweepable);
-            if (!Directory.Exists(directory)) continue;
-            foreach (var file in EnumerateFilesSafe(directory))
+            if (!IsOrdinaryUnder(paths.Root, Anchor(paths), directory: true) ||
+                !IsOrdinaryUnder(Anchor(paths), root, directory: true)) return 0;
+            using var gate = SharedRuntimeGate.TryAcquire(paths);
+            if (gate is null || hasLiveGame()) return 0;
+
+            var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var profiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!TryReadLiveStates(paths, live, profiles)) return 0;
+
+            foreach (var sweepable in AlwaysSweepable)
             {
-                if (live.Contains(Path.GetFullPath(file))) continue;
-                if (TryDelete(file, logger)) removed++;
+                var directory = Path.Combine(root, sweepable);
+                if (!IsOrdinaryUnder(root, directory, directory: true)) continue;
+                removed += SweepFiles(directory, live, logger);
             }
 
-            RemoveEmptyDirectories(directory, logger);
+            removed += SweepProfiles(paths, profiles, logger);
+            if (removed > 0)
+                logger?.Info($"Shared runtime store: {removed} unused file(s) removed.");
+            return removed;
         }
-        if (removed > 0)
+        catch (Exception ex) when (IsStorageError(ex))
         {
-            logger?.Info($"Shared runtime store: {removed} file(s) no build needs any more were removed.");
+            logger?.Warn($"Shared runtime cleanup could not finish ({ex.Message}).");
+            return removed;
+        }
+    }
+
+    private static bool TryReadLiveStates(AppPaths paths, HashSet<string> live, HashSet<string> profiles)
+    {
+        if (!Exists(paths.Runtimes)) return true;
+        var anchor = Anchor(paths);
+        if (!IsOrdinaryUnder(anchor, paths.Runtimes, directory: true)) return false;
+
+        var assets = Assets(paths);
+        var indexes = Path.Combine(assets, "indexes");
+        var resources = Resources(paths);
+        var versions = Versions(paths);
+
+        foreach (var build in Directory.EnumerateDirectories(paths.Runtimes))
+        {
+            if (!IsOrdinaryUnder(paths.Runtimes, build, directory: true)) return false;
+            var state = Path.Combine(build, RuntimeStateFileName);
+            if (!Exists(state)) continue;
+            if (!IsOrdinaryUnder(build, state, directory: false)) return false;
+            using var document = JsonDocument.Parse(File.ReadAllText(state));
+            var root = document.RootElement;
+            if (!root.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Object)
+                return false;
+            if (root.TryGetProperty("profileId", out var profile))
+            {
+                if (profile.ValueKind != JsonValueKind.String || !ValidName(profile.GetString())) return false;
+                profiles.Add(profile.GetString()!);
+            }
+            foreach (var file in files.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(file.Name) || Path.IsPathRooted(file.Name)) return false;
+                var full = Path.GetFullPath(Path.Combine(anchor, file.Name.Replace('/', Path.DirectorySeparatorChar)));
+                if (!IsBelow(anchor, full)) return false;
+                live.Add(full);
+                if (IsBelow(versions, full) && !string.Equals(Path.GetDirectoryName(full), versions, StringComparison.OrdinalIgnoreCase))
+                    profiles.Add(Path.GetRelativePath(versions, full).Split(Path.DirectorySeparatorChar)[0]);
+                if (string.Equals(Path.GetDirectoryName(full), indexes, StringComparison.OrdinalIgnoreCase) &&
+                    IsOrdinaryUnder(anchor, full, directory: false))
+                    foreach (var copy in DerivedAssetLayout.Read(full, assets, resources))
+                        live.Add(copy.Destination);
+            }
+        }
+        return true;
+    }
+
+    private static int SweepProfiles(AppPaths paths, HashSet<string> live, Logger? logger)
+    {
+        var versions = Versions(paths);
+        if (!IsOrdinaryUnder(Anchor(paths), versions, directory: true)) return 0;
+        var owned = new List<(string Directory, ProfileOwner Owner)>();
+        foreach (var directory in Directory.EnumerateDirectories(versions))
+        {
+            if (!IsOrdinaryUnder(versions, directory, directory: true)) continue;
+            if (ReadProfileOwner(directory) is { } owner) owned.Add((directory, owner));
+        }
+        if (owned.Count == 0) return 0;
+
+        if (Exists(paths.Packs))
+        {
+            if (!IsOrdinaryUnder(paths.Root, paths.Packs, directory: true)) return 0;
+            foreach (var directory in Directory.EnumerateDirectories(paths.Packs))
+            {
+                if (!IsOrdinaryUnder(paths.Packs, directory, directory: true)) return 0;
+                var manifest = Path.Combine(directory, PackManifestService.ManifestFileName);
+                if (!Exists(manifest)) continue;
+                if (!IsOrdinaryUnder(directory, manifest, directory: false)) return 0;
+                var descriptor = PackManifestService.Load(directory);
+                if (descriptor.NativeRuntime is not null) continue;
+
+                live.Add(descriptor.MinecraftVersion);
+                var loaderVersion = PackRuntimeService.CanonicalLoaderVersion(descriptor);
+                foreach (var (_, owner) in owned)
+                {
+                    if (owner.MinecraftVersion.Equals(descriptor.MinecraftVersion, StringComparison.OrdinalIgnoreCase) &&
+                        owner.LoaderType == descriptor.Loader.Type &&
+                        string.Equals(owner.LoaderVersion, loaderVersion, StringComparison.OrdinalIgnoreCase))
+                        live.Add(owner.ProfileId);
+                }
+            }
+        }
+
+        // Older state may only name the loader. Its local profile also names
+        // the inherited Minecraft profile (and sometimes a separate jar).
+        var pending = new Queue<string>(live);
+        while (pending.TryDequeue(out var id))
+        {
+            if (!ValidName(id)) return 0;
+            var profile = Path.Combine(versions, id, id + ".json");
+            if (!TryReadOrdinaryAttributes(versions, profile, out var attributes)) return 0;
+            if (attributes is null) continue;
+            if (attributes.Value.HasFlag(FileAttributes.Directory)) return 0;
+            using var json = JsonDocument.Parse(File.ReadAllText(profile));
+            foreach (var key in new[] { "inheritsFrom", "jar" })
+            {
+                if (!json.RootElement.TryGetProperty(key, out var value) || value.ValueKind == JsonValueKind.Null) continue;
+                var dependency = value.GetString();
+                if (!ValidName(dependency)) return 0;
+                if (live.Add(dependency!)) pending.Enqueue(dependency!);
+            }
+        }
+
+        var removed = 0;
+        foreach (var (directory, owner) in owned)
+        {
+            if (live.Contains(owner.ProfileId)) continue;
+            var files = new List<string>();
+            var intact = true;
+            foreach (var (relative, sha256) in owner.Files)
+            {
+                var file = Path.GetFullPath(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar)));
+                if (!TryReadOrdinaryAttributes(directory, file, out var attributes) ||
+                    attributes is { } value && (value.HasFlag(FileAttributes.Directory) ||
+                    !HashFile(file).Equals(sha256, StringComparison.OrdinalIgnoreCase)))
+                {
+                    intact = false;
+                    break;
+                }
+                if (attributes is not null) files.Add(file);
+            }
+            if (!intact) continue;
+
+            var retry = false;
+            var parents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files)
+            {
+                if (TryDelete(file, logger)) removed++;
+                else retry = true;
+                for (var parent = Path.GetDirectoryName(file); parent is not null && IsBelow(directory, parent);
+                     parent = Path.GetDirectoryName(parent))
+                    parents.Add(parent);
+            }
+            if (!retry && TryDelete(Path.Combine(directory, ProfileOwnerFileName), logger)) removed++;
+            foreach (var parent in parents.OrderByDescending(path => path.Length))
+                RemoveIfEmpty(parent, logger);
+            RemoveIfEmpty(directory, logger);
         }
         return removed;
     }
 
-    private static IEnumerable<string> EnumerateStates(AppPaths paths)
+    private static ProfileOwner? ReadProfileOwner(string directory)
     {
-        if (!Directory.Exists(paths.Runtimes)) yield break;
-        string[] builds;
+        var path = Path.Combine(directory, ProfileOwnerFileName);
+        if (!IsOrdinaryUnder(directory, path, directory: false)) return null;
         try
         {
-            builds = Directory.GetDirectories(paths.Runtimes);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            yield break;
-        }
-
-        foreach (var build in builds)
-        {
-            var state = Path.Combine(build, RuntimeStateFileName);
-            if (File.Exists(state)) yield return state;
-        }
-    }
-
-    /// <summary>
-    /// Adds one build's files to the live set. False when the state cannot be
-    /// read at all, which stops the sweep rather than under-counting it.
-    /// </summary>
-    private static bool TryReadLiveFiles(string statePath, string anchor, HashSet<string> live, string assets, string resources)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(statePath));
-            if (!document.RootElement.TryGetProperty("files", out var files) ||
-                files.ValueKind != JsonValueKind.Object)
+            var owner = JsonSerializer.Deserialize<ProfileOwner>(File.ReadAllText(path), OwnerJson);
+            if (owner is not { SchemaVersion: 1, Files: not null } || !ValidName(owner.ProfileId) ||
+                !owner.ProfileId.Equals(Path.GetFileName(directory), StringComparison.OrdinalIgnoreCase) ||
+                !ValidName(owner.MinecraftVersion) || !Enum.IsDefined(owner.LoaderType) ||
+                (owner.LoaderType == PackLoaderKind.Vanilla
+                    ? owner.LoaderVersion is not null || !owner.ProfileId.Equals(owner.MinecraftVersion, StringComparison.OrdinalIgnoreCase)
+                    : !ValidName(owner.LoaderVersion)) ||
+                !owner.Files.ContainsKey(owner.ProfileId + ".json")) return null;
+            foreach (var (relative, hash) in owner.Files)
             {
-                return false;
+                if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative) ||
+                    relative.Split('/', Path.DirectorySeparatorChar).Any(part => !ValidName(part)) ||
+                    relative.Equals(ProfileOwnerFileName, StringComparison.OrdinalIgnoreCase) ||
+                    hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigit)) return null;
             }
-
-            foreach (var file in files.EnumerateObject())
-            {
-                var relative = file.Name;
-                if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) continue;
-                var full = Path.GetFullPath(
-                    Path.Combine(anchor, relative.Replace('/', Path.DirectorySeparatorChar)));
-                live.Add(full);
-                var indexes = Path.GetFullPath(Path.Combine(assets, "indexes"));
-                if (string.Equals(Path.GetDirectoryName(full), indexes, StringComparison.OrdinalIgnoreCase) && File.Exists(full))
-                    foreach (var copy in DerivedAssetLayout.Read(full, assets, resources))
-                        live.Add(copy.Destination);
-            }
-            return true;
+            return owner;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException)
+        catch (Exception ex) when (IsStorageError(ex))
         {
-            return false;
+            return null;
         }
     }
 
+    private static bool ValidName(string? name) => !string.IsNullOrWhiteSpace(name) &&
+        name is not ("." or "..") && name == name.Trim() && !name.EndsWith('.') &&
+        name.IndexOfAny(Path.GetInvalidFileNameChars()) == -1;
 
-    private static string[] EnumerateFilesSafe(string root)
+    private static bool Exists(string path)
     {
-        // Materialised on purpose: the walk and the deleting cannot be
-        // interleaved over one lazy enumeration of the same tree.
-        try
-        {
-            return Directory.GetFiles(root, "*", SearchOption.AllDirectories);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return [];
-        }
+        try { _ = File.GetAttributes(path); return true; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return false; }
     }
+
+    private static bool IsBelow(string root, string path) =>
+        path.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOrdinaryUnder(string root, string path, bool directory) =>
+        TryReadOrdinaryAttributes(root, path, out var attributes) &&
+        attributes is { } value && value.HasFlag(FileAttributes.Directory) == directory;
+
+    private static bool TryReadOrdinaryAttributes(string root, string path, out FileAttributes? attributes)
+    {
+        attributes = null;
+        if (!IsBelow(root, path)) return false;
+
+        var segments = Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar);
+        var current = root;
+        for (var index = 0; index < segments.Length; index++)
+        {
+            current = Path.Combine(current, segments[index]);
+            FileAttributes found;
+            try { found = File.GetAttributes(current); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return true; }
+
+            if (found.HasFlag(FileAttributes.ReparsePoint) ||
+                index < segments.Length - 1 && !found.HasFlag(FileAttributes.Directory)) return false;
+            if (index == segments.Length - 1) attributes = found;
+        }
+        return true;
+    }
+
+    private static string HashFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexStringLower(SHA256.HashData(stream));
+    }
+
+    private static int SweepFiles(string root, HashSet<string> live, Logger? logger)
+    {
+        var removed = 0;
+        foreach (var path in Directory.EnumerateFileSystemEntries(root))
+        {
+            var attributes = File.GetAttributes(path);
+            if (attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+            if (attributes.HasFlag(FileAttributes.Directory))
+            {
+                removed += SweepFiles(path, live, logger);
+                RemoveIfEmpty(path, logger);
+            }
+            else if (!live.Contains(path) && TryDelete(path, logger)) removed++;
+        }
+        return removed;
+    }
+
+    private static bool IsStorageError(Exception ex) => ex is IOException or UnauthorizedAccessException or
+        JsonException or ArgumentException or KeyNotFoundException or InvalidOperationException or FormatException or
+        OverflowException or InvalidDataException or NotSupportedException;
+
+    private sealed record ProfileOwner(int SchemaVersion, string ProfileId, string MinecraftVersion,
+        PackLoaderKind LoaderType, string? LoaderVersion, SortedDictionary<string, string> Files);
 
     private static bool TryDelete(string path, Logger? logger)
     {
@@ -236,30 +387,15 @@ public static class SharedRuntimeStore
         }
     }
 
-    private static void RemoveEmptyDirectories(string root, Logger? logger)
+    private static void RemoveIfEmpty(string directory, Logger? logger)
     {
-        string[] directories;
         try
         {
-            directories = Directory.GetDirectories(root, "*", SearchOption.AllDirectories);
+            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return;
-        }
-
-        // Deepest first, so a directory emptied by the level below it is itself
-        // seen as empty on the way up.
-        foreach (var directory in directories.OrderByDescending(path => path.Length))
-        {
-            try
-            {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                logger?.Warn($"Empty shared runtime directory stayed ({ex.Message}): {directory}");
-            }
+            logger?.Warn($"Empty shared runtime directory stayed ({ex.Message}): {directory}");
         }
     }
 }

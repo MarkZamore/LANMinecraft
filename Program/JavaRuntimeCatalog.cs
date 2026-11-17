@@ -53,7 +53,7 @@ internal static class JavaRuntimeCatalog
             25,
             "temurin-25.0.4.1+1",
             "25.0.4.1",
-            "java-25",
+            "temurin-25.0.4.1+1",
             "OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip",
             "jdk-25.0.4.1+1/",
             UrisFor("jdk-25.0.4.1+1", "temurin25-binaries", "OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"),
@@ -65,7 +65,7 @@ internal static class JavaRuntimeCatalog
             21,
             "temurin-21.0.12.1+1",
             "21.0.12.1",
-            "java-21",
+            "temurin-21.0.12.1+1",
             "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
             "jdk-21.0.12.1+1/",
             UrisFor("jdk-21.0.12.1+1", "temurin21-binaries", "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip"),
@@ -77,7 +77,7 @@ internal static class JavaRuntimeCatalog
             17,
             "temurin-17.0.20.1+1",
             "17.0.20.1",
-            "java-17",
+            "temurin-17.0.20.1+1",
             "OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip",
             "jdk-17.0.20.1+1/",
             UrisFor("jdk-17.0.20.1+1", "temurin17-binaries", "OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip"),
@@ -89,7 +89,7 @@ internal static class JavaRuntimeCatalog
             8,
             "temurin-8u504-b01",
             "1.8.0_504",
-            "java-8",
+            "temurin-8u504-b01",
             "OpenJDK8U-jdk_x64_windows_hotspot_8u504b01.zip",
             "jdk8u504-b01/",
             UrisFor("jdk8u504-b01", "temurin8-binaries", "OpenJDK8U-jdk_x64_windows_hotspot_8u504b01.zip"),
@@ -157,6 +157,9 @@ internal static class JavaRuntimeCatalog
     /// <summary>Every install folder a pinned runtime uses.</summary>
     public static IReadOnlyCollection<string> InstallDirectoryNames { get; } =
         Releases.Select(release => release.InstallDirectoryName).ToArray();
+
+    internal static IReadOnlyCollection<string> LegacyInstallDirectoryNames { get; } =
+        Releases.Select(release => release.LegacyInstallDirectoryName).ToArray();
 
     /// <summary>Every archive folder a pinned runtime caches under.</summary>
     public static IReadOnlyCollection<string> CacheDirectoryNames { get; } =

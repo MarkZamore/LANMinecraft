@@ -239,6 +239,77 @@ public sealed class SharedRuntimeStoreTests : IDisposable
         Assert.Equal(Path.GetFullPath(_paths.Launcher), SharedRuntimeStore.Anchor(_paths));
     }
 
+    [Fact]
+    public void OwnedProfilesStayUntilTheirInstalledPackAndRuntimeReferencesAreGone()
+    {
+        const string baseId = "1.20.1";
+        const string loaderId = "1.20.1-forge-47.4.0";
+        var baseProfile = Asset($"versions/{baseId}/{baseId}.json");
+        var loaderProfile = Asset($"versions/{loaderId}/{loaderId}.json");
+        var natives = Asset($"versions/{loaderId}/natives/lwjgl.dll");
+        var receipt = Asset($"versions/{loaderId}/.portable-loader.json");
+        File.WriteAllText(baseProfile, "{}");
+        File.WriteAllText(loaderProfile, """{"inheritsFrom":"1.20.1"}""");
+        var manifest = Path.Combine(_paths.Packs, "New", PackManifestService.ManifestFileName);
+        Write(manifest, """{"schemaVersion":1,"minecraftVersion":"1.20.1","loader":{"type":"forge","version":"1.20.1-47.4.0"}}""");
+        var descriptor = new PackRuntimeDescriptor(1, baseId,
+            new PackLoaderDescriptor(PackLoaderKind.Forge, "47.4.0"), "", "");
+        SharedRuntimeStore.RecordProfileOwnership(_paths, baseId, descriptor, [baseProfile]);
+        SharedRuntimeStore.RecordProfileOwnership(_paths, loaderId, descriptor, [loaderProfile, natives]);
+
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        Assert.True(File.Exists(baseProfile));
+        Assert.True(File.Exists(loaderProfile));
+
+        File.Delete(manifest);
+        Build("First", loaderProfile);
+        Build("Second", loaderProfile);
+        Directory.Delete(Path.Combine(_paths.Runtimes, "First"), recursive: true);
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        Assert.True(File.Exists(baseProfile), "The old state only names the child profile.");
+        Assert.True(File.Exists(natives));
+        Assert.True(File.Exists(receipt));
+
+        Directory.Delete(Path.Combine(_paths.Runtimes, "Second"), recursive: true);
+        Assert.Equal(6, SharedRuntimeStore.Sweep(_paths));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(baseProfile)));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(loaderProfile)));
+    }
+
+    [Fact]
+    public void UnmarkedAndModifiedProfilesArePreserved()
+    {
+        var unmarked = Asset("versions/custom/custom.json");
+        var profile = Asset("versions/1.20.1/1.20.1.json");
+        var client = Asset("versions/1.20.1/1.20.1.jar");
+        var descriptor = new PackRuntimeDescriptor(1, "1.20.1",
+            new PackLoaderDescriptor(PackLoaderKind.Vanilla, null), "", "");
+        SharedRuntimeStore.RecordProfileOwnership(_paths, descriptor.MinecraftVersion, descriptor, [profile, client]);
+        File.WriteAllText(profile, """{"id":"modified"}""");
+
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        Assert.True(File.Exists(unmarked));
+        Assert.True(File.Exists(profile));
+        Assert.True(File.Exists(client));
+    }
+
+    [Fact]
+    public void APreparingRuntimeOrALiveGameDefersCleanup()
+    {
+        var profile = Asset("versions/1.20.1/1.20.1.json");
+        var descriptor = new PackRuntimeDescriptor(1, "1.20.1",
+            new PackLoaderDescriptor(PackLoaderKind.Vanilla, null), "", "");
+        SharedRuntimeStore.RecordProfileOwnership(_paths, descriptor.MinecraftVersion, descriptor, [profile]);
+
+        using (Assert.IsType<FileStream>(SharedRuntimeGate.TryAcquire(_paths)))
+            Assert.Equal(0, SharedRuntimeStore.Sweep(_paths));
+        Assert.True(File.Exists(profile));
+
+        Assert.Equal(0, SharedRuntimeStore.Sweep(_paths, logger: null, hasLiveGame: () => true));
+        Assert.True(File.Exists(profile));
+        Assert.Equal(2, SharedRuntimeStore.Sweep(_paths));
+    }
+
     /// <summary>Writes a file into the shared store and answers with its path.</summary>
     private string Asset(string relativePath)
     {

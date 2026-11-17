@@ -20,7 +20,7 @@ using CmlLib.Core.VersionLoader;
 
 namespace Minecraft;
 
-public sealed class PackRuntimeService : IDisposable
+public sealed partial class PackRuntimeService : IDisposable
 {
 
     /// <summary>
@@ -78,13 +78,11 @@ public sealed class PackRuntimeService : IDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            return await PrepareCoreAsync(packRelativePath, progress, token).ConfigureAwait(false);
+            using var shared = await SharedRuntimeGate.AcquireAsync(_paths, token).ConfigureAwait(false);
+            try { return await PrepareCoreAsync(packRelativePath, progress, token).ConfigureAwait(false); }
+            finally { CleanupTemporaryFiles(packRelativePath); }
         }
-        finally
-        {
-            CleanupTemporaryFiles(packRelativePath);
-            _gate.Release();
-        }
+        finally { _gate.Release(); }
     }
 
     private async Task<PreparedRuntime> PrepareCoreAsync(
@@ -158,6 +156,28 @@ public sealed class PackRuntimeService : IDisposable
             };
         }
 
+        var librarySources = RuntimeLibrarySource.Load(packDirectory);
+        if (descriptor.Loader.Type != PackLoaderKind.Vanilla &&
+            await TryReuseLoaderAsync(descriptor, librarySources, sourceClientJar, runtimeRoot, temporaryRoot, token)
+                .ConfigureAwait(false) is { } reused)
+        {
+            var java = await _javaRuntime.EnsureAsync(_paths.JavaRuntimes, requiredJava, progress, token)
+                .ConfigureAwait(false);
+            var reusedState = CreateState(runtimeRoot, descriptor, reused.ProfileId, java.RuntimeId, java.JavaVersion,
+                sourceClientJar, reused.ClientPath, reused.Files, token, reused.Proof);
+            RestoreDerivedAssets(reusedState, token);
+            RegisterPreparedRuntime(statePath, descriptor, reusedState, librarySources, reused.LoaderFiles);
+            CleanupUntrackedRuntimeFiles(runtimeRoot, reusedState);
+            await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
+            _logger.Info($"Reused verified loader profile {reused.ProfileId} for {packRelativePath}.");
+            progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
+            return new PreparedRuntime(runtimeRoot, reused.ProfileId, java.JavaWPath, reused.ClientPath, descriptor)
+            {
+                LibrariesRoot = SharedRuntimeStore.Libraries(_paths)
+            };
+        }
+
+        EnsureSharedGameMayBeRepaired(descriptor);
         Directory.CreateDirectory(temporaryRoot);
         // What the button says while each set of files comes down. The base
         // game is Minecraft's own; everything after it belongs to the loader,
@@ -177,7 +197,7 @@ public sealed class PackRuntimeService : IDisposable
             localOnly: false,
             subject: gameLabel,
             includeInstallerJava: includeInstallerJava,
-            librarySources: RuntimeLibrarySource.Load(packDirectory));
+            librarySources: librarySources);
         IVersion baseVersion;
         try
         {
@@ -267,7 +287,8 @@ public sealed class PackRuntimeService : IDisposable
             progress,
             localOnly: false,
             subject: loaderLabels[0],
-            includeInstallerJava: includeInstallerJava);
+            includeInstallerJava: includeInstallerJava,
+            librarySources: librarySources);
 
         var context = new PackLoaderInstallationContext(
             descriptor,
@@ -290,7 +311,8 @@ public sealed class PackRuntimeService : IDisposable
             progress,
             localOnly: true,
             subject: loaderLabels[1],
-            includeInstallerJava: includeInstallerJava);
+            includeInstallerJava: includeInstallerJava,
+            librarySources: librarySources);
         var profile = await RuntimeRetry.RunAsync(
             retryToken => launcher.GetVersionAsync(profileId, retryToken).AsTask(),
             token).ConfigureAwait(false);
@@ -306,6 +328,9 @@ public sealed class PackRuntimeService : IDisposable
         var mappings = await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
         var requiredFiles = await EnumerateRequiredFilesAsync(launcher, profile, clientFile.Path!, token).ConfigureAwait(false);
         if (mappings is not null) requiredFiles = [.. requiredFiles, mappings];
+        var loaderFiles = GetInstalledLoaderFiles(descriptor, profileId);
+        if (loaderFiles is not null)
+            requiredFiles = [.. requiredFiles, .. loaderFiles];
         var newState = CreateState(
             runtimeRoot,
             descriptor,
@@ -316,7 +341,7 @@ public sealed class PackRuntimeService : IDisposable
             clientFile.Path!,
             requiredFiles,
             token);
-        AtomicFile.WriteAllText(statePath, JsonSerializer.Serialize(newState, _jsonOptions));
+        RegisterPreparedRuntime(statePath, descriptor, newState, librarySources, loaderFiles);
         CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
         _logger.Info(
@@ -419,12 +444,15 @@ public sealed class PackRuntimeService : IDisposable
 
     internal static ValueTask InstallOfficialClientAsync(IGameInstaller installer, GameFile clientFile, CancellationToken token)
     {
-        if (clientFile.Size <= 0 || clientFile.Hash is not { Length: 40 } hash || !hash.All(Uri.IsHexDigit) ||
-            !Uri.TryCreate(clientFile.Url, UriKind.Absolute, out var source) || source.Scheme != Uri.UriSchemeHttps ||
-            source.Host is not ("piston-data.mojang.com" or "launcher.mojang.com"))
+        if (!IsOfficialClientArtifact(clientFile))
             throw new InvalidDataException("Official Minecraft client metadata must include a Mojang HTTPS URL, size and SHA-1.");
         return installer.Install([clientFile], null, null, token);
     }
+
+    private static bool IsOfficialClientArtifact(GameFile file) =>
+        file.Size > 0 && file.Hash is { Length: 40 } hash && hash.All(Uri.IsHexDigit) &&
+        Uri.TryCreate(file.Url, UriKind.Absolute, out var source) && source.Scheme == Uri.UriSchemeHttps &&
+        source.Host is "piston-data.mojang.com" or "launcher.mojang.com";
 
     private static void ValidateClientJar(string sourcePath, GameFile expected)
     {
@@ -568,7 +596,8 @@ public sealed class PackRuntimeService : IDisposable
         MinecraftLauncher launcher,
         IVersion profile,
         string clientJarPath,
-        CancellationToken token)
+        CancellationToken token,
+        bool verifyShared = false)
     {
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { clientJarPath };
         // The asset index, which CmlLib downloads and then does not report as a
@@ -580,9 +609,9 @@ public sealed class PackRuntimeService : IDisposable
         if (!string.IsNullOrWhiteSpace(assetId))
         {
             var index = Path.Combine(launcher.MinecraftPath.Assets, "indexes", assetId + ".json");
-            if (File.Exists(index))
+            if (verifyShared || File.Exists(index))
             {
-                DerivedAssetLayout.Restore(index, launcher.MinecraftPath.Assets, launcher.MinecraftPath.Resource, token);
+                if (!verifyShared) DerivedAssetLayout.Restore(index, launcher.MinecraftPath.Assets, launcher.MinecraftPath.Resource, token);
                 files.Add(Path.GetFullPath(index));
             }
         }
@@ -591,10 +620,10 @@ public sealed class PackRuntimeService : IDisposable
         {
             foreach (var file in await launcher.ExtractFiles(version, token))
             {
-                if (!string.IsNullOrWhiteSpace(file.Path) && File.Exists(file.Path)) files.Add(Path.GetFullPath(file.Path));
+                if (!string.IsNullOrWhiteSpace(file.Path) && (verifyShared || File.Exists(file.Path))) files.Add(Path.GetFullPath(file.Path));
             }
             var versionJson = launcher.MinecraftPath.GetVersionJsonPath(version.Id);
-            if (File.Exists(versionJson))
+            if (verifyShared || File.Exists(versionJson))
             {
                 files.Add(versionJson);
                 foreach (var library in LibrariesNamedBy(versionJson, launcher.MinecraftPath.Library))
@@ -604,7 +633,7 @@ public sealed class PackRuntimeService : IDisposable
             }
         }
         var localManifest = Path.Combine(launcher.MinecraftPath.Versions, "version_manifest_v2.json");
-        if (File.Exists(localManifest)) files.Add(localManifest);
+        if (!verifyShared && File.Exists(localManifest)) files.Add(localManifest);
         return files;
     }
 
@@ -691,7 +720,8 @@ public sealed class PackRuntimeService : IDisposable
         string sourceClientJarPath,
         string clientJarPath,
         IReadOnlyCollection<string> requiredFiles,
-        CancellationToken token)
+        CancellationToken token,
+        IReadOnlyDictionary<string, RuntimeFileState>? verifiedFiles = null)
     {
         var state = new RuntimeState
         {
@@ -712,15 +742,16 @@ public sealed class PackRuntimeService : IDisposable
             SourceClientJarSha1 = sourceClientJarPath.Length == 0 ? "" : ComputeSha1(sourceClientJarPath),
             PreparedAtUtc = DateTimeOffset.UtcNow
         };
-        foreach (var path in requiredFiles.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        foreach (var path in requiredFiles.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
             token.ThrowIfCancellationRequested();
             var info = new FileInfo(path);
-            state.Files[ToRelativePath(Anchor, path)] = new RuntimeFileState
+            var relative = ToRelativePath(Anchor, path);
+            state.Files[relative] = new RuntimeFileState
             {
                 SizeBytes = info.Length,
                 LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
-                Sha256 = ComputeSha256(path)
+                Sha256 = verifiedFiles?.GetValueOrDefault(relative)?.Sha256 ?? ComputeSha256(path)
             };
         }
         return state;
@@ -1182,6 +1213,7 @@ internal static class OfficialLoaderInstaller
             Hash = sha1
         };
         await context.Launcher.GameInstaller.Install([gameFile], null, null, token);
+        RememberVerifiedInstallerPin(installerPath, sha1, context.Logger);
         var legacyForge = context.Descriptor.Loader.Type == PackLoaderKind.Forge && UsesLegacyForgeClientAction(installerPath);
         await RuntimeRetry.RunAsync(
             retryToken => RunInstallerAsync(context, installerPath, installArgument, legacyForge, retryToken),
@@ -1207,6 +1239,34 @@ internal static class OfficialLoaderInstaller
                root.TryGetProperty("versionInfo", out var version) && version.ValueKind == JsonValueKind.Object;
     }
 
+    internal static async Task<string> ReadVerifiedInstallerPinAsync(
+        HttpClient http, PackRuntimeDescriptor descriptor, string installerPath, CancellationToken token)
+    {
+        var path = installerPath + ".verified-sha1";
+        if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0 &&
+            new FileInfo(path).Length == 40)
+        {
+            var stored = await File.ReadAllTextAsync(path, token).ConfigureAwait(false);
+            if (stored.Length == 40 && stored.All(Uri.IsHexDigit)) return stored;
+        }
+        var uri = LoaderInstallationFiles.GetInstallerUri(descriptor);
+        return await DownloadChecksumAsync(http, uri.AbsoluteUri + ".sha1", token).ConfigureAwait(false);
+    }
+
+    internal static void RememberVerifiedInstallerPin(string installerPath, string sha1, Logger logger)
+    {
+        var path = installerPath + ".verified-sha1";
+        try
+        {
+            if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+                AtomicFile.WriteAllTextIfChanged(path, sha1);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.Warn($"Could not save the loader installer checksum: {ex.Message}");
+        }
+    }
+
     private static async Task<string> DownloadChecksumAsync(HttpClient httpClient, string uri, CancellationToken token)
     {
         var value = await RuntimeRetry.RunAsync(async retryToken =>
@@ -1214,11 +1274,11 @@ internal static class OfficialLoaderInstaller
             using var response = await GitHubReleaseTransport.GetAsync(httpClient, uri, retryToken);
             response.EnsureSuccessStatusCode();
             return (await response.Content.ReadAsStringAsync(retryToken)).Trim()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
         }, token);
         if (value.Length != 40 || !value.All(Uri.IsHexDigit))
         {
-            throw new InvalidDataException("NeoForge Maven SHA-1 checksum is invalid.");
+            throw new InvalidDataException("Loader installer Maven SHA-1 checksum is invalid.");
         }
         return value.ToLowerInvariant();
     }

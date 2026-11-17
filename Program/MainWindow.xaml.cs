@@ -1666,7 +1666,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        var outcome = removal.Remove(plan);
+        BuildRemovalService.RemovalOutcome outcome;
+        try
+        {
+            outcome = removal.Remove(plan);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            RequireLogger().Warn($"Build removal could not finish for {build.RelativePath}: {ex.Message}");
+            SetState("Не удалось удалить сборку. Если лаунчер готовит игру, дождитесь завершения подготовки.");
+            return;
+        }
         PackMembership.Remove(_settings, build.RelativePath);
         BuildRemovalService.Forget(_settings, build.RelativePath);
         _settingsService.Save(_settings);

@@ -33,7 +33,7 @@ public sealed partial class PortableJavaRuntimeService
     /// label but a runtime that reinstalls itself on every launch for ever.
     /// </summary>
     public const string PinnedJavaVersion = "21.0.12.1";
-    public const string InstallDirectoryName = "java-21";
+    public const string InstallDirectoryName = PinnedRuntimeId;
     public const string ArchiveFileName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip";
     public const long ArchiveSizeBytes = 205_073_461;
     public const string ArchiveSha256 =
@@ -43,15 +43,14 @@ public sealed partial class PortableJavaRuntimeService
     public static int PinnedMajorVersion { get; } =
         int.Parse(PinnedJavaVersion.Split('.')[0], CultureInfo.InvariantCulture);
 
-    // Temurin packs everything under one versioned directory; it is stripped so
-    // the install looks like Mojang's components and carries no '+' in its path.
+    // The Temurin archive wraps its files in one directory. Strip that prefix into the exact runtime ID.
     private const string ArchiveRootPrefix = "jdk-21.0.12.1+1/";
-    private const string MarkerFileName = ".portable-java.json";
+    internal const string MarkerFileName = ".portable-java.json";
     // A cache generation, not a data format: it is bumped to throw the cached
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int MarkerCacheGeneration = 1;
+    internal const int MarkerCacheGeneration = 1;
 
     // Measured from the extracted image, with headroom for the archive copy.
     private const long RequiredFreeSpaceBytes = 800L * 1024 * 1024;
@@ -126,7 +125,7 @@ public sealed partial class PortableJavaRuntimeService
     /// <remarks>
     /// A different runtime is a different service rather than a parameter
     /// threaded through every step. Everything below - where the archive is
-    /// cached, what counts as a valid one, which folder is swept as superseded,
+    /// cached, what counts as a valid one, which folder is migrated,
     /// what the marker must say - reads the pin, and forty-odd places quietly
     /// taking one from an argument instead of a field is how one of them ends
     /// up still reading the other.
@@ -154,20 +153,44 @@ public sealed partial class PortableJavaRuntimeService
         CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runtimeRoot);
-        var installRoot = Path.Combine(
-            Path.GetFullPath(runtimeRoot),
-            "runtime",
-            "windows-x64",
-            _pin.InstallDirectoryName);
-        _paths.EnsureUnderRoot(installRoot);
+        var parent = JavaRuntimeStorage.InstallParent(runtimeRoot);
+        var installRoot = Path.Combine(parent, _pin.InstallDirectoryName);
+        JavaRuntimeStorage.RequireOrdinaryPath(_paths, installRoot);
+        using var gate = await JavaRuntimeStorage.AcquireAsync(_paths, token).ConfigureAwait(false);
 
+        var legacyRoot = string.Equals(_pin.LegacyInstallDirectoryName, _pin.InstallDirectoryName, StringComparison.OrdinalIgnoreCase)
+            ? null : Path.Combine(parent, _pin.LegacyInstallDirectoryName);
         if (TryDescribeInstalled(installRoot) is { } installed)
         {
-            RemoveSupersededRuntimes(installRoot);
+            if (legacyRoot is not null && TryDescribeInstalled(legacyRoot) is not null &&
+                JavaRuntimeStorage.OrdinaryTree(legacyRoot) && !JavaRuntimeStorage.IsInUse(legacyRoot))
+                TryDeleteDirectory(legacyRoot);
+            SweepAbandonedStaging(parent);
             return installed;
         }
 
+        if (legacyRoot is not null && TryDescribeInstalled(legacyRoot) is { } legacy &&
+            JavaRuntimeStorage.OrdinaryTree(legacyRoot) && !Directory.Exists(installRoot))
+        {
+            // A game started before the update can still be using the previous path.
+            if (JavaRuntimeStorage.IsInUse(legacyRoot)) return legacy;
+            try { Directory.Move(legacyRoot, installRoot); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Info($"Java runtime {_pin.RuntimeId} still uses its previous directory: {ex.Message}");
+                return legacy;
+            }
+            var migrated = TryDescribeInstalled(installRoot) ??
+                throw new InvalidDataException("The migrated Java runtime did not verify.");
+            SweepAbandonedStaging(parent);
+            return migrated;
+        }
+
+        if (Directory.Exists(installRoot) && JavaRuntimeStorage.IsInUse(installRoot))
+            throw new IOException($"Close the process using Java {_pin.RuntimeId} before repairing it.");
+
         var cachePath = GetCachePath();
+        JavaRuntimeStorage.RequireOrdinaryPath(_paths, cachePath);
         var archiveCached = IsValidArchive(cachePath);
         var labels = archiveCached ? ["Java"] : PreparationLabels.NumberRepeated("Java", "Java");
         if (!archiveCached)
@@ -201,51 +224,12 @@ public sealed partial class PortableJavaRuntimeService
         var prepared = TryDescribeInstalled(installRoot)
             ?? throw new InvalidDataException(
                 $"Java runtime {_pin.RuntimeId} did not verify after installation.");
-        RemoveSupersededRuntimes(installRoot);
+        SweepAbandonedStaging(parent);
         return prepared;
     }
 
-    /// <summary>
-    /// Deletes what an earlier pin left behind: the JDK sitting beside this one
-    /// and the archive cached to install it. A pinned runtime is replaced, not
-    /// collected, and a superseded pair costs half a gigabyte on every disk.
-    /// Only ever runs once this runtime is known good, and only over names this
-    /// service writes itself - Mojang's components are named otherwise and keep
-    /// driving the loader installer.
-    /// </summary>
-    /// <summary>
-    /// Throws away Java installs and archives nothing pins any more.
-    /// </summary>
-    /// <remarks>
-    /// What counts as superseded is every runtime in the catalogue, not just
-    /// the one being asked for. They share a folder now: a machine that plays a
-    /// 1.20.1 pack and a 1.21.1 pack keeps a Java 17 beside its Java 21, and a
-    /// sweep that recognised only the runtime it was called about would delete
-    /// the other one on every launch and download it again on the next.
-    /// </remarks>
-    private void RemoveSupersededRuntimes(string installRoot)
-    {
-        var keptInstalls = new HashSet<string>(
-            JavaRuntimeCatalog.InstallDirectoryNames, StringComparer.OrdinalIgnoreCase)
-        {
-            _pin.InstallDirectoryName
-        };
-        var keptArchives = new HashSet<string>(
-            JavaRuntimeCatalog.CacheDirectoryNames, StringComparer.OrdinalIgnoreCase)
-        {
-            _pin.RuntimeId.Replace('+', '_')
-        };
-
-        Sweep(
-            Path.GetDirectoryName(installRoot),
-            name => PortableInstallDirectoryRegex().IsMatch(name) && !keptInstalls.Contains(name),
-            "Java install");
-        Sweep(
-            Path.GetDirectoryName(Path.GetDirectoryName(GetCachePath())),
-            name => !keptArchives.Contains(name),
-            "cached Java archive");
-        SweepAbandonedStaging(Path.GetDirectoryName(installRoot));
-    }
+    internal static void SweepUnusedSuperseded(AppPaths paths, Logger? logger = null) =>
+        JavaRuntimeStorage.SweepUnusedSuperseded(paths, logger);
 
     /// <summary>
     /// Throws away staging directories a killed run left behind, whichever
@@ -259,15 +243,8 @@ public sealed partial class PortableJavaRuntimeService
     /// behind is a few hundred megabytes nothing ever looks at again - and it
     /// counts against the free space every later install checks for.
     ///
-    /// The superseded-install sweep beside this one cannot reach them: it knows
-    /// names of the form java-&lt;major&gt; exactly, and a staging directory is not
-    /// one of those.
-    ///
-    /// Anything still being written is left alone. A tree in the middle of an
-    /// extraction has had a directory put in it moments ago, and an hour is far
-    /// past what an extraction, a probe and a move take together - so a second
-    /// launcher installing a different runtime beside this one is never robbed
-    /// halfway through.
+    /// The Java cache lock protects installations by another launcher instance.
+    /// A recently written stage may also belong to a previous launcher version.
     /// </remarks>
     private void SweepAbandonedStaging(string? parent)
     {
@@ -285,6 +262,7 @@ public sealed partial class PortableJavaRuntimeService
             {
                 continue;
             }
+            if (!JavaRuntimeStorage.OrdinaryTree(directory) || JavaRuntimeStorage.IsInUse(directory)) continue;
             TryDeleteDirectory(directory);
             if (!Directory.Exists(directory))
             {
@@ -295,33 +273,12 @@ public sealed partial class PortableJavaRuntimeService
 
     private static readonly TimeSpan AbandonedStagingAge = TimeSpan.FromHours(1);
 
-    private void Sweep(string? parent, Func<string, bool> superseded, string what)
-    {
-        if (parent is null || !Directory.Exists(parent)) return;
-        foreach (var directory in Directory.EnumerateDirectories(parent))
-        {
-            var name = Path.GetFileName(directory);
-            if (!superseded(name)) continue;
-            try
-            {
-                Directory.Delete(directory, recursive: true);
-                _logger.Info($"Removed the superseded {what} {name}.");
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.Warn($"The superseded {what} {name} could not be removed ({ex.Message}).");
-            }
-        }
-    }
-
     internal string CachePath => GetCachePath();
 
     private string GetCachePath()
     {
         var path = Path.Combine(
-            _paths.Launcher,
-            "ManagedComponents",
-            "java-runtime",
+            JavaRuntimeStorage.ArchiveParent(_paths),
             _pin.RuntimeId.Replace('+', '_'),
             _pin.ArchiveFileName);
         _paths.EnsureUnderRoot(path);
@@ -333,6 +290,7 @@ public sealed partial class PortableJavaRuntimeService
         try
         {
             var markerPath = Path.Combine(installRoot, MarkerFileName);
+            JavaRuntimeStorage.RequireOrdinaryPath(_paths, markerPath);
             if (!File.Exists(markerPath)) return null;
             var marker = JsonSerializer.Deserialize<JavaRuntimeMarker>(File.ReadAllText(markerPath));
             if (marker is null ||
@@ -345,6 +303,10 @@ public sealed partial class PortableJavaRuntimeService
 
             var javaw = Path.Combine(installRoot, "bin", "javaw.exe");
             var java = Path.Combine(installRoot, "bin", "java.exe");
+            JavaRuntimeStorage.RequireOrdinaryPath(_paths, javaw);
+            JavaRuntimeStorage.RequireOrdinaryPath(_paths, java);
+            JavaRuntimeStorage.RequireOrdinaryPath(_paths, GetRuntimeImagePath(installRoot));
+            JavaRuntimeStorage.RequireOrdinaryPath(_paths, Path.Combine(installRoot, "release"));
             if (!File.Exists(javaw) ||
                 !File.Exists(java) ||
                 !File.Exists(GetRuntimeImagePath(installRoot)) ||
@@ -584,7 +546,12 @@ public sealed partial class PortableJavaRuntimeService
             // The move goes first. Nothing has been run out of the staging
             // folder yet, so Windows has no image of it mapped and the one
             // thing that made this move fail cannot have happened.
-            if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true);
+            if (Directory.Exists(installRoot))
+            {
+                if (!JavaRuntimeStorage.OrdinaryTree(installRoot) || JavaRuntimeStorage.IsInUse(installRoot))
+                    throw new IOException($"The Java install directory cannot be replaced: {installRoot}");
+                Directory.Delete(installRoot, recursive: true);
+            }
             PublishInstall(stageRoot, installRoot);
         }
         finally
@@ -861,12 +828,10 @@ public sealed partial class PortableJavaRuntimeService
     private static JavaRuntimePin ValidatePin(JavaRuntimePin pin)
     {
         ArgumentNullException.ThrowIfNull(pin);
-        if (string.IsNullOrWhiteSpace(pin.RuntimeId) ||
+        if (!PackCatalogService.ValidFolder(pin.RuntimeId) ||
             string.IsNullOrWhiteSpace(pin.JavaVersion) ||
-            string.IsNullOrWhiteSpace(pin.InstallDirectoryName) ||
-            pin.InstallDirectoryName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-            string.IsNullOrWhiteSpace(pin.ArchiveFileName) ||
-            pin.ArchiveFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            !PackCatalogService.ValidFolder(pin.InstallDirectoryName) ||
+            !PackCatalogService.ValidFolder(pin.ArchiveFileName))
         {
             throw new ArgumentException("Java runtime pin is invalid.", nameof(pin));
         }
@@ -899,13 +864,10 @@ public sealed partial class PortableJavaRuntimeService
     // What Install() names a staging directory: a dot, the install folder's
     // name, ".install." and a guid with no dashes. Anchored both ends so it can
     // only ever match something this service wrote itself.
-    [GeneratedRegex(@"^\.java-[0-9]+\.install\.[0-9a-f]{32}$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\.(?:java-[0-9]+|temurin-[0-9][0-9A-Za-z.+-]*)\.install\.[0-9a-f]{32}$", RegexOptions.IgnoreCase)]
     private static partial Regex AbandonedStagingRegex();
 
-    [GeneratedRegex("^java-[0-9]+$", RegexOptions.IgnoreCase)]
-    private static partial Regex PortableInstallDirectoryRegex();
-
-    private sealed class JavaRuntimeMarker
+    internal sealed class JavaRuntimeMarker
     {
         public int SchemaVersion { get; set; }
         public string RuntimeId { get; set; } = "";
@@ -933,4 +895,7 @@ internal sealed record JavaRuntimePin(
     long ArchiveSizeBytes,
     string ArchiveSha256,
     long RequiredFreeSpaceBytes,
-    bool VerifyFlags);
+    bool VerifyFlags)
+{
+    public string LegacyInstallDirectoryName => $"java-{MajorVersion}";
+}
