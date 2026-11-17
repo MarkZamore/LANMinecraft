@@ -67,15 +67,18 @@ public static partial class E4steamLogLines
     /// by line, gzipped ones through the archive, so a debug log of hundreds of
     /// megabytes costs time, not memory.
     /// </remarks>
-    public static IReadOnlyList<string> Read(IEnumerable<string> paths, int maxChars)
+    public static IReadOnlyList<string> Read(IEnumerable<string> paths, int maxChars, Action? checkpoint = null)
     {
         var kept = new Queue<string>();
         long size = 0;
+        var lineCount = 0;
         foreach (var path in paths)
         {
+            checkpoint?.Invoke();
             var following = false;
             foreach (var line in ReadLines(path))
             {
+                if (++lineCount % 128 == 0) checkpoint?.Invoke();
                 var continuation = line.Length > 0 && line[0] != '[';
                 var keep = continuation ? following : IsE4steamLine(line);
                 if (!continuation) following = keep;
@@ -87,11 +90,16 @@ public static partial class E4steamLogLines
     }
 
     /// <summary>Every line of a file, keeping the last <paramref name="maxChars"/> characters.</summary>
-    public static IReadOnlyList<string> ReadTail(string path, int maxChars)
+    public static IReadOnlyList<string> ReadTail(string path, int maxChars, Action? checkpoint = null)
     {
         var kept = new Queue<string>();
         long size = 0;
-        foreach (var line in ReadLines(path)) Keep(kept, ref size, line, maxChars);
+        var lineCount = 0;
+        foreach (var line in ReadLines(path))
+        {
+            if (++lineCount % 128 == 0) checkpoint?.Invoke();
+            Keep(kept, ref size, line, maxChars);
+        }
         return [.. kept];
     }
 

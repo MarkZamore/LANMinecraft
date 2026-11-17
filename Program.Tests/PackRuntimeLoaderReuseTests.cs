@@ -40,6 +40,10 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         Assert.Equal(profile.Client, prepared.ClientJarPath);
         Assert.Equal(java, prepared.JavaPath);
         Assert.True(File.Exists(ReceiptPath(FabricProfile)));
+        var warm = await service.PrepareAsync("Personal pack", null, CancellationToken.None);
+        Assert.Equal(prepared.ClientJarPath, warm.ClientJarPath);
+        Assert.Equal(prepared.JavaPath, warm.JavaPath);
+        Assert.Equal(0, _handler.RequestCount);
         using (var state = JsonDocument.Parse(File.ReadAllText(StatePath("Personal pack"))))
             Assert.Equal(personal.DescriptorHash, state.RootElement.GetProperty("descriptorHash").GetString());
 
@@ -161,6 +165,7 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         {
             id = loaderProfile,
             inheritsFrom = minecraft,
+            jar = loaderProfile.StartsWith("fabric-loader-", StringComparison.Ordinal) ? minecraft : null,
             type = "release",
             mainClass = "fixture.Loader",
             libraries = Array.Empty<object>()

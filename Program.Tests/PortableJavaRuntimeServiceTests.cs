@@ -596,7 +596,8 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         var archive = BuildArchive();
         var handler = new RecordingHandler(_ => Success(archive));
         using var httpClient = new HttpClient(handler);
-        var runtimeRoot = CreateRuntimeRoot();
+        var paths = new AppPaths(_root);
+        var runtimeRoot = paths.JavaRuntimes;
         var siblings = Path.Combine(runtimeRoot, "runtime", "windows-x64");
 
         var abandoned = Path.Combine(siblings, ".java-17.install." + new string('a', 32));
@@ -608,6 +609,14 @@ public sealed class PortableJavaRuntimeServiceTests : IDisposable
         Directory.CreateDirectory(Path.Combine(live, "bin"));
 
         await CreateService(httpClient, archive).EnsureAsync(runtimeRoot, null, CancellationToken.None);
+        Assert.True(Directory.Exists(abandoned));
+
+        JavaRuntimeStorage.SweepUnusedSuperseded(paths, null, () =>
+        {
+            // No iteration or idle wait may hold the lease needed by Play.
+            using var gate = JavaRuntimeStorage.TryAcquire(paths);
+            Assert.NotNull(gate);
+        });
 
         Assert.False(
             Directory.Exists(abandoned),

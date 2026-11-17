@@ -120,7 +120,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
             Assert.True(
                 File.Exists(Path.Combine(components, "java-runtime", runtime, "runtime.zip")),
                 $"java-runtime/{runtime} is pinned and must survive the sweep"));
-        Assert.False(Directory.Exists(Path.Combine(components, "java-runtime", "temurin-1.2.3_4")));
+        Assert.True(Directory.Exists(Path.Combine(components, "java-runtime", "temurin-1.2.3_4")));
         Assert.False(Directory.Exists(Path.Combine(components, "e4steam", "19999")));
         Assert.False(Directory.Exists(Path.Combine(components, "tiptothescales")));
         Assert.False(Directory.Exists(Path.Combine(components, "ftb-essentials")));
@@ -176,19 +176,33 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
         var paths = CreatePaths();
         var components = Path.Combine(paths.Runtimes, "Some Build", "runtime", "windows-x64");
         var ours = Path.Combine(components, "java-21", "bin", "javaw.exe");
+        var stillReferenced = Path.Combine(components, "java-17", "bin", "javaw.exe");
         var mojang = Path.Combine(components, "java-runtime-delta", "bin", "javaw.exe");
         var legacy = Path.Combine(components, "jre-legacy", "bin", "java.exe");
-        foreach (var path in new[] { ours, mojang, legacy }) WriteFile(path, "exe");
+        foreach (var path in new[] { ours, stillReferenced, mojang, legacy }) WriteFile(path, "exe");
+        WriteFile(Path.Combine(paths.Runtimes, "Some Build", ".portable-runtime.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = PackRuntimeService.RuntimeCacheGeneration,
+            files = new Dictionary<string, object>
+            {
+                ["Runtimes/Some Build/runtime/windows-x64/java-17/bin/javaw.exe"] = new { },
+                ["Runtimes/Some Build/runtime/windows-x64/java-runtime-delta/bin/javaw.exe"] = new { }
+            }
+        }));
         // And the one that is still in use, where it lives now.
         var shared = Path.Combine(paths.JavaRuntimes, "runtime", "windows-x64", "java-21", "bin", "javaw.exe");
         WriteFile(shared, "exe");
+        var personal = Path.Combine(paths.Runtimes, "Personal build", "runtime", "windows-x64", "java-21", "bin", "javaw.exe");
+        WriteFile(personal, "exe");
 
-        DeprecatedFileCleanupService.Run(paths);
+        DeprecatedFileCleanupService.Run(paths, isManagedPack: name => name == "Some Build");
 
         Assert.False(Directory.Exists(Path.Combine(components, "java-21")));
         Assert.True(File.Exists(mojang));
+        Assert.True(File.Exists(stillReferenced));
         Assert.True(File.Exists(legacy));
         Assert.True(File.Exists(shared));
+        Assert.True(File.Exists(personal));
     }
 
     /// <summary>A build with nothing of ours under it is left entirely alone.</summary>

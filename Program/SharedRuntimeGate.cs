@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 
 namespace Minecraft;
@@ -5,6 +6,15 @@ namespace Minecraft;
 /// <summary>Serializes shared game files across launcher processes for one portable install.</summary>
 internal static class SharedRuntimeGate
 {
+    private static readonly ConcurrentDictionary<string, long> Activity = new(StringComparer.OrdinalIgnoreCase);
+
+    // A foreground writer invalidates inventories being read in idle slices.
+    // This is process-local because the desktop launcher is single-instance.
+    internal static void MarkActivity(AppPaths paths) =>
+        Activity.AddOrUpdate(paths.Root, 1, static (_, previous) => unchecked(previous + 1));
+
+    internal static long ActivityVersion(AppPaths paths) => Activity.GetValueOrDefault(paths.Root);
+
     internal static FileStream? TryAcquire(AppPaths paths)
     {
         foreach (var parent in new[] { paths.Root, paths.Service, paths.Launcher })
@@ -23,6 +33,7 @@ internal static class SharedRuntimeGate
 
     internal static async Task<FileStream> AcquireAsync(AppPaths paths, CancellationToken token)
     {
+        MarkActivity(paths);
         while (true)
         {
             token.ThrowIfCancellationRequested();

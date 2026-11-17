@@ -167,7 +167,7 @@ internal sealed class JavaLaunchArgumentFile : IDisposable
 
     private static string ArgumentDirectory(AppPaths paths) => Path.Combine(paths.Launcher, "LaunchArguments");
 
-    internal static void CleanupStale(AppPaths paths)
+    internal static void CleanupStale(AppPaths paths, Action? checkpoint = null)
     {
         var directory = ArgumentDirectory(paths);
         var cutoff = DateTime.UtcNow.AddDays(-1);
@@ -177,13 +177,15 @@ internal sealed class JavaLaunchArgumentFile : IDisposable
             if (!Directory.Exists(directory)) return;
             foreach (var path in Directory.EnumerateFiles(directory, FilePrefix + "*.args"))
             {
+                checkpoint?.Invoke();
                 var file = new FileInfo(path);
                 var name = Path.GetFileNameWithoutExtension(file.Name);
                 if (!name.StartsWith(FilePrefix, StringComparison.Ordinal) ||
                     !Guid.TryParseExact(name[FilePrefix.Length..], "N", out _) ||
                     (file.Attributes & FileAttributes.ReparsePoint) != 0 || file.LastWriteTimeUtc >= cutoff)
                     continue;
-                Delete(path, null);
+                checkpoint?.Invoke();
+                MaintenancePath.TryDelete(paths, path, directory: false);
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)

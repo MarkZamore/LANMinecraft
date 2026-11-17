@@ -279,7 +279,6 @@ public sealed partial class PackRuntimeService
         SharedRuntimeStore.RecordProfileOwnership(_paths, descriptor.MinecraftVersion, descriptor, verifiedFiles, _logger);
         if (state.ProfileId != descriptor.MinecraftVersion)
             SharedRuntimeStore.RecordProfileOwnership(_paths, state.ProfileId, descriptor, verifiedFiles, _logger);
-        PortableJavaRuntimeService.SweepUnusedSuperseded(_paths, _logger);
     }
 
     private void EnsureSharedGameMayBeRepaired(PackRuntimeDescriptor requested)

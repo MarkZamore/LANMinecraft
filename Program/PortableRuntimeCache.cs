@@ -17,11 +17,17 @@ internal static class PortableRuntimeCache
     private const int MaximumGenerationEntries = 65_536;
     private const uint GenericRead = 0x80000000;
     private const uint GenericReadWrite = 0xC0000000;
+    private const uint DeleteAccess = 0x00010000;
+    private const uint ReadAttributes = 0x00000080;
+    private const int FileDispositionInfoEx = 21;
+    private const uint DeleteIgnoringReadOnlyAttribute = 0x11;
     private const uint OpenExisting = 3;
     private const uint OpenReparsePoint = 0x00200000;
     private const uint BackupSemantics = 0x02000000;
 
-    internal static void Cleanup(AppPaths paths)
+    internal static void Cleanup(AppPaths paths) => CleanupIdle(paths, null);
+
+    internal static void CleanupIdle(AppPaths paths, Action? checkpoint)
     {
         ArgumentNullException.ThrowIfNull(paths);
         try
@@ -35,6 +41,7 @@ internal static class PortableRuntimeCache
             var inactive = new List<Generation>();
             foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
             {
+                checkpoint?.Invoke();
                 var hash = Path.GetFileName(directory);
                 if (!IsHash(hash) || !IsDirectChild(root, directory)) continue;
                 using var lease = OpenOwnedLease(root, hash);
@@ -48,11 +55,12 @@ internal static class PortableRuntimeCache
                          .ThenBy(item => item.Hash, StringComparer.Ordinal)
                          .Skip(RetainedInactiveGenerations))
             {
+                checkpoint?.Invoke();
                 // A generation may have become active since the inventory.
                 // Keep the exclusive ownership lease for the whole deletion.
                 using var lease = OpenOwnedLease(root, generation.Hash);
                 if (lease is null) continue;
-                TryDeleteGeneration(root, generation.Path);
+                TryDeleteGeneration(root, generation.Path, checkpoint);
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -93,7 +101,7 @@ internal static class PortableRuntimeCache
         }
     }
 
-    private static void TryDeleteGeneration(string root, string generation)
+    private static void TryDeleteGeneration(string root, string generation, Action? checkpoint)
     {
         try
         {
@@ -108,6 +116,7 @@ internal static class PortableRuntimeCache
             {
                 foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
                 {
+                    checkpoint?.Invoke();
                     if (!IsDescendant(generation, entry) || files.Count + orderedDirectories.Count >= MaximumGenerationEntries)
                         return;
                     var attributes = File.GetAttributes(entry);
@@ -126,18 +135,21 @@ internal static class PortableRuntimeCache
             // read-only file leaves the whole known tree for a later run.
             foreach (var file in files)
             {
+                checkpoint?.Invoke();
                 using var handle = CreateFile(NativePath(file), GenericReadWrite, 0, 0, OpenExisting, OpenReparsePoint, 0);
                 if (handle.IsInvalid || !IsPlainFile(handle)) return;
             }
 
             foreach (var file in files)
             {
+                checkpoint?.Invoke();
                 var attributes = File.GetAttributes(file);
                 if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0) return;
                 File.Delete(file);
             }
             for (var index = orderedDirectories.Count - 1; index >= 0; index--)
             {
+                checkpoint?.Invoke();
                 var directory = orderedDirectories[index];
                 if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return;
                 directories.Release(directory);
@@ -164,6 +176,22 @@ internal static class PortableRuntimeCache
     private static bool IsPlainFile(SafeFileHandle handle) =>
         GetFileInformationByHandle(handle, out var information) &&
         (information.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
+
+    // Keeping each parent open closes the gap between path validation and deletion.
+    // The leaf is checked on its handle; deleting an empty directory never recurses.
+    internal static bool TryDeleteOrdinaryEntry(string path, bool directory, Func<bool>? stillAllowed = null)
+    {
+        using var parents = new DirectoryLocks();
+        if (Path.GetDirectoryName(path) is not { } parent || !parents.HoldAncestors(parent)) return false;
+        using var entry = CreateFile(NativePath(path), DeleteAccess | ReadAttributes, 1, 0,
+            OpenExisting, BackupSemantics | OpenReparsePoint, 0);
+        var expected = directory ? FileAttributes.Directory : 0;
+        if (entry.IsInvalid || !GetFileInformationByHandle(entry, out var information) ||
+            (information.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != expected) return false;
+        if (stillAllowed?.Invoke() == false) return false;
+        var flags = DeleteIgnoringReadOnlyAttribute;
+        return SetFileInformationByHandle(entry, FileDispositionInfoEx, ref flags, sizeof(uint));
+    }
 
     private static string NativePath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal)
         ? path
@@ -238,4 +266,9 @@ internal static class PortableRuntimeCache
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileInformation information);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass,
+        ref uint flags, int bufferSize);
 }

@@ -602,9 +602,7 @@ public sealed class PackInstanceService : IDisposable
                 string.Equals(name, descriptor.ClientJar, StringComparison.OrdinalIgnoreCase) ||
                 (descriptor.NativeRuntime is not null && name.Equals(PackManifestService.NativePayloadRoot, StringComparison.OrdinalIgnoreCase)) ||
                 string.Equals(name, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, PortablePackSyncService.SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, PortablePackSyncService.SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, PortablePackSyncService.ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
+                PortablePackSyncService.IsServiceRelativePath(name) ||
                 InstanceOwnedDirectories.Contains(name) ||
                 InstanceOwnedFiles.Contains(name) ||
                 name.StartsWith("XaeroWaypoints_BACKUP", StringComparison.OrdinalIgnoreCase))

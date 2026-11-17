@@ -142,7 +142,6 @@ public sealed partial class PackRuntimeService : IDisposable
             ValidateState(runtimeRoot, state))
         {
             RestoreDerivedAssets(state, token);
-            CleanupUntrackedRuntimeFiles(runtimeRoot, state);
             var clientJar = ResolveStatePath(Anchor, state.ClientJarRelativePath);
             // Repairs a deleted or damaged JDK without paying for a full re-prepare.
             var cachedJava = await _javaRuntime
@@ -167,7 +166,6 @@ public sealed partial class PackRuntimeService : IDisposable
                 sourceClientJar, reused.ClientPath, reused.Files, token, reused.Proof);
             RestoreDerivedAssets(reusedState, token);
             RegisterPreparedRuntime(statePath, descriptor, reusedState, librarySources, reused.LoaderFiles);
-            CleanupUntrackedRuntimeFiles(runtimeRoot, reusedState);
             await EnsureMojangMappingsAsync(descriptor, token).ConfigureAwait(false);
             _logger.Info($"Reused verified loader profile {reused.ProfileId} for {packRelativePath}.");
             progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
@@ -342,7 +340,6 @@ public sealed partial class PackRuntimeService : IDisposable
             requiredFiles,
             token);
         RegisterPreparedRuntime(statePath, descriptor, newState, librarySources, loaderFiles);
-        CleanupUntrackedRuntimeFiles(runtimeRoot, newState);
         progress?.Report(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1));
         _logger.Info(
             $"Runtime prepared for {packRelativePath}: Minecraft {descriptor.MinecraftVersion}, " +
@@ -819,42 +816,6 @@ public sealed partial class PackRuntimeService : IDisposable
         catch
         {
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Removes what preparation leaves behind and does not track: the copies of
-    /// the game this build used to keep for itself, and the loader installer
-    /// jar that was downloaded to be run once.
-    /// </summary>
-    private void CleanupUntrackedRuntimeFiles(string runtimeRoot, RuntimeState state)
-    {
-        // What the build used to keep for itself and now reads out of the
-        // shared store. A build that has just been prepared against the store
-        // has no use for its own copy, and the copy is most of a gigabyte.
-        foreach (var directoryName in new[]
-                 {
-                     "assets", "libraries", "versions", "runtime", "resources", "java21-windows-x86-64"
-                 })
-        {
-            TryDeleteDirectory(Path.Combine(runtimeRoot, directoryName));
-        }
-
-        // The installer jar the loader leaves behind, which is downloaded to
-        // run once and never read again. It lives in the shared libraries with
-        // everything else, so an installer another build still lists is left
-        // alone - hence the check against this build's files is not enough on
-        // its own, and the store's own sweep is what finally takes it.
-        var neoForgeRoot = Path.Combine(
-            SharedRuntimeStore.Libraries(_paths), "net", "neoforged", "neoforge");
-        if (!Directory.Exists(neoForgeRoot)) return;
-        foreach (var installer in Directory.EnumerateFiles(
-                     neoForgeRoot,
-                     "neoforge-*-installer.jar",
-                     SearchOption.AllDirectories))
-        {
-            var relative = ToRelativePath(Anchor, installer);
-            if (!state.Files.ContainsKey(relative)) TryDeleteFile(installer);
         }
     }
 

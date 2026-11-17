@@ -40,7 +40,7 @@ public sealed class LogVolumeTests : IDisposable
         var rolled = Path.Combine(logs, "debug-1.log.gz");
         var latest = Path.Combine(logs, "latest.log");
         File.WriteAllText(debug, new string('d', 4096));
-        File.WriteAllText(rolled, "compressed");
+        WriteGzip(rolled, "the previous debug session");
         File.WriteAllText(latest, "the session");
 
         LogCleanupService.RetainRecentSessionDiagnostics(instance);

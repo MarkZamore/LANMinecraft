@@ -79,6 +79,7 @@ public partial class MainWindow : Window
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
+    private LauncherMaintenance? _maintenance;
     private BugReportService? _bugReports;
     private PeerGreetingService? _greetings;
     private string _localPackHash = "";
@@ -149,6 +150,9 @@ public partial class MainWindow : Window
         LibraryView.MembershipRequested += ChangeLibraryMembership;
         LibraryView.ModPageRequested += OpenModPage;
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
+        PreviewMouseDown += (_, _) => _maintenance?.Interrupt();
+        PreviewMouseWheel += (_, _) => _maintenance?.Interrupt();
+        PreviewKeyDown += (_, _) => _maintenance?.Interrupt();
         _uiTimer.Tick += (_, _) =>
         {
             RefreshBuilds();
@@ -162,6 +166,7 @@ public partial class MainWindow : Window
             // instead of waiting for the next launch to notice.
             RefreshControlsPresetStatus();
             RefreshUi();
+            _maintenance?.ObserveIdle(CanRunStorageMaintenance());
             if (!_shutdownStarted && _steamClient is { } steam && _steamConnectionTask.IsCompleted &&
                 SteamRecoveryPolicy.ShouldConnect(steam.Status, IsIdentityBound))
             {
@@ -197,6 +202,12 @@ public partial class MainWindow : Window
             // Catalog, disk discovery and hidden views start after ContentRendered.
             _packHash = new PackHashService(_paths);
             _packSync = new PortablePackSyncService(_paths, _logger);
+            var paths = _paths;
+            var log = _logger;
+            var packSync = _packSync;
+            _maintenance = new LauncherMaintenance(paths, log,
+                () => _transfer?.IsOperationActive == true || _minecraft is { IsClientRunning: true } or { IsClientPreparing: true },
+                (full, pending, checkpoint, token) => LauncherMaintenancePass.Run(paths, log, packSync, full, pending, checkpoint, token));
             _worldMetadata = new WorldMetadataService();
             _controlsPreset = new ControlsPresetService(_logger);
             LoadSettingsIntoUi();
@@ -262,6 +273,7 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry);
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
+            _minecraft.ClientSessionEnded += pack => _maintenance?.RequestPack(pack);
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
@@ -316,26 +328,6 @@ public partial class MainWindow : Window
             RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
             _uiTimer.Start();
-            // Housekeeping nobody waits for: last week's logs, files this
-            // launcher used to write, runtimes for builds that are gone. It
-            // walks the instances folder and what the single-file host left
-            // in the temp directory, a third of a second on a full
-            // installation, and it used to do that walk before the window
-            // existed. The order between the two passes is kept: the second
-            // reasons about folders the first is what removes.
-            _ = Task.Run(() =>
-            {
-                try
-                {
-                    LogCleanupService.RunCleanup(_paths, rotateLauncherLog: false);
-                    DeprecatedFileCleanupService.Run(_paths, _logger);
-                    StructureCleanupService.Run(_paths, _logger, _settings.AddedPackRelativePaths?.ToArray());
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Warn("Housekeeping did not finish: " + ex.Message);
-                }
-            });
             StartupTrace.Mark("интерфейс");
             _logger.Info("Minecraft portable launcher started.");
             _startupFinished = true;
@@ -378,6 +370,7 @@ public partial class MainWindow : Window
         if (_shutdownStarted) return;
         var canInstallUpdate = !GameNeedsLauncher;
         _shutdownStarted = true;
+        _maintenance?.Stop();
         _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
@@ -756,6 +749,7 @@ public partial class MainWindow : Window
         if (DiagnosticLogTargetComboBox.SelectedItem is not DiagnosticLogTargetOption recipient) return;
 
         _bugReportSending = true;
+        _maintenance?.Interrupt();
         // The button goes down for the length of the send, the way it comes back
         // up in the finally below: one report at a time, and a second press
         // while the first is in flight is a press that does nothing.
@@ -1345,6 +1339,7 @@ public partial class MainWindow : Window
     {
         if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
         _playRequested = true;
+        _maintenance?.Interrupt();
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1380,6 +1375,8 @@ public partial class MainWindow : Window
                     .PrepareAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
                 syncResult = prepared.SyncResult;
                 localAiDownloads = prepared.LocalAi;
+                if (syncResult.Outcome is PackSyncOutcome.Installed or PackSyncOutcome.Updated)
+                    _maintenance?.RequestPack(build.RelativePath);
             }
             catch
             {
@@ -1499,6 +1496,7 @@ public partial class MainWindow : Window
             return Task.CompletedTask;
         var pack = _settings.ClientRelativePath;
         if (!PackCatalogService.ValidFolder(pack)) return Task.CompletedTask;
+        _maintenance?.Interrupt();
         var previous = _launcherDataByPack.GetValueOrDefault(pack, Task.CompletedTask);
         _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
         _launcherDataByPack[pack] = _launcherDataRefresh;
@@ -1620,6 +1618,7 @@ public partial class MainWindow : Window
     private void RemoveBuild(string relativePath, string name, bool installed)
     {
         if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
+        _maintenance?.Interrupt();
         var build = new ClientBuildViewModel { RelativePath = relativePath, Name = name, FullPath = _paths.CombineUnderPacks(relativePath), IsInstalled = installed };
         if (!installed)
         {
@@ -2381,6 +2380,7 @@ public partial class MainWindow : Window
     {
         var activeChanged = _transferActive != progress.IsActive;
         _transferActive = progress.IsActive;
+        if (progress.IsActive && activeChanged) _maintenance?.Interrupt();
         SetProgressActivity(TransferProgressBar, progress.IsActive);
         if (!progress.IsActive)
         {
@@ -2664,6 +2664,7 @@ public partial class MainWindow : Window
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _updateBusy = true;
+                    _maintenance?.Interrupt();
                     _updateRate.Reset();
                     UpdateProgressBar.IsIndeterminate = false;
                     UpdateProgressBar.Value = 0;
@@ -2777,6 +2778,7 @@ public partial class MainWindow : Window
         if (_updateBusy || _restartAfterUpdateOnExit || _preparedUpdate is null) return;
 
         _updateBusy = true;
+        _maintenance?.Interrupt();
         RefreshUi();
         try
         {
@@ -2816,6 +2818,12 @@ public partial class MainWindow : Window
     // service takes over. Dispatcher callbacks only reflect UI state.
     private bool GameNeedsLauncher =>
         _playRequested || _minecraft is { IsClientPreparing: true } or { IsClientRunning: true };
+
+    private bool CanRunStorageMaintenance() => _framePainted && _startupComplete && !_shutdownStarted &&
+        !_busy && !GameNeedsLauncher && !_minecraftRunning && !_minecraftPreparing && !_transferActive &&
+        _transfer?.IsOperationActive != true && !_updateBusy && !_bugReportSending &&
+        _catalogStartup?.IsCompletedSuccessfully == true && _libraryStartup?.IsCompleted != false &&
+        _selectedLaunchPreparation.IsCompleted && _launcherDataByPack.Values.All(task => task.IsCompleted);
 
     private void ShowPreparedUpdate(int release)
     {
@@ -3062,6 +3070,7 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         _busy = true;
+        _maintenance?.Interrupt();
         RefreshUi();
         try
         {
@@ -3275,6 +3284,7 @@ public partial class MainWindow : Window
             return _selectedLaunchPreparation;
         _selectedLaunchPath = path;
         _selectedLaunchError = null;
+        _maintenance?.Interrupt();
         var generation = ++_selectedLaunchGeneration;
         RefreshUi();
         return _selectedLaunchPreparation = PrepareSelectedLaunchCoreAsync(catalog, path, generation);

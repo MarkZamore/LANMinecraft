@@ -311,6 +311,7 @@ public sealed class MinecraftProcessService
     public string DiagnosticGameVersion => Volatile.Read(ref _lastGameVersion);
     public string DiagnosticProfileId => Volatile.Read(ref _lastProfileId);
     public event Action<bool>? ClientRunningChanged;
+    internal event Action<string>? ClientSessionEnded;
 
     /// <summary>
     /// The game died for want of memory, carrying the size it was given. Worth
@@ -894,8 +895,6 @@ public sealed class MinecraftProcessService
             if (!native)
             {
                 await _waypointSync.FlushAsync().ConfigureAwait(false);
-                await _packInstances.CleanupGeneratedLocalArtifactsAsync(
-                    packRelativePath, process.ExitCode == 0 || endedByLauncher).ConfigureAwait(false);
             }
         }
         catch (ArgumentException)
@@ -903,12 +902,11 @@ public sealed class MinecraftProcessService
             if (!native)
             {
                 await _waypointSync.FlushAsync().ConfigureAwait(false);
-                await _packInstances.CleanupGeneratedLocalArtifactsAsync(packRelativePath, removeSessionLogs: false).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
         {
-            _logger.Warn($"Could not clean generated local instance data after Minecraft exited: {ex.Message}");
+            _logger.Warn($"Minecraft exit monitoring did not finish: {ex.Message}");
         }
         finally
         {
@@ -936,6 +934,11 @@ public sealed class MinecraftProcessService
             if (_activeClientProcesses.TryRemove(processId, out _) && _activeClientProcesses.IsEmpty)
             {
                 NotifyClientRunningChanged(false);
+            }
+            if (confirmedExited)
+            {
+                try { ClientSessionEnded?.Invoke(packRelativePath); }
+                catch (Exception ex) { _logger.Warn($"Minecraft exit listener failed: {ex.Message}"); }
             }
         }
     }

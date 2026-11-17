@@ -147,6 +147,7 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
     /// <summary>Carries out a plan. Never throws for a folder that would not go.</summary>
     public RemovalOutcome Remove(RemovalPlan plan)
     {
+        SharedRuntimeGate.MarkActivity(_paths);
         using var sharedRuntime = SharedRuntimeGate.TryAcquire(_paths) ??
             throw new InvalidOperationException("Another launcher is preparing the shared runtime.");
         var kept = new List<string>();
@@ -207,16 +208,11 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp", "Java"));
         TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp"));
 
-        // Releasing the preparation gate lets the sweep try to take it again.
-        // If preparation wins, cleanup can wait for a later run.
-        sharedRuntime.Dispose();
-        var shared = SharedRuntimeStore.Sweep(_paths, _logger);
         var outcome = new RemovalOutcome(removed, worlds, java, kept);
         _logger?.Info(
             $"Build removed: {plan.BuildRelativePath} - {removed} folder(s)" +
             (worlds > 0 ? $", {worlds} world(s)" : ", worlds kept") +
             (java.Count > 0 ? $", Java {string.Join(", ", java)}" : "") +
-            (shared > 0 ? $", {shared} shared file(s)" : "") +
             (kept.Count > 0 ? $"; could not remove {string.Join(", ", kept)}" : "") + ".");
         return outcome;
     }

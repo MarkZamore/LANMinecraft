@@ -5,15 +5,7 @@ using Minecraft;
 namespace Minecraft.Tests;
 
 /// <summary>
-/// The structural sweep. It runs at startup, one directory away from
-/// everything a player owns, so most of what is pinned here is what it must
-/// not touch rather than what it takes.
-///
-/// The rule it works by is a whitelist: it looks only inside folders it can
-/// name and removes only things it can explain. That rule was written the day
-/// three files in a row looked exactly like junk and were not - Mojang's
-/// mappings, the window icon's assets, and the asset index whose loss took the
-/// language list with it.
+/// Only a library-owned runtime with obsolete state may lose old private copies.
 /// </summary>
 public sealed class StructureCleanupServiceTests : IDisposable
 {
@@ -39,13 +31,8 @@ public sealed class StructureCleanupServiceTests : IDisposable
         }
     }
 
-    /// <summary>
-    /// A runtime whose build is gone is worth more than the space it takes: its
-    /// state file names files in the shared store, and the store keeps alive
-    /// whatever any state names. So it pins a whole Minecraft for ever.
-    /// </summary>
     [Fact]
-    public void ARuntimeForABuildThatIsGone_Goes()
+    public void ARuntimeWithNoProofOfLibraryOwnershipStays()
     {
         Pack("Some Build");
         Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration);
@@ -54,7 +41,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
         StructureCleanupService.Run(_paths);
 
         Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Build")));
-        Assert.False(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Pack Nobody Has")));
+        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "Some Pack Nobody Has")));
     }
 
     /// <summary>
@@ -104,7 +91,10 @@ public sealed class StructureCleanupServiceTests : IDisposable
         }
         Write(Path.Combine(runtime, "natives", "lwjgl.dll"), "dll");
 
-        StructureCleanupService.Run(_paths);
+        var personal = Runtime("Personal build", PackRuntimeService.RuntimeCacheGeneration - 1);
+        var personalAsset = Path.Combine(personal, "assets", "file.bin");
+        Write(personalAsset, "personal");
+        StructureCleanupService.Run(_paths, isManagedPack: name => name == "Some Build");
 
         foreach (var root in new[] { "assets", "libraries", "versions", "runtime", "resources" })
         {
@@ -113,18 +103,27 @@ public sealed class StructureCleanupServiceTests : IDisposable
         // Its own things stay: the natives it unpacks, and the state itself.
         Assert.True(File.Exists(Path.Combine(runtime, "natives", "lwjgl.dll")));
         Assert.True(File.Exists(Path.Combine(runtime, ".portable-runtime.json")));
+        Assert.True(File.Exists(personalAsset));
     }
 
-    /// <summary>And a build that is up to date keeps everything it has.</summary>
+    /// <summary>A current runtime keeps a referenced private copy while unused copies are collected.</summary>
     [Fact]
     public void ABuildPreparedAgainstTheSharedStore_IsLeftAlone()
     {
         Pack("Some Build");
         var runtime = Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration);
-        Write(Path.Combine(runtime, "natives", "lwjgl.dll"), "dll");
+        var tracked = Path.Combine(runtime, "assets", "objects", "tracked");
+        Write(tracked, "current");
+        Write(Path.Combine(runtime, "versions", "obsolete.json"), "old");
+        Write(Path.Combine(runtime, ".portable-runtime.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = PackRuntimeService.RuntimeCacheGeneration,
+            files = new Dictionary<string, object> { ["Runtimes/Some Build/assets/objects/tracked"] = new { } }
+        }));
 
-        Assert.Equal(0, StructureCleanupService.Run(_paths));
-        Assert.True(File.Exists(Path.Combine(runtime, "natives", "lwjgl.dll")));
+        Assert.True(StructureCleanupService.Run(_paths, isManagedPack: _ => true) > 0);
+        Assert.True(File.Exists(tracked));
+        Assert.False(Directory.Exists(Path.Combine(runtime, "versions")));
     }
 
     /// <summary>
@@ -140,7 +139,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
         Write(Path.Combine(runtime, ".portable-runtime.json"), "{ not json");
         Write(Path.Combine(runtime, "assets", "objects", "ab", "file"), "x");
 
-        Assert.Equal(0, StructureCleanupService.Run(_paths));
+        Assert.Equal(0, StructureCleanupService.Run(_paths, isManagedPack: _ => true));
         Assert.True(File.Exists(Path.Combine(runtime, "assets", "objects", "ab", "file")));
     }
 
@@ -160,7 +159,7 @@ public sealed class StructureCleanupServiceTests : IDisposable
         StructureCleanupService.Run(_paths);
 
         Assert.True(File.Exists(world));
-        Assert.False(Directory.Exists(Path.Combine(_paths.Runtimes, "Removed Pack")));
+        Assert.True(Directory.Exists(Path.Combine(_paths.Runtimes, "Removed Pack")));
     }
 
     /// <summary>
@@ -187,10 +186,11 @@ public sealed class StructureCleanupServiceTests : IDisposable
     public void RunningTwiceIsHarmless()
     {
         Pack("Some Build");
-        Runtime("Gone", PackRuntimeService.RuntimeCacheGeneration);
+        var runtime = Runtime("Some Build", PackRuntimeService.RuntimeCacheGeneration - 1);
+        Write(Path.Combine(runtime, "assets", "old"), "archive");
 
-        Assert.Equal(1, StructureCleanupService.Run(_paths));
-        Assert.Equal(0, StructureCleanupService.Run(_paths));
+        Assert.True(StructureCleanupService.Run(_paths, isManagedPack: name => name == "Some Build") > 0);
+        Assert.Equal(0, StructureCleanupService.Run(_paths, isManagedPack: name => name == "Some Build"));
     }
 
     private void Pack(string name) =>

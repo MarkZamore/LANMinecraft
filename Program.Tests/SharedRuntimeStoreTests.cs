@@ -310,6 +310,57 @@ public sealed class SharedRuntimeStoreTests : IDisposable
         Assert.Equal(2, SharedRuntimeStore.Sweep(_paths));
     }
 
+    [Fact]
+    public void IdleInventoryYieldsItsLeaseAndStopsAfterForegroundActivity()
+    {
+        var orphan = Asset("assets/objects/ab/orphan");
+        var checkpoints = 0;
+
+        Assert.Equal(0, SharedRuntimeStore.SweepIdle(_paths, null, () =>
+        {
+            using var lease = SharedRuntimeGate.TryAcquire(_paths);
+            Assert.NotNull(lease);
+            if (++checkpoints == 4) SharedRuntimeGate.MarkActivity(_paths);
+        }, hasLiveGame: static () => false));
+        Assert.Equal(4, checkpoints);
+        Assert.True(File.Exists(orphan));
+
+        Assert.Equal(1, SharedRuntimeStore.SweepIdle(_paths, null, static () => { },
+            hasLiveGame: static () => false));
+        Assert.False(File.Exists(orphan));
+    }
+
+    [Fact]
+    public void IdleSweepKeepsCachedAssetsWhileAnInstalledPackHasNoPreparedState()
+    {
+        var orphan = Asset("assets/objects/ab/orphan");
+        var active = Asset("assets/objects/ab/active");
+        var pack = _paths.CombineUnderPacks("Some Build");
+        Write(Path.Combine(pack, PackManifestService.ManifestFileName),
+            """{"schemaVersion":1,"minecraftVersion":"1.20.1","loader":{"type":"vanilla"}}""");
+        var descriptor = PackManifestService.Load(pack);
+
+        Assert.Equal(0, SharedRuntimeStore.SweepIdle(_paths, null, static () => { },
+            hasLiveGame: static () => false));
+        Assert.True(File.Exists(orphan));
+
+        Write(Path.Combine(_paths.Runtimes, "Some Build", ".portable-runtime.json"),
+            JsonSerializer.Serialize(new
+            {
+                schemaVersion = PackRuntimeService.RuntimeCacheGeneration,
+                profileId = "1.20.1",
+                descriptorHash = descriptor.DescriptorHash,
+                files = new Dictionary<string, object>
+                {
+                    [Path.GetRelativePath(SharedRuntimeStore.Anchor(_paths), active).Replace('\\', '/')] = new { }
+                }
+            }));
+        Assert.Equal(1, SharedRuntimeStore.SweepIdle(_paths, null, static () => { },
+            hasLiveGame: static () => false));
+        Assert.False(File.Exists(orphan));
+        Assert.True(File.Exists(active));
+    }
+
     /// <summary>Writes a file into the shared store and answers with its path.</summary>
     private string Asset(string relativePath)
     {

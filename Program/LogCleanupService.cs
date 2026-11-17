@@ -1,374 +1,202 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Minecraft;
 
-public static class LogCleanupService
+public static partial class LogCleanupService
 {
     private static readonly TimeSpan DiagnosticRetention = TimeSpan.FromDays(7);
-
-    /// <summary>
-    /// The running executable's name. It is both the single-file extraction
-    /// directory and the process name, and it changed when the launcher was
-    /// renamed - which is why the previous name's cache was never swept.
-    /// </summary>
     private static readonly string ExecutableName =
         Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? "LANMinecraft";
 
-    /// <summary>
-    /// Age alone does not bound anything: a week of modded sessions is
-    /// hundreds of megabytes of logs. Each store also gets a size budget, and
-    /// the oldest files go first once it is exceeded.
-    /// </summary>
     private const long LauncherLogBudgetBytes = 16L * 1024 * 1024;
     private const long InstanceLogBudgetBytes = 64L * 1024 * 1024;
-
-    /// <summary>The game's DEBUG copy; retention here is launcher diagnostics policy.</summary>
-    private static readonly string[] DiscardedGameLogNames = ["debug.log"];
+    private const int E4steamKeptChars = 2 * 1024 * 1024;
     private static readonly string[] SessionDiagnosticDirectories = ["logs", "debug", "crash-reports"];
-    private const string DiscardedGameLogPattern = "debug-*.log.gz";
-
-    /// <summary>The e4steam lines of the last debug.log, kept after the log itself is discarded.</summary>
     internal const string E4steamPreviousLogName = "e4steam-previous.log";
 
-    /// <summary>A whole evening of e4steam lines fits; a runaway loop of them does not fill the budget.</summary>
-    private const int E4steamKeptChars = 2 * 1024 * 1024;
-
-    /// <summary>
-    /// Moves the last run's log aside so this run writes a fresh one. It has
-    /// to happen before the logger opens the file, which is why it is not
-    /// left to <see cref="RunCleanup"/> with the rest of the housekeeping.
-    /// </summary>
+    /// <summary>The only log operation that has to precede opening the current log.</summary>
     public static void RotateLauncherLog(AppPaths paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        CleanupLauncherLog(paths.LogFile);
-    }
-
-    /// <param name="rotateLauncherLog">False once the logger holds the file:
-    /// the log is moved aside before a run, never during one.</param>
-    public static void RunCleanup(AppPaths paths, bool rotateLauncherLog = true)
-    {
-        if (rotateLauncherLog) CleanupLauncherLog(paths.LogFile);
-        JavaLaunchArgumentFile.CleanupStale(paths);
-        CleanupMinecraftGeneratedFiles(paths.Personal);
-        CleanupInstanceGeneratedFiles(paths.Instances);
+        var current = paths.LogFile;
+        if (!MaintenancePath.TryRead(paths, current, out var attributes) ||
+            (attributes & FileAttributes.Directory) != 0) return;
         try
         {
-            PackInstanceService.CleanupEmptyWorldPlaceholders(paths.Worlds);
-        }
-        catch
-        {
-        }
-        try
-        {
-            PackInstanceService.PruneOldConflictSnapshots(paths.PackConflicts);
-        }
-        catch
-        {
-        }
-        PortableRuntimeCache.Cleanup(paths);
-        CleanupDotNetExtractionCache();
-        CleanupRenamedExtractionRoots();
-    }
-
-    private static void CleanupLauncherLog(string launcherLogPath)
-    {
-        var directory = Path.GetDirectoryName(launcherLogPath);
-        if (string.IsNullOrWhiteSpace(directory)) return;
-        Directory.CreateDirectory(directory);
-        try
-        {
-            var current = new FileInfo(launcherLogPath);
-            if (current.Exists && current.Length > 0)
+            var info = new FileInfo(current);
+            if (info.Length == 0)
             {
-                var stamp = current.LastWriteTimeUtc.ToString(
-                    "yyyyMMdd-HHmmss",
-                    System.Globalization.CultureInfo.InvariantCulture);
-                var archivedPath = Path.Combine(directory, $"logs-{stamp}.log");
-                if (File.Exists(archivedPath))
-                {
-                    archivedPath = Path.Combine(
-                        directory,
-                        $"logs-{stamp}-{Guid.NewGuid():N}.log");
-                }
-                File.Move(launcherLogPath, archivedPath);
+                MaintenancePath.TryDelete(paths, current, directory: false);
+                return;
             }
-            else
-            {
-                DeleteFile(launcherLogPath);
-            }
-        }
-        catch
-        {
-            // A second running launcher may still own the file. Keeping it is safer
-            // than deleting diagnostic data.
-        }
-
-        var cutoff = DateTime.UtcNow - DiagnosticRetention;
-        foreach (var archivedLog in Directory.EnumerateFiles(directory, "logs-*.log", SearchOption.TopDirectoryOnly))
-        {
-            try
-            {
-                if (File.GetLastWriteTimeUtc(archivedLog) < cutoff)
-                {
-                    DeleteFile(archivedLog);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        EnforceSizeBudget(
-            EnumerateFilesSafe(directory, "logs-*.log", SearchOption.TopDirectoryOnly),
-            LauncherLogBudgetBytes);
-    }
-
-    /// <summary>
-    /// Deletes the oldest files until the rest fit the budget. Nothing else
-    /// bounds a store whose files all arrived within the retention window.
-    /// </summary>
-    private static void EnforceSizeBudget(IEnumerable<FileInfo> files, long budgetBytes)
-    {
-        var ordered = files
-            .OrderByDescending(file => file.LastWriteTimeUtc)
-            .ToArray();
-        var used = 0L;
-        foreach (var file in ordered)
-        {
-            used += file.Length;
-            if (used > budgetBytes) DeleteFile(file.FullName);
-        }
-    }
-
-    private static FileInfo[] EnumerateFilesSafe(string directory, string pattern, SearchOption option)
-    {
-        try
-        {
-            return Directory.EnumerateFiles(directory, pattern, option)
-                .Select(path => new FileInfo(path))
-                .Where(file => file.Exists)
-                .ToArray();
+            var stamp = info.LastWriteTimeUtc.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var archive = Path.Combine(paths.Personal, $"logs-{stamp}.log");
+            if (File.Exists(archive) || Directory.Exists(archive))
+                archive = Path.Combine(paths.Personal, $"logs-{stamp}-{Guid.NewGuid():N}.log");
+            File.Move(current, archive);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return [];
+            // Opening the existing log is fine if another process is holding it.
         }
     }
 
-    private static void CleanupMinecraftGeneratedFiles(string personalRoot)
+    public static void RunCleanup(AppPaths paths, bool rotateLauncherLog = true)
     {
-        Directory.CreateDirectory(personalRoot);
-        foreach (var directoryName in new[] { "BootstrapDownloads", "Build", "Temp" })
-        {
-            DeleteDirectory(Path.Combine(personalRoot, directoryName));
-        }
-
-        CleanupUpdateArtifacts(Path.Combine(personalRoot, "Updates"));
-
-        var logsRoot = Path.Combine(personalRoot, "Logs");
-        if (!Directory.Exists(logsRoot)) return;
-        foreach (var file in Directory.EnumerateFiles(logsRoot, "*", SearchOption.AllDirectories)
-                     .Select(path => new FileInfo(path))
-                     .Where(ShouldDeleteExpiredGeneratedFile)
-                     .ToList())
-        {
-            DeleteFile(file.FullName);
-        }
+        if (rotateLauncherLog) RotateLauncherLog(paths);
+        PruneLauncherArchives(paths, static () => { });
     }
 
-    private static void CleanupUpdateArtifacts(string updatesRoot)
+    internal static bool IsLauncherArchiveName(string name) => LauncherArchiveName().IsMatch(name);
+    internal static bool IsSteamSpikeLogName(string name) => SteamSpikeLogName().IsMatch(name);
+
+    internal static void PruneLauncherArchives(AppPaths paths, Action checkpoint)
     {
-        if (!Directory.Exists(updatesRoot)) return;
-        if (UpdateService.IsInstallationInProgress(updatesRoot)) return;
-
-        var journalPath = Path.Combine(updatesRoot, UpdateService.InstallJournalFileName);
-        var hasJournal = File.Exists(journalPath);
-
-        foreach (var fileName in new[]
-                 {
-                     $"{UpdateService.ExecutableAssetName}.download",
-                     $"{UpdateService.DeltaPatchAssetName}.download",
-                     $"{UpdateService.ExecutableAssetName}.new",
-                     UpdateService.InstallCandidateFileName,
-                     UpdateService.InstallScriptFileName,
-                     UpdateService.InstallRestartRequestFileName,
-                     "update.log"
-                 })
+        var kept = new List<FileInfo>();
+        var cutoff = DateTime.UtcNow - DiagnosticRetention;
+        foreach (var path in LauncherStorageCleanup.ReadEntries(paths, paths.Personal, checkpoint))
         {
-            DeleteFile(Path.Combine(updatesRoot, fileName));
-        }
-
-        if (!hasJournal)
-        {
-            DeleteFile(Path.Combine(updatesRoot, UpdateService.InstallBackupFileName));
-        }
-
-        foreach (var file in Directory.EnumerateFiles(updatesRoot, "*.bsdiff.download", SearchOption.TopDirectoryOnly))
-        {
-            DeleteFile(file);
-        }
-
-        var readyDirectory = Path.Combine(updatesRoot, "Ready");
-        var hasPreparedUpdate =
-            File.Exists(Path.Combine(readyDirectory, UpdateService.ExecutableAssetName)) &&
-            File.Exists(Path.Combine(readyDirectory, UpdateService.ManifestAssetName)) ||
-            File.Exists(Path.Combine(updatesRoot, UpdateService.ExecutableAssetName)) &&
-            File.Exists(Path.Combine(updatesRoot, UpdateService.ManifestAssetName));
-        if (hasJournal && !hasPreparedUpdate)
-        {
-            DeleteFile(journalPath);
-            DeleteFile(Path.Combine(updatesRoot, UpdateService.InstallBackupFileName));
-        }
-        TryDeleteDirectoryIfEmpty(updatesRoot);
-    }
-
-    private static bool ShouldDeleteExpiredGeneratedFile(FileInfo file)
-    {
-        var directory = file.DirectoryName ?? string.Empty;
-        if (directory.Contains("dynamic-data-pack-cache", StringComparison.OrdinalIgnoreCase) ||
-            directory.Contains("dynamic-resource-pack-cache", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return file.LastWriteTimeUtc < DateTime.UtcNow - DiagnosticRetention &&
-               (file.Extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
-                file.Extension.Equals(".gz", StringComparison.OrdinalIgnoreCase) ||
-                directory.Contains("crash-reports", StringComparison.OrdinalIgnoreCase) ||
-                directory.Contains("debug", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static void CleanupInstanceGeneratedFiles(string instancesRoot)
-    {
-        if (!Directory.Exists(instancesRoot)) return;
-        var generatedDirectories = new[]
-        {
-            ".mixin.out",
-            "downloads",
-            "dynamic-data-pack-cache",
-            "dynamic-resource-pack-cache"
-        };
-        foreach (var instanceDir in Directory.EnumerateDirectories(instancesRoot, "*", SearchOption.TopDirectoryOnly))
-        {
-            foreach (var directoryName in generatedDirectories)
-            {
-                DeleteDirectory(Path.Combine(instanceDir, directoryName));
-            }
-            RetainRecentSessionDiagnostics(instanceDir);
+            var name = Path.GetFileName(path);
+            if ((!IsLauncherArchiveName(name) && !IsSteamSpikeLogName(name)) ||
+                !MaintenancePath.TryRead(paths, path, out var attributes) ||
+                (attributes & FileAttributes.Directory) != 0) continue;
+            var file = new FileInfo(path);
             try
             {
-                PackInstanceService.CleanupDisposableInstancePlaceholders(instanceDir);
+                if (file.LastWriteTimeUtc < cutoff)
+                {
+                    checkpoint();
+                    MaintenancePath.TryDelete(paths, path, directory: false);
+                }
+                else kept.Add(file);
             }
-            catch
-            {
-            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
+        EnforceSizeBudget(kept, LauncherLogBudgetBytes, checkpoint,
+            path => MaintenancePath.TryDelete(paths, path, directory: false));
     }
 
-    internal static void RetainRecentSessionDiagnostics(string gameDirectory)
+    /// <summary>For a proven library instance whose game session has ended.</summary>
+    internal static void RetainRecentSessionDiagnostics(string gameDirectory, Action? checkpoint = null)
     {
+        checkpoint ??= static () => { };
+        if (!IsOrdinary(gameDirectory, directory: true)) return;
+        DiscardGameDebugLogs(Path.Combine(gameDirectory, "logs"), checkpoint);
+
+        var kept = new List<FileInfo>();
         var cutoff = DateTime.UtcNow - DiagnosticRetention;
-        foreach (var directoryName in SessionDiagnosticDirectories)
+        foreach (var name in SessionDiagnosticDirectories)
         {
-            var directory = Path.Combine(gameDirectory, directoryName);
-            if (!Directory.Exists(directory)) continue;
-            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            var directory = Path.Combine(gameDirectory, name);
+            foreach (var path in ReadEntries(directory, checkpoint))
             {
+                if (!IsOrdinary(path, directory: false)) continue;
+                var fileName = Path.GetFileName(path);
+                if (fileName.Equals("latest.log", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.Equals(E4steamPreviousLogName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var crash = name == "crash-reports" && CrashReportName().IsMatch(fileName);
+                if (!crash && !fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase) &&
+                    !fileName.EndsWith(".log.gz", StringComparison.OrdinalIgnoreCase)) continue;
+                var file = new FileInfo(path);
                 try
                 {
-                    if (File.GetLastWriteTimeUtc(path) < cutoff)
+                    if (file.LastWriteTimeUtc < cutoff)
                     {
+                        checkpoint();
                         DeleteFile(path);
                     }
+                    else if (!crash) kept.Add(file);
                 }
-                catch
-                {
-                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
         }
-
-        DiscardGameDebugLogs(Path.Combine(gameDirectory, "logs"));
-        EnforceSizeBudget(
-            SessionDiagnosticDirectories
-                .Select(name => Path.Combine(gameDirectory, name))
-                .Where(Directory.Exists)
-                .SelectMany(directory => EnumerateFilesSafe(directory, "*", SearchOption.AllDirectories)),
-            InstanceLogBudgetBytes);
+        EnforceSizeBudget(kept, InstanceLogBudgetBytes, checkpoint, DeleteFile);
     }
 
-    /// <summary>
-    /// The game's DEBUG copy of a session, left over from before the launcher
-    /// configured logging - tens of megabytes that latest.log and the crash
-    /// report already cover.
-    /// </summary>
-    private static void DiscardGameDebugLogs(string logsDirectory)
+    private static void EnforceSizeBudget(IEnumerable<FileInfo> files, long budgetBytes, Action checkpoint,
+        Action<string> delete)
     {
-        if (!Directory.Exists(logsDirectory)) return;
-        // A launcher restarted over a game still playing sweeps its instance
-        // too; that session's debug log is still being written, and neither
-        // its e4steam lines nor the file itself are finished yet.
-        if (IsHeldByTheGame(Path.Combine(logsDirectory, "debug.log"))) return;
-        KeepE4steamLines(logsDirectory);
-        foreach (var name in DiscardedGameLogNames)
+        long used = 0;
+        foreach (var file in files.OrderByDescending(file => file.LastWriteTimeUtc))
         {
-            DeleteFile(Path.Combine(logsDirectory, name));
-        }
-        foreach (var file in EnumerateFilesSafe(logsDirectory, DiscardedGameLogPattern, SearchOption.TopDirectoryOnly))
-        {
-            DeleteFile(file.FullName);
+            checkpoint();
+            try
+            {
+                used += file.Length;
+                if (used > budgetBytes) delete(file.FullName);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
     }
 
-    /// <summary>
-    /// Writes down what e4steam said before the debug copies that hold it go;
-    /// see <see cref="E4steamLogLines"/>. Nothing else in those copies is kept.
-    /// </summary>
-    /// <remarks>
-    /// Sessions are added to the record rather than replacing it: the one worth
-    /// reading is the one a guest fell out of, and by the time a report is sent
-    /// the players have usually restarted the game once or twice to try again.
-    /// The oldest lines go first once the record is full.
-    /// </remarks>
-    private static void KeepE4steamLines(string logsDirectory)
+    private static void DiscardGameDebugLogs(string logsDirectory, Action checkpoint)
     {
-        var sources = E4steamLogLines.DebugLogsOldestFirst(logsDirectory);
-        if (sources.Count == 0) return;
+        checkpoint();
+        if (!IsOrdinary(logsDirectory, directory: true)) return;
+        var current = Path.Combine(logsDirectory, "debug.log");
+        if (IsHeldByTheGame(current)) return;
+
+        // The owner keeps only e4steam diagnostics from these generated logs.
+        // A redirected file is never read or removed.
+        var sources = E4steamLogLines.DebugLogsOldestFirst(logsDirectory)
+            .Where(path => IsOrdinary(path, directory: false)).ToArray();
+        if (sources.Length == 0 || sources.Any(IsHeldByTheGame)) return;
+        if (!TryKeepE4steamLines(logsDirectory, sources, checkpoint)) return;
+        foreach (var source in sources)
+        {
+            checkpoint();
+            DeleteFile(source);
+        }
+    }
+
+    private static bool TryKeepE4steamLines(string logsDirectory, string[] sources, Action checkpoint)
+    {
         try
         {
-            var lines = E4steamLogLines.Read(sources, E4steamKeptChars);
-            if (lines.Count == 0) return;
+            var lines = E4steamLogLines.Read(sources, E4steamKeptChars, checkpoint);
+            if (lines.Count == 0) return true;
 
             var record = Path.Combine(logsDirectory, E4steamPreviousLogName);
             var ended = File.GetLastWriteTime(sources[^1]);
             var all = new List<string>();
-            if (File.Exists(record)) all.AddRange(E4steamLogLines.ReadTail(record, E4steamKeptChars));
-            all.Add($"[launcher] --- session last written {ended:yyyy-MM-dd HH:mm} ---");
+            if (File.Exists(record))
+            {
+                if (!IsOrdinary(record, directory: false)) return false;
+                all.AddRange(E4steamLogLines.ReadTail(record, E4steamKeptChars, checkpoint));
+            }
+            all.Add($"[launcher] --- session last written {ended:yyyy-MM-dd HH:mm:ss} ---");
             all.AddRange(lines);
 
             long size = all.Sum(line => (long)line.Length + 1);
             var skip = 0;
             while (size > E4steamKeptChars && skip < all.Count)
-            {
-                size -= all[skip].Length + 1;
-                skip++;
-            }
-            File.WriteAllLines(record, all.Skip(skip), new UTF8Encoding(false));
+                size -= all[skip++].Length + 1;
+
+            checkpoint();
+            if (!IsOrdinary(logsDirectory, directory: true)) return false;
+            if (File.Exists(record) && !IsOrdinary(record, directory: false)) return false;
+            AtomicFile.WriteAllText(record, string.Join(Environment.NewLine, all.Skip(skip)) + Environment.NewLine);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
-            // The session still happened; only this record of it is missing.
+            // Preserve the source logs if we cannot retain their e4steam lines.
+            return false;
         }
     }
 
-    /// <summary>Whether the game still has the file open for writing.</summary>
     private static bool IsHeldByTheGame(string path)
     {
         if (!File.Exists(path)) return false;
         try
         {
+            if (!IsOrdinary(path, directory: false)) return true;
             using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
             return false;
         }
@@ -378,124 +206,146 @@ public static class LogCleanupService
         }
     }
 
-    private static void CleanupDotNetExtractionCache()
+    internal static void PrunePortableExtractionCache(AppPaths paths, Action checkpoint)
     {
-        var root = GetExtractionRoot();
-        if (!Directory.Exists(root)) return;
-        PruneExtractionCache(root, FindExtractionDirectoriesInUse(root, ExecutableName));
-    }
-
-    /// <summary>Keeps the current bundle for the next launch and any other
-    /// bundle a running copy still uses. An unreadable process means no sweep.</summary>
-    internal static void PruneExtractionCache(string root, IReadOnlySet<string>? directoriesInUse)
-    {
-        if (directoriesInUse is null || !Directory.Exists(root)) return;
-        var inUse = new HashSet<string>(directoriesInUse.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
-        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+        var bundles = Path.Combine(paths.Launcher, "DotNetBundles");
+        foreach (var executableName in new[] { ExecutableName, "Minecraft" }.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (inUse.Contains(Path.GetFullPath(directory))) continue;
-            DeleteDirectory(directory);
+            checkpoint();
+            var root = Path.Combine(bundles, executableName);
+            if (!IsOrdinary(root, directory: true)) continue;
+            var inUse = FindExtractionDirectoriesInUse(root, executableName, checkpoint);
+            // A process without a mapped module in its own extraction root
+            // may still need it on the next launch.
+            if (executableName.Equals(ExecutableName, StringComparison.OrdinalIgnoreCase) && inUse is not { Count: > 0 })
+                continue;
+            PruneExtractionCache(root, inUse, checkpoint);
         }
-        TryDeleteDirectoryIfEmpty(root);
     }
 
-    private static HashSet<string>? FindExtractionDirectoriesInUse(string root, string processName)
+    /// <summary>Keeps the current bundle and any other bundle a running copy still uses.</summary>
+    internal static void PruneExtractionCache(string root, IReadOnlySet<string>? directoriesInUse,
+        Action? checkpoint = null)
+    {
+        if (directoriesInUse is null || !IsOrdinary(root, directory: true)) return;
+        checkpoint ??= static () => { };
+        var inUse = new HashSet<string>(directoriesInUse.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase);
+        foreach (var path in ReadEntries(root, checkpoint))
+        {
+            if (inUse.Contains(Path.GetFullPath(path)) || !IsOrdinary(path, directory: true)) continue;
+            var pending = new Stack<(string Path, bool Visited)>();
+            pending.Push((path, false));
+            while (pending.TryPop(out var candidate))
+            {
+                checkpoint();
+                if (MaintenancePath.IsProtectedAssetName(Path.GetFileName(candidate.Path))) continue;
+                if (candidate.Visited) DeleteEmptyDirectory(candidate.Path);
+                else if (IsOrdinary(candidate.Path, directory: true))
+                {
+                    pending.Push((candidate.Path, true));
+                    foreach (var child in ReadEntries(candidate.Path, checkpoint)) pending.Push((child, false));
+                }
+                else DeleteFile(candidate.Path);
+            }
+        }
+        checkpoint();
+        DeleteEmptyDirectory(root);
+    }
+
+    private static HashSet<string>? FindExtractionDirectoriesInUse(string root, string processName, Action checkpoint)
     {
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rootWithSlash = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var process in Process.GetProcessesByName(processName))
+        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        var processes = Process.GetProcessesByName(processName);
+        try
         {
-            using (process)
+            foreach (var process in processes)
             {
+                checkpoint();
                 try
                 {
                     foreach (ProcessModule module in process.Modules)
                     {
-                        var directory = GetExtractionDirectory(root, rootWithSlash, module.FileName);
-                        if (directory is not null) directories.Add(directory);
+                        checkpoint();
+                        var full = Path.GetFullPath(module.FileName);
+                        if (!full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                        var relative = full[prefix.Length..];
+                        var separator = relative.IndexOf(Path.DirectorySeparatorChar);
+                        var name = separator < 0 ? relative : relative[..separator];
+                        if (name.Length > 0) directories.Add(Path.Combine(root, name));
                     }
                 }
-                catch
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception
+                                                    or NotSupportedException)
                 {
                     if (!process.HasExited) return null;
                 }
             }
+            return directories;
         }
-
-        return directories;
-    }
-
-    private static string? GetExtractionDirectory(string root, string rootWithSlash, string? modulePath)
-    {
-        if (string.IsNullOrWhiteSpace(modulePath)) return null;
-        var full = Path.GetFullPath(modulePath);
-        if (!full.StartsWith(rootWithSlash, StringComparison.OrdinalIgnoreCase)) return null;
-        var relative = full[rootWithSlash.Length..];
-        var separator = relative.IndexOf(Path.DirectorySeparatorChar);
-        var directoryName = separator < 0 ? relative : relative[..separator];
-        return string.IsNullOrWhiteSpace(directoryName) ? null : Path.GetFullPath(Path.Combine(root, directoryName));
-    }
-
-    private static string GetExtractionBaseDirectory()
-    {
-        var configured = Environment.GetEnvironmentVariable("DOTNET_BUNDLE_EXTRACT_BASE_DIR");
-        return string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(Path.GetTempPath(), ".net")
-            : Path.GetFullPath(configured);
-    }
-
-    private static string GetExtractionRoot() => Path.Combine(GetExtractionBaseDirectory(), ExecutableName);
-
-    /// <summary>
-    /// The single-file host extracts under a directory named after the
-    /// executable, so a rename leaves the whole previous tree behind.
-    /// </summary>
-    private static void CleanupRenamedExtractionRoots()
-    {
-        var dotNetRoot = GetExtractionBaseDirectory();
-        if (!Directory.Exists(dotNetRoot)) return;
-        foreach (var directory in Directory.EnumerateDirectories(dotNetRoot, "*", SearchOption.TopDirectoryOnly))
+        finally
         {
-            var name = Path.GetFileName(directory);
-            if (string.Equals(name, ExecutableName, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(name, "Minecraft", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-            PruneExtractionCache(directory, FindExtractionDirectoriesInUse(directory, name));
+            foreach (var process in processes) process.Dispose();
         }
+    }
+
+    private static IEnumerable<string> ReadEntries(string path, Action checkpoint)
+    {
+        checkpoint();
+        if (!IsOrdinary(path, directory: true)) yield break;
+        using var entries = TryReadEntries(path);
+        if (entries is null) yield break;
+        while (TryMoveNext(entries, checkpoint)) yield return entries.Current;
+    }
+
+    private static IEnumerator<string>? TryReadEntries(string path)
+    {
+        try { return Directory.EnumerateFileSystemEntries(path).GetEnumerator(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    private static bool TryMoveNext(IEnumerator<string> entries, Action checkpoint)
+    {
+        checkpoint();
+        try { return entries.MoveNext(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private static bool IsOrdinary(string path, bool directory)
+    {
+        try
+        {
+            var leaf = true;
+            for (var part = Path.GetFullPath(path); part is not null; part = Path.GetDirectoryName(part))
+            {
+                var attributes = File.GetAttributes(part);
+                if ((attributes & FileAttributes.ReparsePoint) != 0 ||
+                    ((attributes & FileAttributes.Directory) != 0) != (leaf ? directory : true)) return false;
+                leaf = false;
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     private static void DeleteFile(string path)
     {
-        try
-        {
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch
-        {
-        }
+        if (IsOrdinary(path, directory: false))
+            PortableRuntimeCache.TryDeleteOrdinaryEntry(Path.GetFullPath(path), directory: false);
     }
 
-    private static void DeleteDirectory(string path)
+    private static void DeleteEmptyDirectory(string path)
     {
-        try
-        {
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-        }
-        catch
-        {
-        }
+        if (IsOrdinary(path, directory: true))
+            PortableRuntimeCache.TryDeleteOrdinaryEntry(Path.GetFullPath(path), directory: true);
     }
 
-    private static void TryDeleteDirectoryIfEmpty(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
-        }
-        catch
-        {
-        }
-    }
+    [GeneratedRegex(@"^logs-[0-9]{8}-[0-9]{6}(-[0-9a-f]{32})?\.log$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex LauncherArchiveName();
+
+    [GeneratedRegex(@"^steam-spike-[0-9]{8}-[0-9]{6}\.log$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SteamSpikeLogName();
+
+    [GeneratedRegex(@"^crash-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}\.[0-9]{2}\.[0-9]{2}-(client|server)\.txt$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CrashReportName();
 }

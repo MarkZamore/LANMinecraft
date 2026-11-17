@@ -211,11 +211,11 @@ public sealed class BuildRemovalServiceTests : IDisposable
 
         var service = new BuildRemovalService(_paths);
         Assert.DoesNotContain(oldHome, service.Plan(Build, worldsToo: false).JavaDirectories);
-        PortableJavaRuntimeService.SweepUnusedSuperseded(_paths);
+        JavaRuntimeStorage.SweepUnusedSuperseded(_paths, null, static () => { });
         Assert.True(Directory.Exists(oldHome));
 
         Write(state, JsonSerializer.Serialize(new { javaRuntimeId = Path.GetFileName(current[0]) }));
-        PortableJavaRuntimeService.SweepUnusedSuperseded(_paths);
+        JavaRuntimeStorage.SweepUnusedSuperseded(_paths, null, static () => { });
         Assert.False(Directory.Exists(oldHome));
         Assert.All(current, directory => Assert.True(Directory.Exists(directory)));
     }

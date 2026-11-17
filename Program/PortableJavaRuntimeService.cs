@@ -160,14 +160,7 @@ public sealed partial class PortableJavaRuntimeService
 
         var legacyRoot = string.Equals(_pin.LegacyInstallDirectoryName, _pin.InstallDirectoryName, StringComparison.OrdinalIgnoreCase)
             ? null : Path.Combine(parent, _pin.LegacyInstallDirectoryName);
-        if (TryDescribeInstalled(installRoot) is { } installed)
-        {
-            if (legacyRoot is not null && TryDescribeInstalled(legacyRoot) is not null &&
-                JavaRuntimeStorage.OrdinaryTree(legacyRoot) && !JavaRuntimeStorage.IsInUse(legacyRoot))
-                TryDeleteDirectory(legacyRoot);
-            SweepAbandonedStaging(parent);
-            return installed;
-        }
+        if (TryDescribeInstalled(installRoot) is { } installed) return installed;
 
         if (legacyRoot is not null && TryDescribeInstalled(legacyRoot) is { } legacy &&
             JavaRuntimeStorage.OrdinaryTree(legacyRoot) && !Directory.Exists(installRoot))
@@ -182,7 +175,6 @@ public sealed partial class PortableJavaRuntimeService
             }
             var migrated = TryDescribeInstalled(installRoot) ??
                 throw new InvalidDataException("The migrated Java runtime did not verify.");
-            SweepAbandonedStaging(parent);
             return migrated;
         }
 
@@ -224,54 +216,8 @@ public sealed partial class PortableJavaRuntimeService
         var prepared = TryDescribeInstalled(installRoot)
             ?? throw new InvalidDataException(
                 $"Java runtime {_pin.RuntimeId} did not verify after installation.");
-        SweepAbandonedStaging(parent);
         return prepared;
     }
-
-    internal static void SweepUnusedSuperseded(AppPaths paths, Logger? logger = null) =>
-        JavaRuntimeStorage.SweepUnusedSuperseded(paths, logger);
-
-    /// <summary>
-    /// Throws away staging directories a killed run left behind, whichever
-    /// runtime made them rather than only this one.
-    /// </summary>
-    /// <remarks>
-    /// Install() clears its own pin's leftovers before it starts, and that is
-    /// enough for as long as the pin is still asked for. It stops being enough
-    /// the moment it is not: a machine whose packs all move to 1.21.1 never
-    /// installs java-17 again, so a .java-17.install.&lt;guid&gt; that a kill left
-    /// behind is a few hundred megabytes nothing ever looks at again - and it
-    /// counts against the free space every later install checks for.
-    ///
-    /// The Java cache lock protects installations by another launcher instance.
-    /// A recently written stage may also belong to a previous launcher version.
-    /// </remarks>
-    private void SweepAbandonedStaging(string? parent)
-    {
-        if (parent is null || !Directory.Exists(parent)) return;
-        var stale = DateTime.UtcNow - AbandonedStagingAge;
-        foreach (var directory in Directory.EnumerateDirectories(parent))
-        {
-            var name = Path.GetFileName(directory);
-            if (!AbandonedStagingRegex().IsMatch(name)) continue;
-            try
-            {
-                if (Directory.GetLastWriteTimeUtc(directory) > stale) continue;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-            if (!JavaRuntimeStorage.OrdinaryTree(directory) || JavaRuntimeStorage.IsInUse(directory)) continue;
-            TryDeleteDirectory(directory);
-            if (!Directory.Exists(directory))
-            {
-                _logger.Info($"Removed the abandoned Java staging directory {name}.");
-            }
-        }
-    }
-
-    private static readonly TimeSpan AbandonedStagingAge = TimeSpan.FromHours(1);
 
     internal string CachePath => GetCachePath();
 
@@ -285,46 +231,51 @@ public sealed partial class PortableJavaRuntimeService
         return path;
     }
 
-    private PreparedJavaRuntime? TryDescribeInstalled(string installRoot)
+    private PreparedJavaRuntime? TryDescribeInstalled(string installRoot) =>
+        DescribeInstalled(_paths, _pin, installRoot, _logger);
+
+    internal static PreparedJavaRuntime? DescribeInstalled(AppPaths paths, JavaRuntimePin pin, string installRoot,
+        Logger? logger = null)
     {
         try
         {
             var markerPath = Path.Combine(installRoot, MarkerFileName);
-            JavaRuntimeStorage.RequireOrdinaryPath(_paths, markerPath);
+            JavaRuntimeStorage.RequireOrdinaryPath(paths, markerPath);
             if (!File.Exists(markerPath)) return null;
             var marker = JsonSerializer.Deserialize<JavaRuntimeMarker>(File.ReadAllText(markerPath));
             if (marker is null ||
                 marker.SchemaVersion != MarkerCacheGeneration ||
-                !string.Equals(marker.RuntimeId, _pin.RuntimeId, StringComparison.Ordinal) ||
-                !string.Equals(marker.ArchiveSha256, _pin.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(marker.RuntimeId, pin.RuntimeId, StringComparison.Ordinal) ||
+                !string.Equals(marker.ArchiveSha256, pin.ArchiveSha256, StringComparison.OrdinalIgnoreCase))
             {
                 return null;
             }
 
             var javaw = Path.Combine(installRoot, "bin", "javaw.exe");
             var java = Path.Combine(installRoot, "bin", "java.exe");
-            JavaRuntimeStorage.RequireOrdinaryPath(_paths, javaw);
-            JavaRuntimeStorage.RequireOrdinaryPath(_paths, java);
-            JavaRuntimeStorage.RequireOrdinaryPath(_paths, GetRuntimeImagePath(installRoot));
-            JavaRuntimeStorage.RequireOrdinaryPath(_paths, Path.Combine(installRoot, "release"));
+            var runtimeImage = GetRuntimeImagePath(installRoot, pin.MajorVersion);
+            JavaRuntimeStorage.RequireOrdinaryPath(paths, javaw);
+            JavaRuntimeStorage.RequireOrdinaryPath(paths, java);
+            JavaRuntimeStorage.RequireOrdinaryPath(paths, runtimeImage);
+            JavaRuntimeStorage.RequireOrdinaryPath(paths, Path.Combine(installRoot, "release"));
             if (!File.Exists(javaw) ||
                 !File.Exists(java) ||
-                !File.Exists(GetRuntimeImagePath(installRoot)) ||
-                ReadReleaseJavaVersion(installRoot) != _pin.JavaVersion)
+                !File.Exists(runtimeImage) ||
+                ReadReleaseJavaVersion(installRoot) != pin.JavaVersion)
             {
                 return null;
             }
 
-            return new PreparedJavaRuntime(installRoot, javaw, java, _pin.RuntimeId, _pin.JavaVersion);
+            return new PreparedJavaRuntime(installRoot, javaw, java, pin.RuntimeId, pin.JavaVersion);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
-            _logger.Warn($"Installed Java runtime could not be inspected: {ex.Message}");
+            logger?.Warn($"Installed Java runtime could not be inspected: {ex.Message}");
             return null;
         }
     }
 
-    private string GetRuntimeImagePath(string installRoot) => _pin.MajorVersion == 8
+    private static string GetRuntimeImagePath(string installRoot, int majorVersion) => majorVersion == 8
         ? Path.Combine(installRoot, "jre", "lib", "rt.jar")
         : Path.Combine(installRoot, "lib", "modules");
 
@@ -370,7 +321,6 @@ public sealed partial class PortableJavaRuntimeService
     {
         var cacheDirectory = Path.GetDirectoryName(cachePath)!;
         Directory.CreateDirectory(cacheDirectory);
-        SweepAbandonedEntries(cacheDirectory, $"{_pin.ArchiveFileName}.*.tmp");
         var failures = new List<string>(_pin.DownloadUris.Count);
         for (var index = 0; index < _pin.DownloadUris.Count; index++)
         {
@@ -517,7 +467,6 @@ public sealed partial class PortableJavaRuntimeService
     private void Install(string archivePath, string installRoot, CancellationToken token)
     {
         var parent = Path.GetDirectoryName(installRoot)!;
-        SweepAbandonedEntries(parent, $".{_pin.InstallDirectoryName}.install.*");
         var stageRoot = Path.Combine(
             parent,
             $".{_pin.InstallDirectoryName}.install.{Guid.NewGuid():N}");
@@ -533,7 +482,7 @@ public sealed partial class PortableJavaRuntimeService
             {
                 throw new InvalidDataException("Java runtime archive is missing its executables.");
             }
-            if (!File.Exists(GetRuntimeImagePath(stageRoot)))
+            if (!File.Exists(GetRuntimeImagePath(stageRoot, _pin.MajorVersion)))
             {
                 throw new InvalidDataException("Java runtime archive is missing its runtime image.");
             }
@@ -799,32 +748,6 @@ public sealed partial class PortableJavaRuntimeService
         }
     }
 
-    /// <summary>
-    /// Removes staging directories and download temporaries a killed earlier run
-    /// left behind; each is a few hundred megabytes nothing else ever deletes.
-    /// </summary>
-    private static void SweepAbandonedEntries(string directory, string pattern)
-    {
-        try
-        {
-            if (!Directory.Exists(directory)) return;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, pattern))
-            {
-                if (Directory.Exists(entry))
-                {
-                    TryDeleteDirectory(entry);
-                }
-                else
-                {
-                    TryDeleteFile(entry);
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-    }
-
     private static JavaRuntimePin ValidatePin(JavaRuntimePin pin)
     {
         ArgumentNullException.ThrowIfNull(pin);
@@ -860,12 +783,6 @@ public sealed partial class PortableJavaRuntimeService
 
     [GeneratedRegex("^JAVA_VERSION=\"([^\"]+)\"")]
     private static partial Regex JavaVersionRegex();
-
-    // What Install() names a staging directory: a dot, the install folder's
-    // name, ".install." and a guid with no dashes. Anchored both ends so it can
-    // only ever match something this service wrote itself.
-    [GeneratedRegex(@"^\.(?:java-[0-9]+|temurin-[0-9][0-9A-Za-z.+-]*)\.install\.[0-9a-f]{32}$", RegexOptions.IgnoreCase)]
-    private static partial Regex AbandonedStagingRegex();
 
     internal sealed class JavaRuntimeMarker
     {

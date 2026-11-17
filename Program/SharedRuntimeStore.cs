@@ -102,41 +102,131 @@ public static class SharedRuntimeStore
     internal static int Sweep(AppPaths paths, Logger? logger, Func<bool> hasLiveGame)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        var root = Root(paths);
-        if (!Directory.Exists(root)) return 0;
-
-        var removed = 0;
+        if (!Directory.Exists(Root(paths))) return 0;
         try
         {
-            if (!IsOrdinaryUnder(paths.Root, Anchor(paths), directory: true) ||
-                !IsOrdinaryUnder(Anchor(paths), root, directory: true)) return 0;
             using var gate = SharedRuntimeGate.TryAcquire(paths);
             if (gate is null || hasLiveGame()) return 0;
-
-            var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var profiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (!TryReadLiveStates(paths, live, profiles)) return 0;
-
-            foreach (var sweepable in AlwaysSweepable)
-            {
-                var directory = Path.Combine(root, sweepable);
-                if (!IsOrdinaryUnder(root, directory, directory: true)) continue;
-                removed += SweepFiles(directory, live, logger);
-            }
-
-            removed += SweepProfiles(paths, profiles, logger);
-            if (removed > 0)
-                logger?.Info($"Shared runtime store: {removed} unused file(s) removed.");
-            return removed;
+            return SweepCore(paths, logger, static () => { }, (path, directory) =>
+                MaintenancePath.TryDelete(paths, path, directory), requirePreparedPacks: false);
         }
         catch (Exception ex) when (IsStorageError(ex))
         {
             logger?.Warn($"Shared runtime cleanup could not finish ({ex.Message}).");
-            return removed;
+            return 0;
         }
     }
 
-    private static bool TryReadLiveStates(AppPaths paths, HashSet<string> live, HashSet<string> profiles)
+    internal static int SweepIdle(AppPaths paths, Logger? logger, Action checkpoint) =>
+        SweepIdle(paths, logger, checkpoint, () => HasSessionNotes(paths));
+
+    internal static int SweepIdle(AppPaths paths, Logger? logger, Action checkpoint, Func<bool> hasLiveGame)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+        if (!Directory.Exists(Root(paths))) return 0;
+
+        var revision = SharedRuntimeGate.ActivityVersion(paths);
+        try
+        {
+            Checkpoint();
+            using (var gate = SharedRuntimeGate.TryAcquire(paths))
+                if (gate is null) return 0;
+            if (hasLiveGame()) return 0;
+
+            // The inventory and hashes never hold the game's gate. The gate
+            // only protects the mutation of a single file or empty directory.
+            return SweepCore(paths, logger, Checkpoint, Delete, requirePreparedPacks: true);
+        }
+        catch (InventoryChangedException)
+        {
+            return 0;
+        }
+        catch (Exception ex) when (IsStorageError(ex))
+        {
+            logger?.Warn($"Shared runtime cleanup could not finish ({ex.Message}).");
+            return 0;
+        }
+
+        void Checkpoint()
+        {
+            checkpoint();
+            if (revision != SharedRuntimeGate.ActivityVersion(paths))
+                throw new InventoryChangedException();
+        }
+
+        bool Delete(string path, bool directory)
+        {
+            Checkpoint();
+            using var gate = SharedRuntimeGate.TryAcquire(paths);
+            if (gate is null || revision != SharedRuntimeGate.ActivityVersion(paths))
+                throw new InventoryChangedException();
+            return MaintenancePath.TryDelete(paths, path, directory);
+        }
+    }
+
+    private static bool HasSessionNotes(AppPaths paths)
+    {
+        var root = Path.Combine(paths.Personal, "ClientSessions");
+        if (!Exists(root)) return false;
+        // Startup reconciles these notes. An unreadable note is still a reason
+        // to defer maintenance and must not be removed by this check.
+        return !MaintenancePath.TryRead(paths, root, out var attributes) ||
+            !attributes.HasFlag(FileAttributes.Directory) || Directory.EnumerateFiles(root, "*.json").Any();
+    }
+
+    private static int SweepCore(AppPaths paths, Logger? logger, Action checkpoint,
+        Func<string, bool, bool> delete, bool requirePreparedPacks)
+    {
+        var root = Root(paths);
+        if (!IsOrdinaryUnder(paths.Root, Anchor(paths), directory: true) ||
+            !IsOrdinaryUnder(Anchor(paths), root, directory: true)) return 0;
+        var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var profiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var preparedPacks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryReadLiveStates(paths, live, profiles, preparedPacks, checkpoint)) return 0;
+
+        var removed = 0;
+        // A source pack without a matching runtime state may still benefit
+        // from an already downloaded assets index or Mojang Java during Play.
+        if (!requirePreparedPacks || AllInstalledPacksArePrepared(paths, preparedPacks, checkpoint))
+        {
+            foreach (var sweepable in AlwaysSweepable)
+            {
+                checkpoint();
+                var directory = Path.Combine(root, sweepable);
+                if (!IsOrdinaryUnder(root, directory, directory: true)) continue;
+                removed += SweepFiles(paths, directory, live, checkpoint, delete);
+            }
+        }
+
+        removed += SweepProfiles(paths, profiles, checkpoint, delete);
+        if (removed > 0) logger?.Info($"Shared runtime store: {removed} unused file(s) removed.");
+        return removed;
+    }
+
+    private static bool AllInstalledPacksArePrepared(AppPaths paths, IReadOnlyDictionary<string, string> prepared,
+        Action checkpoint)
+    {
+        if (!Exists(paths.Packs)) return true;
+        if (!IsOrdinaryUnder(paths.Root, paths.Packs, directory: true)) return false;
+        foreach (var pack in Directory.EnumerateDirectories(paths.Packs))
+        {
+            checkpoint();
+            if (!IsOrdinaryUnder(paths.Packs, pack, directory: true)) return false;
+            var manifest = Path.Combine(pack, PackManifestService.ManifestFileName);
+            if (!Exists(manifest)) return false;
+            if (!IsOrdinaryUnder(pack, manifest, directory: false)) return false;
+            var descriptor = PackManifestService.Load(pack);
+            if (descriptor.NativeRuntime is not null) continue;
+            if (!prepared.TryGetValue(Path.GetFileName(pack), out var hash) ||
+                !descriptor.DescriptorHash.Equals(hash, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
+
+    private static bool TryReadLiveStates(AppPaths paths, HashSet<string> live, HashSet<string> profiles,
+        Dictionary<string, string> preparedPacks, Action checkpoint)
     {
         if (!Exists(paths.Runtimes)) return true;
         var anchor = Anchor(paths);
@@ -146,9 +236,11 @@ public static class SharedRuntimeStore
         var indexes = Path.Combine(assets, "indexes");
         var resources = Resources(paths);
         var versions = Versions(paths);
+        var readIndexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var build in Directory.EnumerateDirectories(paths.Runtimes))
         {
+            checkpoint();
             if (!IsOrdinaryUnder(paths.Runtimes, build, directory: true)) return false;
             var state = Path.Combine(build, RuntimeStateFileName);
             if (!Exists(state)) continue;
@@ -162,8 +254,17 @@ public static class SharedRuntimeStore
                 if (profile.ValueKind != JsonValueKind.String || !ValidName(profile.GetString())) return false;
                 profiles.Add(profile.GetString()!);
             }
+            if (profile.ValueKind == JsonValueKind.String &&
+                root.TryGetProperty("schemaVersion", out var schema) &&
+                schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) &&
+                version == PackRuntimeService.RuntimeCacheGeneration &&
+                root.TryGetProperty("descriptorHash", out var descriptor) &&
+                descriptor.ValueKind == JsonValueKind.String && descriptor.GetString() is { Length: 64 } hash &&
+                hash.All(char.IsAsciiHexDigit) && files.EnumerateObject().MoveNext())
+                preparedPacks.Add(Path.GetFileName(build), hash);
             foreach (var file in files.EnumerateObject())
             {
+                checkpoint();
                 if (string.IsNullOrWhiteSpace(file.Name) || Path.IsPathRooted(file.Name)) return false;
                 var full = Path.GetFullPath(Path.Combine(anchor, file.Name.Replace('/', Path.DirectorySeparatorChar)));
                 if (!IsBelow(anchor, full)) return false;
@@ -171,21 +272,26 @@ public static class SharedRuntimeStore
                 if (IsBelow(versions, full) && !string.Equals(Path.GetDirectoryName(full), versions, StringComparison.OrdinalIgnoreCase))
                     profiles.Add(Path.GetRelativePath(versions, full).Split(Path.DirectorySeparatorChar)[0]);
                 if (string.Equals(Path.GetDirectoryName(full), indexes, StringComparison.OrdinalIgnoreCase) &&
-                    IsOrdinaryUnder(anchor, full, directory: false))
+                    readIndexes.Add(full) && IsOrdinaryUnder(anchor, full, directory: false))
                     foreach (var copy in DerivedAssetLayout.Read(full, assets, resources))
+                    {
+                        checkpoint();
                         live.Add(copy.Destination);
+                    }
             }
         }
         return true;
     }
 
-    private static int SweepProfiles(AppPaths paths, HashSet<string> live, Logger? logger)
+    private static int SweepProfiles(AppPaths paths, HashSet<string> live, Action checkpoint,
+        Func<string, bool, bool> delete)
     {
         var versions = Versions(paths);
         if (!IsOrdinaryUnder(Anchor(paths), versions, directory: true)) return 0;
         var owned = new List<(string Directory, ProfileOwner Owner)>();
         foreach (var directory in Directory.EnumerateDirectories(versions))
         {
+            checkpoint();
             if (!IsOrdinaryUnder(versions, directory, directory: true)) continue;
             if (ReadProfileOwner(directory) is { } owner) owned.Add((directory, owner));
         }
@@ -196,6 +302,7 @@ public static class SharedRuntimeStore
             if (!IsOrdinaryUnder(paths.Root, paths.Packs, directory: true)) return 0;
             foreach (var directory in Directory.EnumerateDirectories(paths.Packs))
             {
+                checkpoint();
                 if (!IsOrdinaryUnder(paths.Packs, directory, directory: true)) return 0;
                 var manifest = Path.Combine(directory, PackManifestService.ManifestFileName);
                 if (!Exists(manifest)) continue;
@@ -220,6 +327,7 @@ public static class SharedRuntimeStore
         var pending = new Queue<string>(live);
         while (pending.TryDequeue(out var id))
         {
+            checkpoint();
             if (!ValidName(id)) return 0;
             var profile = Path.Combine(versions, id, id + ".json");
             if (!TryReadOrdinaryAttributes(versions, profile, out var attributes)) return 0;
@@ -238,37 +346,49 @@ public static class SharedRuntimeStore
         var removed = 0;
         foreach (var (directory, owner) in owned)
         {
+            checkpoint();
             if (live.Contains(owner.ProfileId)) continue;
-            var files = new List<string>();
+            var files = new List<(string Path, long Size, DateTime Modified)>();
             var intact = true;
             foreach (var (relative, sha256) in owner.Files)
             {
+                checkpoint();
                 var file = Path.GetFullPath(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar)));
                 if (!TryReadOrdinaryAttributes(directory, file, out var attributes) ||
-                    attributes is { } value && (value.HasFlag(FileAttributes.Directory) ||
-                    !HashFile(file).Equals(sha256, StringComparison.OrdinalIgnoreCase)))
+                    attributes is { } value && value.HasFlag(FileAttributes.Directory))
                 {
                     intact = false;
                     break;
                 }
-                if (attributes is not null) files.Add(file);
+                if (attributes is null) continue;
+                var stamp = new FileInfo(file);
+                var size = stamp.Length;
+                var modified = stamp.LastWriteTimeUtc;
+                if (!HashFile(file, checkpoint).Equals(sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    intact = false;
+                    break;
+                }
+                files.Add((file, size, modified));
             }
             if (!intact) continue;
 
             var retry = false;
             var parents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in files)
+            foreach (var (file, size, modified) in files)
             {
-                if (TryDelete(file, logger)) removed++;
+                var current = new FileInfo(file);
+                if (current.Exists && current.Length == size && current.LastWriteTimeUtc == modified &&
+                    delete(file, false)) removed++;
                 else retry = true;
                 for (var parent = Path.GetDirectoryName(file); parent is not null && IsBelow(directory, parent);
                      parent = Path.GetDirectoryName(parent))
                     parents.Add(parent);
             }
-            if (!retry && TryDelete(Path.Combine(directory, ProfileOwnerFileName), logger)) removed++;
+            if (!retry && delete(Path.Combine(directory, ProfileOwnerFileName), false)) removed++;
             foreach (var parent in parents.OrderByDescending(path => path.Length))
-                RemoveIfEmpty(parent, logger);
-            RemoveIfEmpty(directory, logger);
+                delete(parent, true);
+            delete(directory, true);
         }
         return removed;
     }
@@ -341,25 +461,41 @@ public static class SharedRuntimeStore
         return true;
     }
 
-    private static string HashFile(string path)
+    internal static string HashFile(string path, Action? checkpoint = null)
     {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
+        using var stream = checkpoint is null ? File.OpenRead(path) :
+            new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (checkpoint is null) return Convert.ToHexStringLower(SHA256.HashData(stream));
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(128 * 1024);
+        try
+        {
+            int count;
+            while ((count = stream.Read(buffer)) != 0)
+            {
+                checkpoint();
+                hash.AppendData(buffer, 0, count);
+            }
+            return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+        finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
     }
 
-    private static int SweepFiles(string root, HashSet<string> live, Logger? logger)
+    private static int SweepFiles(AppPaths paths, string root, HashSet<string> live, Action checkpoint,
+        Func<string, bool, bool> delete)
     {
         var removed = 0;
         foreach (var path in Directory.EnumerateFileSystemEntries(root))
         {
-            var attributes = File.GetAttributes(path);
-            if (attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+            checkpoint();
+            if (MaintenancePath.IsProtectedAssetName(Path.GetFileName(path)) ||
+                !MaintenancePath.TryRead(paths, path, out var attributes)) continue;
             if (attributes.HasFlag(FileAttributes.Directory))
             {
-                removed += SweepFiles(path, live, logger);
-                RemoveIfEmpty(path, logger);
+                removed += SweepFiles(paths, path, live, checkpoint, delete);
+                delete(path, true);
             }
-            else if (!live.Contains(path) && TryDelete(path, logger)) removed++;
+            else if (!live.Contains(path) && delete(path, false)) removed++;
         }
         return removed;
     }
@@ -370,32 +506,7 @@ public static class SharedRuntimeStore
 
     private sealed record ProfileOwner(int SchemaVersion, string ProfileId, string MinecraftVersion,
         PackLoaderKind LoaderType, string? LoaderVersion, SortedDictionary<string, string> Files);
-
-    private static bool TryDelete(string path, Logger? logger)
+    private sealed class InventoryChangedException : Exception
     {
-        try
-        {
-            var info = new FileInfo(path);
-            if (info.IsReadOnly) info.IsReadOnly = false;
-            info.Delete();
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger?.Warn($"Shared runtime file could not be removed ({ex.Message}): {path}");
-            return false;
-        }
-    }
-
-    private static void RemoveIfEmpty(string directory, Logger? logger)
-    {
-        try
-        {
-            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger?.Warn($"Empty shared runtime directory stayed ({ex.Message}): {directory}");
-        }
     }
 }

@@ -363,6 +363,7 @@ public sealed partial class PortablePackSyncService
         if (source is null) return PackMemoryProfile.Unknown;
 
         string? metadataStage = null;
+        FileStream? metadataLease = null;
         try
         {
             var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
@@ -377,8 +378,7 @@ public sealed partial class PortablePackSyncService
             var packDir = _paths.CombineUnderPacks(packRelativePath);
             var manifest = ValidateRemoteManifest(dto, packDir);
             metadataStage = Path.Combine(_paths.Launcher, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(metadataStage);
-            AtomicFile.WriteAllText(Path.Combine(metadataStage, DownloadPlanOwnershipFile), DownloadPlanOwnership);
+            metadataLease = CreateDownloadPlanLease(metadataStage);
             var metadata = await PrepareLauncherMetadataSnapshotAsync(source, packDir, manifest, metadataStage,
                 token, launcherAssetsOnly: true).ConfigureAwait(false);
             var requirements = LocalAiProvisioningService.ReadRequirements(metadata.Directory)
@@ -403,6 +403,7 @@ public sealed partial class PortablePackSyncService
         }
         finally
         {
+            metadataLease?.Dispose();
             if (metadataStage is not null) TryDeleteDownloadPlanDirectory(_paths.Launcher, metadataStage);
         }
     }
@@ -421,7 +422,8 @@ public sealed partial class PortablePackSyncService
         var packDir = _paths.CombineUnderPacks(packRelativePath);
         if (!PackManifestService.HasManifest(packDir)) return false;
 
-        var staging = Path.Combine(packDir, StagingDirectoryName + "launcher-" + Guid.NewGuid().ToString("N")[..8]);
+        var staging = Path.Combine(packDir, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
+        FileStream? stagingLease = null;
         try
         {
             var dto = await FetchManifestAsync(source, token).ConfigureAwait(false);
@@ -435,7 +437,11 @@ public sealed partial class PortablePackSyncService
             var removePreset = !manifest.Files.Any(file => string.Equals(
                 file.Path, ControlsPresetService.PresetRelativePath, StringComparison.OrdinalIgnoreCase)) &&
                 File.Exists(presetPath);
-            if (wanted.Count == 0 && !removePreset) return false;
+            if (wanted.Count == 0 && !removePreset)
+            {
+                WriteLauncherCleanupState(packDir, source, manifest);
+                return false;
+            }
 
             var assets = wanted
                 .Select(file => manifest.AssetByCoveredPath[file.Path])
@@ -447,6 +453,7 @@ public sealed partial class PortablePackSyncService
 
             var stageAssets = Path.Combine(staging, "assets");
             var stageExtract = Path.Combine(staging, "extract");
+            stagingLease = CreateDownloadPlanLease(staging);
             Directory.CreateDirectory(stageAssets);
             Directory.CreateDirectory(stageExtract);
             foreach (var asset in assets)
@@ -462,6 +469,9 @@ public sealed partial class PortablePackSyncService
                 stageExtract,
                 token);
 
+            // Protect all paths in the verified subset before placing any of them.
+            token.ThrowIfCancellationRequested();
+            WriteLauncherCleanupState(packDir, source, manifest);
             foreach (var file in wanted)
             {
                 var staged = ResolveStagedSource(manifest.AssetByCoveredPath[file.Path], stageAssets, stageExtract, file.Path);
@@ -486,7 +496,8 @@ public sealed partial class PortablePackSyncService
         }
         finally
         {
-            TryDeleteDirectory(staging);
+            stagingLease?.Dispose();
+            TryDeleteDownloadPlanDirectory(packDir, staging);
         }
     }
 
@@ -526,7 +537,7 @@ public sealed partial class PortablePackSyncService
         }
 
         EnsureGameStopped(packRelativePath);
-        SweepAbandonedEntries(packDir, StagingDirectoryName + "*");
+        TryDeleteLegacyApplyStage(packDir);
         var hadManifest = PackManifestService.HasManifest(packDir);
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.SyncingPack,
@@ -561,10 +572,10 @@ public sealed partial class PortablePackSyncService
         }
 
         var stageRoot = Path.Combine(packDir, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
+        FileStream? stageLease = null;
         try
         {
-            Directory.CreateDirectory(stageRoot);
-            AtomicFile.WriteAllText(Path.Combine(stageRoot, DownloadPlanOwnershipFile), DownloadPlanOwnership);
+            stageLease = CreateDownloadPlanLease(stageRoot);
             PackSyncDiff diff;
             try
             {
@@ -582,12 +593,20 @@ public sealed partial class PortablePackSyncService
             var pendingBytes = manifest.Assets.Where(asset => asset.Covers.Any(changed.Contains) && !prefetched.Contains(asset.Name))
                 .Aggregate(0L, (sum, asset) => checked(sum + asset.SizeBytes));
             var state = new PreparedSyncState(source, manifest, diff, hadManifest, stageRoot, prefetched);
-            return new PackSyncDownloadPlan(this, state, packRelativePath, packDir, metadata.Directory, pendingBytes,
+            var ownership = stageLease;
+            var plan = new PackSyncDownloadPlan(this, state, packRelativePath, packDir, metadata.Directory, pendingBytes,
                 path => manifest.FilesByPath.TryGetValue(ValidateManifestPath(path, packDir), out var file) ? file.Sha256 : null,
-                cleanup: () => TryDeleteDownloadPlanDirectory(packDir, stageRoot));
+                cleanup: () =>
+                {
+                    ownership.Dispose();
+                    TryDeleteDownloadPlanDirectory(packDir, stageRoot);
+                });
+            stageLease = null;
+            return plan;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+            stageLease?.Dispose();
             TryDeleteDownloadPlanDirectory(packDir, stageRoot);
             throw;
         }
@@ -595,6 +614,7 @@ public sealed partial class PortablePackSyncService
                                    ex is HttpRequestException or IOException or InvalidDataException
                                        or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
+            stageLease?.Dispose();
             TryDeleteDownloadPlanDirectory(packDir, stageRoot);
             _logger.Warn($"Pack sync for {packRelativePath} failed; playing the local version: {ex.Message}");
             return LocalDownloadPlan(packRelativePath, packDir,
@@ -602,6 +622,7 @@ public sealed partial class PortablePackSyncService
         }
         catch
         {
+            stageLease?.Dispose();
             TryDeleteDownloadPlanDirectory(packDir, stageRoot);
             throw;
         }
@@ -1457,6 +1478,7 @@ public sealed partial class PortablePackSyncService
         {
             SchemaVersion = SyncStateCacheGeneration,
             Revision = manifest.Revision,
+            HasCompleteLauncherPaths = true,
             RequiredLauncherFeatures = manifest.RequiredLauncherFeatures.Count == 0 ? null : [.. manifest.RequiredLauncherFeatures]
         };
         foreach (var file in manifest.Files)
@@ -1718,7 +1740,7 @@ public sealed partial class PortablePackSyncService
         return new ValidatedManifest(revision, files, assets, filesByPath, assetByCoveredPath, legacyFiles, seen);
     }
 
-    internal static string ValidateManifestPath(string? value, string packRoot)
+    internal static string ValidateManifestPath(string? value, string packRoot, bool checkAncestors = true)
     {
         var path = value ?? "";
         if (path.Length is 0 or > 512 ||
@@ -1735,10 +1757,7 @@ public sealed partial class PortablePackSyncService
             }
         }
         if (string.Equals(path.Split('/')[0], PackLaunchContextService.RuntimeDirectory, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(path, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(path, SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(path, ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(path, InstanceStateFileName, StringComparison.OrdinalIgnoreCase))
+            IsServiceRelativePath(path))
         {
             throw new InvalidDataException($"Pack sync manifest may not ship a service file: {path}");
         }
@@ -1747,6 +1766,7 @@ public sealed partial class PortablePackSyncService
         {
             throw new InvalidDataException($"Pack sync manifest path escapes the pack: {path}");
         }
+        if (!checkAncestors) return path;
         var current = packRoot;
         foreach (var segment in path.Split('/').Prepend(""))
         {
@@ -1801,11 +1821,12 @@ public sealed partial class PortablePackSyncService
     private static bool IsPackManifestPath(string path) =>
         string.Equals(path, PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsServiceRelativePath(string relativePath) =>
+    internal static bool IsServiceRelativePath(string relativePath) =>
         string.Equals(relativePath, SourceMarkerFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(relativePath, SyncStateFileName, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(relativePath, ApplyPendingFileName, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(relativePath, InstanceStateFileName, StringComparison.OrdinalIgnoreCase);
+        string.Equals(relativePath, InstanceStateFileName, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(relativePath, LauncherCleanupStateFileName, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsProtectedRootName(string name) =>
         IsServiceRelativePath(name) ||
@@ -1926,37 +1947,6 @@ public sealed partial class PortablePackSyncService
         }
     }
 
-    /// <summary>
-    /// Removes staging directories a killed earlier run left behind; nothing
-    /// else ever deletes them.
-    /// </summary>
-    private static void SweepAbandonedEntries(string directory, string pattern)
-    {
-        try
-        {
-            if (!Directory.Exists(directory)) return;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, pattern))
-            {
-                if (Path.GetFileName(entry).StartsWith(DownloadPlanDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    TryDeleteDownloadPlanDirectory(directory, entry);
-                    continue;
-                }
-                if (Directory.Exists(entry))
-                {
-                    TryDeleteDirectory(entry);
-                }
-                else
-                {
-                    TryDeleteFile(entry);
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-        }
-    }
-
     [GeneratedRegex("^[A-Za-z0-9._-]+$")]
     private static partial Regex IdentifierRegex();
 
@@ -2055,6 +2045,8 @@ public sealed partial class PortablePackSyncService
     {
         public int SchemaVersion { get; set; }
         public string Revision { get; set; } = "";
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+        public bool HasCompleteLauncherPaths { get; set; }
         public Dictionary<string, SyncStateFileDto> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<RemoteFileDto>? RetiredFiles { get; set; } = [];
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
