@@ -58,7 +58,7 @@ public sealed class PortableSkinSignatureTests
 
     private static string ReadAdapterSource(params string[] relativeParts)
     {
-        var parts = new[] { "Program", "IdentityAdapters" }.Concat(relativeParts).ToArray();
+        var parts = new[] { "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters" }.Concat(relativeParts).ToArray();
         var current = new DirectoryInfo(AppContext.BaseDirectory);
         while (current is not null)
         {

@@ -92,9 +92,7 @@ public sealed class NoticeOverlayAgentTests
         finally { TempTree.Delete(root); }
     }
 
-    private static Stream AgentResource() => typeof(PeerNoticeService).Assembly
-        .GetManifestResourceStream("Minecraft.NoticeOverlayAgent.jar")
-        ?? throw new FileNotFoundException("The launcher must embed its fullscreen notice agent.");
+    private static Stream AgentResource() => ComponentTestFiles.OpenArtifact("notice-overlay");
 
     private static string Read(ZipArchive jar, string path)
     {

@@ -67,8 +67,6 @@
                       LogicalName="Minecraft.WindowIconAssets.jar" />
     <!-- The version history the window shows; hand-written, one entry per
          commit, checked by the release workflow. See ChangelogService. -->
-    <EmbeddedResource Include="Resources\steam-components.json" LogicalName="Minecraft.Steam.components.json" />
-    <EmbeddedResource Include="Resources\steam-components-v2.json" LogicalName="Minecraft.Steam.components-v2.json" />
     <EmbeddedResource Include="Changelog.md"
                       LogicalName="Minecraft.Changelog.md" />
     <!-- Steamworks SDK 1.60 native, the build Steamworks.NET 2024.8.0 targets.
@@ -80,69 +78,6 @@
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
     <PackageReference Include="BsDiff" Version="1.1.0" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <PortableIdentityAdapterName>Minecraft-1.21.1-NeoForge</PortableIdentityAdapterName>
-    <PortableIdentityAdapterJar>$(MSBuildProjectDirectory)\Build\IdentityAdapters\$(PortableIdentityAdapterName)\portable-identity-adapter.jar</PortableIdentityAdapterJar>
-  </PropertyGroup>
-
-  <Target Name="BuildPortableIdentityAdapter"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\IdentityAdapters\Common\Build-IdentityAdapter.ps1&quot; -AdapterName &quot;$(PortableIdentityAdapterName)&quot; -OutputPath &quot;$(PortableIdentityAdapterJar)&quot;" />
-    <ItemGroup>
-      <EmbeddedResource Include="$(PortableIdentityAdapterJar)" LogicalName="Minecraft.PortableIdentityAdapter.jar" />
-    </ItemGroup>
-  </Target>
-
-  <PropertyGroup>
-    <NoticeOverlayAgentJar>$(MSBuildProjectDirectory)\Build\NoticeOverlay\launcher-notice-agent.jar</NoticeOverlayAgentJar>
-  </PropertyGroup>
-  <Target Name="BuildNoticeOverlayAgent"
-          BeforeTargets="PrepareForBuild"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\NoticeOverlay\Build-NoticeOverlay.ps1&quot; -OutputPath &quot;$(NoticeOverlayAgentJar)&quot;" />
-  </Target>
-  <Target Name="EmbedNoticeOverlayAgent" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildNoticeOverlayAgent"
-          Condition="'$(DesignTimeBuild)' != 'true'">
-    <ItemGroup>
-      <EmbeddedResource Include="$(NoticeOverlayAgentJar)" LogicalName="Minecraft.NoticeOverlayAgent.jar"
-                        Condition="Exists('$(NoticeOverlayAgentJar)')" />
-    </ItemGroup>
-  </Target>
-
-  <PropertyGroup>
-    <NativeInteropAgentJar>$(MSBuildProjectDirectory)\Build\NativeInterop\launcher-native-interop-agent.jar</NativeInteropAgentJar>
-  </PropertyGroup>
-  <Target Name="BuildNativeInteropAgent" BeforeTargets="PrepareForBuild"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\NativeInterop\Build-NativeInterop.ps1&quot; -OutputPath &quot;$(NativeInteropAgentJar)&quot;" />
-  </Target>
-  <Target Name="EmbedNativeInteropAgent" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildNativeInteropAgent"
-          Condition="'$(DesignTimeBuild)' != 'true'">
-    <ItemGroup>
-      <EmbeddedResource Include="$(NativeInteropAgentJar)" LogicalName="Minecraft.NativeInteropAgent.jar"
-                        Condition="Exists('$(NativeInteropAgentJar)')" />
-    </ItemGroup>
-  </Target>
-
-  <PropertyGroup>
-    <LegacyForgeInstallerSource>$(MSBuildProjectDirectory)\LegacyForgeInstaller\LegacyForgeClientInstaller.java</LegacyForgeInstallerSource>
-    <LegacyForgeInstallerBuild>$(MSBuildProjectDirectory)\LegacyForgeInstaller\Build-LegacyForgeInstaller.ps1</LegacyForgeInstallerBuild>
-    <LegacyForgeInstallerClass>$(MSBuildProjectDirectory)\Build\LegacyForgeInstaller\LegacyForgeClientInstaller.class</LegacyForgeInstallerClass>
-  </PropertyGroup>
-  <Target Name="BuildLegacyForgeInstaller" BeforeTargets="PrepareForBuild"
-          Inputs="$(LegacyForgeInstallerSource);$(LegacyForgeInstallerBuild)" Outputs="$(LegacyForgeInstallerClass)"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipPortableIdentityAdapter)' != 'true'">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(LegacyForgeInstallerBuild)&quot; -OutputPath &quot;$(LegacyForgeInstallerClass)&quot;" />
-  </Target>
-  <Target Name="EmbedLegacyForgeInstaller" BeforeTargets="PrepareForBuild" DependsOnTargets="BuildLegacyForgeInstaller"
-          Condition="'$(DesignTimeBuild)' != 'true'">
-    <ItemGroup>
-      <EmbeddedResource Include="$(LegacyForgeInstallerClass)" LogicalName="Minecraft.LegacyForgeClientInstaller.class"
-                        Condition="Exists('$(LegacyForgeInstallerClass)')" />
-    </ItemGroup>
-  </Target>
 
   <Target Name="UseFinalWpfAssemblyForPublish"
           BeforeTargets="ComputeResolvedFilesToPublishList"

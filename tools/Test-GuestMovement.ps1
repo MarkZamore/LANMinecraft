@@ -6,9 +6,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_ASSETS) -or
+    [string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_SOURCES)) {
+    . (Join-Path $repositoryRoot 'tools/Prepare-ComponentTests.ps1')
+}
 if ([string]::IsNullOrWhiteSpace($JavaHome)) { throw 'Set JAVA_HOME to a JDK.' }
 if ([string]::IsNullOrWhiteSpace($AdapterPath)) {
-    $AdapterPath = Join-Path $repositoryRoot 'Program\Build\IdentityAdapters\Minecraft-1.21.1-NeoForge\portable-identity-adapter.jar'
+    $AdapterPath = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_ASSETS 'portable-identity-adapter.jar'
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot 'artifacts\guest-movement-probe'
@@ -17,7 +21,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $compiler = Join-Path $JavaHome 'bin\javac.exe'
 $java = Join-Path $JavaHome 'bin\java.exe'
 $source = Join-Path $PSScriptRoot 'GuestMovementProbe\GuestMovementProbe.java'
-$common = Join-Path $repositoryRoot 'Program\IdentityAdapters\Common'
+$common = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_SOURCES 'Program\IdentityAdapters\Common'
 # The probe's generated fixtures use a public ASM of their own. The runtime
 # agent carries a private copy and must not export the loader's org.objectweb.asm.
 $classPath = @($AdapterPath,

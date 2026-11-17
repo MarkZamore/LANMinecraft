@@ -58,8 +58,11 @@ public sealed class LegacySteamComponentCatalogTests
 
     private static JsonObject WithLegacy()
     {
-        var root = JsonNode.Parse(SteamComponentCatalog.HistoricalV2Json())!.AsObject();
-        root["builds"]!.AsArray().Add(new JsonObject
+        var root = JsonNode.Parse(RuntimeComponentContext.Current.SteamCatalogJson)!.AsObject();
+        var rows = root["builds"]!.AsArray();
+        foreach (var existing in rows.Where(row => row!["loaders"]!.AsArray().Any(value => value!.GetValue<string>() == "LegacyFabric")).ToArray()) rows.Remove(existing);
+        root.Remove("java8Builds");
+        rows.Add(new JsonObject
         {
             ["version"] = "0.3.4", ["authorVersion"] = "0.3.4",
             ["fileName"] = "e4steam-legacy-fabric-mc1.6.4-v0.3.4-lf164.1.jar",

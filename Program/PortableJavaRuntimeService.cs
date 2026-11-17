@@ -12,62 +12,26 @@ using System.Text.RegularExpressions;
 namespace Minecraft;
 
 /// <summary>
-/// Installs the pinned Java runtime the game runs on. Minecraft's own metadata
-/// still names Mojang's Java 21 component, which keeps driving the loader
-/// installer, while the client itself runs on this runtime.
-///
-/// The pin is Java 21 because that is the version 1.21.1 and everything built
-/// for it targets, and because mods may refuse anything newer: Cobblemon
-/// declares javaVersion="[21,21.999999)" in its metadata, and NeoForge answers
-/// a broken feature bound by refusing to load a single mod, which reads as an
-/// unrelated crash deep inside another mod's static initialiser.
+/// Installs the exact Java runtime selected by the checked component catalog.
+/// Each prepared game supplies its own pin, including the archive identity,
+/// installation layout and flags supported by that runtime.
 /// </summary>
 public sealed partial class PortableJavaRuntimeService
 {
-    public const string PinnedRuntimeId = "temurin-21.0.12.1+1";
-    /// <summary>
-    /// What this runtime answers for JAVA_VERSION in its own <c>release</c>
-    /// file, which is how an installed copy is recognised - not the release
-    /// name and not the file name. jdk-21.0.12.1+1 reports "21.0.12.1" where
-    /// jdk-21.0.12+8 reported "21.0.12", and a wrong guess here is not a wrong
-    /// label but a runtime that reinstalls itself on every launch for ever.
-    /// </summary>
-    public const string PinnedJavaVersion = "21.0.12.1";
-    public const string InstallDirectoryName = PinnedRuntimeId;
-    public const string ArchiveFileName = "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip";
-    public const long ArchiveSizeBytes = 205_073_461;
-    public const string ArchiveSha256 =
-        "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e";
-
-    /// <summary>The feature release, which decides which JVM options the game gets.</summary>
-    public static int PinnedMajorVersion { get; } =
-        int.Parse(PinnedJavaVersion.Split('.')[0], CultureInfo.InvariantCulture);
-
-    // The Temurin archive wraps its files in one directory. Strip that prefix into the exact runtime ID.
-    private const string ArchiveRootPrefix = "jdk-21.0.12.1+1/";
+    public static string PinnedRuntimeId => DefaultPin.RuntimeId;
+    public static string PinnedJavaVersion => DefaultPin.JavaVersion;
+    public static string InstallDirectoryName => DefaultPin.InstallDirectoryName;
+    public static string ArchiveFileName => DefaultPin.ArchiveFileName;
+    public static long ArchiveSizeBytes => DefaultPin.ArchiveSizeBytes;
+    public static string ArchiveSha256 => DefaultPin.ArchiveSha256;
+    public static int PinnedMajorVersion => DefaultPin.MajorVersion;
+    public static Uri ReleaseDownloadUri => DefaultPin.DownloadUris[0];
+    public static Uri ApiDownloadUri => DefaultPin.DownloadUris.Last();
+    public static IReadOnlyList<Uri> DownloadUris => DefaultPin.DownloadUris;
     internal const string MarkerFileName = ".portable-java.json";
-    // A cache generation, not a data format: it is bumped to throw the cached
-    // work away and redo it, so it is deliberately independent of
-    // PortableFormat's version - a release must not cost every player a
-    // re-download for an unrelated change.
     internal const int MarkerCacheGeneration = 1;
-
-    // Measured from the extracted image, with headroom for the archive copy.
-    private const long RequiredFreeSpaceBytes = 800L * 1024 * 1024;
     private static readonly TimeSpan DownloadSourceTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan FlagProbeTimeout = TimeSpan.FromSeconds(30);
-
-    public static Uri ReleaseDownloadUri { get; } = new(
-        "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/" +
-        "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
-        UriKind.Absolute);
-
-    public static Uri ApiDownloadUri { get; } = new(
-        "https://api.adoptium.net/v3/binary/version/jdk-21.0.12.1%2B1/windows/x64/jdk/hotspot/normal/eclipse",
-        UriKind.Absolute);
-
-    public static IReadOnlyList<Uri> DownloadUris { get; } =
-        Array.AsReadOnly([ReleaseDownloadUri, ApiDownloadUri]);
 
     private readonly AppPaths _paths;
     private readonly Logger _logger;
@@ -94,18 +58,8 @@ public sealed partial class PortableJavaRuntimeService
         _freeSpaceProbe = freeSpaceProbe ?? HasFreeSpace;
     }
 
-    internal static JavaRuntimePin DefaultPin { get; } = new(
-        PinnedMajorVersion,
-        PinnedRuntimeId,
-        PinnedJavaVersion,
-        InstallDirectoryName,
-        ArchiveFileName,
-        ArchiveRootPrefix,
-        DownloadUris,
-        ArchiveSizeBytes,
-        ArchiveSha256,
-        RequiredFreeSpaceBytes,
-        VerifyFlags: true);
+    internal static JavaRuntimePin DefaultPin => JavaRuntimeCatalog.ForMajorVersion(JavaRuntimeCatalog.DefaultMajorVersion)
+        ?? throw new InvalidDataException("The component catalog has no default Java runtime.");
 
     /// <summary>
     /// Returns the pinned runtime, installing it under <paramref name="runtimeRoot"/> when
@@ -199,6 +153,12 @@ public sealed partial class PortableJavaRuntimeService
         else
         {
             _logger.Info($"Java runtime {_pin.RuntimeId} archive was already cached.");
+        }
+
+        try { JavaRuntimeStorage.RecordArchiveOwnership(_paths, cachePath, _pin); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.Warn($"Java runtime archive ownership could not be recorded: {exception.Message}");
         }
 
         if (!_freeSpaceProbe(installRoot, _pin.RequiredFreeSpaceBytes))
@@ -748,7 +708,7 @@ public sealed partial class PortableJavaRuntimeService
         }
     }
 
-    private static JavaRuntimePin ValidatePin(JavaRuntimePin pin)
+    internal static JavaRuntimePin ValidatePin(JavaRuntimePin pin)
     {
         ArgumentNullException.ThrowIfNull(pin);
         if (!PackCatalogService.ValidFolder(pin.RuntimeId) ||
@@ -758,7 +718,7 @@ public sealed partial class PortableJavaRuntimeService
         {
             throw new ArgumentException("Java runtime pin is invalid.", nameof(pin));
         }
-        if (!pin.ArchiveRootPrefix.EndsWith('/'))
+        if (string.IsNullOrWhiteSpace(pin.ArchiveRootPrefix) || !pin.ArchiveRootPrefix.EndsWith('/'))
         {
             throw new ArgumentException("Java runtime archive prefix must end with '/'.", nameof(pin));
         }
@@ -773,7 +733,7 @@ public sealed partial class PortableJavaRuntimeService
             throw new ArgumentException("Java runtime URLs must be absolute and use HTTPS.", nameof(pin));
         }
         if (pin.ArchiveSizeBytes <= 0 ||
-            pin.ArchiveSha256.Length != 64 ||
+            string.IsNullOrWhiteSpace(pin.ArchiveSha256) || pin.ArchiveSha256.Length != 64 ||
             pin.ArchiveSha256.Any(character => !Uri.IsHexDigit(character)))
         {
             throw new ArgumentException("Java runtime archive pin is invalid.", nameof(pin));

@@ -8,7 +8,7 @@ public sealed class IdentityAdapterSteamLanEntryTests
     public async Task NativeSteamWorldHeaders_KeepNativeRowsAndRejectIncompleteShapes()
     {
         var repository = FindRepository();
-        var common = Path.Combine(repository, "Program", "IdentityAdapters", "Common");
+        var common = Path.Combine(repository, "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
         var root = Path.Combine(Path.GetTempPath(), "steam-lan-header-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try

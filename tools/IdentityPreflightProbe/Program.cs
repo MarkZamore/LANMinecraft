@@ -37,6 +37,13 @@ var profile = isFabric ? $"fabric-loader-{loaderVersion}-{version}" : "read-only
 var runtime = Activator.CreateInstance(Type("PreparedRuntime"), packRoot, profile, "java", client, descriptor)!;
 Type("PreparedRuntime").GetProperty("LibrariesRoot")!.SetValue(runtime, libraries);
 var paths = Activator.CreateInstance(Type("AppPaths"), appRoot)!;
+var logger = Activator.CreateInstance(Type("Logger"), Path.Combine(appRoot, "Minecraft", "Personal", "logs.log"))!;
+var components = Activator.CreateInstance(Type("RuntimeComponentService"), paths, logger, null, null, null)!;
+var catalogTask = (Task)Type("RuntimeComponentService").GetMethod("LoadAsync")!
+    .Invoke(components, [false, CancellationToken.None])!;
+await catalogTask;
+var catalog = catalogTask.GetType().GetProperty("Result")!.GetValue(catalogTask);
+Type("RuntimeComponentContext").GetMethod("SetDefault")!.Invoke(null, [catalog]);
 var serviceType = Type("IdentityAdapterMappingService");
 var service = Activator.CreateInstance(serviceType, paths)!;
 const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;

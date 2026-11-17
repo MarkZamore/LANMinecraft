@@ -2,13 +2,17 @@
 # This is an offline semantic bench, not a visual or two-client game check.
 param(
     [string]$InstallRoot = (Join-Path $PSScriptRoot '..\Minecraft'),
-    [string]$AdapterJar = (Join-Path $PSScriptRoot '..\Program\Build\IdentityAdapters\Minecraft-1.21.1-NeoForge\portable-identity-adapter.jar'),
+    [string]$AdapterJar = '',
     [string]$JavaHome = $env:JAVA_HOME,
     [string[]]$MinecraftVersions = @('26.2', '1.21.1')
 )
 
 $ErrorActionPreference = 'Stop'
 $InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
+if ([string]::IsNullOrWhiteSpace($AdapterJar)) {
+    . (Join-Path $PSScriptRoot 'Prepare-ComponentTests.ps1')
+    $AdapterJar = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_ASSETS 'portable-identity-adapter.jar'
+}
 $AdapterJar = [IO.Path]::GetFullPath($AdapterJar)
 if (-not $JavaHome) {
     $JavaHome = Join-Path $InstallRoot 'Launcher\JavaRuntimes\runtime\windows-x64\java-25'

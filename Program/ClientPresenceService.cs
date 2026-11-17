@@ -31,19 +31,30 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
     {
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public string? ExecutablePath { get; init; }
+
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string[]? ComponentHashes { get; init; }
+
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? ComponentRevision { get; init; }
     }
 
     private string Root => Path.Combine(paths.Personal, DirectoryName);
 
     /// <summary>Writes the note that says this process is playing.</summary>
-    public void Remember(Process process, string packRelativePath, string? executablePath = null)
+    public void Remember(Process process, string packRelativePath, string? executablePath = null,
+        IReadOnlyCollection<string>? componentHashes = null, string? componentRevision = null)
     {
         ArgumentNullException.ThrowIfNull(process);
+        if (componentHashes?.Any(hash => !IsComponentHash(hash)) == true)
+            throw new ArgumentException("Invalid component hash in game session.", nameof(componentHashes));
         try
         {
             var session = new ClientSession(process.Id, process.StartTime.ToUniversalTime(), packRelativePath)
             {
-                ExecutablePath = executablePath
+                ExecutablePath = executablePath,
+                ComponentHashes = componentHashes?.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                ComponentRevision = componentRevision
             };
             Directory.CreateDirectory(Root);
             AtomicFile.WriteAllText(
@@ -89,12 +100,13 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
             }
             catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
             {
-                session = null;
+                continue;
             }
-
-            if (session is not null && IsStillRunning(session, probe is null
-                    ? ProbeProcess(session.ProcessId, session.ExecutablePath is not null)
-                    : probe(session.ProcessId)))
+            if (session is null || session.ProcessId <= 0 || !PackCatalogService.ValidFolder(session.PackRelativePath)) continue;
+            (string Name, DateTime StartedUtc)? actual;
+            if (probe is not null) actual = probe(session.ProcessId);
+            else if (!TryProbeProcess(session.ProcessId, session.ExecutablePath is not null, out actual)) continue;
+            if (IsStillRunning(session, actual))
             {
                 live.Add(session);
                 continue;
@@ -103,6 +115,43 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
         }
         return live;
     }
+
+    /// <summary>Returns null when an active game's component references cannot be established.</summary>
+    internal IReadOnlySet<string>? ReadComponentReferences(Func<int, (string Name, DateTime StartedUtc)?>? probe = null)
+    {
+        var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (!Directory.Exists(Root)) return hashes;
+            if (!MaintenancePath.TryRead(paths, Root, out var folder) || !folder.HasFlag(FileAttributes.Directory)) return null;
+            foreach (var file in Directory.EnumerateFiles(Root, "*.json"))
+            {
+                if (!MaintenancePath.TryRead(paths, file, out var attributes) || attributes.HasFlag(FileAttributes.Directory))
+                    return null;
+                var session = JsonSerializer.Deserialize<ClientSession>(File.ReadAllText(file), JsonOptions);
+                if (session is null || session.ProcessId <= 0 || !PackCatalogService.ValidFolder(session.PackRelativePath)) return null;
+                (string Name, DateTime StartedUtc)? actual;
+                if (probe is not null) actual = probe(session.ProcessId);
+                else if (!TryProbeProcess(session.ProcessId, session.ExecutablePath is not null, out actual)) return null;
+                if (!IsStillRunning(session, actual)) continue;
+                if (session.ComponentHashes is null)
+                {
+                    // An older Java process can hold extracted agents from before the shared cache.
+                    if (session.ExecutablePath is null) return null;
+                    continue;
+                }
+                if (session.ComponentHashes.Any(hash => !IsComponentHash(hash))) return null;
+                hashes.UnionWith(session.ComponentHashes);
+            }
+            return hashes;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsComponentHash(string? hash) => hash is { Length: 64 } && hash.All(char.IsAsciiHexDigit);
 
     /// <summary>
     /// Whether the note still describes the process that is running under that
@@ -121,18 +170,24 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
         return Math.Abs((actual.Value.StartedUtc - session.StartedUtc).TotalSeconds) < 1.5;
     }
 
-    private static (string Name, DateTime StartedUtc)? ProbeProcess(int processId, bool native)
+    private static bool TryProbeProcess(int processId, bool native, out (string Name, DateTime StartedUtc)? actual)
     {
+        actual = null;
         try
         {
             using var process = Process.GetProcessById(processId);
             var name = native ? process.MainModule?.FileName : process.ProcessName;
-            if (name is null) return null;
-            return (name, process.StartTime.ToUniversalTime());
+            if (name is null) return false;
+            actual = (name, process.StartTime.ToUniversalTime());
+            return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or SystemException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
-            return null;
+            return true;
+        }
+        catch (SystemException)
+        {
+            return false;
         }
     }
 

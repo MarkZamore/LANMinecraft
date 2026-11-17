@@ -85,6 +85,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
             if (File.Exists(sessionLock))
             { using var held = new FileStream(sessionLock, FileMode.Open, FileAccess.Read, FileShare.None); }
         }
+        using var componentRename = RuntimeComponentService.PreparePackRename(paths, old, entry.RelativePath);
         Journal journal;
         if (pending)
         {
@@ -128,6 +129,7 @@ internal sealed class PackRenameMigration(AppPaths paths, Logger? logger = null,
             afterMove?.Invoke(step + 1);
         }
         RetargetSaves(old, entry.RelativePath, journal.SavesJunction);
+        componentRename?.Commit();
         RewriteOwnedJson(old, entry);
         RewriteSettings(settings, old, entry.RelativePath);
         save(settings);

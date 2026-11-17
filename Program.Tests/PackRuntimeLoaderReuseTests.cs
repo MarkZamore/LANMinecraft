@@ -33,6 +33,7 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         var java = CreateJava(personal);
 
         using var http = new HttpClient(_handler, disposeHandler: false);
+        ComponentTestFiles.SeedInstallation(_paths);
         using var service = new PackRuntimeService(_paths, new Logger(_paths.LogFile), http);
         var prepared = await service.PrepareAsync("Personal pack", null, CancellationToken.None);
 
@@ -66,6 +67,7 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         CreateJava(personal);
 
         using var http = new HttpClient(_handler, disposeHandler: false);
+        ComponentTestFiles.SeedInstallation(_paths);
         using var service = new PackRuntimeService(_paths, new Logger(_paths.LogFile), http);
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.PrepareAsync("Personal pack", null, CancellationToken.None));
@@ -97,6 +99,7 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         var reports = new RecordedProgress();
         using var http = new HttpClient(_handler, disposeHandler: false);
         var logger = new Logger(_paths.LogFile);
+        ComponentTestFiles.SeedInstallation(_paths);
         using var service = new PackRuntimeService(_paths, logger, http,
             packSync: new PortablePackSyncService(_paths, logger, http));
 
@@ -137,6 +140,7 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
         CreateJava(installed);
 
         using var http = new HttpClient(_handler, disposeHandler: false);
+        ComponentTestFiles.SeedInstallation(_paths);
         using var service = new PackRuntimeService(_paths, new Logger(_paths.LogFile), http);
         var prepared = await service.PrepareAsync("First personal pack", null, CancellationToken.None);
         Assert.Equal(NeoForgeProfile, prepared.ProfileId);
@@ -290,6 +294,8 @@ public sealed class PackRuntimeLoaderReuseTests : IDisposable
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
+            if (request.RequestUri?.Host == "raw.githubusercontent.com")
+                throw new HttpRequestException("The component catalog is offline in this fixture.");
             RequestCount++;
             throw new InvalidOperationException($"Fixture network access blocked for {request.RequestUri}");
         }

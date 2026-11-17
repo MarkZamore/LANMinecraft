@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,7 +12,6 @@ namespace Minecraft;
 public sealed class GameNoticeOverlayService
 {
     internal const string NativeFeature = "native-launcher-notices-v1";
-    private const string ResourceName = "Minecraft.NoticeOverlayAgent.jar";
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(7);
     private static readonly TimeSpan HeartbeatLifetime = TimeSpan.FromSeconds(2);
     private readonly AppPaths _paths;
@@ -23,7 +21,7 @@ public sealed class GameNoticeOverlayService
     private readonly Func<DateTimeOffset> _now;
     private readonly Func<int> _foregroundProcess;
     private readonly Func<int, long?> _processStartTicks;
-    private readonly Func<Stream> _agentResource;
+    private readonly Func<Stream>? _agentResource;
     private readonly Func<int, double> _displayScale;
     private readonly Func<int, int, bool> _isDescendant;
     private readonly Func<int, bool> _fullscreenPresentation;
@@ -42,7 +40,7 @@ public sealed class GameNoticeOverlayService
         _now = now;
         _foregroundProcess = foregroundProcess;
         _processStartTicks = processStartTicks;
-        _agentResource = agentResource ?? OpenAgentResource;
+        _agentResource = agentResource;
         _displayScale = displayScale ?? ForegroundDisplayScale;
         _isDescendant = isDescendant ?? GameProcessTree.Contains;
         _fullscreenPresentation = fullscreenPresentation ?? PeerNoticeNative.IsForegroundFullscreenGame;
@@ -228,12 +226,13 @@ public sealed class GameNoticeOverlayService
 
     private string ExtractAgent()
     {
+        if (_agentResource is null) return RuntimeComponentContext.RequirePath(_paths, "notice-overlay");
         using var resource = _agentResource();
         using var buffer = new MemoryStream();
         resource.CopyTo(buffer);
         var bytes = buffer.ToArray();
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        var directory = Path.Combine(Root, "Agent", hash);
+        var directory = Path.Combine(_paths.Launcher, "Components", "objects", hash);
         EnsureOrdinaryDirectory(directory);
         var target = Path.Combine(directory, "launcher-notice-agent.jar");
         if (File.Exists(target))
@@ -245,10 +244,6 @@ public sealed class GameNoticeOverlayService
         AtomicWrite(target, bytes);
         return target;
     }
-
-    private static Stream OpenAgentResource() =>
-        Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName)
-        ?? throw new InvalidOperationException("The launcher has no fullscreen notice renderer. Rebuild with its Java tools enabled.");
 
     private void Bind(OverlaySession session, int processId, long startedUtcTicks)
     {

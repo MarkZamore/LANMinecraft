@@ -8,7 +8,7 @@ public sealed class IdentityAdapterSteamDiscoveryBehaviorTests
     public async Task NativeDiscovery_UsesLauncherWorldMetadataAndScopesUdpFiltering()
     {
         var repository = FindRepository();
-        var common = Path.Combine(repository, "Program", "IdentityAdapters", "Common");
+        var common = Path.Combine(repository, "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
         var fixture = Path.Combine(repository, "Program.Tests", "Fixtures", "SteamDiscoveryBehavior");
         var root = Path.Combine(Path.GetTempPath(), "steam-discovery-behavior-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -28,9 +28,7 @@ public sealed class IdentityAdapterSteamDiscoveryBehaviorTests
             foreach (var version in new[] { "26.1", "26.2", "26.3" })
                 Assert.Contains($"PASS: {version} native publication announces a world once through both entry points", output, StringComparison.Ordinal);
             var adapter = Path.Combine(root, "native-preflight-adapter.jar");
-            await using (var resource = typeof(PortableIdentityAdapterService).Assembly
-                .GetManifestResourceStream("Minecraft.PortableIdentityAdapter.jar")
-                ?? throw new InvalidOperationException("Build the actual Java adapter before native preflight behavior tests."))
+            await using (var resource = ComponentTestFiles.OpenArtifact("identity-adapter"))
             await using (var target = File.Create(adapter)) await resource.CopyToAsync(target);
             var hostOutput = await Run("java", "-Djava.io.tmpdir=" + root,
                 "-cp", root + Path.PathSeparator + classPath + Path.PathSeparator + adapter,

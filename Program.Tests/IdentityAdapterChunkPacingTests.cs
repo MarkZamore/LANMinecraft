@@ -180,7 +180,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     public async Task NativeChosenView32_IsCompleteWhenTheBoundedHoldOverflows()
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
         var classes = Path.Combine(_root, "native-distance-probe");
         Directory.CreateDirectory(classes);
         var asm = string.Join(Path.PathSeparator, Path.Combine(common, "lib", "asm-9.8.jar"),
@@ -236,7 +236,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     public async Task UnwritableNetworkPausesAndResumesHeldChunks_WithoutChangingNativeViewOrFallbacks()
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"))!;
         var classes = Path.Combine(_root, "backpressure-probe");
         Directory.CreateDirectory(classes);
         await RunJava("javac", "-J-Xmx128m", "--release", "17", "-d", classes,
@@ -266,7 +266,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
         Assert.Equal(1, NumberInTheAgent("CHUNKS_PER_TICK_WHEN_VERY_SLOW"));
         Assert.True(NumberInTheAgent("HOLD_LIMIT") < wholeView);
         var source = File.ReadAllText(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"));
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"));
         Assert.DoesNotContain("SERVE_DISTANCE_LIMIT", source, StringComparison.Ordinal);
         Assert.DoesNotContain("setChunkViewDistanceMethods", source, StringComparison.Ordinal);
         Assert.DoesNotContain("portable-serve-distance", source, StringComparison.Ordinal);
@@ -291,7 +291,7 @@ public sealed class IdentityAdapterChunkPacingTests : IDisposable
     private static int NumberInTheAgent(string constant)
     {
         var source = File.ReadAllText(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"));
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortablePerPlayerChunksHooks.java"));
         var match = Regex.Match(source, constant + @"\s*=\s*(\d+)");
 
         Assert.True(match.Success, $"The agent no longer names {constant}.");

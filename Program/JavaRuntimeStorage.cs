@@ -17,6 +17,21 @@ internal static partial class JavaRuntimeStorage
 
     public static string ArchiveParent(AppPaths paths) => Path.Combine(paths.Launcher, "ManagedComponents", "java-runtime");
 
+    private const string ArchiveOwnerFileName = ".portable-java-archive.json";
+
+    internal static void RecordArchiveOwnership(AppPaths paths, string archivePath, JavaRuntimePin pin)
+    {
+        var expected = Path.Combine(ArchiveParent(paths), pin.RuntimeId.Replace('+', '_'), pin.ArchiveFileName);
+        RequireOrdinaryPath(paths, archivePath);
+        if (!Path.GetFullPath(archivePath).Equals(Path.GetFullPath(expected), StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(archivePath) || new FileInfo(archivePath).Length != pin.ArchiveSizeBytes)
+            throw new InvalidDataException("Verified Java archive is outside its owned cache location.");
+        var marker = Path.Combine(Path.GetDirectoryName(archivePath)!, ArchiveOwnerFileName);
+        RequireOrdinaryPath(paths, marker);
+        AtomicFile.WriteAllText(marker, JsonSerializer.Serialize(new ArchiveOwner(1, pin.RuntimeId,
+            pin.ArchiveFileName, pin.ArchiveSha256, pin.MajorVersion)));
+    }
+
     public static async Task<FileStream> AcquireAsync(AppPaths paths, CancellationToken token)
     {
         SharedRuntimeGate.MarkActivity(paths);
@@ -88,15 +103,14 @@ internal static partial class JavaRuntimeStorage
                 {
                     try
                     {
-                        var path = process.MainModule?.FileName;
+                        var path = ProcessImagePath.TryRead(process.Id);
                         if (path is null ? !HasExited(process) : path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                             return true;
                     }
                     catch (InvalidOperationException) { /* The process exited before it could be inspected. */ }
                     catch (Win32Exception)
                     {
-                        // Module enumeration can also fail while an unrelated JVM is exiting.
-                        // Keep the files if the process might still be alive.
+                        // Keep the files if process state cannot establish that it exited.
                         if (!HasExited(process)) return true;
                     }
                 }
@@ -144,6 +158,7 @@ internal static partial class JavaRuntimeStorage
                 {
                     checkpoint?.Invoke();
                     if (string.Equals(Path.GetFileName(packRuntime), excludingBuild, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!Directory.Exists(paths.CombineUnderPacks(Path.GetFileName(packRuntime)))) continue;
                     var statePath = Path.Combine(packRuntime, ".portable-runtime.json");
                     RequireOrdinaryPath(paths, statePath);
                     if (!File.Exists(statePath)) continue;
@@ -154,6 +169,9 @@ internal static partial class JavaRuntimeStorage
                     needed.Add(runtimeId.GetString()!);
                 }
             }
+            var selected = RuntimeComponentService.ReadProtectedJavaRuntimeIds(paths, checkpoint, excludingBuild);
+            if (selected is null) return null;
+            needed.UnionWith(selected);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or
                                    InvalidOperationException or ArgumentException or NotSupportedException)
@@ -164,10 +182,9 @@ internal static partial class JavaRuntimeStorage
     }
 
     public static IReadOnlyList<OwnedDirectory> ReadUnusedDirectories(AppPaths paths, string? excludingBuild = null,
-        bool preservePinnedRuntimes = false, Action? checkpoint = null)
+        Action? checkpoint = null)
     {
         if (ReadNeededRuntimes(paths, excludingBuild, checkpoint) is not { } needed) return [];
-        if (preservePinnedRuntimes) needed.UnionWith(JavaRuntimeCatalog.Releases.Select(pin => pin.RuntimeId));
         var directories = ReadOwnedDirectories(paths, needed, checkpoint);
         foreach (var directory in directories.Where(entry => entry.IsInstall && !needed.Contains(entry.RuntimeId)))
         {
@@ -208,6 +225,11 @@ internal static partial class JavaRuntimeStorage
         {
             checkpoint?.Invoke();
             var name = Path.GetFileName(directory);
+            if (TryReadArchiveOwner(paths, directory, checkpoint, out var ownedArchive))
+            {
+                if (!needed.Contains(ownedArchive.RuntimeId)) result.Add(ownedArchive);
+                continue;
+            }
             var pin = JavaRuntimeCatalog.Releases.FirstOrDefault(release =>
                 string.Equals(release.RuntimeId.Replace('+', '_'), name, StringComparison.OrdinalIgnoreCase));
             if (pin is not null && needed.Contains(pin.RuntimeId)) continue;
@@ -232,6 +254,37 @@ internal static partial class JavaRuntimeStorage
         }
         return result;
     }
+
+    private static bool TryReadArchiveOwner(AppPaths paths, string directory, Action? checkpoint, out OwnedDirectory owner)
+    {
+        owner = null!;
+        try
+        {
+            var marker = Path.Combine(directory, ArchiveOwnerFileName);
+            RequireOrdinaryPath(paths, marker);
+            if (!File.Exists(marker) || new FileInfo(marker).Length > 64 * 1024) return false;
+            var saved = JsonSerializer.Deserialize<ArchiveOwner>(File.ReadAllText(marker));
+            if (saved is not { SchemaVersion: 1, MajorVersion: > 0 } || !OwnedRuntimeId().IsMatch(saved.RuntimeId) ||
+                !Path.GetFileName(directory).Equals(saved.RuntimeId.Replace('+', '_'), StringComparison.OrdinalIgnoreCase) ||
+                saved.ArchiveSha256 is not { Length: 64 } hash || !hash.All(char.IsAsciiHexDigit) ||
+                saved.ArchiveFileName is not { Length: > 0 } name || name != Path.GetFileName(name) ||
+                name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || !OrdinaryTree(directory, checkpoint)) return false;
+            var archive = Path.Combine(directory, name);
+            var entries = Directory.GetFileSystemEntries(directory);
+            if (entries.Length != 2 || !entries.Contains(archive, StringComparer.OrdinalIgnoreCase) ||
+                !entries.Contains(marker, StringComparer.OrdinalIgnoreCase) || !File.Exists(archive) ||
+                !string.Equals(SharedRuntimeStore.HashFile(archive, checkpoint), hash, StringComparison.OrdinalIgnoreCase)) return false;
+            owner = new OwnedDirectory(directory, saved.RuntimeId, saved.MajorVersion, IsInstall: false);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private sealed record ArchiveOwner(int SchemaVersion, string RuntimeId, string ArchiveFileName,
+        string ArchiveSha256, int MajorVersion);
 
     private static bool TryReadOwner(AppPaths paths, string directory, out string runtimeId, out string archiveSha256, out int major)
     {
@@ -330,7 +383,7 @@ internal static partial class JavaRuntimeStorage
                 }
             }
 
-            foreach (var directory in ReadUnusedDirectories(paths, preservePinnedRuntimes: true, checkpoint: Checkpoint)
+            foreach (var directory in ReadUnusedDirectories(paths, checkpoint: Checkpoint)
                          .OrderBy(directory => directory.IsInstall))
             {
                 Checkpoint();
@@ -369,10 +422,12 @@ internal static partial class JavaRuntimeStorage
                 !attributes.HasFlag(FileAttributes.Directory)) return false;
             var complete = true;
             var marker = Path.Combine(directory, PortableJavaRuntimeService.MarkerFileName);
+            var archiveMarker = Path.Combine(directory, ArchiveOwnerFileName);
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
             {
                 Checkpoint();
-                if (entry.Equals(marker, StringComparison.OrdinalIgnoreCase)) continue;
+                if (entry.Equals(marker, StringComparison.OrdinalIgnoreCase) ||
+                    entry.Equals(archiveMarker, StringComparison.OrdinalIgnoreCase)) continue;
                 if (MaintenancePath.IsProtectedAssetName(Path.GetFileName(entry)) ||
                     !MaintenancePath.TryRead(paths, entry, out var entryAttributes))
                 {
@@ -382,7 +437,8 @@ internal static partial class JavaRuntimeStorage
                 complete &= entryAttributes.HasFlag(FileAttributes.Directory)
                     ? DeleteTree(entry) : Delete(entry, false);
             }
-            if (!complete || File.Exists(marker) && !Delete(marker, false)) return false;
+            if (!complete || File.Exists(marker) && !Delete(marker, false) ||
+                File.Exists(archiveMarker) && !Delete(archiveMarker, false)) return false;
             return Delete(directory, true);
         }
     }

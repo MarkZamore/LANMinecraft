@@ -10,6 +10,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+if ([string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_ASSETS) -or
+    [string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_SOURCES)) {
+    . (Join-Path $projectRoot 'tools/Prepare-ComponentTests.ps1')
+}
 if (-not $JavaHome) { throw 'Pass -JavaHome or set JAVA_HOME to a JDK 17 or newer.' }
 $java = Join-Path $JavaHome 'bin\java.exe'
 $javac = Join-Path $JavaHome 'bin\javac.exe'
@@ -17,7 +21,7 @@ foreach ($executable in @($java, $javac)) {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "JDK tool not found: $executable" }
 }
 if (-not $AdapterJar) {
-    $AdapterJar = Join-Path $projectRoot 'Program\Build\IdentityAdapters\Minecraft-1.21.1-NeoForge\portable-identity-adapter.jar'
+    $AdapterJar = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_ASSETS 'portable-identity-adapter.jar'
 }
 $AdapterJar = [IO.Path]::GetFullPath($AdapterJar)
 if (-not (Test-Path -LiteralPath $AdapterJar -PathType Leaf)) { throw 'Build the current production adapter before running the probe.' }
@@ -32,7 +36,7 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Use a new output directory for each proof.' }
 $classes = Join-Path $OutputDirectory 'classes'
 [void][IO.Directory]::CreateDirectory($classes)
-$common = Join-Path $projectRoot 'Program\IdentityAdapters\Common'
+$common = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_SOURCES 'Program\IdentityAdapters\Common'
 $probeDependencies = @($AdapterJar,
     (Join-Path $common 'lib\asm-9.8.jar'),
     (Join-Path $common 'lib\asm-tree-9.8.jar')) -join [IO.Path]::PathSeparator

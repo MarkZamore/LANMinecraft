@@ -1,167 +1,131 @@
-using System.Collections.ObjectModel;
 using System.IO;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace Minecraft;
 
-/// <summary>
-/// The Java runtimes the launcher will install, one per feature release it can
-/// be asked for.
-///
-/// Every field here was taken from the release itself rather than derived: the
-/// sizes and checksums come from Adoptium's own metadata for that exact build,
-/// and each archive root prefix was read out of the first entry of the zip,
-/// because the name of the folder inside an archive is not something to guess
-/// at when getting it wrong strips the install to nothing.
-///
-/// The version string beside each one is not the release name and not the file
-/// name: it is what that runtime's own <c>release</c> file answers for
-/// JAVA_VERSION, read out of each archive. That distinction is the whole
-/// difference between a runtime that installs once and one that reinstalls for
-/// ever, because an installed copy is recognised by comparing exactly that
-/// string - and it is not guessable from anything else. The build called
-/// jdk-21.0.12.1+1 reports "21.0.12.1", the one called jdk-21.0.12+8 reports
-/// "21.0.12", and a release named jdk8u504-b01 reports "1.8.0_504".
-/// </summary>
+/// <summary>Java selections from the immutable component snapshot used by this launch.</summary>
 internal static class JavaRuntimeCatalog
 {
-    /// <summary>
-    /// What a modern Minecraft is built for, and what a pack that says nothing
-    /// and looks like nothing recognisable is given.
-    /// </summary>
-    public const int DefaultMajorVersion = 21;
+    private static readonly ConditionalWeakTable<RuntimeComponentSnapshot, Catalog> Parsed = new();
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = false
+    };
+    private static Catalog Current => Parsed.GetValue(RuntimeComponentContext.Current,
+        snapshot => Parse(snapshot.JavaCatalogJson));
 
-    private static ReadOnlyCollection<Uri> UrisFor(string releaseName, string repository, string archiveFileName) =>
-        Array.AsReadOnly<Uri>(
-        [
-            new Uri(
-                $"https://github.com/adoptium/{repository}/releases/download/" +
-                $"{Uri.EscapeDataString(releaseName)}/{archiveFileName}",
-                UriKind.Absolute),
-            // The same file by version rather than by release asset. Kept as a
-            // second way in, not a different build: Adoptium serves this from
-            // the release above.
-            new Uri(
-                $"https://api.adoptium.net/v3/binary/version/{Uri.EscapeDataString(releaseName)}" +
-                "/windows/x64/jdk/hotspot/normal/eclipse",
-                UriKind.Absolute)
-        ]);
-
-    /// <summary>Every runtime the launcher knows how to install, newest first.</summary>
-    public static IReadOnlyList<JavaRuntimePin> Releases { get; } = Array.AsReadOnly<JavaRuntimePin>(
-    [
-        new(
-            25,
-            "temurin-25.0.4.1+1",
-            "25.0.4.1",
-            "temurin-25.0.4.1+1",
-            "OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip",
-            "jdk-25.0.4.1+1/",
-            UrisFor("jdk-25.0.4.1+1", "temurin25-binaries", "OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"),
-            141_167_264,
-            "00c847d804f4a78e9f04f2683faf14fed898535b177b7fc704486cb0284e9283",
-            600L * 1024 * 1024,
-            VerifyFlags: true),
-        new(
-            21,
-            "temurin-21.0.12.1+1",
-            "21.0.12.1",
-            "temurin-21.0.12.1+1",
-            "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
-            "jdk-21.0.12.1+1/",
-            UrisFor("jdk-21.0.12.1+1", "temurin21-binaries", "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip"),
-            205_073_461,
-            "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e",
-            800L * 1024 * 1024,
-            VerifyFlags: true),
-        new(
-            17,
-            "temurin-17.0.20.1+1",
-            "17.0.20.1",
-            "temurin-17.0.20.1+1",
-            "OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip",
-            "jdk-17.0.20.1+1/",
-            UrisFor("jdk-17.0.20.1+1", "temurin17-binaries", "OpenJDK17U-jdk_x64_windows_hotspot_17.0.20.1_1.zip"),
-            190_817_615,
-            "e53a79c3c3d86865bd7e787903884331068e71321714ffd44f145785affc7cb0",
-            700L * 1024 * 1024,
-            VerifyFlags: true),
-        new(
-            8,
-            "temurin-8u504-b01",
-            "1.8.0_504",
-            "temurin-8u504-b01",
-            "OpenJDK8U-jdk_x64_windows_hotspot_8u504b01.zip",
-            "jdk8u504-b01/",
-            UrisFor("jdk8u504-b01", "temurin8-binaries", "OpenJDK8U-jdk_x64_windows_hotspot_8u504b01.zip"),
-            106_457_258,
-            "ea43d46ede95b51e44a12c66711706cddc762e0a766c54bccea18954e902b2aa",
-            400L * 1024 * 1024,
-            // Java 8 predates every option the modern list carries, and the
-            // probe would refuse a runtime that is doing nothing wrong.
-            VerifyFlags: false)
-    ]);
-
-    /// <summary>The runtime for one feature release, or null if none is pinned.</summary>
+    public static int DefaultMajorVersion => Current.DefaultMajorVersion;
+    public static IReadOnlyList<JavaRuntimePin> Releases => Current.Releases;
     public static JavaRuntimePin? ForMajorVersion(int majorVersion) =>
         Releases.FirstOrDefault(release => release.MajorVersion == majorVersion);
 
-    /// <summary>
-    /// The Java a pack has to run on.
-    /// </summary>
-    /// <remarks>
-    /// Taken from the Minecraft version, because that is what decides it and
-    /// because a pack is not asked: Mojang's own version manifest names the
-    /// feature release for every Minecraft they ship - 17 for 1.18.2 and
-    /// 1.20.1, 21 from 1.20.5 - and a pack built for that Minecraft was built
-    /// against it.
-    ///
-    /// Newer is not safer, which is the whole reason this is a mapping rather
-    /// than "install the latest". A mod may declare a Java bound - Cobblemon
-    /// declares [21,21.999999) - and NeoForge answers a bound it cannot satisfy
-    /// by refusing to load that one mod, which surfaces as an unrelated crash
-    /// deep inside another mod's static initialiser. And older is worse still:
-    /// 1.18.2 on 21 is the pairing this launcher shipped for months without a
-    /// choice in the matter.
-    ///
-    /// A Minecraft nobody recognises gets <see cref="DefaultMajorVersion"/>,
-    /// which is what every pack got before this existed.
-    /// </remarks>
     public static JavaRuntimePin RequiredFor(PackRuntimeDescriptor? descriptor)
     {
-        if (descriptor?.JavaMajorVersion is { } explicitMajor)
-            return ForMajorVersion(explicitMajor)
-                ?? throw new InvalidDataException("The pack requests a Java feature release the launcher cannot install.");
-        return ForMajorVersion(MajorVersionFor(descriptor?.MinecraftVersion))
-            ?? ForMajorVersion(DefaultMajorVersion)!;
+        var major = descriptor?.JavaMajorVersion ?? MajorVersionFor(descriptor?.MinecraftVersion);
+        return ForMajorVersion(major)
+            ?? throw new InvalidDataException($"The component catalog has no Java runtime for feature release {major}.");
     }
 
-    /// <summary>The feature release one Minecraft is built for.</summary>
     internal static int MajorVersionFor(string? minecraftVersion)
     {
-        if (!SteamTransportCatalog.TryParseVersion(minecraftVersion, out var parts))
-        {
-            return DefaultMajorVersion;
-        }
-
-        // Anything that is not 1.x is newer than every 1.x, and the newest
-        // Minecraft asks for the newest Java.
-        if (parts[0] != 1) return 25;
-
-        var minor = parts.Length > 1 ? parts[1] : 0;
-        var patch = parts.Length > 2 ? parts[2] : 0;
-        if (minor > 20 || (minor == 20 && patch >= 5)) return 21;
-        if (minor >= 17) return 17;
-        return 8;
+        var catalog = Current;
+        if (!SteamTransportCatalog.TryParseVersion(minecraftVersion, out var version))
+            return catalog.DefaultMajorVersion;
+        foreach (var rule in catalog.Rules)
+            if (SteamTransportCatalog.Compare(version, rule.MinimumMinecraftVersion) >= 0 &&
+                (rule.ExclusiveMaximumMinecraftVersion is null ||
+                 SteamTransportCatalog.Compare(version, rule.ExclusiveMaximumMinecraftVersion) < 0))
+                return rule.MajorVersion;
+        return catalog.DefaultMajorVersion;
     }
 
-    /// <summary>Every install folder a pinned runtime uses.</summary>
-    public static IReadOnlyCollection<string> InstallDirectoryNames { get; } =
+    public static IReadOnlyCollection<string> InstallDirectoryNames =>
         Releases.Select(release => release.InstallDirectoryName).ToArray();
-
-    internal static IReadOnlyCollection<string> LegacyInstallDirectoryNames { get; } =
+    internal static IReadOnlyCollection<string> LegacyInstallDirectoryNames =>
         Releases.Select(release => release.LegacyInstallDirectoryName).ToArray();
-
-    /// <summary>Every archive folder a pinned runtime caches under.</summary>
-    public static IReadOnlyCollection<string> CacheDirectoryNames { get; } =
+    public static IReadOnlyCollection<string> CacheDirectoryNames =>
         Releases.Select(release => release.RuntimeId.Replace('+', '_')).ToArray();
+
+    internal static bool SupportsWorldSharing(PackRuntimeDescriptor descriptor) =>
+        Current.WorldSharingRules.Any(rule =>
+            rule.Loader == descriptor.Loader.Type.ToString() && rule.MinecraftVersion == descriptor.MinecraftVersion &&
+            rule.JavaMajorVersion == RequiredFor(descriptor).MajorVersion);
+
+    internal static bool UseGameJavaForInstaller(PackRuntimeDescriptor descriptor) =>
+        Current.InstallerJavaRules.Any(rule =>
+            rule.Loader == descriptor.Loader.Type.ToString() && rule.MinecraftVersion == descriptor.MinecraftVersion &&
+            rule.LoaderVersions.Contains(descriptor.Loader.Version, StringComparer.Ordinal) &&
+            rule.JavaMajorVersion == RequiredFor(descriptor).MajorVersion);
+
+    internal static void ValidateJson(string json) => _ = Parse(json);
+
+    private static Catalog Parse(string json)
+    {
+        var catalog = JsonSerializer.Deserialize<Catalog>(json, JsonOptions)
+            ?? throw new InvalidDataException("Empty Java component catalog.");
+        if (catalog.SchemaVersion != 1 || catalog.Releases is not { Count: > 0 and <= 64 } ||
+            catalog.Rules is not { Count: > 0 and <= 128 } ||
+            catalog.WorldSharingRules is not { Count: <= 128 } ||
+            catalog.InstallerJavaRules is not { Count: <= 128 } ||
+            catalog.Releases.Any(pin => pin is null) ||
+            catalog.Releases.Select(pin => pin.MajorVersion).Distinct().Count() != catalog.Releases.Count ||
+            catalog.Releases.Select(pin => pin.RuntimeId).Distinct(StringComparer.OrdinalIgnoreCase).Count() != catalog.Releases.Count ||
+            catalog.Releases.All(pin => pin.MajorVersion != catalog.DefaultMajorVersion))
+            throw new InvalidDataException("Invalid Java component catalog schema, runtimes or default.");
+        foreach (var pin in catalog.Releases)
+        {
+            try { _ = PortableJavaRuntimeService.ValidatePin(pin); }
+            catch (ArgumentException exception)
+            {
+                throw new InvalidDataException("Java component catalog contains an invalid runtime pin.", exception);
+            }
+            if (pin.MajorVersion <= 0 || pin.RequiredFreeSpaceBytes < pin.ArchiveSizeBytes ||
+                pin.DownloadUris.Any(uri => !IsOfficialSource(uri)))
+                throw new InvalidDataException("Java component catalog contains an invalid runtime/source.");
+        }
+        foreach (var rule in catalog.Rules)
+            if (rule is null || !ValidVersion(rule.MinimumMinecraftVersion) ||
+                rule.ExclusiveMaximumMinecraftVersion is { } maximum &&
+                    (!ValidVersion(maximum) || SteamTransportCatalog.Compare(rule.MinimumMinecraftVersion, maximum) >= 0) ||
+                catalog.Releases.All(pin => pin.MajorVersion != rule.MajorVersion))
+                throw new InvalidDataException("Invalid Java compatibility rule.");
+        foreach (var rule in catalog.WorldSharingRules)
+            if (rule is null || !Enum.TryParse<PackLoaderKind>(rule.Loader, false, out var loader) ||
+                loader is PackLoaderKind.Native or PackLoaderKind.Vanilla ||
+                !SteamTransportCatalog.TryParseVersion(rule.MinecraftVersion, out _) ||
+                catalog.Releases.All(pin => pin.MajorVersion != rule.JavaMajorVersion))
+                throw new InvalidDataException("Invalid world-sharing compatibility rule.");
+        foreach (var rule in catalog.InstallerJavaRules)
+            if (rule is null || !Enum.TryParse<PackLoaderKind>(rule.Loader, false, out var loader) ||
+                loader is PackLoaderKind.Native or PackLoaderKind.Vanilla ||
+                !SteamTransportCatalog.TryParseVersion(rule.MinecraftVersion, out _) ||
+                rule.LoaderVersions is not { Length: > 0 and <= 32 } ||
+                rule.LoaderVersions.Any(string.IsNullOrWhiteSpace) ||
+                catalog.Releases.All(pin => pin.MajorVersion != rule.JavaMajorVersion))
+                throw new InvalidDataException("Invalid installer Java compatibility rule.");
+        var ordered = catalog.Rules.OrderBy(rule => rule.MinimumMinecraftVersion,
+            Comparer<int[]>.Create(SteamTransportCatalog.Compare)).ToArray();
+        for (var index = 1; index < ordered.Length; index++)
+            if (ordered[index - 1].ExclusiveMaximumMinecraftVersion is not { } previousEnd ||
+                SteamTransportCatalog.Compare(previousEnd, ordered[index].MinimumMinecraftVersion) > 0)
+                throw new InvalidDataException("Ambiguous Java compatibility rules.");
+        return catalog;
+    }
+
+    private static bool ValidVersion(int[]? version) =>
+        version is { Length: > 0 and <= 4 } && version.All(part => part >= 0);
+
+    private static bool IsOfficialSource(Uri uri) =>
+        uri.Query.Length == 0 && uri.Fragment.Length == 0 &&
+        (uri.Host == "github.com" && uri.AbsolutePath.StartsWith("/adoptium/", StringComparison.Ordinal) &&
+            uri.AbsolutePath.Contains("/releases/download/", StringComparison.Ordinal) ||
+         uri.Host == "api.adoptium.net" && uri.AbsolutePath.StartsWith("/v3/binary/version/", StringComparison.Ordinal));
+
+    private sealed record Catalog(int SchemaVersion, int DefaultMajorVersion,
+        IReadOnlyList<JavaRuntimePin> Releases, IReadOnlyList<JavaRule> Rules,
+        IReadOnlyList<WorldSharingRule> WorldSharingRules, IReadOnlyList<InstallerJavaRule> InstallerJavaRules);
+    private sealed record JavaRule(int[] MinimumMinecraftVersion, int[]? ExclusiveMaximumMinecraftVersion, int MajorVersion);
+    private sealed record WorldSharingRule(string Loader, string MinecraftVersion, int JavaMajorVersion);
+    private sealed record InstallerJavaRule(string Loader, string MinecraftVersion, string[] LoaderVersions, int JavaMajorVersion);
 }

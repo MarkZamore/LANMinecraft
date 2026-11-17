@@ -8,7 +8,7 @@ public sealed class IdentityAdapterPreflightClassSourcesTests
     [Fact]
     public async Task SplitNativeArchives_RequireTheirExactExplicitSupportingClasses()
     {
-        var common = Path.GetDirectoryName(FileInRepository("Program", "IdentityAdapters", "Common", "PortableIdentityPreflight.java"))!;
+        var common = Path.GetDirectoryName(FileInRepository("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableIdentityPreflight.java"))!;
         var root = Path.Combine(Path.GetTempPath(), "preflight-class-sources-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -16,7 +16,7 @@ public sealed class IdentityAdapterPreflightClassSourcesTests
             var classPath = string.Join(Path.PathSeparator,
                 Path.Combine(common, "lib", "asm-9.8.jar"), Path.Combine(common, "lib", "asm-tree-9.8.jar"));
             var sources = Directory.EnumerateFiles(common, "*.java").Concat(new[] {
-                FileInRepository("Program", "IdentityAdapters", "Minecraft-1.21.1-NeoForge", "PortableIdentityTransformer.java"),
+                FileInRepository("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Minecraft-1.21.1-NeoForge", "PortableIdentityTransformer.java"),
                 FileInRepository("Program.Tests", "Fixtures", "PreflightClassSourcesProbe.java") });
             await Run("javac", new[] {"--release", "17", "-cp", classPath, "-d", root}.Concat(sources).ToArray());
             var output = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath,

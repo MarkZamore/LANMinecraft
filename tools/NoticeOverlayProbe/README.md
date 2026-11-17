@@ -16,7 +16,7 @@
 
 ```powershell
 $env:JAVA_HOME = 'C:\Tools\jdk-25.0.2'
-.\Program\NoticeOverlay\Build-NoticeOverlay.ps1 -OutputPath .\Program\Build\NoticeOverlay\launcher-notice-agent.jar
+.\LocalSources\LANMinecraft-Components\Program\NoticeOverlay\Build-NoticeOverlay.ps1 -OutputPath .\Program\Build\NoticeOverlay\launcher-notice-agent.jar
 .\tools\NoticeOverlayProbe\Run-Probe.ps1 -Version 3.3.3
 .\tools\NoticeOverlayProbe\Run-Probe.ps1 -Version 3.4.1
 .\tools\NoticeOverlayProbe\Run-Probe.ps1 -Version 3.2.2

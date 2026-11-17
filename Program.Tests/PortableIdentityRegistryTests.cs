@@ -170,7 +170,7 @@ public sealed class PortableIdentityRegistryTests : IDisposable
     public void TheAdapter_ReadsAllThreeFieldsTheLauncherWrites()
     {
         var source = File.ReadAllText(FindRepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableIdentityProfiles.java"));
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableIdentityProfiles.java"));
 
         Assert.Contains("line.split(\"\\\\|\", 3)", source, StringComparison.Ordinal);
         Assert.Contains("byTunnelUuid.get(id)", source, StringComparison.Ordinal);

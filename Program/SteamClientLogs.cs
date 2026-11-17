@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -24,8 +23,6 @@ public static partial class SteamClientLogs
 
     /// <summary>SteamID64 of account 0 in the individual universe; a SteamID3 is the difference.</summary>
     private const ulong IndividualAccountBase = 76561197960265728;
-
-    private const uint ProcessQueryLimitedInformation = 0x1000;
 
     [GeneratedRegex(@"\[U:1:(?<account>\d+)\]")]
     private static partial Regex AccountId();
@@ -56,7 +53,7 @@ public static partial class SteamClientLogs
             try
             {
                 if (found is not null) continue;
-                var executable = ImagePathOf(process.Id);
+                var executable = ProcessImagePath.TryRead(process.Id);
                 var directory = executable is null ? null : Path.GetDirectoryName(executable);
                 if (directory is null) continue;
                 var logs = Path.Combine(directory, "logs");
@@ -72,22 +69,6 @@ public static partial class SteamClientLogs
             }
         }
         return found;
-    }
-
-    private static string? ImagePathOf(int processId)
-    {
-        var handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
-        if (handle == IntPtr.Zero) return null;
-        try
-        {
-            var buffer = new char[1024];
-            var size = buffer.Length;
-            return QueryFullProcessImageName(handle, 0, buffer, ref size) ? new string(buffer, 0, size) : null;
-        }
-        finally
-        {
-            CloseHandle(handle);
-        }
     }
 
     /// <summary>
@@ -143,14 +124,4 @@ public static partial class SteamClientLogs
                    CultureInfo.InvariantCulture, DateTimeStyles.None, out stamp);
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
-
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, [Out] char[] name, ref int size);
-
-    [DllImport("kernel32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(IntPtr handle);
 }

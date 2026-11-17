@@ -8,12 +8,15 @@ public sealed class IdentityAdapterContentBoundaryTests
     [Fact]
     public async Task PackMenuCompatibilityCannotReturnThroughPackagedAgentOrLegacyProperties()
     {
+        Assert.DoesNotContain(typeof(AppPaths).Assembly.GetManifestResourceNames(),
+            name => name is "Minecraft.PortableIdentityAdapter.jar" or "Minecraft.NoticeOverlayAgent.jar" or
+                "Minecraft.NativeInteropAgent.jar" or "Minecraft.LegacyForgeClientInstaller.class");
         var root = Path.Combine(Path.GetTempPath(), "lanmc-agent-content-boundary-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
             var adapter = Path.Combine(root, "adapter.jar");
-            using (var resource = typeof(AppPaths).Assembly.GetManifestResourceStream("Minecraft.PortableIdentityAdapter.jar")!)
+            using (var resource = ComponentTestFiles.OpenArtifact("identity-adapter"))
             using (var output = File.Create(adapter)) await resource.CopyToAsync(output);
             using (var zip = ZipFile.OpenRead(adapter))
                 Assert.DoesNotContain(zip.Entries, entry => entry.FullName.EndsWith("/PortableMenuRegistrationTransformer.class", StringComparison.Ordinal));
@@ -21,8 +24,8 @@ public sealed class IdentityAdapterContentBoundaryTests
             // The fixture generates bytecode with its own pinned ASM. Runtime
             // agent internals are private and are not a test compile dependency.
             var classPath = string.Join(Path.PathSeparator, adapter,
-                RepositoryFile("Program", "IdentityAdapters", "Common", "lib", "asm-9.8.jar"),
-                RepositoryFile("Program", "IdentityAdapters", "Common", "lib", "asm-tree-9.8.jar"));
+                RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "lib", "asm-9.8.jar"),
+                RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "lib", "asm-tree-9.8.jar"));
             await Run("javac", "--release", "17", "-cp", classPath, "-d", root, fixture);
             var text = await Run("java", "-Xverify:all", "-cp", root + Path.PathSeparator + classPath, "AgentContentBoundaryProbe");
             Assert.Contains("Agent content boundary passed: registrations=12, unchangedMenuChecks=24.", text, StringComparison.Ordinal);

@@ -9,7 +9,7 @@ public sealed class IdentityAdapterLanRedirectCoexistenceTests
     [Fact]
     public async Task Pinned_author_redirect_keeps_native_init_and_unrelated_callbacks_before_publication()
     {
-        var common = Path.GetDirectoryName(RepositoryFile("Program", "IdentityAdapters", "Common",
+        var common = Path.GetDirectoryName(RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common",
             "PortableLanAutoPublishHooks.java"))!;
         var fixture = RepositoryFile("Program.Tests", "Fixtures", "LanRedirect", "upstream-fixtures.zip");
         Assert.Equal("fb9a5293762a33cd4d4d516736756d288465d27b10722d66a4741c7c725d8a08",

@@ -117,4 +117,5 @@ public sealed record PackLoaderInstallationContext(
     Logger Logger)
 {
     internal string? GameJavaPath { get; init; }
+    internal AppPaths? Paths { get; init; }
 }

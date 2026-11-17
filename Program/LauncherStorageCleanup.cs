@@ -14,7 +14,8 @@ internal enum LauncherStorageCleanupStep
     PrivateRuntimes,
     PortableExtraction,
     LaunchArguments,
-    PortableRuntimeCache
+    PortableRuntimeCache,
+    RuntimeComponents
 }
 
 internal static class LauncherStorageCleanup
@@ -31,7 +32,7 @@ internal static class LauncherStorageCleanup
     {
         "Temp", "DotNetBundles", "Runtime", "Runtimes", "JavaRuntimes", "Shared", "Steam", "ManagedComponents",
         "Library", "IdentityAdapters", "NoticeOverlay", "WindowPresentation", "LaunchArguments", "NativeInterop",
-        "ComponentCatalog", "LocalAI", "PowerShell", "bootstrap.log", ".shared-runtime.lock", LauncherMaintenance.CompletionFileName
+        "Components", "ComponentCatalog", "LocalAI", "PowerShell", "bootstrap.log", ".shared-runtime.lock", LauncherMaintenance.CompletionFileName
     };
 
     private static readonly HashSet<string> PersonalEntries = new(StringComparer.OrdinalIgnoreCase)
@@ -60,7 +61,7 @@ internal static class LauncherStorageCleanup
     internal static bool CanRunDuringGame(LauncherStorageCleanupStep step) => step is
         LauncherStorageCleanupStep.ServiceRoot or LauncherStorageCleanupStep.LauncherRoot or
         LauncherStorageCleanupStep.PersonalRoot or LauncherStorageCleanupStep.LauncherArchives or
-        LauncherStorageCleanupStep.AbandonedPlans;
+        LauncherStorageCleanupStep.AbandonedPlans or LauncherStorageCleanupStep.RuntimeComponents;
 
     internal static int RunStep(AppPaths paths, Logger? logger, LauncherStorageCleanupStep step,
         Action checkpoint, Func<string, bool> isManagedPack, string? resumeAfter = null, Action<string>? completedEntry = null)
@@ -98,6 +99,8 @@ internal static class LauncherStorageCleanup
             case LauncherStorageCleanupStep.PortableRuntimeCache:
                 PortableRuntimeCache.CleanupIdle(paths, checkpoint);
                 break;
+            case LauncherStorageCleanupStep.RuntimeComponents:
+                return DeprecatedFileCleanupService.CleanupRuntimeComponents(paths, checkpoint);
             default:
                 throw new ArgumentOutOfRangeException(nameof(step));
         }

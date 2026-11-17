@@ -8,7 +8,7 @@ public sealed class IdentityAdapterProfileNamesTests
     [Fact]
     public async Task Portable_owner_names_work_with_cold_caches_and_preserve_unknown_accounts()
     {
-        var common = RepositoryFile("Program", "IdentityAdapters", "Common", "PortableIdentityProfiles.java");
+        var common = RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableIdentityProfiles.java");
         var root = Path.Combine(Path.GetTempPath(), $"minecraft-profile-names-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try

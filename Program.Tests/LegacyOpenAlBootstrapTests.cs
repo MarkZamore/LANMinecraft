@@ -34,7 +34,7 @@ public sealed class LegacyOpenAlBootstrapTests : IDisposable
         Assert.Equal("-Dlanminecraft.native.openal=" + Path.Combine(natives, DllName), arguments[1]);
         Assert.Equal("-Dlanminecraft.native.openal.sha256=" + Hash(expected), arguments[2]);
         var agent = arguments[0]["-javaagent:".Length..];
-        Assert.StartsWith(Path.Combine(paths.Launcher, "NativeInterop") + Path.DirectorySeparatorChar,
+        Assert.StartsWith(Path.Combine(paths.Launcher, "Components", "objects") + Path.DirectorySeparatorChar,
             agent, StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(agent));
         Assert.Equal(nativeHash, Hash(File.ReadAllBytes(Path.Combine(natives, DllName))));
@@ -230,8 +230,7 @@ public sealed class LegacyOpenAlBootstrapTests : IDisposable
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-    private static Stream AgentResource() => typeof(MinecraftProcessService).Assembly.GetManifestResourceStream("Minecraft.NativeInteropAgent.jar")
-        ?? throw new FileNotFoundException("The launcher must embed its native interop agent.");
+    private static Stream AgentResource() => ComponentTestFiles.OpenArtifact("native-interop");
 
     private static async Task<string> Run(string jvmRoot, string tool, params string[] arguments)
     {

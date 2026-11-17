@@ -186,6 +186,8 @@ public sealed class IdentityAdapterTransportCacheTests : IDisposable
         Set(state, "DescriptorHash", runtime.Descriptor.DescriptorHash);
         Set(state, "TargetRoot", game);
         Set(state, "AdapterSha256", "unchanged-adapter-hash");
+        Set(state, "ComponentCatalogRevision", RuntimeComponentContext.Current.Revision);
+        Set(state, "ComponentCatalogSha256", RuntimeComponentContext.Current.Sha256);
         Set(state, "MappingPath", mapping);
         Set(state, "MappingSizeBytes", new FileInfo(mapping).Length);
         Set(state, "MappingLastWriteUtcTicks", File.GetLastWriteTimeUtc(mapping).Ticks);

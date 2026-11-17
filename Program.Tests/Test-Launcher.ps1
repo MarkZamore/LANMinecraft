@@ -21,7 +21,7 @@ if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is support
 if ($ReleaseImpactPlan -and ($Profile -ne 'Release' -or $WithAdapters)) {
     throw '-ReleaseImpactPlan requires -Profile Release without -WithAdapters.'
 }
-$caseBudget = if ($WithAdapters) { 762 } else { 688 }
+$caseBudget = if ($WithAdapters) { 788 } else { 714 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
@@ -150,10 +150,10 @@ try {
     $resultsBase = [IO.Path]::GetFullPath($ResultsDirectory)
     $session = Join-Path $resultsBase ($Profile + '-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($session)
+    & (Join-Path $repository 'tools/Prepare-ComponentTests.ps1')
     $restoreArguments = if ($NoRestore) { @('--no-restore') } else { @() }
     if (-not $NoBuild) {
-        # Build the real adapter once. Tests and the small updater host reference
-        # that assembly without rebuilding it with SkipPortableIdentityAdapter.
+        # Component fixtures are checked separately from the production EXE.
         $launcherArguments = @('build', (Join-Path $repository 'Program/Minecraft.csproj'), '-c', $Configuration) + $restoreArguments
         if ($SkipPortableIdentityAdapter) { $launcherArguments += '-p:SkipPortableIdentityAdapter=true' }
         Invoke-Dotnet $launcherArguments

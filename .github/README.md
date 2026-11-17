@@ -156,14 +156,14 @@ Client jar приложение не скачивает и не заменяет
 
 ## Сборка Приложения
 
-Для самостоятельной сборки нужны .NET SDK 10 и Java Development Kit 21 для Windows x64. Java используется для компиляции встроенного identity-adapter.
+Для самостоятельной сборки EXE нужен .NET SDK 10 для Windows x64. Java-компоненты собираются и публикуются в `MarkZamore/LANMinecraft-Components`. Для контрактных проверок требуется JDK 25.0.2; `tools/Prepare-ComponentTests.ps1` получает закреплённые исходники и артефакты.
 
 Работа со Steam идёт через [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) 2024.8.0; нативная библиотека `steam_api64.dll` из Steamworks SDK 1.60 лежит в `Program\Native`, вшивается в exe и распаковывается при запуске с проверкой SHA-256.
 
-Исходники identity-adapter разделены на общий код и реализацию конкретной версии:
+Канонические исходники identity-adapter находятся в репозитории компонентов и разделены на общий код и реализацию адаптера:
 
 ```text
-Program\IdentityAdapters\
+LocalSources\LANMinecraft-Components\Program\IdentityAdapters\
   Common\
     Build-IdentityAdapter.ps1
     MANIFEST.MF
@@ -180,7 +180,7 @@ Program\IdentityAdapters\
 powershell -NoProfile -ExecutionPolicy Bypass -File Program\Publish.ps1
 ```
 
-Release собирается как self-contained single-file и записывается строго в корень проекта:
+Release лаунчера записывается в корень проекта. Служебные Java-файлы загружаются отдельно по проверенному каталогу:
 
 ```text
 LANMinecraft.exe

@@ -339,7 +339,7 @@
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.UnpinnedOrEscapingArtifact_IsRejected|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.ValidNetworkProfile_SelectsNewPinnedBytesAndWritesCheckedCache|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.InvalidNetwork_PreservesPreviouslyCheckedCacheByteForByte|
-      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_UsesEmbeddedV3AndExactLegacyPinWithoutCreatingUnverifiedCache|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineWithoutCache_RequiresFirstNetworkPreparation|
       FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.CorruptCache_IsNotTrustedWhenOffline|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.PlayFindsR2WithoutRestartAndRetiresTheManagedR1Jar|
       FullyQualifiedName=Minecraft.Tests.PackPlayFreshManifestTests.OneFreshPlanPinsMeasureMetadataAndApplyEvenWhenR3Appears|
@@ -409,8 +409,8 @@
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.AReparsedInstallationParentCannotWriteOutsideTheInstallation|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.MalformedPacketsAreRejectedBeforeAnyManagedCodeRuns|
       FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.NativeUpdaterWaitsForTheOuterProcessAndRestartsTheVerifiedReplacementAtItsPortableRoot|
-      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.HistoricalV2CacheIsPreservedButCannotRemoveLegacySupportWhenOffline|
-      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.NetworkV2DowngradeCannotReplaceACheckedV3Cache|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.OfflineCacheRetainsTheSelectedComponentSet|
+      FullyQualifiedName=Minecraft.Tests.SteamComponentCatalogTests.UnsupportedApiCannotReplaceACheckedCatalog|
       FullyQualifiedName=Minecraft.Tests.LegacyFabricRuntimeTests.ExplicitJavaIsPinnedAndPartOfTheRuntimeIdentityWhileOldDescriptorsKeepTheirHash|
       FullyQualifiedName=Minecraft.Tests.InheritedGameArgumentsTests.ActualLegacyFabricAndVanillaProfilesReachTheProductionBuilderWithIdentityAndAssets|
       FullyQualifiedName=Minecraft.Tests.InheritedGameArgumentsTests.ExplicitLoaderArgumentsKeepTheirOwnPrecedence|
@@ -446,6 +446,24 @@
       FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AccountAndBuildChangesDuringPlay_DoNotAttributeTheSavedHostToTheCurrentUiAccount|
       FullyQualifiedName=Minecraft.Tests.WorldLaunchSessionTests.AnAdoptedProcessWithoutLaunchIdentity_DoesNotAssignItsHostToTheCurrentAccount|
       FullyQualifiedName=Minecraft.Tests.LegacyIdentityRegistryTests.SavedUnicodeAndDelimiterNames_AreEncodedWithoutChangingTheOrdinaryRegistry|
-      FullyQualifiedName=Minecraft.Tests.PackInstanceMigrationTests.LegacyClientStatisticsStayPersonalAcrossSourceClaimsUpdatesAndRepeatedPreparation</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.PackInstanceMigrationTests.LegacyClientStatisticsStayPersonalAcrossSourceClaimsUpdatesAndRepeatedPreparation|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.IdenticalArtifactsAreDownloadedOnceAcrossServicesAndPacks|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.CheckedInstalledSelectionStartsOfflineWhenGlobalCacheIsLost|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.FailedNewPayloadPreservesCommittedSelectionAndRemovesPartialFiles|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.UncommittedPreparationCannotReplaceOfflineReadyLock|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.PackRenamePreservesOfflineSelectionAndResumesWithoutOverwritingAnotherSet|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.ComponentScopesRemainBoundAcrossAwaitAndRestoreTheirParent|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentServiceTests.UnsupportedArtifactProtocolAndInvertedRulesAreRejected|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.SessionReferencesBelongToTheOriginalProcessInstance|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.AnOlderLiveSessionDefersComponentDeletion|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.MalformedSessionEvidenceSurvivesDiscoveryAndDefersCleanup|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.RememberPersistsComponentReferencesForTheNextLauncher|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.UnreferencedOwnedObjectIsDeleted|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.APreparationHandleProtectsBothPayloadAndOwnershipMarker|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.DurableGameReferenceProtectsTheObjectAfterPreparationEnds|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.AbandonedPartIsRemovedWhileFreshPartAndUnknownFilesStay|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.UnreadableSelectionProtectsAnOtherwiseUnreferencedObject|
+      FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.ARecordedJavaArchiveCanBeCollectedAfterItsCatalogPinDisappears|
+      FullyQualifiedName=Minecraft.Tests.RuntimeCatalogJavaTests.InvalidRemoteJavaSelectionIsRejectedBeforeActivation</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

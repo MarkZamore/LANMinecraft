@@ -207,7 +207,7 @@ public sealed class GameNoticeOverlayServiceTests
         var argument = Assert.Single(session.JvmArguments, value => value.StartsWith("-javaagent:", StringComparison.Ordinal));
         var agentPath = argument["-javaagent:".Length..];
         Assert.True(File.Exists(agentPath));
-        Assert.StartsWith(Path.Combine(fixture.Paths.Launcher, "NoticeOverlay", "Agent"), agentPath, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(Path.Combine(fixture.Paths.Launcher, "Components", "objects"), agentPath, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("identity", argument, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("mods", argument, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("-Dlanminecraft.notice.directory=" + session.Directory, session.JvmArguments[1]);

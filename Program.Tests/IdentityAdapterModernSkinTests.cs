@@ -9,7 +9,7 @@ public sealed class IdentityAdapterModernSkinTests
     public async Task Native_lookup_keeps_its_body_and_relaxes_secure_skins_only_for_registered_profiles()
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableSkinProfiles.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableSkinProfiles.java"))!;
         var root = Path.Combine(Path.GetTempPath(), "minecraft-native-skin-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
@@ -20,7 +20,7 @@ public sealed class IdentityAdapterModernSkinTests
             await Run("javac", "--release", "17", "-cp", classPath, "-d", root,
                 Path.Combine(common, "PortableIdentityReflection.java"),
                 Path.Combine(common, "PortableSkinProfiles.java"),
-                RepositoryFile("Program", "IdentityAdapters", "Minecraft-1.21.1-NeoForge", "PortableIdentityTransformer.java"),
+                RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Minecraft-1.21.1-NeoForge", "PortableIdentityTransformer.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "NativeSkinLookupProbe.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "ModernSkin", "com", "mojang", "authlib", "GameProfile.java"),
                 RepositoryFile("Program.Tests", "Fixtures", "ModernSkin", "com", "mojang", "authlib", "properties", "Property.java"));

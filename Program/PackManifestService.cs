@@ -99,9 +99,9 @@ public static class PackManifestService
         }
 
         var clientJar = ValidateClientJarName(manifest.ClientJar);
-        if (manifest.JavaMajorVersion is { } javaMajor && JavaRuntimeCatalog.ForMajorVersion(javaMajor) is null)
+        if (manifest.JavaMajorVersion is <= 0)
         {
-            throw new InvalidDataException("javaMajorVersion must name a Java feature release installed by the launcher.");
+            throw new InvalidDataException("javaMajorVersion must be positive.");
         }
         var canonical = $"{CurrentSchemaVersion}\n{minecraftVersion}\n{loaderKind.ToString().ToLowerInvariant()}\n{loaderVersion}\n{clientJar}";
         // Absent overrides retain the identity of every existing descriptor.
@@ -120,19 +120,20 @@ public static class PackManifestService
             JavaMajorVersion = manifest.JavaMajorVersion,
             PreserveWorldSettingsOnShare = manifest.PreserveWorldSettingsOnShare == true
         };
-        if (descriptor.PreserveWorldSettingsOnShare && !SupportsWorldSharingPolicy(descriptor))
-            throw new InvalidDataException("preserveWorldSettingsOnShare is unsupported for the declared Minecraft, loader and Java versions.");
         return descriptor;
+    }
+
+    internal static void ValidateCompatibility(PackRuntimeDescriptor descriptor)
+    {
+        if (descriptor.NativeRuntime is not null) return;
+        _ = JavaRuntimeCatalog.RequiredFor(descriptor);
+        if (descriptor.PreserveWorldSettingsOnShare && !JavaRuntimeCatalog.SupportsWorldSharing(descriptor))
+            throw new InvalidDataException("preserveWorldSettingsOnShare is unsupported for the declared Minecraft, loader and Java versions.");
     }
 
     internal static bool UsesJava8SteamWorldSharing(PackRuntimeDescriptor descriptor) =>
         descriptor.PreserveWorldSettingsOnShare && descriptor.Loader.Type == PackLoaderKind.Forge &&
-        descriptor.MinecraftVersion is "1.12.2" or "1.16.5" && JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion == 8;
-
-    private static bool SupportsWorldSharingPolicy(PackRuntimeDescriptor descriptor) =>
-        UsesJava8SteamWorldSharing(descriptor) ||
-        (descriptor.Loader.Type, descriptor.MinecraftVersion, JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion) is
-            (PackLoaderKind.Forge, "1.18.2" or "1.19.2" or "1.20.1", 17) or (PackLoaderKind.NeoForge, "1.21.1", 21);
+        JavaRuntimeCatalog.RequiredFor(descriptor).MajorVersion == 8;
 
     private static PackRuntimeDescriptor LoadNative(PackManifestDto manifest, string minecraftVersion, string packRoot)
     {

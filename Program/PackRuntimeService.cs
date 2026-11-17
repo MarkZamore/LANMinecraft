@@ -81,8 +81,23 @@ public sealed partial class PackRuntimeService : IDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            var descriptor = PackManifestService.Load(_paths.CombineUnderPacks(packRelativePath));
+            var current = RuntimeComponentContext.CurrentSet;
+            using var components = current is not null &&
+                current.PackRelativePath.Equals(packRelativePath, StringComparison.OrdinalIgnoreCase) &&
+                current.DescriptorHash.Equals(descriptor.DescriptorHash, StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : await new RuntimeComponentService(_paths, _logger, _httpClient)
+                        .PrepareAsync(packRelativePath, descriptor, progress, token).ConfigureAwait(false);
+            using var componentScope = components is null ? null : RuntimeComponentContext.Use(components);
+            PackManifestService.ValidateCompatibility(descriptor);
             using var shared = await SharedRuntimeGate.AcquireAsync(_paths, token).ConfigureAwait(false);
-            try { return await PrepareCoreAsync(packRelativePath, progress, token).ConfigureAwait(false); }
+            try
+            {
+                var prepared = await PrepareCoreAsync(packRelativePath, progress, token).ConfigureAwait(false);
+                components?.Commit();
+                return prepared;
+            }
             finally { CleanupTemporaryFiles(packRelativePath); }
         }
         finally { _gate.Release(); }
@@ -185,11 +200,7 @@ public sealed partial class PackRuntimeService : IDisposable
         // however many rounds that takes.
         const string gameLabel = "Minecraft";
         var loaderName = PackLoaderNames.DisplayName(descriptor.Loader.Type);
-        var usePinnedInstallerJava = (descriptor.Loader.Type, descriptor.MinecraftVersion,
-            descriptor.Loader.Version, requiredJava.MajorVersion) is
-            (PackLoaderKind.Forge, "1.20.1", "47.3.7" or "1.20.1-47.3.7", 17) or
-            (PackLoaderKind.NeoForge, "1.21.1", "21.1.248", 21) or
-            (PackLoaderKind.NeoForge, "26.3", "26.3.0.99", 25);
+        var usePinnedInstallerJava = JavaRuntimeCatalog.UseGameJavaForInstaller(descriptor);
         var includeInstallerJava = provider.RequiresInstallerJava && !usePinnedInstallerJava;
         var launcher = CreateLauncher(
             runtimeRoot,
@@ -301,7 +312,7 @@ public sealed partial class PackRuntimeService : IDisposable
             _httpClient,
             launcher,
             progress,
-            _logger) { GameJavaPath = gameJava.JavaPath };
+            _logger) { GameJavaPath = gameJava.JavaPath, Paths = _paths };
         var profileId = await provider.InstallAsync(context, token).ConfigureAwait(false);
 
         if (loaderName is not null)
@@ -1279,7 +1290,8 @@ internal static class OfficialLoaderInstaller
             using var processFiles = PortableJavaEnvironment.CreateToolScope(startInfo, context.TemporaryRoot);
             if (legacyForge)
             {
-                await AddLegacyForgeArgumentsAsync(startInfo, installerPath, processFiles.RootDirectory, token);
+                AddLegacyForgeArguments(startInfo, installerPath,
+                    context.Paths ?? throw new InvalidOperationException("The component cache root is missing from the loader context."));
             }
             else
             {
@@ -1327,19 +1339,18 @@ internal static class OfficialLoaderInstaller
         }
     }
 
-    private static async Task AddLegacyForgeArgumentsAsync(
-        ProcessStartInfo startInfo, string installerPath, string toolRoot, CancellationToken token)
+    private static void AddLegacyForgeArguments(
+        ProcessStartInfo startInfo, string installerPath, AppPaths paths)
     {
         const string className = "LegacyForgeClientInstaller";
-        using var source = typeof(OfficialLoaderInstaller).Assembly.GetManifestResourceStream($"Minecraft.{className}.class")
-            ?? throw new InvalidOperationException("The launcher is missing its legacy Forge installer bootstrap.");
-        await using (var output = File.Create(Path.Combine(toolRoot, className + ".class")))
-            await source.CopyToAsync(output, token).ConfigureAwait(false);
+        var helper = RuntimeComponentContext.RequirePath(paths, "legacy-forge-installer");
+        var helperDirectory = Path.GetDirectoryName(helper)
+            ?? throw new InvalidDataException("The legacy Forge helper has no class directory.");
 
         startInfo.ArgumentList.Add("-Djava.awt.headless=true");
         startInfo.ArgumentList.Add("-Dfile.encoding=UTF-8");
         startInfo.ArgumentList.Add("-cp");
-        startInfo.ArgumentList.Add(toolRoot + Path.PathSeparator + installerPath);
+        startInfo.ArgumentList.Add(helperDirectory + Path.PathSeparator + installerPath);
         startInfo.ArgumentList.Add(className);
     }
 

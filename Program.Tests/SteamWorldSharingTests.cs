@@ -84,7 +84,9 @@ public sealed class SteamWorldSharingTests : IDisposable
         };
         if (preserve is { } value) descriptor["preserveWorldSettingsOnShare"] = value;
         File.WriteAllText(Path.Combine(_root, PackManifestService.ManifestFileName), JsonSerializer.Serialize(descriptor));
-        return PackManifestService.Load(_root);
+        var result = PackManifestService.Load(_root);
+        PackManifestService.ValidateCompatibility(result);
+        return result;
     }
 
     public void Dispose() => TempTree.Delete(_root);

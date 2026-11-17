@@ -137,12 +137,6 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '25'
-
       - name: Prepare
         id: prepare
         shell: pwsh

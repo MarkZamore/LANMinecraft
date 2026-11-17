@@ -58,8 +58,7 @@ public sealed class IdentityAdapterAgainstInstalledPacksTests(ITestOutputHelper 
     {
         var install = InstallRoot;
         var java = FindJava(install);
-        var adapter = FindUpwards("Program", "Build", "IdentityAdapters", "Minecraft-1.21.1-NeoForge",
-            "portable-identity-adapter.jar");
+        var adapter = ComponentTestFiles.ArtifactPath("identity-adapter");
         if (install is null || java is null || adapter is null)
         {
             // Nothing installed, no JDK, or the adapter was not built. None of

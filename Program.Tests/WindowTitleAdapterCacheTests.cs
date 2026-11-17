@@ -56,6 +56,8 @@ public sealed class WindowTitleAdapterCacheTests : IDisposable
         Set(state, "DescriptorHash", runtime.Descriptor.DescriptorHash);
         Set(state, "TargetRoot", gameDirectory);
         Set(state, "AdapterSha256", "current-adapter-hash");
+        Set(state, "ComponentCatalogRevision", RuntimeComponentContext.Current.Revision);
+        Set(state, "ComponentCatalogSha256", RuntimeComponentContext.Current.Sha256);
         Set(state, "MappingPath", mapping);
         Set(state, "MappingSizeBytes", new FileInfo(mapping).Length);
         Set(state, "MappingLastWriteUtcTicks", File.GetLastWriteTimeUtc(mapping).Ticks);

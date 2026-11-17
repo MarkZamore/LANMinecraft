@@ -4,11 +4,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+if ([string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_ASSETS) -or
+    [string]::IsNullOrWhiteSpace($env:LANMINECRAFT_COMPONENT_TEST_SOURCES)) {
+    . (Join-Path $repository 'tools/Prepare-ComponentTests.ps1')
+}
 if (-not $JavaHome) { $JavaHome = 'C:\Tools\jdk-25.0.2' }
 $resultRoot = Join-Path $repository 'artifacts\atm9-original-steam\discovery-probe'
 $classes = Join-Path $resultRoot 'classes'
 New-Item -ItemType Directory -Force -Path $classes | Out-Null
-$common = Join-Path $repository 'Program\IdentityAdapters\Common'
+$common = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_SOURCES 'Program\IdentityAdapters\Common'
 $asm = @((Join-Path $common 'lib\asm-9.8.jar'), (Join-Path $common 'lib\asm-tree-9.8.jar')) -join ';'
 $sources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -Filter '*.java' | ForEach-Object FullName)
 $sources += Join-Path $common 'PortableSteamDiscoveryHooks.java'

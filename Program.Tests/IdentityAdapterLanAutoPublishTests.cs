@@ -9,7 +9,7 @@ public sealed class IdentityAdapterLanAutoPublishTests
     public async Task Modern_and_legacy_publish_keep_native_init_settings_and_one_session()
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
         var root = Path.Combine(Path.GetTempPath(), $"minecraft-lan-publish-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try

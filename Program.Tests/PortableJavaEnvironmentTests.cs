@@ -137,6 +137,7 @@ public sealed class PortableJavaEnvironmentTests : IDisposable
     {
         var paths = new AppPaths(_root);
         var loaderTemporary = Path.Combine(paths.Personal, "Temp", "RuntimeDownloads", "fixture");
+        ComponentTestFiles.SeedInstallation(paths);
         using var runtimes = new PackRuntimeService(paths, new Logger(paths.LogFile));
         var start = WaitingChild();
         var scope = PortableJavaEnvironment.CreateToolScope(start, loaderTemporary);

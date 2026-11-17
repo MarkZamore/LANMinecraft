@@ -39,7 +39,8 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
     [InlineData(99)]
     public void UnpinnedJavaIsRejectedBeforeRuntimePreparation(int major)
     {
-        Assert.Throws<InvalidDataException>(() => Load("legacyfabric", "1.6.4", "0.18.2", major));
+        Assert.Throws<InvalidDataException>(() =>
+            PackManifestService.ValidateCompatibility(Load("legacyfabric", "1.6.4", "0.18.2", major)));
         var descriptor = new PackRuntimeDescriptor(1, "1.6.4", new(PackLoaderKind.LegacyFabric, "0.18.2"), "", "fixture")
         { JavaMajorVersion = major };
         Assert.Throws<InvalidDataException>(() => JavaRuntimeCatalog.RequiredFor(descriptor));
@@ -155,6 +156,7 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
 
         using var handler = new ColdRuntimeHandler(clientBytes, officialClient, invalidMirror, failFirstAssetIndexRequest);
         using var http = new HttpClient(handler);
+        ComponentTestFiles.SeedInstallation(paths);
         using var service = new PackRuntimeService(paths, new Logger(paths.LogFile), http);
         var progress = new PreparationProgress();
         var runtime = await service.PrepareAsync("Legacy fixture", progress, CancellationToken.None);
@@ -254,6 +256,8 @@ public sealed class LegacyFabricRuntimeTests : IDisposable
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
+            if (request.RequestUri?.Host == "raw.githubusercontent.com")
+                throw new HttpRequestException("The component catalog is offline in this fixture.");
             Interlocked.Increment(ref _requestCount);
             if (request.RequestUri!.AbsoluteUri == "https://piston-data.mojang.com/fixture/client.jar" && officialClient)
             {

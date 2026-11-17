@@ -30,7 +30,7 @@ public static class DeprecatedFileCleanupService
         var removed = RemoveEntries(paths, paths.Personal, PersonalEntries, checkpoint);
         removed += RemoveEntries(paths, paths.Launcher, LauncherEntries, checkpoint);
         removed += CleanupUnpinnedComponents(paths, checkpoint);
-        removed += CleanupOrphanedAdapterBuilds(paths, checkpoint);
+        removed += CleanupRetiredJavaComponents(paths, checkpoint);
         if (isManagedPack is not null)
             removed += CleanupSupersededPackJava(paths, checkpoint, isManagedPack);
         if (removed > 0) logger?.Info($"Removed {removed} entries left by earlier launcher versions.");
@@ -84,55 +84,108 @@ public static class DeprecatedFileCleanupService
         return removed;
     }
 
-    private static int CleanupOrphanedAdapterBuilds(AppPaths paths, Action checkpoint)
+    private static int CleanupRetiredJavaComponents(AppPaths paths, Action checkpoint)
     {
-        var root = Path.Combine(paths.Launcher, "IdentityAdapters");
-        if (!MaintenancePath.TryRead(paths, root, out var rootAttributes) ||
-            (rootAttributes & FileAttributes.Directory) == 0 ||
-            !MaintenancePath.TryRead(paths, paths.Runtimes, out var runtimeAttributes) ||
-            (runtimeAttributes & FileAttributes.Directory) == 0) return 0;
-
-        // If any runtime cannot be read, an adapter could still belong to it.
-        var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            foreach (var runtime in Directory.EnumerateFileSystemEntries(paths.Runtimes))
-            {
-                checkpoint();
-                if (!MaintenancePath.TryRead(paths, runtime, out var attributes)) return 0;
-                if ((attributes & FileAttributes.Directory) == 0) continue;
-                var statePath = Path.Combine(runtime, ".portable-runtime.json");
-                try { _ = File.GetAttributes(statePath); }
-                catch (FileNotFoundException) { continue; }
-                if (!MaintenancePath.TryRead(paths, statePath, out var stateAttributes) ||
-                    (stateAttributes & FileAttributes.Directory) != 0) return 0;
-
-                using var input = File.OpenRead(statePath);
-                using var state = JsonDocument.Parse(input);
-                if (state.RootElement.ValueKind != JsonValueKind.Object ||
-                    !state.RootElement.TryGetProperty("descriptorHash", out var descriptor) ||
-                    descriptor.ValueKind != JsonValueKind.String ||
-                    descriptor.GetString() is not { } hash || !IsHash(hash)) return 0;
-                live.Add(hash);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            return 0;
-        }
-        if (live.Count == 0) return 0;
-
+        // A session from an earlier launcher may still hold its extracted Java agents.
+        if (new ClientPresenceService(paths).ReadComponentReferences() is null) return 0;
         var removed = 0;
-        foreach (var directory in LauncherStorageCleanup.ReadEntries(paths, root, checkpoint))
+        foreach (var relative in new[] { "IdentityAdapters", "NativeInterop", "NoticeOverlay/Agent" })
         {
-            var name = Path.GetFileName(directory);
-            if (IsHash(name) && !live.Contains(name) &&
-                MaintenancePath.TryRead(paths, directory, out var attributes) &&
-                (attributes & FileAttributes.Directory) != 0)
-                removed += LauncherStorageCleanup.DeleteTree(paths, directory, checkpoint);
+            checkpoint();
+            removed += LauncherStorageCleanup.DeleteTree(paths, Path.Combine(paths.Launcher, relative), checkpoint);
         }
         return removed;
     }
 
-    private static bool IsHash(string name) => name.Length == 64 && name.All(char.IsAsciiHexDigit);
+    internal static int CleanupRuntimeComponents(AppPaths paths, Action checkpoint)
+    {
+        var root = Path.Combine(paths.Launcher, "Components", "objects");
+        if (!MaintenancePath.TryRead(paths, root, out var rootAttributes) ||
+            !rootAttributes.HasFlag(FileAttributes.Directory)) return 0;
+        var references = ReadComponentReferences(paths, checkpoint);
+        if (references is null) return 0;
+        var removed = 0;
+        foreach (var directory in LauncherStorageCleanup.ReadEntries(paths, root, checkpoint))
+        {
+            var hash = Path.GetFileName(directory);
+            if (!RuntimeComponentSnapshot.IsHash(hash) || !MaintenancePath.TryRead(paths, directory, out var attributes) ||
+                !attributes.HasFlag(FileAttributes.Directory)) continue;
+            using var gate = RuntimeComponentService.TryAcquireObjectLock(paths, hash);
+            if (gate is null) continue;
+            removed += CleanupComponentParts(paths, directory, checkpoint);
+            if (references.Contains(hash) || !TryReadComponentOwner(paths, directory, hash, out var payload)) continue;
+            var current = ReadComponentReferences(paths, checkpoint);
+            if (current is null) return removed;
+            if (current.Contains(hash)) continue;
+            try
+            {
+                // A preparation keeps its payload read handle until the process is recorded.
+                using (var exclusive = new FileStream(payload, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+                checkpoint();
+                if (!MaintenancePath.TryDelete(paths, payload, directory: false)) continue;
+                removed++;
+                var marker = Path.Combine(directory, "artifact.json");
+                if (MaintenancePath.TryDelete(paths, marker, directory: false)) removed++;
+                if (MaintenancePath.TryDelete(paths, directory, directory: true)) removed++;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return removed;
+    }
+
+    private static IReadOnlySet<string>? ReadComponentReferences(AppPaths paths, Action checkpoint)
+    {
+        var installed = RuntimeComponentService.ReadProtectedHashes(paths, checkpoint);
+        var sessions = new ClientPresenceService(paths).ReadComponentReferences();
+        if (installed is null || sessions is null) return null;
+        var references = new HashSet<string>(installed, StringComparer.OrdinalIgnoreCase);
+        references.UnionWith(sessions);
+        return references;
+    }
+
+    private static bool TryReadComponentOwner(AppPaths paths, string directory, string hash, out string payload)
+    {
+        payload = "";
+        try
+        {
+            var marker = Path.Combine(directory, "artifact.json");
+            if (!MaintenancePath.TryRead(paths, marker, out var markerAttributes) ||
+                markerAttributes.HasFlag(FileAttributes.Directory) || new FileInfo(marker).Length > 64 * 1024) return false;
+            using var document = JsonDocument.Parse(File.ReadAllText(marker));
+            var owner = document.RootElement;
+            if (owner.ValueKind != JsonValueKind.Object ||
+                !owner.TryGetProperty("sha256", out var digest) || digest.GetString() is not { } ownerHash ||
+                !string.Equals(ownerHash, hash, StringComparison.OrdinalIgnoreCase) ||
+                !owner.TryGetProperty("fileName", out var file) || file.GetString() is not { Length: > 0 } name ||
+                name != Path.GetFileName(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                !owner.TryGetProperty("sizeBytes", out var size) || !size.TryGetInt64(out var length) || length < 0)
+                return false;
+            payload = Path.Combine(directory, name);
+            var entries = Directory.GetFileSystemEntries(directory);
+            return entries.Length == 2 && entries.Contains(marker, StringComparer.OrdinalIgnoreCase) &&
+                entries.Contains(payload, StringComparer.OrdinalIgnoreCase) &&
+                MaintenancePath.TryRead(paths, payload, out var attributes) && !attributes.HasFlag(FileAttributes.Directory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or
+                                   InvalidOperationException or ArgumentException) { return false; }
+    }
+
+    private static int CleanupComponentParts(AppPaths paths, string directory, Action checkpoint)
+    {
+        var removed = 0;
+        var cutoff = DateTime.UtcNow.AddHours(-1);
+        foreach (var path in LauncherStorageCleanup.ReadEntries(paths, directory, checkpoint))
+        {
+            var name = Path.GetFileName(path);
+            var suffix = name.Length - 38;
+            if (suffix <= 0 || name[suffix] != '.' || !name.EndsWith(".part", StringComparison.Ordinal) ||
+                !Guid.TryParseExact(name.AsSpan(suffix + 1, 32), "N", out _) ||
+                !MaintenancePath.TryRead(paths, path, out var attributes) || attributes.HasFlag(FileAttributes.Directory) ||
+                File.GetLastWriteTimeUtc(path) > cutoff) continue;
+            checkpoint();
+            if (MaintenancePath.TryDelete(paths, path, directory: false)) removed++;
+        }
+        return removed;
+    }
+
 }

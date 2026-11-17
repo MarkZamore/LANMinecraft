@@ -8,7 +8,7 @@ public sealed class IdentityAdapterLanReturnTests
     public async Task ForgeCancellableAuthorForm_PublishesAfterInitializationOnEveryReturn()
     {
         var repository = FindRepository();
-        var common = Path.Combine(repository, "Program", "IdentityAdapters", "Common");
+        var common = Path.Combine(repository, "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
         var root = Path.Combine(Path.GetTempPath(), "forge-lan-return-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try

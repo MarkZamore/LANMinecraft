@@ -33,6 +33,10 @@ git merge --ff-only origin/main
 `git add` или подмену checkout. Новые инструкции можно предварительно прочитать
 через `git show origin/main:AGENTS.md`, не изменяя чужие файлы.
 
+## Подготовить компоненты и контрактные проверки
+
+Общий Java-код и таблицы совместимости публикуются в `MarkZamore/LANMinecraft-Components`. Перед тестами выполнить `tools/Prepare-ComponentTests.ps1` в том же процессе PowerShell. Он получает закреплённые исходники в `LocalSources/LANMinecraft-Components-Tests` и проверенные артефакты. Канонический рабочий репозиторий компонентов можно держать отдельно в `LocalSources/LANMinecraft-Components`. Порядок доставки, первого сетевого перехода и последующего офлайн-запуска описан в [RUNTIME-COMPONENTS.md](RUNTIME-COMPONENTS.md).
+
 ## Найти сборки по текущему каталогу
 
 ```powershell
@@ -63,7 +67,7 @@ $catalog.packs | Select-Object id, relativePath, sourcePath, source
 | Лаунчер WPF | Windows x64, Git, PowerShell 7.2+, .NET 10 SDK по [global.json](../global.json): база 10.0.100, `latestFeature` |
 | Инструменты данных | Python 3.12+; дополнительные Node/Java и их версии брать из workflow/README выбранной сборки |
 | Java-адаптер лаунчера | JDK 25.0.2 с настоящими `java`, `javac`, `jar`; `JAVA_HOME` указывает на установленный здесь JDK |
-| Загрузка нативных Java-библиотек | [NativeInterop](../Program/NativeInterop/README.md): тот же JDK, runtime-классы Java 8, исходные игровые DLL/JAR сохраняются; собственный кеш внутри папки лаунчера |
+| Загрузка нативных Java-библиотек | [NativeInterop](https://github.com/MarkZamore/LANMinecraft-Components/blob/main/Program/NativeInterop/README.md): тот же JDK, runtime-классы Java 8, исходные игровые DLL/JAR сохраняются; собственный кеш внутри папки лаунчера |
 | Native EXE | Visual Studio Build Tools: x64 C++ toolchain и Windows SDK; discovery через `vswhere`, см. [Bootstrap](../Program/Bootstrap/README.md) |
 | Игра и pack helpers | Игровая Java из descriptor/проверенного runtime; JDK компилятора и `--release` из pack-owned build/probe, это разные требования |
 

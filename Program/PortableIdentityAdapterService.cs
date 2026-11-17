@@ -1,7 +1,6 @@
 ﻿using System.Diagnostics;
 using System.IO;
 using System.Globalization;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,9 +13,7 @@ public sealed class PortableIdentityAdapterService : IDisposable
     // work away and redo it, so it is deliberately independent of
     // PortableFormat's version - a release must not cost every player a
     // re-download for an unrelated change.
-    private const int AdapterCacheGeneration = 14;
-    private const string ResourceName = "Minecraft.PortableIdentityAdapter.jar";
-    private const string AdapterFileName = "portable-identity-adapter.jar";
+    private const int AdapterCacheGeneration = 15;
     internal const string ManagedTransportFingerprintProperty = "managedTransportFingerprint";
     internal const string SteamNativePublicationMetadataFeature = "steam-native-publication-metadata-v1";
     private readonly AppPaths _paths;
@@ -76,7 +73,10 @@ public sealed class PortableIdentityAdapterService : IDisposable
                 ];
             }
 
-            var directory = Path.Combine(_paths.Launcher, "IdentityAdapters", runtime.Descriptor.DescriptorHash);
+            var targetKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(targetRoot.ToUpperInvariant())))
+                .ToLowerInvariant();
+            var directory = Path.Combine(_paths.Launcher, "Components", "configurations",
+                runtime.Descriptor.DescriptorHash, targetKey);
             _paths.EnsureUnderRoot(directory);
             Directory.CreateDirectory(directory);
             var adapterPath = ExtractAdapter(directory);
@@ -184,6 +184,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
                     DescriptorHash = runtime.Descriptor.DescriptorHash,
                     TargetRoot = targetRoot,
                     AdapterSha256 = adapterHash,
+                    ComponentCatalogRevision = RuntimeComponentContext.Current.Revision,
+                    ComponentCatalogSha256 = RuntimeComponentContext.Current.Sha256,
                     MappingPath = verified.MappingPath,
                     MappingSizeBytes = mappingInfo.Length,
                     MappingLastWriteUtcTicks = mappingInfo.LastWriteTimeUtc.Ticks,
@@ -437,38 +439,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
 
     internal string ExtractAdapter(string directory)
     {
-        using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName)
-            ?? throw new InvalidOperationException("Embedded portable identity adapter is missing.");
-        using var memory = new MemoryStream();
-        resource.CopyTo(memory);
-        var bytes = memory.ToArray();
-        var expectedHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        // Java keeps agent JARs open for its lifetime. A launcher update must
-        // not replace the image still used by an earlier process/session.
-        var versionDirectory = Path.Combine(directory, expectedHash);
-        _paths.EnsureUnderRoot(versionDirectory);
-        Directory.CreateDirectory(versionDirectory);
-        var destination = Path.Combine(versionDirectory, AdapterFileName);
-        if (File.Exists(destination) && string.Equals(HashFile(destination), expectedHash, StringComparison.Ordinal))
-        {
-            return destination;
-        }
-
-        var temporary = destination + ".tmp";
-        try
-        {
-            File.WriteAllBytes(temporary, bytes);
-            if (!string.Equals(HashFile(temporary), expectedHash, StringComparison.Ordinal))
-            {
-                throw new InvalidDataException("Extracted portable identity adapter failed SHA-256 validation.");
-            }
-            File.Move(temporary, destination, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporary)) File.Delete(temporary);
-        }
-        return destination;
+        _paths.EnsureUnderRoot(directory);
+        return RuntimeComponentContext.RequirePath(_paths, "identity-adapter");
     }
 
     private async Task RunPreflightAsync(
@@ -657,6 +629,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             !string.Equals(state.DescriptorHash, runtime.Descriptor.DescriptorHash, StringComparison.Ordinal) ||
             !string.Equals(state.TargetRoot, targetRoot, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(state.AdapterSha256, adapterHash, StringComparison.Ordinal) ||
+            !string.Equals(state.ComponentCatalogRevision, RuntimeComponentContext.Current.Revision, StringComparison.Ordinal) ||
+            !string.Equals(state.ComponentCatalogSha256, RuntimeComponentContext.Current.Sha256, StringComparison.Ordinal) ||
             state.Properties.Count == 0 ||
             state.Targets.Count == 0 ||
             !FileMatches(state.MappingPath, state.MappingSizeBytes, state.MappingLastWriteUtcTicks))
@@ -701,6 +675,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
             .AppendLine(state.DescriptorHash)
             .AppendLine(state.TargetRoot)
             .AppendLine(state.AdapterSha256)
+            .AppendLine(state.ComponentCatalogRevision)
+            .AppendLine(state.ComponentCatalogSha256)
             .AppendLine(state.MappingSha256);
         foreach (var pair in state.Properties.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
@@ -780,6 +756,8 @@ public sealed class PortableIdentityAdapterService : IDisposable
         public string DescriptorHash { get; set; } = "";
         public string TargetRoot { get; set; } = "";
         public string AdapterSha256 { get; set; } = "";
+        public string ComponentCatalogRevision { get; set; } = "";
+        public string ComponentCatalogSha256 { get; set; } = "";
         public string MappingPath { get; set; } = "";
         public long MappingSizeBytes { get; set; }
         public long MappingLastWriteUtcTicks { get; set; }

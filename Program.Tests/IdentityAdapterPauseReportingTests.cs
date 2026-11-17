@@ -9,7 +9,7 @@ public sealed class IdentityAdapterPauseReportingTests
     public async Task Native_pause_slot_uses_reporting_only_for_a_published_integrated_world()
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
         var root = Path.Combine(Path.GetTempPath(), $"minecraft-pause-reporting-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try

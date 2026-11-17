@@ -15,7 +15,7 @@ public sealed class IdentityAdapterModernLanEntryTests
     private static async Task<string> RunProbe(string probe)
     {
         var common = Path.GetDirectoryName(RepositoryFile(
-            "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
+            "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableLanAutoPublishHooks.java"))!;
         var root = Path.Combine(Path.GetTempPath(), $"minecraft-modern-lan-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try

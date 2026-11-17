@@ -10,7 +10,7 @@ public sealed class ForgeHandshakeAdapterTests
     public async Task ConcurrentAcknowledgement_PreservesPendingMessagesAndRejectsUnsupportedBytecode()
     {
         var repository = FindRepository();
-        var common = Path.Combine(repository, "Program", "IdentityAdapters", "Common");
+        var common = Path.Combine(repository, "LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
         var root = Path.Combine(Path.GetTempPath(), "forge-handshake-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try

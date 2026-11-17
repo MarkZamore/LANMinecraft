@@ -439,6 +439,9 @@ public sealed class MinecraftProcessService
                 packHash, runtimeProgress, token).ConfigureAwait(false);
             return;
         }
+        using var components = await new RuntimeComponentService(_paths, _logger)
+            .PrepareAsync(packRelativePath, descriptor, runtimeProgress, token).ConfigureAwait(false);
+        using var componentScope = RuntimeComponentContext.Use(components);
         var runtime = await _packRuntimes.PrepareAsync(packRelativePath, runtimeProgress, token);
         Volatile.Write(ref _lastJavaPath, runtime.JavaPath);
         Volatile.Write(ref _lastGameVersion, runtime.Descriptor.MinecraftVersion);
@@ -794,7 +797,10 @@ public sealed class MinecraftProcessService
             afterStart?.Invoke(process);
 
             var processId = process.Id;
-            _presence.Remember(process, packRelativePath, nativeExecutable);
+            var components = nativeExecutable is null ? RuntimeComponentContext.CurrentSet : null;
+            _presence.Remember(process, packRelativePath, nativeExecutable,
+                componentHashes: components?.ComponentHashes, componentRevision: components?.Snapshot.Revision);
+            components?.Commit();
             if (_activeClientProcesses.TryAdd(processId, packRelativePath) && _activeClientProcesses.Count == 1)
                 NotifyClientRunningChanged(true);
 
@@ -1589,8 +1595,9 @@ public sealed class MinecraftProcessService
         string skinRegistryPath,
         string identityRegistryPath,
         string? minecraftUuid,
-        int javaMajorVersion = JavaRuntimeCatalog.DefaultMajorVersion)
+        int? javaMajorVersion = null)
     {
+        javaMajorVersion ??= JavaRuntimeCatalog.DefaultMajorVersion;
         var extraJvmArguments = new List<string>
         {
             "-Dfile.encoding=UTF-8",

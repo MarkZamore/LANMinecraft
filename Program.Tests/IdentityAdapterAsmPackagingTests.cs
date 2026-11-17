@@ -28,7 +28,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public void AdapterSources_DoNotStartWithAByteOrderMark()
     {
-        var root = FindRepositoryDirectory("Program", "IdentityAdapters");
+        var root = FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters");
         var sources = Directory.EnumerateFiles(root, "*.java", SearchOption.AllDirectories).ToList();
         Assert.NotEmpty(sources);
         foreach (var path in sources)
@@ -47,7 +47,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public void VendoredAsmArtifacts_MatchPinnedBytes()
     {
-        var libraryRoot = FindRepositoryDirectory("Program", "IdentityAdapters", "Common", "lib");
+        var libraryRoot = FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "lib");
         foreach (var (name, length, sha256) in PinnedAsmArtifacts)
         {
             var path = Path.Combine(libraryRoot, name);
@@ -61,7 +61,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public void VendoredAsmArtifacts_ContainEveryAsmTypeTheAdapterImports()
     {
-        var libraryRoot = FindRepositoryDirectory("Program", "IdentityAdapters", "Common", "lib");
+        var libraryRoot = FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "lib");
         var entries = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (name, _, _) in PinnedAsmArtifacts)
         {
@@ -93,7 +93,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     {
         var license = File.ReadAllText(
             Path.Combine(
-                FindRepositoryDirectory("Program", "IdentityAdapters", "Common", "lib"),
+                FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "lib"),
                 "LICENSE.asm.txt"));
         Assert.Contains("INRIA, France Telecom", license, StringComparison.Ordinal);
         foreach (var (name, _, sha256) in PinnedAsmArtifacts)
@@ -118,8 +118,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public void NoLauncherSource_RequestsTheRemovedInternalAsmExport()
     {
-        var programRoot = FindRepositoryDirectory("Program", "IdentityAdapters");
-        var launcherRoot = Directory.GetParent(programRoot)!.FullName;
+        var launcherRoot = FindRepositoryDirectory("Program");
         foreach (var path in Directory.EnumerateFiles(launcherRoot, "*.cs", SearchOption.TopDirectoryOnly))
         {
             Assert.DoesNotContain(
@@ -147,7 +146,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public void TheBootstrapPath_GetsTheHooksAlone_AndNeverAsm()
     {
-        var common = FindRepositoryDirectory("Program", "IdentityAdapters", "Common");
+        var common = FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
         var script = File.ReadAllText(Path.Combine(common, "Build-IdentityAdapter.ps1"));
         var agent = File.ReadAllText(Path.Combine(common, "PortableIdentityAgent.java"));
 
@@ -181,7 +180,7 @@ public sealed class IdentityAdapterAsmPackagingTests
 
         // None of the hooks may reach for ASM, or the split stops working.
         foreach (var hook in Directory.EnumerateFiles(
-                     FindRepositoryDirectory("Program", "IdentityAdapters"),
+                     FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters"),
                      "*Hooks.java",
                      SearchOption.AllDirectories)
                      .Concat(new[]
@@ -214,7 +213,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     {
         var script = File.ReadAllText(
             Path.Combine(
-                FindRepositoryDirectory("Program", "IdentityAdapters", "Common"),
+                FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common"),
                 "Build-IdentityAdapter.ps1"));
 
         // --release (not -source/-target) keeps a JDK 25 javac warning-free.
@@ -233,8 +232,8 @@ public sealed class IdentityAdapterAsmPackagingTests
     [Fact]
     public async Task BundledAsm_IsPrivateAndWorksWithOrWithoutTheLoadersAsm()
     {
-        var common = FindRepositoryDirectory("Program", "IdentityAdapters", "Common");
-        var repository = Directory.GetParent(Directory.GetParent(Directory.GetParent(common)!.FullName)!.FullName)!.FullName;
+        var common = FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common");
+        var repository = ComponentTestFiles.RepositoryRoot;
         var fixture = Path.Combine(repository, "artifacts", "asm-isolation-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(fixture);
         var temporary = Path.Combine(fixture, "temp");
@@ -254,7 +253,7 @@ public sealed class IdentityAdapterAsmPackagingTests
         await RunTool("javac", "--release", "17", "-encoding", "UTF-8", "-d", fixture, source);
         var notice = Path.Combine(fixture, "notice-agent.jar");
         await using (var output = File.Create(notice))
-        await using (var input = typeof(PeerNoticeService).Assembly.GetManifestResourceStream("Minecraft.NoticeOverlayAgent.jar")!)
+        await using (var input = ComponentTestFiles.OpenArtifact("notice-overlay"))
             await input.CopyToAsync(output);
         Directory.CreateDirectory(Path.Combine(fixture, "notice"));
         foreach (var external in new[] { false, true })
@@ -291,7 +290,7 @@ public sealed class IdentityAdapterAsmPackagingTests
     }
 
     private static IEnumerable<string> EnumerateAdapterSources() => Directory.EnumerateFiles(
-        FindRepositoryDirectory("Program", "IdentityAdapters"),
+        FindRepositoryDirectory("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters"),
         "*.java",
         SearchOption.AllDirectories);
 

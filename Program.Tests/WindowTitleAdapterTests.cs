@@ -13,7 +13,7 @@ public sealed class WindowTitleAdapterTests
     public async Task Native_title_producer_keeps_only_pack_name_across_simulated_lifecycle_without_changing_connections()
     {
         var fixture = RepositoryFile("Program.Tests", "Fixtures", "WindowTitleTransformerProbe.java");
-        var transformer = RepositoryFile("Program", "IdentityAdapters", "Common", "PortableWindowTitleTransformer.java");
+        var transformer = RepositoryFile("LocalSources", "LANMinecraft-Components-Tests", "Program", "IdentityAdapters", "Common", "PortableWindowTitleTransformer.java");
         var common = Path.GetDirectoryName(transformer)!;
         var classPath = string.Join(Path.PathSeparator,
             Path.Combine(common, "lib", "asm-9.8.jar"),

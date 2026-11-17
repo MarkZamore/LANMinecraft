@@ -1,6 +1,5 @@
 using System.IO;
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Cryptography;
 using CmlLib.Core;
 using CmlLib.Core.Version;
@@ -53,16 +52,7 @@ internal static class LegacyOpenAlBootstrap
             if (!CryptographicOperations.FixedTimeEquals(expected, SHA256.HashData(installed)))
                 throw new InvalidDataException("The extracted OpenAL DLL does not match its verified runtime archive.");
 
-        using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("Minecraft.NativeInteropAgent.jar")
-            ?? throw new InvalidOperationException("The launcher is missing its native interoperability bootstrap.");
-        using var buffer = new MemoryStream();
-        resource.CopyTo(buffer);
-        var bytes = buffer.ToArray();
-        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        var agent = Path.Combine(paths.Launcher, "NativeInterop", hash, "launcher-native-interop-agent.jar");
-        EnsureOrdinaryPath(paths, agent);
-        if (!File.Exists(agent) || !SHA256.HashData(File.ReadAllBytes(agent)).AsSpan().SequenceEqual(SHA256.HashData(bytes)))
-            AtomicFile.WriteAllBytes(agent, bytes);
+        var agent = RuntimeComponentContext.RequirePath(paths, "native-interop");
         return [$"-javaagent:{agent}", $"-Dlanminecraft.native.openal={dll}",
             $"-Dlanminecraft.native.openal.sha256={Convert.ToHexString(expected).ToLowerInvariant()}"];
     }

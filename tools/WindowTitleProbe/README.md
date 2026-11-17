@@ -57,7 +57,7 @@ report records adapter, input, runtime-JAR and class SHA-256 and the
 changed-method count. The disabled control must change zero methods.
 
 Pass the emitted `state-N.json` explicitly to
-`Program/IdentityAdapters/Common/Verify-IdentityAdapter.ps1`, with the current
+`LocalSources/LANMinecraft-Components/Program/IdentityAdapters/Common/Verify-IdentityAdapter.ps1`, with the current
 adapter and JDK. These aliases are freshly derived offline; they do not replay
 a stale state from a previous game launch. A zero-target preflight is not
 claimed as proof of disabled behavior.

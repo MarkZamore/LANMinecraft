@@ -129,7 +129,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
     }
 
     [Fact]
-    public void AdapterBuilds_AreKeptForRuntimesThatStillExist()
+    public void ObsoleteAdapterCopiesAreRemovedAfterSwitchingToSharedComponents()
     {
         var paths = CreatePaths();
         var live = new string('a', 64);
@@ -142,16 +142,15 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
 
         DeprecatedFileCleanupService.Run(paths);
 
-        Assert.True(File.Exists(Path.Combine(paths.Launcher, "IdentityAdapters", live, "adapter.jar")));
+        Assert.False(File.Exists(Path.Combine(paths.Launcher, "IdentityAdapters", live, "adapter.jar")));
         Assert.False(Directory.Exists(Path.Combine(paths.Launcher, "IdentityAdapters", orphan)));
     }
 
     /// <summary>
-    /// With no readable runtime state nothing is provably orphaned, so nothing
-    /// is removed - a damaged state file must not cost the player a rebuild.
+    /// The old layout is retired after the new shared component model is active.
     /// </summary>
     [Fact]
-    public void WithoutRuntimeState_NoAdapterBuildIsRemoved()
+    public void ObsoleteAdapterCopiesWithoutRuntimeStateAreRemovedWhenNoGameIsRunning()
     {
         var paths = CreatePaths();
         var adapter = Path.Combine(paths.Launcher, "IdentityAdapters", new string('c', 64), "adapter.jar");
@@ -159,7 +158,7 @@ public sealed class DeprecatedFileCleanupServiceTests : IDisposable
 
         DeprecatedFileCleanupService.Run(paths);
 
-        Assert.True(File.Exists(adapter));
+        Assert.False(File.Exists(adapter));
     }
 
     /// <summary>

@@ -18,19 +18,6 @@ internal static class SteamComponentCatalog
     private static readonly string[] RequiredCapabilities =
     [UiCapability, "modern-configured-online-mode-at-native-publish", "author-steam-authentication-retained"];
 
-    internal static string EmbeddedJson() => ReadEmbedded("Minecraft.Steam.components.json");
-
-    /// <summary>Historical provenance/fixture input, never a production fallback.</summary>
-    internal static string HistoricalV2Json() => ReadEmbedded("Minecraft.Steam.components-v2.json");
-
-    private static string ReadEmbedded(string resource)
-    {
-        using var stream = typeof(SteamComponentCatalog).Assembly.GetManifestResourceStream(resource)
-            ?? throw new InvalidDataException("Missing embedded Steam component catalog.");
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
-    }
-
     internal static SteamComponentCatalogSnapshot Parse(string json)
     {
         Require(System.Text.Encoding.UTF8.GetByteCount(json) <= MaximumDocumentBytes, "Oversized Steam component index.");
@@ -115,7 +102,9 @@ internal static class SteamComponentCatalog
                         derivation.GetProperty("allOtherEntriesByteIdentical").GetBoolean(),
                     "Unreviewed Steam derivative.");
             }
-            builds.Add(new SteamTransportBuild(version, file, size, digest, CacheId(file, size, digest),
+            var cacheId = row.TryGetProperty("cacheFileId", out var legacyId) ? legacyId.GetInt64() : CacheId(file, size, digest);
+            Require(cacheId > 0, "Invalid Steam cache identity.");
+            builds.Add(new SteamTransportBuild(version, file, size, digest, cacheId,
                 Array.AsReadOnly(loaders), Array.AsReadOnly(minimum), Array.AsReadOnly(maximum), authorFile, tag,
                 NativeLanUiSuppressed: true, VerifiedDownloadUri: uri, UpstreamSourceCommit: upstreamSource,
                 PreservesWorldSettingsOnShare: java8WorldSharing));
@@ -127,16 +116,16 @@ internal static class SteamComponentCatalog
         Require(builds.Where(build => build.PreservesWorldSettingsOnShare)
             .GroupBy(build => string.Join('.', build.MinimumMinecraftVersion)).All(group => group.Count() == 1),
             "Ambiguous Java 8 Steam world sharing build.");
-        ValidateCoverage(builds.Where(build => !build.PreservesWorldSettingsOnShare).ToArray());
-        return WithHistory(new(profile, commit, builds.AsReadOnly(), []), []);
+        ValidateCoverage(builds.Where(build => !build.PreservesWorldSettingsOnShare).ToArray(), root);
+        var history = root.TryGetProperty("history", out var historyRows)
+            ? historyRows.EnumerateArray().Select(ReadHistory).ToArray() : [];
+        return WithHistory(new(profile, commit, builds.AsReadOnly(), []), history);
     }
 
     internal static SteamComponentCatalogSnapshot WithHistory(SteamComponentCatalogSnapshot snapshot,
         IEnumerable<ManagedComponentDescriptor> known)
     {
-        var retired = SteamTransportCatalog.HistoricalAuthorBuilds
-            .Concat(SteamTransportCatalog.LegacyV1Builds.Select(ManagedComponentService.DescriptorFor))
-            .Concat(known)
+        var retired = snapshot.SupersededBuilds.Concat(known)
             .DistinctBy(row => (row.FileName.ToLowerInvariant(), row.SizeBytes, row.Sha256.ToLowerInvariant()))
             .ToArray();
         Require(retired.Length <= 1024, "Steam component history exceeds its safety limit.");
@@ -165,9 +154,27 @@ internal static class SteamComponentCatalog
     }
 
     internal static long CacheId(string file, long size, string digest) =>
-        SteamTransportCatalog.LegacyV1Builds.FirstOrDefault(build => build.FileName == file &&
-            build.SizeBytes == size && build.Sha256 == digest)?.CacheFileId ??
         long.Parse(digest.AsSpan(0, 15), NumberStyles.HexNumber, CultureInfo.InvariantCulture) + 1;
+
+    private static ManagedComponentDescriptor ReadHistory(JsonElement row)
+    {
+        var file = Text(row, "fileName");
+        var size = row.GetProperty("sizeBytes").GetInt64();
+        var digest = Text(row, "sha256");
+        ValidatePin(file, size, digest);
+        Require(Uri.TryCreate(Text(row, "downloadUrl"), UriKind.Absolute, out var uri) &&
+                uri.Scheme == Uri.UriSchemeHttps && uri.Host == "github.com" && uri.IsDefaultPort &&
+                uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0,
+            "Invalid historical Steam provenance URL.");
+        var parts = uri!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
+        Require(parts.Length == 6 && parts[0] is "MarkZamore" or "Kamilhik" && parts[1] == "e4steam" &&
+                parts[2] == "releases" && parts[3] == "download" && parts[5] == file &&
+                Regex.IsMatch(parts[4], "^[a-zA-Z0-9][a-zA-Z0-9._+\\-]{0,99}$", RegexOptions.CultureInvariant),
+            "Historical Steam provenance escapes the verified publishers.");
+        var cacheId = row.TryGetProperty("cacheFileId", out var id) ? id.GetInt64() : CacheId(file, size, digest);
+        Require(cacheId > 0, "Invalid historical Steam cache identity.");
+        return new(ManagedComponentService.E4steamComponentId, cacheId, file, [uri], size, digest);
+    }
 
     private static int[] VersionParts(JsonElement value)
     {
@@ -176,31 +183,38 @@ internal static class SteamComponentCatalog
         return parts;
     }
 
-    private static void ValidateCoverage(IReadOnlyList<SteamTransportBuild> builds)
+    private static void ValidateCoverage(IReadOnlyList<SteamTransportBuild> builds, JsonElement root)
     {
-        Require(builds.Any(build => build.Loaders.Contains(PackLoaderKind.LegacyFabric) &&
-                build.MinimumMinecraftVersion.SequenceEqual([1, 6, 4]) &&
-                build.ExclusiveMaximumMinecraftVersion.SequenceEqual([1, 6, 5])),
-            "Steam component index removes reviewed Legacy Fabric 1.6.4 coverage.");
-        foreach (var loader in new[] { PackLoaderKind.Forge, PackLoaderKind.NeoForge, PackLoaderKind.Fabric, PackLoaderKind.Quilt, PackLoaderKind.LegacyFabric })
+        var coverage = root.TryGetProperty("coverage", out var rows)
+            ? rows.EnumerateArray().ToArray() : [];
+        Require(coverage.Length <= 128, "Oversized Steam coverage declaration.");
+        foreach (var loader in Enum.GetValues<PackLoaderKind>())
         {
             var selected = builds.Where(build => build.Loaders.Contains(loader))
                 .OrderBy(build => build.MinimumMinecraftVersion, Comparer<IReadOnlyList<int>>.Create(SteamTransportCatalog.Compare)).ToArray();
             for (var index = 1; index < selected.Length; index++)
                 Require(SteamTransportCatalog.Compare(selected[index - 1].ExclusiveMaximumMinecraftVersion,
                     selected[index].MinimumMinecraftVersion) <= 0, "Ambiguous Steam compatibility ranges.");
-            foreach (var baseline in SteamTransportCatalog.LegacyV1Builds.Where(build => build.Loaders.Contains(loader)))
+            foreach (var baseline in coverage)
             {
-                var cursor = baseline.MinimumMinecraftVersion;
+                var loaders = baseline.GetProperty("loaders").EnumerateArray().Select(value => value.GetString()).ToArray();
+                Require(loaders.Length is > 0 and <= 5 && loaders.All(value =>
+                    Enum.TryParse<PackLoaderKind>(value, false, out var declared) && declared is not PackLoaderKind.Native and not PackLoaderKind.Vanilla),
+                    "Invalid Steam coverage loader.");
+                if (!loaders.Contains(loader.ToString(), StringComparer.Ordinal)) continue;
+                var minimum = VersionParts(baseline.GetProperty("minimumMinecraftVersion"));
+                var maximum = VersionParts(baseline.GetProperty("exclusiveMaximumMinecraftVersion"));
+                Require(SteamTransportCatalog.Compare(minimum, maximum) < 0, "Invalid Steam coverage range.");
+                var cursor = minimum;
                 foreach (var build in selected)
                 {
                     if (SteamTransportCatalog.Compare(build.ExclusiveMaximumMinecraftVersion, cursor) <= 0) continue;
                     if (SteamTransportCatalog.Compare(build.MinimumMinecraftVersion, cursor) > 0) break;
-                    cursor = build.ExclusiveMaximumMinecraftVersion;
-                    if (SteamTransportCatalog.Compare(cursor, baseline.ExclusiveMaximumMinecraftVersion) >= 0) break;
+                    cursor = build.ExclusiveMaximumMinecraftVersion.ToArray();
+                    if (SteamTransportCatalog.Compare(cursor, maximum) >= 0) break;
                 }
-                Require(SteamTransportCatalog.Compare(cursor, baseline.ExclusiveMaximumMinecraftVersion) >= 0,
-                    "Steam component index removes existing Minecraft/loader coverage.");
+                Require(SteamTransportCatalog.Compare(cursor, maximum) >= 0,
+                    "Steam component index removes declared Minecraft/loader coverage.");
             }
         }
     }
@@ -219,7 +233,7 @@ internal static class SteamComponentCatalog
     private static string Text(JsonElement element, string name) =>
         element.GetProperty(name).GetString() ?? throw new InvalidDataException("Missing Steam catalog text: " + name);
 
-    private static void UniqueProperties(JsonElement element)
+    internal static void UniqueProperties(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
