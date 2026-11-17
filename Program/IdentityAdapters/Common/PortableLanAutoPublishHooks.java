@@ -16,7 +16,7 @@ public final class PortableLanAutoPublishHooks {
     private PortableLanAutoPublishHooks() {
     }
 
-    /** Adds the explicit LAN action beside the unchanged native world settings. */
+    /** Adds the explicit LAN action independently of the original settings entry. */
     public static Object addLanPauseRow(Object rows, Object nativeExit, int columns, Object pauseScreen) {
         ClassLoader loader = pauseScreen.getClass().getClassLoader();
         try {
@@ -56,6 +56,32 @@ public final class PortableLanAutoPublishHooks {
         }
     }
 
+    public static Object addWorldOptions(Object rows, Object button, Object pauseScreen) {
+        ClassLoader loader = pauseScreen.getClass().getClassLoader();
+        try {
+            if (hideWorldOptions(loader)) return button;
+            return PortableIdentityReflection.invokeDeclared(rows,
+                new Class<?>[] { loadClass(loader, aliases("layoutElementClasses")) }, new Object[] { button },
+                aliases("pauseWorldOptionsAddMethods"));
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("The native world options row could not be built.", exception);
+        }
+    }
+
+    private static boolean hideWorldOptions(ClassLoader loader) {
+        try {
+            Object server = PortableIdentityReflection.invoke(minecraftClient(loader), aliases("getSingleplayerServerMethods"));
+            if (server == null) return false;
+            Object mode = PortableIdentityReflection.invoke(server, aliases("getDefaultGameTypeMethods"));
+            Class<?> gameType = loadClass(loader, aliases("gameTypeClasses"));
+            if (mode != staticField(gameType, aliases("pauseSurvivalFields"))) return false;
+            Object data = PortableIdentityReflection.invoke(server, aliases("getWorldDataMethods"));
+            return data != null && Boolean.FALSE.equals(PortableIdentityReflection.invoke(data, aliases("isAllowCommandsMethods")));
+        } catch (ReflectiveOperationException exception) {
+            return false;
+        }
+    }
+
     private static Object explicitLanPauseButton(
         Object pauseScreen, Object minecraft, boolean published, ClassLoader loader)
         throws ReflectiveOperationException {
@@ -69,8 +95,7 @@ public final class PortableLanAutoPublishHooks {
             constructor.setAccessible(true);
             screen = () -> constructScreen(constructor, pauseScreen);
         } else {
-            // This is Minecraft's own translated Open to LAN caption. Its
-            // world-options caption and action remain in the original row.
+            // Use Minecraft's translated Open to LAN caption.
             label = PortableIdentityReflection.invokeStatic(componentType,
                 new Class<?>[] { String.class }, new Object[] { "menu.multiplayerOptions.button" },
                 aliases("componentTranslatableMethods"));

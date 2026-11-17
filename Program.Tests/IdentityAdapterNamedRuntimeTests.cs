@@ -189,7 +189,8 @@ public sealed class IdentityAdapterNamedRuntimeTests : IDisposable
                         $"(L{Screen};Lnet/minecraft/world/level/Level;)V"));
                 Add(archive, "net/minecraft/client/gui/layouts/GridLayout$RowHelper", ("addChild",
                     missingPausePart == "rowAddSignature" ? "()V" :
-                        "(Lnet/minecraft/client/gui/layouts/LayoutElement;I)Lnet/minecraft/client/gui/layouts/LayoutElement;"));
+                        "(Lnet/minecraft/client/gui/layouts/LayoutElement;I)Lnet/minecraft/client/gui/layouts/LayoutElement;"),
+                    ("addChild", "(Lnet/minecraft/client/gui/layouts/LayoutElement;)Lnet/minecraft/client/gui/layouts/LayoutElement;"));
                 Add(archive, "net/minecraft/client/gui/layouts/LayoutElement");
                 Add(archive, "net/minecraft/client/gui/components/AbstractWidget", ("getWidth", "()I"), ("setWidth", "(I)V"));
                 Add(archive, "net/minecraft/world/level/Level");
@@ -216,7 +217,7 @@ public sealed class IdentityAdapterNamedRuntimeTests : IDisposable
             Add(archive, "net/minecraft/client/gui/components/ChatComponent", ("addClientSystemMessage", "(Lnet/minecraft/network/chat/Component;)V"));
             Add(archive, "net/minecraft/util/thread/BlockableEventLoop", ("schedule", "(Ljava/lang/Runnable;)V"));
             Add(archive, "net/minecraft/util/HttpUtil", ("getAvailablePort", "()I"));
-            Add(archive, "net/minecraft/world/level/GameType");
+            Add(archive, "net/minecraft/world/level/GameType", ("SURVIVAL", "Lnet/minecraft/world/level/GameType;"));
             Add(archive, "net/minecraft/server/commands/PublishCommand");
             Add(archive, "net/minecraft/world/level/storage/WorldData", ("isAllowCommands", "()Z"));
             Add(archive, "net/minecraft/network/chat/Component", ("translatable", "(Ljava/lang/String;)Lnet/minecraft/network/chat/MutableComponent;"));

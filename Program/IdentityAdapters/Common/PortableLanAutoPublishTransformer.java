@@ -396,18 +396,31 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         ClassNode node = new ClassNode(Opcodes.ASM9);
         new ClassReader(original).accept(node, 0);
         int patched = 0;
+        int settingsPatched = 0;
         for (MethodNode method : node.methods) {
             if (!contains(property("pauseCreateMenuMethods", ""), method.name) ||
                 !method.desc.equals("()V") || (method.access & Opcodes.ACC_STATIC) != 0) continue;
             for (AbstractInsnNode instruction : method.instructions.toArray()) {
                 if (!(instruction instanceof MethodInsnNode call) ||
                     call.getOpcode() != Opcodes.INVOKEVIRTUAL || call.itf ||
-                    !contains(property("pauseRowHelperClasses", ""), call.owner) ||
-                    !contains(property("pauseRowAddMethods", ""), call.name) ||
+                    !contains(property("pauseRowHelperClasses", ""), call.owner)) continue;
+                if (contains(property("pauseWorldOptionsAddMethods", ""), call.name) &&
+                    contains(property("pauseWorldOptionsAddDescriptors", ""), call.desc) &&
+                    isWorldOptionsInsertion(node.name, call)) {
+                    method.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
+                    MethodInsnNode replacement = new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS, "addWorldOptions",
+                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
+                    method.instructions.set(call, replacement);
+                    method.instructions.insert(replacement, new TypeInsnNode(
+                        Opcodes.CHECKCAST, Type.getReturnType(call.desc).getInternalName()));
+                    settingsPatched++;
+                    continue;
+                }
+                if (!contains(property("pauseRowAddMethods", ""), call.name) ||
                     !contains(property("pauseRowAddDescriptors", ""), call.desc)) continue;
                 // The native disconnect row supplies the real width and column
                 // span. Its original insertion still runs after the LAN row;
-                // the separate world-options entry is never intercepted.
+                // the settings entry is handled at its own insertion above.
                 method.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
                 MethodInsnNode replacement = new MethodInsnNode(
                     Opcodes.INVOKESTATIC, HOOKS, "addLanPauseRow",
@@ -421,10 +434,31 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
         if (patched != 1) {
             throw unsupported("expected one native full-width disconnect row in " + className + ", found " + patched);
         }
+        if (settingsPatched != 1) {
+            throw unsupported("expected one native world options entry in " + className + ", found " + settingsPatched);
+        }
         ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         node.accept(writer);
         System.out.println("[PortableIdentity] Patched native LAN/reporting pause row class " + className + ".");
         return writer.toByteArray();
+    }
+
+    private static boolean isWorldOptionsInsertion(String owner, MethodInsnNode insertion) {
+        if (!(previousOpcode(insertion) instanceof MethodInsnNode open) ||
+            open.getOpcode() != Opcodes.INVOKEVIRTUAL || open.itf || !open.owner.equals(owner) ||
+            !contains(property("pauseOpenScreenButtonMethods", ""), open.name) ||
+            !contains(property("pauseOpenScreenButtonDescriptors", ""), open.desc) ||
+            !(previousOpcode(open) instanceof InvokeDynamicInsnNode supplier) ||
+            !(previousOpcode(supplier) instanceof VarInsnNode screen) ||
+            screen.getOpcode() != Opcodes.ALOAD || screen.var != 0) return false;
+        return previousOpcode(screen) instanceof FieldInsnNode label && label.getOpcode() == Opcodes.GETSTATIC &&
+            label.owner.equals(owner) && contains(property("pauseWorldOptionsFields", ""), label.name);
+    }
+
+    private static AbstractInsnNode previousOpcode(AbstractInsnNode instruction) {
+        AbstractInsnNode previous = instruction.getPrevious();
+        while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
+        return previous;
     }
 
     private static String property(String name, String fallback) {

@@ -38,6 +38,7 @@ public final class WorldOptionsPublishProbe {
         pauseType = loader.define(PAUSE, transformer.transform(null, null, PAUSE, null, null, pause));
         worldType = loader.define(WORLD, transformer.transform(null, null, WORLD, null, null, world));
         successfulPublication();
+        restrictedSurvivalMenu();
         guestCommandsFollowSavedWorld();
         failedPublication(false);
         failedPublication(true);
@@ -45,6 +46,7 @@ public final class WorldOptionsPublishProbe {
         noIntegratedRow(new Object());
         Server unknown = new Server();
         unknown.throwState = true;
+        unknown.savedCommands = true;
         noIntegratedRow(unknown);
         System.out.println("Explicit world options publication checks passed.");
     }
@@ -52,6 +54,7 @@ public final class WorldOptionsPublishProbe {
     private static void successfulPublication() throws Exception {
         Minecraft client = reset(new Server());
         Server server = (Server) client.server;
+        server.savedCommands = true;
         MenuBase pause = menu();
         checkRow(pause, false);
         check(server.attempts == 0, "building a pause row published a session");
@@ -101,6 +104,27 @@ public final class WorldOptionsPublishProbe {
             "published world's ordinary settings were treated as Open LAN");
     }
 
+    private static void restrictedSurvivalMenu() throws Exception {
+        Server server = new Server();
+        Minecraft client = reset(server);
+        MenuBase pause = menu();
+        checkRow(pause, false, true);
+        lanAction(pause).click();
+        check(server.published && server.attempts == 1, "restricted survival lost single-click publishing");
+        client.drain();
+        check(client.gui.current == null, "restricted survival was not returned to the game");
+        pause.createPauseMenu();
+        checkRow(pause, true, true);
+        lanAction(pause).click();
+        check(client.gui.current instanceof ReportingScreen, "restricted survival lost reporting");
+
+        for (GameType mode : new GameType[] {GameType.CREATIVE, GameType.ADVENTURE}) {
+            server.mode = mode;
+            pause.createPauseMenu();
+            checkRow(pause, true, false);
+        }
+    }
+
     private static void guestCommandsFollowSavedWorld() throws Exception {
         property("lanGuestCommandAccessMethods", "setGuestCommandAccess");
         property("getWorldDataMethods", "getWorldData");
@@ -113,7 +137,7 @@ public final class WorldOptionsPublishProbe {
                 server.guestCommands = !commands;
                 reset(server);
                 MenuBase pause = menu();
-                ((Button) pause.rows.children.get(1)).click();
+                lanAction(pause).click();
                 check(server.guestCommands == (publicationSucceeds ? commands : !commands),
                     "guest permission did not follow the saved setting after successful publication only");
             }
@@ -127,7 +151,7 @@ public final class WorldOptionsPublishProbe {
         server.throwPublish = throwing;
         Minecraft client = reset(server);
         MenuBase pause = menu();
-        ((Button) pause.rows.children.get(1)).click();
+        lanAction(pause).click();
         WorldBase requested = (WorldBase) client.gui.current;
         check(requested.widgetsReady && requested.nativeInits == 1 && server.attempts == 1,
             "failed publication skipped native world settings");
@@ -136,8 +160,8 @@ public final class WorldOptionsPublishProbe {
         requested.init();
         check(server.attempts == 1 && requested.nativeInits == 2, "failed screen resize retried publication");
         pause.createPauseMenu();
-        checkRow(pause, false);
-        ((Button) pause.rows.children.get(1)).click();
+        checkRow(pause, false, true);
+        lanAction(pause).click();
         check(server.attempts == 2, "fresh explicit action could not retry failure");
     }
 
@@ -153,12 +177,21 @@ public final class WorldOptionsPublishProbe {
     }
 
     private static void checkRow(MenuBase menu, boolean published) throws Exception {
-        check(menu.rows.children.size() == 3 && menu.rows.children.get(0) == menu.options &&
-            menu.rows.children.get(2) == menu.exitButton, "new row was not inserted immediately before native exit");
-        Button action = (Button) menu.rows.children.get(1);
+        checkRow(menu, published, false);
+    }
+
+    private static Button lanAction(MenuBase menu) {
+        return (Button) menu.rows.children.get(menu.rows.children.size() - 2);
+    }
+
+    private static void checkRow(MenuBase menu, boolean published, boolean hideOptions) throws Exception {
+        int count = hideOptions ? 2 : 3;
+        check(menu.rows.children.size() == count && menu.rows.children.contains(menu.options) != hideOptions &&
+            menu.rows.children.get(count - 1) == menu.exitButton, "incorrect native settings or exit row");
+        Button action = lanAction(menu);
         check(action.width == menu.exitButton.width && action.width == 345,
             "full-width native LAN/report row did not copy actual exit width");
-        check(menu.rows.columns.get(1) == 2 && menu.rows.columns.get(2) == 2,
+        check(menu.rows.columns.get(count - 2) == 2 && menu.rows.columns.get(count - 1) == 2,
             "injected row did not retain native full-width column span");
         if (published) check(action.label == pauseType.getField("PLAYER_REPORTING").get(null),
             "report row did not keep exact native component");
@@ -231,6 +264,10 @@ public final class WorldOptionsPublishProbe {
         property("pauseRowHelperClasses", ROW);
         property("pauseRowAddMethods", "addChild");
         property("pauseRowAddDescriptors", "(LWorldOptionsPublishProbe$LayoutElement;I)LWorldOptionsPublishProbe$LayoutElement;");
+        property("pauseWorldOptionsAddMethods", "addChild");
+        property("pauseWorldOptionsAddDescriptors", "(LWorldOptionsPublishProbe$LayoutElement;)LWorldOptionsPublishProbe$LayoutElement;");
+        property("pauseWorldOptionsFields", "WORLD_OPTIONS");
+        property("pauseSurvivalFields", "SURVIVAL");
         property("layoutElementClasses", LayoutElement.class.getName());
         property("widgetGetWidthMethods", "getWidth");
         property("widgetSetWidthMethods", "setWidth");
@@ -243,6 +280,9 @@ public final class WorldOptionsPublishProbe {
         property("minecraftGetInstanceMethods", "getInstance");
         property("getSingleplayerServerMethods", "getSingleplayerServer");
         property("isPublishedMethods", "isPublished");
+        property("getDefaultGameTypeMethods", "getDefaultGameType");
+        property("getWorldDataMethods", "getWorldData");
+        property("isAllowCommandsMethods", "isAllowCommands");
         property("screenClasses", Screen.class.getName());
         property("componentClasses", Component.class.getName());
         property("gameTypeClasses", GameType.class.getName());
@@ -281,12 +321,12 @@ public final class WorldOptionsPublishProbe {
     }
     public static final class PauseScreen extends MenuBase {
         public static final Component PLAYER_REPORTING = new Component("native.playerReporting");
+        public static final Component WORLD_OPTIONS = new Component("native.worldOptions");
         public void createPauseMenu() {
             nativeInits++;
             rows = new RowHelper();
-            options = openScreenButton(new Component("native.worldOptions"),
-                () -> ordinaryWorldOptions(this, Minecraft.INSTANCE.level));
-            rows.addChild(options);
+            options = (Button) rows.addChild(openScreenButton(WORLD_OPTIONS,
+                () -> ordinaryWorldOptions(this, Minecraft.INSTANCE.level)));
             Button nativeExit = new Button(new Component("native.exit"), () -> { });
             nativeExit.setWidth(345);
             exitButton = (Button) rows.addChild(nativeExit, 2);
@@ -335,11 +375,13 @@ public final class WorldOptionsPublishProbe {
     }
     public static final class Level { }
     public enum Scope { LAN }
-    public enum GameType { SURVIVAL }
+    public enum GameType { SURVIVAL, CREATIVE, ADVENTURE }
     public static final class Server {
+        GameType mode = GameType.SURVIVAL;
         boolean savedCommands;
         boolean guestCommands;
         public Server getWorldData() { return this; }
+        public GameType getDefaultGameType() { return mode; }
         public boolean isAllowCommands() { return savedCommands; }
         public void setGuestCommandAccess(boolean commands) { guestCommands = commands; }
         public boolean published;

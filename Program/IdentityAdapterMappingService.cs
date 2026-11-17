@@ -467,15 +467,20 @@ internal sealed class IdentityAdapterMappingService
         {
             // WorldOptionsScreen now owns game rules and difficulty as well as
             // LAN settings. Only a dedicated request from the added pause row
-            // may auto-publish; the normal world-options entry stays native.
+            // may auto-publish. The original entry is filtered at insertion.
             var row = mappings.FindClass(PauseRowHelper);
             var element = mappings.FindClass(LayoutElement);
             var widget = mappings.FindClass(AbstractWidget);
             var level = mappings.FindClass(Level);
             var minecraft = mappings.FindClass(MinecraftClient);
-            if (row is null || element is null || widget is null || level is null || minecraft is null) return null;
+            var survival = mappings.FindClass(GameType)?.FindField("SURVIVAL");
+            var worldOptionsLabel = pause.FindField("WORLD_OPTIONS");
+            if (row is null || element is null || widget is null || level is null || minecraft is null ||
+                survival is null || worldOptionsLabel is null) return null;
             var rowAdd = row.FindMethod("addChild", descriptor =>
                 descriptor == $"(L{element.ObfName};I)L{element.ObfName};");
+            var optionsAdd = row.FindMethod("addChild", descriptor =>
+                descriptor == $"(L{element.ObfName};)L{element.ObfName};");
             var width = widget.FindMethod("getWidth", descriptor => descriptor == "()I");
             var setWidth = widget.FindMethod("setWidth", descriptor => descriptor == "(I)V");
             var levelField = minecraft.FindField("level");
@@ -483,13 +488,18 @@ internal sealed class IdentityAdapterMappingService
                 descriptor.StartsWith("(Ljava/lang/String;)L", StringComparison.Ordinal));
             var worldConstructor = worldOptions.FindMethod("<init>", descriptor =>
                 descriptor == $"(L{screen.ObfName};L{level.ObfName};)V");
-            if (rowAdd is null || width is null || setWidth is null || levelField is null ||
-                translatable is null || worldConstructor is null || pause.FindField("WORLD_OPTIONS") is null) return null;
+            if (rowAdd is null || optionsAdd is null || width is null || setWidth is null || levelField is null ||
+                translatable is null || worldConstructor is null) return null;
             properties["pauseLanRowEnabled"] = "true";
             properties["pauseRowHelperClasses"] = JoinAliases(row);
             properties["pauseRowAddMethods"] = JoinAliases(rowAdd);
             properties["pauseRowAddDescriptors"] = JoinAliases(
                 $"(L{element.RuntimeName};I)L{element.RuntimeName};", rowAdd.ObfDescriptor);
+            properties["pauseWorldOptionsAddMethods"] = JoinAliases(optionsAdd);
+            properties["pauseWorldOptionsAddDescriptors"] = JoinAliases(
+                $"(L{element.RuntimeName};)L{element.RuntimeName};", optionsAdd.ObfDescriptor);
+            properties["pauseWorldOptionsFields"] = JoinAliases(worldOptionsLabel);
+            properties["pauseSurvivalFields"] = JoinAliases(survival);
             properties["layoutElementClasses"] = JoinDottedAliases(element);
             properties["widgetClasses"] = JoinAliases(widget);
             properties["widgetGetWidthMethods"] = JoinAliases(width);
