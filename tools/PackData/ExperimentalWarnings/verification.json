@@ -1,0 +1,750 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-17",
+  "scope": "The screenshot lifecycle confirmation, identified by selectWorld.warning.experimental.title and the associated world-open/import lifecycle checks.",
+  "artifact": {
+    "sizeBytes": 385299,
+    "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+  },
+  "catalogSource": "https://github.com/MarkZamore/LANMinecraft/blob/pack-catalog/catalog.json",
+  "publishedPackCount": 25,
+  "updatedPackCount": 20,
+  "commands": [
+    "python -B -m unittest discover -s tools/PackData/CurseForge -p test_*.py -q",
+    "python -B -m unittest discover -s tools/PackData/ExperimentalWarnings -p test_*.py -q",
+    "java -Xverify:all -javaagent:<agent.jar> -cp <compiled-fixtures> net.minecraft.ExperimentalConfirmationProbe",
+    "java -Xverify:all -cp <agent,ASM,compiled-fixtures> NativeBytecodeProbe <verified-official-clients>"
+  ],
+  "unitTests": {
+    "passed": 45,
+    "failed": 0
+  },
+  "deterministicBuild": "PASS: three builds have identical SHA256",
+  "jvmBehaviorProbes": [
+    {
+      "java": "Temurin 8u512-b09",
+      "status": "PASS"
+    },
+    {
+      "java": "21.0.12.1+1",
+      "status": "PASS"
+    },
+    {
+      "java": "25.0.2",
+      "status": "PASS"
+    }
+  ],
+  "officialClientBytecode": [
+    {
+      "minecraftVersion": "1.16.5",
+      "source": "https://piston-data.mojang.com/v1/objects/37fd3c903861eeff3bc24b71eed48f828b5269c8/client.jar",
+      "sha1": "37fd3c903861eeff3bc24b71eed48f828b5269c8",
+      "sha256": "00b5ebbc33e95ea88c1ab80601599c9827e9aa861d93ccc2cfcbbfd996e86263",
+      "sizeBytes": 17547153,
+      "modifiedClasses": 2,
+      "analyzedMethods": 207,
+      "status": "PASS"
+    },
+    {
+      "minecraftVersion": "1.18.2",
+      "source": "https://piston-data.mojang.com/v1/objects/2e9a3e3107cca00d6bc9c97bf7d149cae163ef21/client.jar",
+      "sha1": "2e9a3e3107cca00d6bc9c97bf7d149cae163ef21",
+      "sha256": "1d09e3639644b6b2254499469d0765cc005a286d19f3fa595b0ed8fb07971ec7",
+      "sizeBytes": 20259661,
+      "modifiedClasses": 2,
+      "analyzedMethods": 233,
+      "status": "PASS"
+    },
+    {
+      "minecraftVersion": "1.19.2",
+      "source": "https://piston-data.mojang.com/v1/objects/055b30d860ead928cba3849ba920c88b6950b654/client.jar",
+      "sha1": "055b30d860ead928cba3849ba920c88b6950b654",
+      "sha256": "e1ac65de9b471b6916cc457fdcff00c1bafac17027aa79100c4df893b3d956db",
+      "sizeBytes": 21644740,
+      "modifiedClasses": 1,
+      "analyzedMethods": 26,
+      "status": "PASS"
+    },
+    {
+      "minecraftVersion": "1.20.1",
+      "source": "https://piston-data.mojang.com/v1/objects/0c3ec587af28e5a785c0b4a7b8a30f9a8f78f838/client.jar",
+      "sha1": "0c3ec587af28e5a785c0b4a7b8a30f9a8f78f838",
+      "sha256": "56b71336d2b4fdffd197f56595b0da93e32a946f78f382a299b8f4b92758bb0f",
+      "sizeBytes": 23028853,
+      "modifiedClasses": 1,
+      "analyzedMethods": 30,
+      "status": "PASS"
+    },
+    {
+      "minecraftVersion": "1.21.1",
+      "source": "https://piston-data.mojang.com/v1/objects/30c73b1c5da787909b2f73340419fdf13b9def88/client.jar",
+      "sha1": "30c73b1c5da787909b2f73340419fdf13b9def88",
+      "sha256": "499f6897d1837516680f3114072d8106e11c9adcd933fe5cf051b551089b0c99",
+      "sizeBytes": 26836906,
+      "modifiedClasses": 1,
+      "analyzedMethods": 39,
+      "status": "PASS"
+    },
+    {
+      "minecraftVersion": "26.3",
+      "source": "https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar",
+      "sha1": "e877b6a07acd633fb3bb475002175cec036e7b87",
+      "sha256": "4508d006323f24fa02876310c192d739af56516eb259000ac50f0909a68c9a2d",
+      "sizeBytes": 41483720,
+      "modifiedClasses": 1,
+      "analyzedMethods": 52,
+      "status": "PASS"
+    }
+  ],
+  "publicVerification": [
+    {
+      "status": "PASS",
+      "repo": "Antimatter-Chemistry-Reforged",
+      "revision": "f0b35bd008c0f34aa479237fe72acd359bc2154d",
+      "manifest": {
+        "sizeBytes": 362022,
+        "sha256": "2423b78d55bae411a36fbc5a9d22c90d34cb14d3da9f2c026b523b0c958bee4b"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 1702,
+          "sha256": "83e4e52e0b50d53163e6296f74e21262393e2e0248bfe11d61420f2980515e67"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 173
+    },
+    {
+      "status": "PASS",
+      "repo": "Clayblock",
+      "revision": "5b4424749afe2684dea52fc138ba262933fa80aa",
+      "manifest": {
+        "sizeBytes": 2575719,
+        "sha256": "5fa0f13b033f51333568c87f5a167e5e1e1291760cc825e5939ea76a7c84113b"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 107,
+          "sha256": "131d040f3fa9d7cdd4ac36e18ba1665cc8b822786d23c8274befe08225d22dfc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 113
+    },
+    {
+      "status": "PASS",
+      "repo": "Desolate-Planet",
+      "revision": "a7f699cff9565bfae4bff7b283843b67dd72edf2",
+      "manifest": {
+        "sizeBytes": 1069010,
+        "sha256": "d4902439cc9a432a9e4984814aaf984c29b65d6b341450de9969981121c364ee"
+      },
+      "runtimeFiles": {
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 43764,
+          "sha256": "cce9cd67f3a4b8bb847fb885382404dfad4d6e2ade57d60551f843802d6a856f"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 186
+    },
+    {
+      "status": "PASS",
+      "repo": "Escape-The-End",
+      "revision": "56d52d97a2735b8783acf7ab7a8b8421fefbe45b",
+      "manifest": {
+        "sizeBytes": 406406,
+        "sha256": "1487df3f723c9d5c9d50aadd34e6c4081b826549fd8e9d97f4713c0dba8cba37"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 909,
+          "sha256": "1b3df37080b5980d81e99c2722bc13db890d96bef4cb8940859e54193455a9ad"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 146
+    },
+    {
+      "status": "PASS",
+      "repo": "FTB-Inferno",
+      "revision": "ad94a41fe01607c3c0e98945ee0c8922e68faf5f",
+      "manifest": {
+        "sizeBytes": 1340110,
+        "sha256": "2ac94b66c421322a65ce453676b02cf90dcfc97ad4642c608b9582151df3c2ec"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 2234,
+          "sha256": "d5f560c2843a70185292ef66d060e402e4a13be725135f81ad1e62880bbbd523"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 274
+    },
+    {
+      "status": "PASS",
+      "repo": "Liminal-Industries",
+      "revision": "b3b3d7e309f4bd33ed41fd848a45570b67d83528",
+      "manifest": {
+        "sizeBytes": 1204816,
+        "sha256": "50a9f7e39be571389fbbe37a00b6a03b3ca548a314c5d6c285e035c0e693783f"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 74,
+          "sha256": "6157be94a8289c8638cff19b3428ad3c634b25ca744080ccd210b71a3dbd3ed1"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 152
+    },
+    {
+      "status": "PASS",
+      "repo": "Reclamation",
+      "revision": "cdafd37300dd10f39bee864cb9d0d034e3e6ef4d",
+      "manifest": {
+        "sizeBytes": 1023785,
+        "sha256": "e766513799f6e6902495f713bed199a0cd7625a3265d580ba53d8f7fcfd644e6"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 74,
+          "sha256": "6157be94a8289c8638cff19b3428ad3c634b25ca744080ccd210b71a3dbd3ed1"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 177
+    },
+    {
+      "status": "PASS",
+      "repo": "UniversIO",
+      "revision": "fc70c7a0965f7cb0ad54fd4764513fd8ca38ea2c",
+      "manifest": {
+        "sizeBytes": 2064852,
+        "sha256": "72aada4e7f6331a2700a6411c0edde7067d99916cb88b81aef048d4c9a3e6f2f"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 1445,
+          "sha256": "dd226029cdf430e18d74bf514d9a9b481d2c20024daab492460ec8e53fa8d57b"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 180
+    },
+    {
+      "status": "PASS",
+      "repo": "Awakening-Of-The-Titans",
+      "revision": "b34efe9b4b42e68f30e49c35ce53ac9664f2bd17",
+      "manifest": {
+        "sizeBytes": 180007,
+        "sha256": "28fa932796fca33ba0d76fbaa25d86761a4d442d7fe6237cfb583ff67dd98472"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 343,
+          "sha256": "76a7478ef1a46ae22aa0615e5a564140695437e3eb5e95384912b4c6ae086a15"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 249
+    },
+    {
+      "status": "PASS",
+      "repo": "Caves-and-Dungeons",
+      "revision": "68a6c68a87f56c33b69d397edddb674424f55480",
+      "manifest": {
+        "sizeBytes": 53291,
+        "sha256": "0434f93b931d6d6dbcb4f8820faf2dd3bfc5de2a86452d76725a6f8b6cec2a9d"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 190,
+          "sha256": "a128d896215a3efe8cb85ca7f8236bf1df9034cf96977cd6ab29a03499edd8cb"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 120
+    },
+    {
+      "status": "PASS",
+      "repo": "Fear-Nightfall",
+      "revision": "75284be338384c14d3e85901df10e2b80418b1aa",
+      "manifest": {
+        "sizeBytes": 443412,
+        "sha256": "2723f05813ad5bec2eec62810e1020461d618d09d4333c61a9d7331e0f850ff2"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 784,
+          "sha256": "956c9642bc459f978290b074988cff4ecbd5c27e6e3afa9e3178ef482a1ace0f"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 377
+    },
+    {
+      "status": "PASS",
+      "repo": "TerraFirma-Rebirth-2",
+      "revision": "e1560afab723d12787073af28588446577be3688",
+      "manifest": {
+        "sizeBytes": 848208,
+        "sha256": "dffb0a4aa37518006a8938f2d0c6ada8d05c0e598453696834cd47069eb281c8"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 231,
+          "sha256": "ca68764a81316df578d60e1e9a8a5b3aad29240e08655d9c3943b449872a6d76"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 564,
+          "sha256": "e13b710e57f9344cab84c086c6fddf54adf1b66c1388b80fc44a27d42672e4b1"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 384
+    },
+    {
+      "repo": "All-the-Mods-10",
+      "revision": "2a1ad92efcef4b0ce90743005ec83f5125f380ac",
+      "manifest": {
+        "sizeBytes": 1197808,
+        "sha256": "6e35a66a5742094ae45eac363cc8ee75174d56fe8282727440abd53efcb8d7f2"
+      },
+      "status": "ALREADY_DISABLED"
+    },
+    {
+      "status": "PASS",
+      "repo": "All-the-Mods-9",
+      "revision": "ab40aa7c438f27563ecb0836666f3bad62d9dd5d",
+      "manifest": {
+        "sizeBytes": 902467,
+        "sha256": "f50432445c3316821bd459411398d238c09052356d89cc263d59c7992f48f3be"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 246,
+          "sha256": "ac02c8a70e24340a8b320ee11b25e0452c593be854e341c458c8534be19e8a6a"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 453
+    },
+    {
+      "status": "PASS",
+      "repo": "All-the-Mods-9-Modified",
+      "revision": "a73c77cea71802fa1faef20421b79eea074e758e",
+      "manifest": {
+        "sizeBytes": 972027,
+        "sha256": "d9d008afd8b853a0e8e68e88757c6065da87876ae143a344422232d3d693e282"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 246,
+          "sha256": "ac02c8a70e24340a8b320ee11b25e0452c593be854e341c458c8534be19e8a6a"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 537
+    },
+    {
+      "repo": "Better-Than-Wolves",
+      "revision": "c0f2a3a29170eb0d8cbebd690ace6a28c0f862a3",
+      "manifest": {
+        "sizeBytes": 3608,
+        "sha256": "cf3767e6f22d544dd60e83355b37b15a2b5359dd052d8eb490644cb79d3e4c72"
+      },
+      "status": "NO_MATCHING_SCREENSHOT_DIALOG"
+    },
+    {
+      "status": "PASS",
+      "repo": "Better-Vanilla",
+      "revision": "bababd40e6cfc396ed360e3791f73f38d4739e12",
+      "manifest": {
+        "sizeBytes": 43735,
+        "sha256": "7392c2b631985db223e01b0201ef8aa5a93b996a53a7e92bd2b0c20e7e3897ca"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 167,
+          "sha256": "96dcaea09bd8853d8f2a295ed586d25861210105dc40605c598d69925a61d735"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 119,
+          "sha256": "42a510ff209111af40e2ba9bd23bf8b4dba85984a8932f76a495bcf0cb30d685"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 212
+    },
+    {
+      "status": "PASS",
+      "repo": "Hide-and-Hunt",
+      "revision": "5ed940ead2de88f1c3756f3a03a34df102113c2b",
+      "manifest": {
+        "sizeBytes": 6981,
+        "sha256": "c6156684985e647d786093f9dc381564615c6f2d1d83299bd9dca38bdfb52b9b"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 74,
+          "sha256": "dd4c7bfc687685252efbd35febc1237dde90e3b8055b380da9b89c181316763d"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 47
+    },
+    {
+      "status": "PASS",
+      "repo": "Minecraft-Java-Edition",
+      "revision": "a34b2c07857c6294f1fa9f8ad4d1419af727c7d1",
+      "manifest": {
+        "sizeBytes": 6573,
+        "sha256": "e2ffe0d517f3909dfaa37982617994054a7ea3ee209a8d1fc07588032cf467c5"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 166,
+          "sha256": "0878a1cb1c806b760424d86350ba7e80840dbffcfe25d1cf62a00bcd24b2e751"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 74,
+          "sha256": "dd4c7bfc687685252efbd35febc1237dde90e3b8055b380da9b89c181316763d"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 3
+    },
+    {
+      "repo": "Minecraft-Rust-Edition",
+      "revision": "9f2de1e653e778400f5dc826f834c2e9671fa6f8",
+      "manifest": {
+        "sizeBytes": 151219,
+        "sha256": "29664d4a6c03a7f163f9040fce3fda06a2ec169906373f99f811efd030957e5a"
+      },
+      "status": "NO_MATCHING_SCREENSHOT_DIALOG"
+    },
+    {
+      "repo": "Minecraft-Rust-Mods",
+      "revision": "a778d746adfcfb7cef2c312cee3919e5445aa83d",
+      "manifest": {
+        "sizeBytes": 161282,
+        "sha256": "7435e7ccaa9492706cc26e59462ca51569672607e2f03e4e5b631cd2292264de"
+      },
+      "status": "NO_MATCHING_SCREENSHOT_DIALOG"
+    },
+    {
+      "repo": "Nuclear-Tech-Reborn",
+      "revision": "8496ec85b40dbbbcdfb12e43e1c308c3d43641b9",
+      "manifest": {
+        "sizeBytes": 612360,
+        "sha256": "8851d60f36ae69bc39f99e1cce84cfe46063a8980142e35119f24f063402d5a2"
+      },
+      "status": "NO_MATCHING_SCREENSHOT_DIALOG"
+    },
+    {
+      "status": "PASS",
+      "repo": "All-in-One",
+      "revision": "e1b3f916809e9fd54a701b05afab9fed29c43b0b",
+      "manifest": {
+        "sizeBytes": 188874,
+        "sha256": "05ea404632b7718b9b37058f5e50f66695a584c9db6a86d0cd2d2e128c7e9c5f"
+      },
+      "runtimeFiles": {
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 152,
+          "sha256": "554d3f1e535793101ec0a0e8e7899444f91d22d837bd3dd611518c8dcc74c971"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 1024,
+          "sha256": "01e73fb240d43673755022526114c93f8fb7fc816e69f8f2855ac25eb7d50882"
+        },
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 113
+    },
+    {
+      "status": "PASS",
+      "repo": "All-the-Mods-10-To-the-Sky",
+      "revision": "312db1f7c1af2f784c683559dd40fabaf30e2e0d",
+      "manifest": {
+        "sizeBytes": 863022,
+        "sha256": "c2517a2023cfed6d0b279fa46a615a9d9eae98183ba2625d608b7b759fa2ea09"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 63942,
+          "sha256": "33a52a5fd63daca9cff41d33a648f72455de30320c96ec6b100790bd892e7a3a"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 355
+    },
+    {
+      "status": "PASS",
+      "repo": "Beebeeblock",
+      "revision": "6906aa1f245338a44c1c727b485528c1bce2f784",
+      "manifest": {
+        "sizeBytes": 819949,
+        "sha256": "0a372c5ffc3cd6dfa4553c54bca57d66bd6406f814829626936f22d9a7250235"
+      },
+      "runtimeFiles": {
+        "config/lanminecraft/experimental-world-confirmation.jar": {
+          "sizeBytes": 385299,
+          "sha256": "6db006392ebcfa6ce3cb5d21da8c8772eacfa388052e6e97bd5dd925734dd8bc"
+        },
+        "launcher/jvm-args.txt": {
+          "sizeBytes": 111,
+          "sha256": "6d1dd3ea430f376463bda0836f9b2cdcb5ee6d032c17b1fdf9100b647d5323d2"
+        },
+        "launcher/pack-owned.txt": {
+          "sizeBytes": 172,
+          "sha256": "4b82539f50c6f37b344b2a44951179c7aaf93e450bda69ae783941c1bf45a20f"
+        }
+      },
+      "gameplayRun": "NOT RUN",
+      "computerUse": false,
+      "freshPublicVerification": "PASS",
+      "modCount": 379
+    }
+  ],
+  "alreadyDisabled": {
+    "repo": "All-the-Mods-10",
+    "path": "mods/yeetusexperimentus-neoforge-87.0.0.jar",
+    "sha256": "9117db8b5905abf18f64fdf8f8d8ca5a91c23abd0a7fa2c9986c21aa17d74e75",
+    "proof": "Verified public asset and mixin bytecode of CreateWorldScreenMixin and WorldOpenFlowsMixin."
+  },
+  "legacyWithoutDialog": [
+    {
+      "repo": "Better-Than-Wolves",
+      "minecraftVersion": "1.6.4",
+      "officialClientSha1": "1703704407101cf72bd88e68579e3696ce733ecd",
+      "classMarkerMatches": 0
+    },
+    {
+      "repo": "Nuclear-Tech-Reborn",
+      "minecraftVersion": "1.12.2",
+      "officialClientSha1": "0f275bc1547d01fa5f56ba34bdc87d981ee12daf",
+      "classMarkerMatches": 0
+    }
+  ],
+  "nativeWithoutScreenshotDialog": [
+    {
+      "repo": "Minecraft-Rust-Edition",
+      "revision": "9f2de1e653e778400f5dc826f834c2e9671fa6f8",
+      "client": {
+        "sizeBytes": 92608000,
+        "sha256": "70ca11bd2beace848ebaadb88c31fbcec9d1284c687e55af24fd83ec00a5813b"
+      },
+      "literalMarkers": {
+        "selectWorld.warning.experimental.title": false,
+        "selectWorld.import_worldgen_settings.experimental.title": false,
+        "selectWorld.backupQuestion.experimental": true,
+        "selectWorld.experimental.title": true
+      },
+      "status": "NO_SCREENSHOT_LIFECYCLE_CONFIRMATION_CALLER"
+    },
+    {
+      "repo": "Minecraft-Rust-Mods",
+      "revision": "a778d746adfcfb7cef2c312cee3919e5445aa83d",
+      "client": {
+        "sizeBytes": 101605888,
+        "sha256": "20f3e611605158dabfb0f59ea2d78d90064708b1f2b91e5e860f482ebc83dd76"
+      },
+      "literalMarkers": {
+        "selectWorld.warning.experimental.title": false,
+        "selectWorld.import_worldgen_settings.experimental.title": false,
+        "selectWorld.backupQuestion.experimental": true,
+        "selectWorld.experimental.title": true
+      },
+      "status": "NO_SCREENSHOT_LIFECYCLE_CONFIRMATION_CALLER"
+    }
+  ],
+  "nativeSource": {
+    "commit": "2ebf00a0281c592f79191e76fce0e7d522c6f425",
+    "sha256": "90479a75b886e0b39663c1116c0424e90d0d0ea4e9633668c1c3fed09bc7d645",
+    "source": "https://github.com/MarkZamore/Minecraft-Rust-Edition/releases/download/upstream-horizon-nightly-2026-11-07-2ebf00a/horizon-source.tar.gz",
+    "note": "All Rust sources scanned. Current native clients use separate experimental feature-pack and backup screens with other titles. Those screens are outside the screenshot lifecycle dialog scope."
+  },
+  "publicationRecovery": "AOT and TerraFirma public asset cache misses were retried with fresh URLs. Better Vanilla was restaged against its concurrently published d027c2a baseline, including the current 212 Fabric components.",
+  "launcherImplementationExceptions": [],
+  "computerUse": false,
+  "limitations": [
+    "Full modded clients and visual UI were not run. JVM branch probes, real official-client bytecode analysis and fresh public file verification were run."
+  ]
+}

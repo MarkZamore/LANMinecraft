@@ -67,6 +67,37 @@ class ReleaseOverlayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Staged policy output differs"):
             release.verify_stage(self.stage, self.source, self.receipt)
 
+    def test_support_artifact_is_pinned_owned_and_retained_on_author_update(self):
+        name = "config/lanminecraft/experimental-world-confirmation.jar"
+        raw = b"reviewed-fixture"
+        target = self.source / name
+        target.parent.mkdir(parents=True)
+        target.write_bytes(raw)
+        self.recipe["supportFiles"] = [{"path": name, **prepare.fingerprint(raw)}]
+        self.write_json(self.recipe_path, self.recipe)
+        (self.source / release.OWNERSHIP).write_bytes(("\n".join(sorted([self.config_path, name])) + "\n").encode())
+        candidate = {**self.author, "client": {**self.author["client"], "fileId": 21, "sha256": "b" * 64}}
+        self.assertEqual(release.review_update(self.source, self.author, candidate)["supportFiles"],
+                         self.recipe["supportFiles"])
+        stage = self.stage.parent / "new-stage"
+        game = stage / "game"
+        (game / self.config_path).parent.mkdir(parents=True)
+        (game / self.config_path).write_bytes(self.original)
+        receipt = {**self.receipt, "overrides": self.author["overrides"]}
+        receipt["overlay"] = prepare.apply_overlay(game, self.source, receipt, {})
+        self.assertEqual((game / name).read_bytes(), raw)
+        self.assertEqual(receipt["overlay"]["supportFiles"], self.recipe["supportFiles"])
+        self.write_json(stage / "intake.json", receipt)
+        files, _ = release.verify_stage(stage, self.source, receipt)
+        self.assertEqual(files[name], prepare.fingerprint(raw))
+        target.write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "Support file differs"):
+            release.review_update(self.source, self.author, candidate)
+        target.write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "conflicting support file"):
+            release.review_update(self.source, self.author, {**candidate, "overrides": [
+                *candidate["overrides"], {"path": name.upper(), **prepare.fingerprint(raw)}]})
+
     def test_author_update_preserves_pinned_client_script_and_rejects_changed_inputs(self):
         path = "kubejs/client_scripts/lanmc_policy.js"
         data = b"// priority: 1000\n"

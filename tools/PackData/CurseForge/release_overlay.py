@@ -66,6 +66,7 @@ def source_policy(pack_source, author):
     prepare.overlay_dependency_keys(recipe, author)
     additions = prepare.overlay_additions(recipe, pack_source, author)
     prepare.client_scripts(recipe, pack_source, author)
+    prepare.support_files(recipe, pack_source, author)
     prepare.overlay_bootstrap(recipe, pack_source, author, additions)
     jar_patches = prepare.jar_metadata_patches(recipe, author, pack_source)
     prepare.book_localizations(recipe, pack_source, author)
@@ -74,7 +75,7 @@ def source_policy(pack_source, author):
     return recipe, prepare.fingerprint(recipe_bytes)["sha256"], descriptor, descriptor_pin
 
 
-def payload_inventory(author, policy_files, excluded, jar_patches=()):
+def payload_inventory(author, policy_files, excluded, jar_patches=(), support_paths=()):
     declared = {}
     for row in author["declaredDependencies"]:
         key = row["projectId"], row["fileId"]
@@ -130,6 +131,7 @@ def payload_inventory(author, policy_files, excluded, jar_patches=()):
     for name, pin in policy_files.items():
         if (name in (DESCRIPTOR, OWNERSHIP, prepare.RUSSIAN_QUESTS) or name in prepare.LOGGING_FILES or
                 prepare.BOOTSTRAP_PATH.fullmatch(name) or prepare.CLIENT_SCRIPT_PATH.fullmatch(name) or
+                (name in support_paths and name not in override_paths) or
                 name not in override_paths and prepare.book_localization_addition(name)):
             prepare.reserve_path(paths, prepare.safe_path(name))
         else:
@@ -159,6 +161,11 @@ def verify_stage(stage, pack_source, author):
                 "requiredLauncherFeatures": [prepare.REQUIRED_SHARE_FEATURE]}
     policy_files = {DESCRIPTOR: descriptor_pin, **{patch["path"]: patch["after"] for patch in patches}}
     owned_names = {patch["path"] for patch in patches}
+    if "supportFiles" in recipe:
+        expected["supportFiles"] = recipe["supportFiles"]
+        policy_files.update({row["path"]: {key: row[key] for key in ("sizeBytes", "sha256")}
+                             for row in recipe["supportFiles"]})
+        owned_names.update(row["path"] for row in recipe["supportFiles"])
     jar_patches = prepare.jar_metadata_patches(recipe, receipt, pack_source)
     book_jars = prepare.book_jar_localizations(recipe, receipt, pack_source, jar_patches)
     if jar_patches:
@@ -207,7 +214,8 @@ def verify_stage(stage, pack_source, author):
             prepare.no_links(target)
             prepare.require(not target.exists(), f"Excluded author dependency remains in staged game: {path}")
     prepare.require(receipt.get("overlay") == expected, "Missing or changed overlay receipt or required launcher feature")
-    inventory, _ = payload_inventory(receipt, policy_files, excluded, [*jar_patches, *book_jars])
+    inventory, _ = payload_inventory(receipt, policy_files, excluded, [*jar_patches, *book_jars],
+                                     [row["path"] for row in recipe.get("supportFiles", [])])
     for path, pin in inventory.items():
         target = game / path
         prepare.no_links(target)
@@ -221,7 +229,7 @@ def verify_stage(stage, pack_source, author):
     return policy_files, excluded
 
 
-def verify_manifest(manifest, policy_files, author, excluded=(), jar_patches=()):
+def verify_manifest(manifest, policy_files, author, excluded=(), jar_patches=(), support_paths=()):
     prepare.require(isinstance(manifest, dict) and manifest.get("schemaVersion") == 2 and
                     manifest.get("minecraftVersion") == author["pack"]["minecraftVersion"] and
                     manifest.get("loader") == author["pack"]["loader"],
@@ -235,7 +243,7 @@ def verify_manifest(manifest, policy_files, author, excluded=(), jar_patches=())
                     "Release manifest has no file inventory")
     excluded_paths = {row["path"].casefold() for row in excluded}
     excluded_hashes = {row["sha256"] for row in excluded}
-    inventory, required_paths = payload_inventory(author, policy_files, excluded, jar_patches)
+    inventory, required_paths = payload_inventory(author, policy_files, excluded, jar_patches, support_paths)
     seen = set()
     for row in files:
         path = prepare.safe_path(row["path"]).as_posix()
@@ -261,6 +269,7 @@ def review_update(pack_source, current, candidate):
     prepare.overlay_dependency_keys(recipe, candidate)
     additions = prepare.overlay_additions(recipe, pack_source, candidate)
     prepare.client_scripts(recipe, pack_source, candidate)
+    prepare.support_files(recipe, pack_source, candidate)
     prepare.overlay_bootstrap(recipe, pack_source, candidate, additions)
     jar_patches = prepare.jar_metadata_patches(recipe, candidate, pack_source)
     prepare.quest_translation(recipe, pack_source, candidate)
