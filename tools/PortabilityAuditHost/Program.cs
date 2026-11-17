@@ -191,6 +191,7 @@ internal static class Program
         var closed = false;
         var hadHwnd = false;
         var tabletCount = -1;
+        MethodInfo? deactivatePenImc = null;
         Exception? failure = null;
         var timeout = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Send)
             { Interval = TimeSpan.FromSeconds(6) };
@@ -210,6 +211,17 @@ internal static class Program
                 // Force normal WPF tablet/stylus initialization after the HWND
                 // exists, including the native PenIMC activation-context path.
                 tabletCount = System.Windows.Input.Tablet.TabletDevices.Count;
+                // Headless Windows can report no tablet and omit the normal
+                // hardware-triggered load. Exercise WPF's actual SxS activation
+                // helper explicitly on this owned STA, without creating a tablet
+                // manager or requiring a running tablet service.
+                // https://source.dot.net/PresentationCore/MS/Win32/UnsafeNativeMethodsPenimc.cs.html
+                var penImc = typeof(System.Windows.Input.Tablet).Assembly.GetType("MS.Win32.Penimc.UnsafeNativeMethods", throwOnError: true)!;
+                deactivatePenImc = penImc.GetMethod("DeactivatePenImcClasses", BindingFlags.Static | BindingFlags.NonPublic)
+                    ?? throw new MissingMethodException(penImc.FullName, "DeactivatePenImcClasses");
+                var activatePenImc = penImc.GetMethod("EnsurePenImcClassesActivated", BindingFlags.Static | BindingFlags.NonPublic)
+                    ?? throw new MissingMethodException(penImc.FullName, "EnsurePenImcClassesActivated");
+                activatePenImc.Invoke(null, null);
             }
             catch (Exception error) { failure = error; }
             window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, (Action)Close);
@@ -230,7 +242,8 @@ internal static class Program
         {
             timeout.Stop();
             if (!closed) window.Close();
-            window.Dispatcher.InvokeShutdown();
+            try { deactivatePenImc?.Invoke(null, null); }
+            finally { window.Dispatcher.InvokeShutdown(); }
         }
     }
 
