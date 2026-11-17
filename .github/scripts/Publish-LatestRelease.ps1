@@ -85,9 +85,11 @@ function Save-PreviousBase($Pointer) {
             $base.sha256 -ne $Pointer.sha256 -or $base.sizeBytes -ne $Pointer.sizeBytes) {
             throw 'The published delta base changed before it could be archived.'
         }
+        # Actions cannot create a tag at a historical workflow-changing commit.
+        # The archive's executable identity remains in its verified manifest.
         & (Join-Path $PSScriptRoot 'Archive-PreviousBase.ps1') -ReleaseNumber $base.releaseNumber `
             -ExecutablePath $base.executablePath -ManifestPath $base.manifestPath `
-            -CommitSha $base.commitSha -Repository $Repository
+            -CommitSha $base.commitSha -TagTargetCommitSha $commit -Repository $Repository
     }
     finally {
         if ([IO.Directory]::Exists($directory)) { [IO.Directory]::Delete($directory, $true) }

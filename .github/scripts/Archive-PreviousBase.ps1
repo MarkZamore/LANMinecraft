@@ -12,6 +12,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ExecutablePath,
     [Parameter(Mandatory = $true)][string]$ManifestPath,
     [Parameter(Mandatory = $true)][string]$CommitSha,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-fA-F0-9]{40}$')][string]$TagTargetCommitSha,
     [Parameter(Mandatory = $true)][string]$Repository
 )
 
@@ -29,7 +30,7 @@ if (Invoke-Gh release view $tag 2>$null) {
 Invoke-Gh release create $tag `
     $ExecutablePath `
     $ManifestPath `
-    --target $CommitSha `
+    --target $TagTargetCommitSha `
     --prerelease `
     --title "Update base $ReleaseNumber" `
     --notes "Binary base for commit $CommitSha retained for direct delta generation."

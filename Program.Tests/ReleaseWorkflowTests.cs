@@ -233,6 +233,12 @@ public sealed class ReleaseWorkflowTests
             Assert.Contains("$PSScriptRoot/GhRetry.ps1", text, StringComparison.Ordinal);
             Assert.Contains("$env:GH_REPO", text, StringComparison.Ordinal);
         }
+
+        var publisher = File.ReadAllText(FindRepositoryFile(".github", "scripts", "Publish-LatestRelease.ps1"));
+        var archiver = File.ReadAllText(FindRepositoryFile(".github", "scripts", "Archive-PreviousBase.ps1"));
+        Assert.Contains("-CommitSha $base.commitSha -TagTargetCommitSha $commit", publisher, StringComparison.Ordinal);
+        Assert.Contains("--target $TagTargetCommitSha", archiver, StringComparison.Ordinal);
+        Assert.Contains("Binary base for commit $CommitSha", archiver, StringComparison.Ordinal);
     }
 
     /// <summary>Every step that calls gh dot-sources the helper first.</summary>
