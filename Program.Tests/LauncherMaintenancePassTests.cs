@@ -21,10 +21,14 @@ public sealed class LauncherMaintenancePassTests : IDisposable
         var enteringPack = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstPass = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var resumeSweep = new ManualResetEventSlim();
         var packChecks = 0;
         var playing = 0;
-        var maintenance = new LauncherMaintenance(_paths, logger, run =>
+        File.WriteAllText(Path.Combine(_paths.Launcher, LauncherMaintenance.CompletionFileName),
+            JsonSerializer.Serialize(new LauncherMaintenanceProgress(1, UpdateService.CurrentReleaseNumber,
+                [], [packs[0].RelativePath], [])));
+        LauncherMaintenance CreateMaintenance() => new(_paths, logger, run =>
         {
             try { LauncherMaintenancePass.Run(_paths, logger, sync, run); }
             finally { firstPass.TrySetResult(); }
@@ -40,17 +44,18 @@ public sealed class LauncherMaintenancePassTests : IDisposable
         }, reportProgress: percent =>
         {
             if (percent == 100) completed.TrySetResult();
-        });
+        }, reportActivity: active => { if (!active) idle.TrySetResult(); });
+        var maintenance = CreateMaintenance();
+        LauncherMaintenance? restarted = null;
 
         try
         {
-            maintenance.RequestPack(packs[0].RelativePath);
             maintenance.Start();
             await enteringPack.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Volatile.Write(ref playing, 1);
-            maintenance.ObserveGameState();
             resumeSweep.Set();
             await firstPass.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await idle.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.True(File.Exists(runningFile));
             Assert.False(File.Exists(otherFile));
             var marker = Path.Combine(_paths.Launcher, LauncherMaintenance.CompletionFileName);
@@ -60,7 +65,9 @@ public sealed class LauncherMaintenancePassTests : IDisposable
             Assert.False(completed.Task.IsCompleted);
 
             Volatile.Write(ref playing, 0);
-            maintenance.ObserveGameState();
+            maintenance.Stop();
+            restarted = CreateMaintenance();
+            restarted.Start();
             await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(File.Exists(runningFile));
             Assert.False(File.Exists(marker));
@@ -68,6 +75,7 @@ public sealed class LauncherMaintenancePassTests : IDisposable
         finally
         {
             maintenance.Stop();
+            restarted?.Stop();
             resumeSweep.Set();
         }
     }

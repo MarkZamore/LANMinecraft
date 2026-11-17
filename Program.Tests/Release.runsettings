@@ -48,7 +48,7 @@
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.FullPassStartsAsSoonAsStartupIsReady|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.GameTransitionsDoNotCancelAnInFlightOperationAndShutdownDoesNotWait|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.InterruptedPassKeepsOneCursorAndResumesWithoutRepeatingCompletedWork|
-      FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.DeferredWorkSleepsUntilTheGameStateChanges|
+      FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.DeferredWorkWaitsForNextLauncherStart|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.ProgressCountsDistinctCompletedStepsAndFinishesAfterRemovingCheckpoint|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.ProgressResumesFromSavedStepsAndWaitsForTheDeferredPack|
       FullyQualifiedName=Minecraft.Tests.LauncherMaintenanceTests.AutomaticDeletionLeavesProtectedAssetsAndDoesNotFollowJunctions|

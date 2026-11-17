@@ -275,7 +275,6 @@ public partial class MainWindow : Window
             _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry, packSync: _packSync);
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
-            _minecraft.ClientSessionEnded += pack => _maintenance?.RequestPack(pack);
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
@@ -1271,7 +1270,6 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientRunningChanged(bool isRunning)
     {
-        _maintenance?.ObserveGameState();
         PostToUi(() =>
         {
             _minecraftRunning = isRunning;
@@ -1332,7 +1330,6 @@ public partial class MainWindow : Window
 
     private void OnMinecraftClientPreparingChanged(bool isPreparing)
     {
-        _maintenance?.ObserveGameState();
         PostToUi(() =>
         {
             _minecraftPreparing = isPreparing;
@@ -1350,7 +1347,6 @@ public partial class MainWindow : Window
         using var packUse = BuildComboBox.SelectedItem is ClientBuildViewModel selected
             ? _maintenance?.ProtectPack(selected.RelativePath) : null;
         _playRequested = true;
-        _maintenance?.ObserveGameState();
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
         RefreshUi();
@@ -1391,8 +1387,6 @@ public partial class MainWindow : Window
                     .PrepareAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
                 syncResult = prepared.SyncResult;
                 localAiDownloads = prepared.LocalAi;
-                if (syncResult.Outcome is PackSyncOutcome.Installed or PackSyncOutcome.Updated)
-                    _maintenance?.RequestPack(build.RelativePath);
             }
             catch
             {
@@ -1459,7 +1453,6 @@ public partial class MainWindow : Window
         finally
         {
             _playRequested = false;
-            _maintenance?.ObserveGameState();
             _minecraftPreparing = _minecraft?.IsClientPreparing == true;
             RefreshUi();
             RestartWhenGameEnds();
@@ -1669,13 +1662,11 @@ public partial class MainWindow : Window
 
         using var packUse = _maintenance?.ProtectPack(build.RelativePath);
         _removingPackFiles = true;
-        _maintenance?.ObserveGameState();
         BuildRemovalService.RemovalOutcome? outcome;
         try { outcome = RemoveInstalledPackFiles(build.RelativePath, answer); }
         finally
         {
             _removingPackFiles = false;
-            _maintenance?.ObserveGameState();
         }
         if (outcome is not { } removed) return;
         PackMembership.Remove(_settings, build.RelativePath);
@@ -2768,7 +2759,6 @@ public partial class MainWindow : Window
                 {
                     if (!retryingCheck) _updateDotsTimer?.Stop();
                     _updateBusy = false;
-                    _maintenance?.ResumeDeferredWork();
                     RefreshUi();
                     RestartWhenGameEnds();
                 });
@@ -2828,7 +2818,6 @@ public partial class MainWindow : Window
         finally
         {
             _updateBusy = false;
-            _maintenance?.ResumeDeferredWork();
             RefreshUi();
             RestartWhenGameEnds();
         }

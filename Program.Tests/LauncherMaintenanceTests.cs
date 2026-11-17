@@ -67,10 +67,8 @@ public sealed class LauncherMaintenanceTests : IDisposable
             maintenance.Start();
             var token = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Volatile.Write(ref playing, 1);
-            maintenance.ObserveGameState();
             Assert.False(token.IsCancellationRequested);
             Volatile.Write(ref playing, 0);
-            maintenance.ObserveGameState();
             Assert.False(token.IsCancellationRequested);
             Assert.False(finished.Task.IsCompleted);
             maintenance.Stop();
@@ -171,16 +169,17 @@ public sealed class LauncherMaintenanceTests : IDisposable
     }
 
     [Fact]
-    public async Task DeferredWorkSleepsUntilTheGameStateChanges()
+    public async Task DeferredWorkWaitsForNextLauncherStart()
     {
         Directory.CreateDirectory(_paths.Launcher);
         File.WriteAllText(ProgressPath, JsonSerializer.Serialize(new LauncherMaintenanceProgress(
-            1, UpdateService.CurrentReleaseNumber, ["pack:In game"], [], [])));
+            1, UpdateService.CurrentReleaseNumber, ["pack:In game"], ["In game"], [])));
         var playing = 1;
         var launches = 0;
         var deferred = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var maintenance = Create(run =>
+        var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        LauncherMaintenance CreateMaintenance() => Create(run =>
         {
             Interlocked.Increment(ref launches);
             if (run.GameIsRunning)
@@ -195,28 +194,44 @@ public sealed class LauncherMaintenanceTests : IDisposable
             var didWork = run.RunStep("pack:In game", () => { });
             run.CompletePack("In game");
             completed.TrySetResult(didWork);
-        }, gameIsRunning: () => Volatile.Read(ref playing) != 0, isPackInUse: pack => pack == "In game" && Volatile.Read(ref playing) != 0);
+        }, gameIsRunning: () => Volatile.Read(ref playing) != 0,
+            isPackInUse: pack => pack == "In game" && Volatile.Read(ref playing) != 0,
+            reportActivity: active => { if (!active) idle.TrySetResult(); });
+        var maintenance = CreateMaintenance();
+        LauncherMaintenance? restarted = null;
+        using var protectedPack = maintenance.ProtectPack("In game");
 
         try
         {
-            maintenance.RequestPack("In game");
             maintenance.Start();
             Assert.True(await deferred.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            await idle.Task.WaitAsync(TimeSpan.FromSeconds(5));
             for (var attempt = 0; attempt < 10; attempt++)
             {
-                maintenance.ObserveGameState();
+                maintenance.Start();
                 await Task.Delay(15);
             }
             Assert.Equal(1, Volatile.Read(ref launches));
             Assert.True(File.Exists(ProgressPath));
 
             Volatile.Write(ref playing, 0);
-            maintenance.ObserveGameState();
+            protectedPack.Dispose();
+            maintenance.Start();
+            await Task.Delay(50);
+            Assert.Equal(1, Volatile.Read(ref launches));
+            Assert.False(completed.Task.IsCompleted);
+            maintenance.Stop();
+            restarted = CreateMaintenance();
+            restarted.Start();
             Assert.True(await completed.Task.WaitAsync(TimeSpan.FromSeconds(5)));
             await WaitUntilAsync(() => !File.Exists(ProgressPath));
             Assert.Equal(2, Volatile.Read(ref launches));
         }
-        finally { maintenance.Stop(); }
+        finally
+        {
+            maintenance.Stop();
+            restarted?.Stop();
+        }
     }
 
     [Fact]
@@ -261,7 +276,7 @@ public sealed class LauncherMaintenanceTests : IDisposable
         var activity = new System.Collections.Concurrent.ConcurrentQueue<bool>();
         var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var maintenance = Create(run =>
+        LauncherMaintenance CreateMaintenance() => Create(run =>
         {
             run.PlanSteps(["service", "pack:Busy", "pack:Other"]);
             run.RunStep("service", () => { });
@@ -284,6 +299,8 @@ public sealed class LauncherMaintenanceTests : IDisposable
             if (!active && Volatile.Read(ref playing) != 0) paused.TrySetResult();
             if (!active && Volatile.Read(ref playing) == 0) stopped.TrySetResult();
         });
+        var maintenance = CreateMaintenance();
+        LauncherMaintenance? restarted = null;
 
         try
         {
@@ -296,14 +313,20 @@ public sealed class LauncherMaintenanceTests : IDisposable
             Assert.Equal([true, false], activity.ToArray());
 
             Volatile.Write(ref playing, 0);
-            maintenance.ObserveGameState();
+            maintenance.Stop();
+            restarted = CreateMaintenance();
+            restarted.Start();
             var finalReports = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal([0, 33, 66, 99, 100], finalReports);
+            Assert.Equal([0, 33, 66, 0, 33, 66, 99, 100], finalReports);
             Assert.False(File.Exists(ProgressPath));
             await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal([true, false, true, false], activity.ToArray());
         }
-        finally { maintenance.Stop(); }
+        finally
+        {
+            maintenance.Stop();
+            restarted?.Stop();
+        }
     }
 
     [Fact]
