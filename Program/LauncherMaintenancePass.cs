@@ -55,6 +55,8 @@ internal static class LauncherMaintenancePass
                 {
                     removed += ManagedPackCleanup.Run(paths, sync, pack, CheckPack, token, out var managed,
                         run.Cursor(key), position => run.SaveCursor(key, position), () => !run.IsPackInUse(pack));
+                    if (managed)
+                        PackInstanceService.MigrateArchives(paths, logger, pack, () => CheckPack(token));
                     if (managed && MaintenancePath.TryRead(paths, paths.CombineUnderInstances(pack), out var instance) &&
                         instance.HasFlag(FileAttributes.Directory))
                         LogCleanupService.RetainRecentSessionDiagnostics(paths.CombineUnderInstances(pack), () => CheckPack(token));

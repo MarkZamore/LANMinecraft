@@ -177,6 +177,21 @@ internal static class PortableRuntimeCache
         GetFileInformationByHandle(handle, out var information) &&
         (information.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
 
+    internal static bool AreSameOrdinaryFile(string left, string right)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        const uint shareReadWriteDelete = 7;
+        using var first = CreateFile(NativePath(left), ReadAttributes, shareReadWriteDelete, 0, OpenExisting, OpenReparsePoint, 0);
+        using var second = CreateFile(NativePath(right), ReadAttributes, shareReadWriteDelete, 0, OpenExisting, OpenReparsePoint, 0);
+        const FileAttributes unsupported = FileAttributes.Directory | FileAttributes.ReparsePoint;
+        return !first.IsInvalid && !second.IsInvalid &&
+            GetFileInformationByHandle(first, out var firstInfo) && GetFileInformationByHandle(second, out var secondInfo) &&
+            ((firstInfo.Attributes | secondInfo.Attributes) & unsupported) == 0 &&
+            firstInfo.NumberOfLinks > 1 && (firstInfo.FileIndexHigh | firstInfo.FileIndexLow) != 0 &&
+            firstInfo.VolumeSerialNumber == secondInfo.VolumeSerialNumber &&
+            firstInfo.FileIndexHigh == secondInfo.FileIndexHigh && firstInfo.FileIndexLow == secondInfo.FileIndexLow;
+    }
+
     // Keeping each parent open closes the gap between path validation and deletion.
     // The leaf is checked on its handle; deleting an empty directory never recurses.
     internal static bool TryDeleteOrdinaryEntry(string path, bool directory, Func<bool>? stillAllowed = null)

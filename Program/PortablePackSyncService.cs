@@ -751,10 +751,15 @@ public sealed partial class PortablePackSyncService
             diff.ChangedPaths.Count == 0 &&
             diff.Extras.Count == 0)
         {
-            ReportStructureRepair(repairProgress, 0);
-            WriteSyncState(statePath, packDir, manifest);
-            File.Delete(pendingPath);
-            ReportStructureRepair(repairProgress, 1);
+            lock (PackInstanceService.ArchiveGate)
+            {
+                token.ThrowIfCancellationRequested();
+                ReportStructureRepair(repairProgress, 0);
+                WriteSyncState(statePath, packDir, manifest, ReadSyncState(statePath));
+                PackInstanceService.EnsureArchiveFolders(packDir);
+                File.Delete(pendingPath);
+                ReportStructureRepair(repairProgress, 1);
+            }
             progress?.Report(new RuntimePreparationProgress(
                 RuntimePreparationStage.SyncingPack,
                 "Сборка актуальна",
@@ -806,25 +811,27 @@ public sealed partial class PortablePackSyncService
                     }
                     try
                     {
-                        EnsureGameStopped(Path.GetRelativePath(_paths.Packs, packDir));
-                        if (prepared is not null)
-                            RequireUnchangedDownloadPlan(prepared.Diff, ComputeDiff(packDir, statePath, manifest, token));
-                        ReportStructureRepair(repairProgress, 0);
-                        AtomicFile.WriteAllText(
-                            pendingPath,
-                            JsonSerializer.Serialize(new { schemaVersion = 1, revision = manifest.Revision }, JsonOptions));
-                        ApplyChanges(
-                            packDir, manifest, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token, repairProgress);
-                        // Inside the same try as the files they describe. Once
-                        // ApplyChanges returns, the pack on disk is the new
-                        // revision; a state file still naming the old one would
-                        // make the next sync diff against a pack that is not
-                        // there, and would lose the one chance to say which mods
-                        // this update took away.
-                        WriteSyncState(statePath, packDir, manifest);
-                        WriteSourceMarker(packDir, source);
-                        File.Delete(pendingPath);
-                        ReportStructureRepair(repairProgress, 1);
+                        lock (PackInstanceService.ArchiveGate)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            EnsureGameStopped(Path.GetRelativePath(_paths.Packs, packDir));
+                            if (prepared is not null)
+                                RequireUnchangedDownloadPlan(prepared.Diff, ComputeDiff(packDir, statePath, manifest, token));
+                            ReportStructureRepair(repairProgress, 0);
+                            AtomicFile.WriteAllText(
+                                pendingPath,
+                                JsonSerializer.Serialize(new { schemaVersion = 1, revision = manifest.Revision }, JsonOptions));
+                            var previous = ReadSyncState(statePath);
+                            ApplyChanges(
+                                packDir, manifest, previous, diff.ChangedPaths, diff.Extras, stageAssets, stageExtract, token, repairProgress);
+                            // Keep ownership proofs for the old files until the
+                            // new snapshot has been written and the apply is complete.
+                            WriteSyncState(statePath, packDir, manifest, previous);
+                            PackInstanceService.EnsureArchiveFolders(packDir);
+                            WriteSourceMarker(packDir, source);
+                            File.Delete(pendingPath);
+                            ReportStructureRepair(repairProgress, 1);
+                        }
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                                                    or NotSupportedException)
@@ -1402,6 +1409,7 @@ public sealed partial class PortablePackSyncService
     private static void ApplyChanges(
         string packDir,
         ValidatedManifest manifest,
+        SyncStateDto previous,
         IReadOnlyList<string> changedPaths,
         IReadOnlyList<string> extras,
         string stageAssets,
@@ -1409,12 +1417,18 @@ public sealed partial class PortablePackSyncService
         CancellationToken token,
         IProgress<RuntimePreparationProgress>? repairProgress)
     {
+        var historicalArchives = manifest.LegacyFiles
+            .Concat((previous.RetiredFiles ?? []).Where(file => file is { Path: not null, Sha256: not null, SizeBytes: >= 0 })
+                .Select(file => new ValidatedFile(file.Path!, file.SizeBytes, file.Sha256!)))
+            .Where(file => PackInstanceService.IsPackArchive(file.Path))
+            .ToLookup(file => file.Path, StringComparer.OrdinalIgnoreCase);
         var repaired = 0;
         var total = changedPaths.Count + extras.Count + 1;
         foreach (var path in changedPaths)
         {
             if (IsPackManifestPath(path)) continue;
             token.ThrowIfCancellationRequested();
+            PreserveArchive(path, manifest.FilesByPath[path].Sha256);
             PlaceStagedFile(
                 packDir,
                 path,
@@ -1425,6 +1439,7 @@ public sealed partial class PortablePackSyncService
         foreach (var extra in extras)
         {
             token.ThrowIfCancellationRequested();
+            PreserveArchive(extra, null);
             var livePath = Path.Combine(packDir, extra.Replace('/', Path.DirectorySeparatorChar));
             if (File.Exists(livePath)) File.Delete(livePath);
             DeleteEmptyParents(Path.GetDirectoryName(livePath), packDir);
@@ -1440,6 +1455,21 @@ public sealed partial class PortablePackSyncService
                 path,
                 ResolveStagedSource(manifest.AssetByCoveredPath[path], stageAssets, stageExtract, path));
             ReportApplied();
+        }
+
+        void PreserveArchive(string path, string? installedHash)
+        {
+            if (!PackInstanceService.IsPackArchive(path)) return;
+            var history = historicalArchives[path];
+            if (history.Any())
+            {
+                ValidateManifestPath(path, packDir);
+                if (history.Any(file => HasFileWithHash(packDir, file with { Path = path }))) return;
+            }
+            PackInstanceService.PreserveArchiveBeforePackUpdate(packDir, path, previous.Files.GetValueOrDefault(path)?.Sha256,
+                installedHash, candidate => manifest.FilesByPath.ContainsKey(candidate) ||
+                    previous.Files.ContainsKey(candidate) || historicalArchives.Contains(candidate),
+                token.ThrowIfCancellationRequested);
         }
 
         void ReportApplied()
@@ -1493,9 +1523,8 @@ public sealed partial class PortablePackSyncService
         }
     }
 
-    private void WriteSyncState(string statePath, string packDir, ValidatedManifest manifest)
+    private static void WriteSyncState(string statePath, string packDir, ValidatedManifest manifest, SyncStateDto previous)
     {
-        var previous = ReadSyncState(statePath);
         var state = new SyncStateDto
         {
             SchemaVersion = SyncStateCacheGeneration,

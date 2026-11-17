@@ -104,7 +104,8 @@ internal static class ManagedPackCleanup
                     var directoryEntry = attributes.HasFlag(FileAttributes.Directory);
                     if (directoryEntry && !atResumeBoundary && !Walk(entry, relative, depth + 1, order == 0))
                         return false;
-                    if (!proof.Files.Contains(relative) && !proof.Directories.Contains(relative))
+                    if (!proof.Files.Contains(relative) && !proof.Directories.Contains(relative) &&
+                        !(depth == 0 && directoryEntry && name.Equals("mods", StringComparison.OrdinalIgnoreCase)))
                     {
                         checkpoint(token);
                         // A source, sync state or partial metadata publication changed during the walk.

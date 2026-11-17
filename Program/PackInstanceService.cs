@@ -9,7 +9,7 @@ namespace Minecraft;
 
 public sealed record PackInstanceContext(string PackDirectory, string GameDirectory, string ClientJar);
 
-public sealed class PackInstanceService : IDisposable
+public sealed partial class PackInstanceService : IDisposable
 {
     // A cache generation, not a data format: it is bumped to throw the cached
     // work away and redo it, so it is deliberately independent of
@@ -82,7 +82,10 @@ public sealed class PackInstanceService : IDisposable
         await _gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => PrepareCore(packRelativePath, token), token).ConfigureAwait(false);
+            return await Task.Run(() =>
+            {
+                lock (ArchiveGate) return PrepareCore(packRelativePath, token);
+            }, token).ConfigureAwait(false);
         }
         finally
         {
@@ -221,7 +224,8 @@ public sealed class PackInstanceService : IDisposable
             throw new DirectoryNotFoundException($"Minecraft pack is missing {PackManifestService.ManifestFileName}: {packDir}");
         }
         var descriptor = PackManifestService.Load(packDir);
-        var managedPaths = PortablePackSyncService.ReadManagedPaths(packDir);
+        var managedFiles = PortablePackSyncService.ReadManagedFiles(packDir);
+        var managedPaths = managedFiles?.Select(file => file.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Only ever used as a name to skip while mirroring the pack over the
         // instance - the jar itself belongs to the runtime, not here - so a
         // pack that brings none needs nothing in its place. It was checked for
@@ -235,7 +239,7 @@ public sealed class PackInstanceService : IDisposable
         EnsureOrdinaryPath(gameDir, gameDir);
         var statePath = Path.Combine(gameDir, StateFileName);
         EnsureOrdinaryPath(gameDir, statePath);
-        var state = ReadState(statePath, packRelativePath);
+        var state = ReadState(statePath, packRelativePath, _logger);
 
         // One preparation is one snapshot, however many personal files it
         // preserves. Per-file snapshots would let the next startup's retention
@@ -245,6 +249,11 @@ public sealed class PackInstanceService : IDisposable
         RemoveVerifiedRetiredFiles(packDir, gameDir, token);
         if (descriptor.NativeRuntime is null)
             EnsureMods(packDir, gameDir, state, managedPaths, _steamTransportForPack(descriptor), GetConflictRoot, token);
+        if (managedFiles is not null)
+        {
+            EnsureArchiveFolders(packDir);
+            SynchronizeArchives(packDir, gameDir, state, managedFiles, token.ThrowIfCancellationRequested, GetConflictRoot);
+        }
         SynchronizePackFiles(packDir, gameDir, packRelativePath, descriptor, state, managedPaths, GetConflictRoot, token);
         state.SchemaVersion = StateCacheGeneration;
         state.PackRelativePath = packRelativePath;
@@ -314,6 +323,7 @@ public sealed class PackInstanceService : IDisposable
             token.ThrowIfCancellationRequested();
             var relative = NormalizeRelativePath(Path.GetRelativePath(packDir, sourcePath));
             if (managedPaths is not null && !managedPaths.Contains(relative)) continue;
+            if (managedPaths is not null && IsPackArchive(relative)) continue;
             previousFiles.TryGetValue(relative, out var previous);
             var source = ReadSourceState(sourcePath);
             currentFiles[relative] = source;
@@ -401,6 +411,7 @@ public sealed class PackInstanceService : IDisposable
         foreach (var removed in previousFiles.Where(entry => !currentFiles.ContainsKey(entry.Key)))
         {
             token.ThrowIfCancellationRequested();
+            if (managedPaths is not null && IsPackArchive(removed.Key)) continue;
             var rootName = removed.Key.Split('/')[0];
             if (InstanceOwnedDirectories.Contains(rootName) || InstanceOwnedFiles.Contains(rootName)) continue;
             var destination = Path.Combine(gameDir, removed.Key.Replace('/', Path.DirectorySeparatorChar));
@@ -709,7 +720,7 @@ public sealed class PackInstanceService : IDisposable
         }
     }
 
-    private InstanceState ReadState(string statePath, string packRelativePath)
+    private static InstanceState ReadState(string statePath, string packRelativePath, Logger logger)
     {
         try
         {
@@ -718,18 +729,22 @@ public sealed class PackInstanceService : IDisposable
                 var state = JsonSerializer.Deserialize<InstanceState>(File.ReadAllText(statePath), StateJsonOptions);
                 if (state?.SchemaVersion == StateCacheGeneration)
                 {
-                    state.Files = state.Files.Where(entry => IsSafeStatePath(entry.Key))
+                    state.Files = (state.Files ?? []).Where(entry => IsSafeStatePath(entry.Key) && entry.Value is not null)
                         .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase);
-                    state.ModFiles = state.ModFiles.Where(entry => IsSafeStatePath(entry.Key))
+                    state.ModFiles = (state.ModFiles ?? []).Where(entry => IsSafeStatePath(entry.Key) && entry.Value is not null)
                         .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase);
-                    state.OwnedFiles = new HashSet<string>(state.OwnedFiles.Where(IsSafeStatePath), StringComparer.OrdinalIgnoreCase);
+                    state.Archives = (state.Archives ?? []).Where(entry =>
+                            IsSafeStatePath(entry.Key) && IsPackArchive(entry.Key) && entry.Value is not null)
+                        .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase);
+                    state.OwnedFiles = new HashSet<string>((state.OwnedFiles ?? []).Where(IsSafeStatePath),
+                        StringComparer.OrdinalIgnoreCase);
                     return state;
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or ArgumentException)
         {
-            _logger.Warn($"Pack instance state could not be read and will be rebuilt: {ex.Message}");
+            logger.Warn($"Pack instance state could not be read and will be rebuilt: {ex.Message}");
         }
 
         return new InstanceState { PackRelativePath = packRelativePath };
@@ -983,6 +998,7 @@ public sealed class PackInstanceService : IDisposable
         public string ModsMode { get; set; } = "";
         public Dictionary<string, SourceFileState> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, SourceFileState> ModFiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, SourceFileState> Archives { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> OwnedFiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>

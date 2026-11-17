@@ -822,6 +822,84 @@ public sealed class PortablePackSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishedArchiveRestoresAfterDeletionAndKeepsAConflictingPersonalZip()
+    {
+        var player = new PackFile("shaderpacks/sky.zip", Encoding.UTF8.GetBytes("player shader"));
+        var previouslyPublished = player with { Path = $"shaderpacks/sky.personal-{player.Sha[..12]}.zip" };
+        var published = player with { Content = Encoding.UTF8.GetBytes("published shader") };
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("before", [previouslyPublished, packManifest],
+            [ZipRootAsset("shaderpacks", previouslyPublished), JarAsset(packManifest)]), DefaultPack);
+        var packDir = PackDir(DefaultPack);
+        File.WriteAllBytes(LivePath(packDir, player.Path), player.Content);
+
+        var release = BuildRelease("after", [published, packManifest],
+            [ZipRootAsset("shaderpacks", published), JarAsset(packManifest)]);
+        var handler = CreateReleaseHandler(release);
+        using var client = new HttpClient(handler);
+        var service = CreateService(client);
+        var result = await service.SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        AssertFileContent(packDir, published);
+        Assert.False(File.Exists(LivePath(packDir, previouslyPublished.Path)));
+        var personalArchive = Assert.Single(Directory.EnumerateFiles(Path.Combine(packDir, "shaderpacks"), "*.personal-*.zip"));
+        Assert.Equal(player.Content, File.ReadAllBytes(personalArchive));
+        Assert.DoesNotContain(PortablePackSyncService.ReadManagedFiles(packDir)!,
+            entry => Path.GetFileName(entry.Path) == Path.GetFileName(personalArchive));
+
+        File.Delete(LivePath(packDir, published.Path));
+        var repair = await service.SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, repair.Outcome);
+        Assert.True(repair.BytesDownloaded > 0);
+        AssertFileContent(packDir, published);
+        Assert.Equal(personalArchive, Assert.Single(Directory.EnumerateFiles(Path.Combine(packDir, "shaderpacks"), "*.personal-*.zip")));
+        Assert.Equal(player.Content, File.ReadAllBytes(personalArchive));
+    }
+
+    [Fact]
+    public async Task RetiringPublishedArchivesKeepsPlayerBytesAndDropsUntouchedCopies()
+    {
+        var keptByPlayer = new PackFile("resourcepacks/customized.zip", Encoding.UTF8.GetBytes("author bytes"));
+        var unchanged = new PackFile("resourcepacks/retired.zip", Encoding.UTF8.GetBytes("retired author bytes"));
+        var packManifest = PackManifestFile("{\"schemaVersion\":1}");
+        await InstallAsync(BuildRelease("before", [keptByPlayer, unchanged, packManifest],
+            [ZipRootAsset("resourcepacks", keptByPlayer, unchanged), JarAsset(packManifest)]), DefaultPack);
+        var packDir = PackDir(DefaultPack);
+        var paths = new AppPaths(_root);
+        var game = paths.CombineUnderInstances(DefaultPack);
+        Directory.CreateDirectory(game);
+        var logger = new Logger(paths.LogFile);
+        PackInstanceService.MigrateArchives(paths, logger, DefaultPack, () => { });
+        var playerBytes = Encoding.UTF8.GetBytes("player bytes");
+        File.WriteAllBytes(LivePath(packDir, keptByPlayer.Path), playerBytes);
+        File.WriteAllBytes(LivePath(game, keptByPlayer.Path), playerBytes);
+
+        var release = BuildRelease("after", [packManifest], [JarAsset(packManifest)], [keptByPlayer, unchanged]);
+        using var client = new HttpClient(CreateReleaseHandler(release));
+        var service = CreateService(client);
+        var result = await service.SyncAsync(DefaultPack, null, CancellationToken.None);
+
+        Assert.Equal(PackSyncOutcome.Updated, result.Outcome);
+        Assert.False(File.Exists(LivePath(packDir, keptByPlayer.Path)));
+        Assert.False(File.Exists(LivePath(packDir, unchanged.Path)));
+        var preserved = Assert.Single(Directory.EnumerateFiles(Path.Combine(packDir, "resourcepacks")));
+        Assert.Equal(playerBytes, File.ReadAllBytes(preserved));
+        PackInstanceService.MigrateArchives(paths, logger, DefaultPack, () => { });
+        Assert.False(File.Exists(LivePath(game, keptByPlayer.Path)));
+        Assert.False(File.Exists(LivePath(game, unchanged.Path)));
+        Assert.Equal(preserved, Assert.Single(Directory.EnumerateFiles(Path.Combine(packDir, "resourcepacks"))));
+        var active = Assert.Single(Directory.EnumerateFiles(Path.Combine(game, "resourcepacks")));
+        Assert.Equal(Path.GetFileName(preserved), Path.GetFileName(active));
+        Assert.Equal(playerBytes, File.ReadAllBytes(active));
+        Assert.Equal(packManifest.Path, Assert.Single(PortablePackSyncService.ReadManagedFiles(packDir)!).Path);
+        Assert.Equal(PackSyncOutcome.UpToDate,
+            (await service.SyncAsync(DefaultPack, null, CancellationToken.None)).Outcome);
+        Assert.Equal(playerBytes, File.ReadAllBytes(preserved));
+    }
+
+    [Fact]
     public async Task LegacyWithoutState_OnlyVerifiedHistoricalFilesAreRemoved()
     {
         var kept = new PackFile("mods/kept.jar", Encoding.UTF8.GetBytes("unchanged"));
