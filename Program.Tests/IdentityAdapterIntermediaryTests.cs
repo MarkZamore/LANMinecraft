@@ -86,7 +86,9 @@ public sealed class IdentityAdapterIntermediaryTests : IDisposable
         var refused = source.IndexOf("_mappings.BuildSkins(", StringComparison.Ordinal);
         Assert.True(refused > 0, "A refused preflight no longer asks for the skins on their own.");
         // And the second ask is preflighted too, rather than trusted.
-        Assert.Contains("refusal = await PreflightAsync(configuration)", source, StringComparison.Ordinal);
+        var fallback = source[refused..];
+        Assert.Contains("preflight = await PreflightAsync(configuration)", fallback, StringComparison.Ordinal);
+        Assert.Contains("refusal = preflight.Refusal", fallback, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -340,8 +340,6 @@ public final class PortableIdentityPreflight {
         ClassNode rows = readClass(archive, alias("pauseRowHelperClasses", index));
         requireMethodDescriptor(rows, "pauseRowAddMethods", "pauseRowAddDescriptors");
         requireMethodDescriptor(rows, "pauseWorldOptionsAddMethods", "pauseWorldOptionsAddDescriptors");
-        ClassNode gameType = readClass(archive, alias("gameTypeClasses", index).replace('.', '/'));
-        requireField(gameType, "pauseSurvivalFields");
         ClassNode widget = readClass(archive, alias("widgetClasses", index));
         requireMethod(widget, "widgetGetWidthMethods", 0);
         requireMethod(widget, "widgetSetWidthMethods", 1);
@@ -368,18 +366,18 @@ public final class PortableIdentityPreflight {
         for (MethodNode method : patched.methods) for (AbstractInsnNode instruction : method.instructions) {
             if (!(instruction instanceof MethodInsnNode call) ||
                 !call.owner.equals("minecraft/portable/identity/PortableLanAutoPublishHooks")) continue;
-            if (call.name.equals("addLanPauseRow") || call.name.equals("addWorldOptions")) {
+            if (call.name.equals("addLanPauseRow") || call.name.equals("omitWorldOptions")) {
                 if (!isAlias("pauseCreateMenuMethods", method.name) || !method.desc.equals("()V")) {
                     throw new IllegalStateException("A LAN menu hook changed an unrelated pause method.");
                 }
                 if (call.name.equals("addLanPauseRow") &&
                     call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/Object;)Ljava/lang/Object;")) hooks++;
-                if (call.name.equals("addWorldOptions") &&
-                    call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")) settings++;
+                if (call.name.equals("omitWorldOptions") &&
+                    call.desc.equals("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")) settings++;
             }
         }
         requireHookCount(className, "addLanPauseRow", hooks, 1);
-        requireHookCount(className, "addWorldOptions", settings, 1);
+        requireHookCount(className, "omitWorldOptions", settings, 1);
     }
 
     private static void requireConstructor(ClassNode owner, String descriptor) {

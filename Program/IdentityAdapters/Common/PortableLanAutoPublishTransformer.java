@@ -407,9 +407,8 @@ public final class PortableLanAutoPublishTransformer implements ClassFileTransfo
                 if (contains(property("pauseWorldOptionsAddMethods", ""), call.name) &&
                     contains(property("pauseWorldOptionsAddDescriptors", ""), call.desc) &&
                     isWorldOptionsInsertion(node.name, call)) {
-                    method.instructions.insertBefore(call, new VarInsnNode(Opcodes.ALOAD, 0));
-                    MethodInsnNode replacement = new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS, "addWorldOptions",
-                        "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
+                    MethodInsnNode replacement = new MethodInsnNode(Opcodes.INVOKESTATIC, HOOKS, "omitWorldOptions",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
                     method.instructions.set(call, replacement);
                     method.instructions.insert(replacement, new TypeInsnNode(
                         Opcodes.CHECKCAST, Type.getReturnType(call.desc).getInternalName()));

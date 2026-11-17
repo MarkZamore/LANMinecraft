@@ -56,30 +56,9 @@ public final class PortableLanAutoPublishHooks {
         }
     }
 
-    public static Object addWorldOptions(Object rows, Object button, Object pauseScreen) {
-        ClassLoader loader = pauseScreen.getClass().getClassLoader();
-        try {
-            if (hideWorldOptions(loader)) return button;
-            return PortableIdentityReflection.invokeDeclared(rows,
-                new Class<?>[] { loadClass(loader, aliases("layoutElementClasses")) }, new Object[] { button },
-                aliases("pauseWorldOptionsAddMethods"));
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("The native world options row could not be built.", exception);
-        }
-    }
-
-    private static boolean hideWorldOptions(ClassLoader loader) {
-        try {
-            Object server = PortableIdentityReflection.invoke(minecraftClient(loader), aliases("getSingleplayerServerMethods"));
-            if (server == null) return false;
-            Object mode = PortableIdentityReflection.invoke(server, aliases("getDefaultGameTypeMethods"));
-            Class<?> gameType = loadClass(loader, aliases("gameTypeClasses"));
-            if (mode != staticField(gameType, aliases("pauseSurvivalFields"))) return false;
-            Object data = PortableIdentityReflection.invoke(server, aliases("getWorldDataMethods"));
-            return data != null && Boolean.FALSE.equals(PortableIdentityReflection.invoke(data, aliases("isAllowCommandsMethods")));
-        } catch (ReflectiveOperationException exception) {
-            return false;
-        }
+    /** Leaves the original button off the layout in every game mode. */
+    public static Object omitWorldOptions(Object rows, Object button) {
+        return button;
     }
 
     private static Object explicitLanPauseButton(

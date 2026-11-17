@@ -473,10 +473,9 @@ internal sealed class IdentityAdapterMappingService
             var widget = mappings.FindClass(AbstractWidget);
             var level = mappings.FindClass(Level);
             var minecraft = mappings.FindClass(MinecraftClient);
-            var survival = mappings.FindClass(GameType)?.FindField("SURVIVAL");
             var worldOptionsLabel = pause.FindField("WORLD_OPTIONS");
             if (row is null || element is null || widget is null || level is null || minecraft is null ||
-                survival is null || worldOptionsLabel is null) return null;
+                worldOptionsLabel is null) return null;
             var rowAdd = row.FindMethod("addChild", descriptor =>
                 descriptor == $"(L{element.ObfName};I)L{element.ObfName};");
             var optionsAdd = row.FindMethod("addChild", descriptor =>
@@ -499,7 +498,6 @@ internal sealed class IdentityAdapterMappingService
             properties["pauseWorldOptionsAddDescriptors"] = JoinAliases(
                 $"(L{element.RuntimeName};)L{element.RuntimeName};", optionsAdd.ObfDescriptor);
             properties["pauseWorldOptionsFields"] = JoinAliases(worldOptionsLabel);
-            properties["pauseSurvivalFields"] = JoinAliases(survival);
             properties["layoutElementClasses"] = JoinDottedAliases(element);
             properties["widgetClasses"] = JoinAliases(widget);
             properties["widgetGetWidthMethods"] = JoinAliases(width);

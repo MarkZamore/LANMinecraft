@@ -15,7 +15,7 @@ import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 
-/** Keeps ordinary world settings intact and publishes only an explicitly requested native screen. */
+/** Hides world settings in every mode and publishes only an explicitly requested native screen. */
 public final class WorldOptionsPublishProbe {
     private static final String PAUSE = "WorldOptionsPublishProbe$PauseScreen";
     private static final String WORLD = "WorldOptionsPublishProbe$WorldOptionsScreen";
@@ -38,7 +38,7 @@ public final class WorldOptionsPublishProbe {
         pauseType = loader.define(PAUSE, transformer.transform(null, null, PAUSE, null, null, pause));
         worldType = loader.define(WORLD, transformer.transform(null, null, WORLD, null, null, world));
         successfulPublication();
-        restrictedSurvivalMenu();
+        allGameModesMenu();
         guestCommandsFollowSavedWorld();
         failedPublication(false);
         failedPublication(true);
@@ -64,7 +64,7 @@ public final class WorldOptionsPublishProbe {
         checkRow(pause, false);
         check(pause.nativeInits == 2 && server.attempts == 0, "pause resize altered native initialization or published");
 
-        // The ordinary World Options action remains available and must not open the world or disappear.
+        // Even direct construction of an unrequested screen must not publish the world.
         pause.options.click();
         WorldBase ordinary = (WorldBase) client.gui.current;
         check(ordinary.widgetsReady && ordinary.nativeInits == 1 && ordinary.parent == pause,
@@ -74,7 +74,7 @@ public final class WorldOptionsPublishProbe {
         check(server.attempts == 0 && client.gui.current == ordinary, "ordinary settings resize auto-published");
 
         client.gui.current = pause;
-        ((Button) pause.rows.children.get(1)).click();
+        lanAction(pause).click();
         WorldBase requested = (WorldBase) client.gui.current;
         check(requested != ordinary && requested.widgetsReady && requested.parent == pause &&
             requested.level == client.level, "explicit action lost native world options constructor/state");
@@ -91,7 +91,7 @@ public final class WorldOptionsPublishProbe {
         pause.createPauseMenu();
         checkRow(pause, true);
         check(client.constructedReports == 0, "report screen was not lazy");
-        ((Button) pause.rows.children.get(1)).click();
+        lanAction(pause).click();
         check(client.gui.current instanceof ReportingScreen && client.gui.current.parent == pause &&
             client.constructedReports == 1 && server.attempts == 1, "published row did not use native reports/parent");
         client.gui.current.onClose();
@@ -104,24 +104,24 @@ public final class WorldOptionsPublishProbe {
             "published world's ordinary settings were treated as Open LAN");
     }
 
-    private static void restrictedSurvivalMenu() throws Exception {
-        Server server = new Server();
-        Minecraft client = reset(server);
-        MenuBase pause = menu();
-        checkRow(pause, false, true);
-        lanAction(pause).click();
-        check(server.published && server.attempts == 1, "restricted survival lost single-click publishing");
-        client.drain();
-        check(client.gui.current == null, "restricted survival was not returned to the game");
-        pause.createPauseMenu();
-        checkRow(pause, true, true);
-        lanAction(pause).click();
-        check(client.gui.current instanceof ReportingScreen, "restricted survival lost reporting");
-
-        for (GameType mode : new GameType[] {GameType.CREATIVE, GameType.ADVENTURE}) {
-            server.mode = mode;
-            pause.createPauseMenu();
-            checkRow(pause, true, false);
+    private static void allGameModesMenu() throws Exception {
+        for (GameType mode : GameType.values()) {
+            for (boolean commands : new boolean[] {false, true}) {
+                Server server = new Server();
+                server.mode = mode;
+                server.savedCommands = commands;
+                Minecraft client = reset(server);
+                MenuBase pause = menu();
+                checkRow(pause, false);
+                lanAction(pause).click();
+                check(server.published && server.attempts == 1, "a game mode lost single-click publishing");
+                client.drain();
+                check(client.gui.current == null, "publication did not return to the game");
+                pause.createPauseMenu();
+                checkRow(pause, true);
+                lanAction(pause).click();
+                check(client.gui.current instanceof ReportingScreen, "a game mode lost reporting");
+            }
         }
     }
 
@@ -160,7 +160,7 @@ public final class WorldOptionsPublishProbe {
         requested.init();
         check(server.attempts == 1 && requested.nativeInits == 2, "failed screen resize retried publication");
         pause.createPauseMenu();
-        checkRow(pause, false, true);
+        checkRow(pause, false);
         lanAction(pause).click();
         check(server.attempts == 2, "fresh explicit action could not retry failure");
     }
@@ -168,25 +168,21 @@ public final class WorldOptionsPublishProbe {
     private static void noIntegratedRow(Object server) throws Exception {
         Minecraft client = reset(server);
         MenuBase pause = menu();
-        check(pause.rows.children.size() == 2 && pause.rows.children.get(0) == pause.options &&
-            pause.rows.children.get(1) == pause.exitButton, "unknown/remote server gained a LAN row");
+        check(pause.rows.children.size() == 1 && pause.rows.children.get(0) == pause.exitButton,
+            "unknown/remote server gained a LAN row or world options");
         check(pause.nativeTail == 1 && pause.exitButton.width == 345, "native exit layout changed");
         pause.options.click();
         check(client.gui.current instanceof WorldBase && client.queue.isEmpty(),
             "ordinary remote/unknown world options were changed");
     }
 
-    private static void checkRow(MenuBase menu, boolean published) throws Exception {
-        checkRow(menu, published, false);
-    }
-
     private static Button lanAction(MenuBase menu) {
         return (Button) menu.rows.children.get(menu.rows.children.size() - 2);
     }
 
-    private static void checkRow(MenuBase menu, boolean published, boolean hideOptions) throws Exception {
-        int count = hideOptions ? 2 : 3;
-        check(menu.rows.children.size() == count && menu.rows.children.contains(menu.options) != hideOptions &&
+    private static void checkRow(MenuBase menu, boolean published) throws Exception {
+        int count = 2;
+        check(menu.rows.children.size() == count && !menu.rows.children.contains(menu.options) &&
             menu.rows.children.get(count - 1) == menu.exitButton, "incorrect native settings or exit row");
         Button action = lanAction(menu);
         check(action.width == menu.exitButton.width && action.width == 345,
@@ -267,7 +263,6 @@ public final class WorldOptionsPublishProbe {
         property("pauseWorldOptionsAddMethods", "addChild");
         property("pauseWorldOptionsAddDescriptors", "(LWorldOptionsPublishProbe$LayoutElement;)LWorldOptionsPublishProbe$LayoutElement;");
         property("pauseWorldOptionsFields", "WORLD_OPTIONS");
-        property("pauseSurvivalFields", "SURVIVAL");
         property("layoutElementClasses", LayoutElement.class.getName());
         property("widgetGetWidthMethods", "getWidth");
         property("widgetSetWidthMethods", "setWidth");
@@ -375,7 +370,7 @@ public final class WorldOptionsPublishProbe {
     }
     public static final class Level { }
     public enum Scope { LAN }
-    public enum GameType { SURVIVAL, CREATIVE, ADVENTURE }
+    public enum GameType { SURVIVAL, CREATIVE, ADVENTURE, SPECTATOR }
     public static final class Server {
         GameType mode = GameType.SURVIVAL;
         boolean savedCommands;
