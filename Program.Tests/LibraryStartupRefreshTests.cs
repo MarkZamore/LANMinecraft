@@ -104,6 +104,7 @@ public sealed class LibraryStartupRefreshTests
             Task.Run(fixture.Notify).GetAwaiter().GetResult();
             Assert.Equal(1, fixture.PendingRefresh);
             fixture.StopAndDisposeLibrary();
+            fixture.RefreshAfterShutdown();
             Assert.Null(fixture.Cards.ItemsSource);
             Drain();
             Assert.Equal(0, fixture.PendingRefresh);
@@ -191,6 +192,15 @@ public sealed class LibraryStartupRefreshTests
         private static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, Fields)!;
         private static MethodInfo Method(string name) => typeof(MainWindow).GetMethod(name, Fields)!;
         private void Set(string name, object value) => Field(name).SetValue(owner, value);
+        internal void RefreshAfterShutdown()
+        {
+            using var names = new PackDisplayNames((AppPaths)Field("_paths").GetValue(owner)!);
+            Set("_displayNames", names);
+            names.Dispose();
+            // A timer tick already queued at close must not reach disposed services.
+            Method("RefreshBuilds").Invoke(owner, null);
+            Assert.False((bool)Method("PublishPackDisplayNames").Invoke(owner, null)!);
+        }
         public void Dispose()
         {
             StopAndDisposeLibrary();

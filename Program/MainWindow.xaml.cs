@@ -154,6 +154,7 @@ public partial class MainWindow : Window
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
         _uiTimer.Tick += (_, _) =>
         {
+            if (_shutdownStarted) return;
             RefreshBuilds();
             RefreshWorlds();
             RefreshSteamPeers();
@@ -371,6 +372,7 @@ public partial class MainWindow : Window
         if (_shutdownStarted) return;
         var canInstallUpdate = !GameNeedsLauncher;
         _shutdownStarted = true;
+        _uiTimer.Stop();
         StopMaintenanceStatus();
         _maintenance?.Stop();
         _updateDotsTimer?.Stop();
@@ -387,8 +389,6 @@ public partial class MainWindow : Window
         // Always leave the original Closing event before issuing the final Close().
         // Several services can complete synchronously when networking was never started.
         await Dispatcher.Yield(DispatcherPriority.Background);
-
-        _uiTimer.Stop();
 
         // Before anything is torn down, tell Steam this launcher is going.
         // Steam keeps the keys of a closed launcher and keeps serving them, so
@@ -519,6 +519,7 @@ public partial class MainWindow : Window
 
     private void RefreshBuilds()
     {
+        if (_shutdownStarted) return;
         if (_paths is null || _settings is null || _settingsService is null || _catalog is null) return;
 
         PublishPackDisplayNames();
@@ -3421,6 +3422,7 @@ public partial class MainWindow : Window
 
     private bool PublishPackDisplayNames()
     {
+        if (_shutdownStarted) return false;
         if (_catalog is null || _displayNames?.Publish(_catalog.Packs) != true) return false;
         foreach (var peer in _peers) peer.RefreshPackDisplayName();
         foreach (var world in _worlds) world.RefreshPackDisplayName();
