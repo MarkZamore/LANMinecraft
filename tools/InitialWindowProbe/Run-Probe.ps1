@@ -12,8 +12,12 @@ $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $LibraryRoot = [IO.Path]::GetFullPath($LibraryRoot)
 $output = Join-Path $repository ('artifacts/agent-runs/initial-window-probe/' + $Version)
-$agent = Join-Path $repository 'Program/Build/NoticeOverlay/launcher-notice-agent.jar'
-if (-not $IconArchive) { $IconArchive = Join-Path $repository 'Program/MinecraftWindowIconAssets.jar' }
+& (Join-Path $repository 'tools/Prepare-ComponentTests.ps1')
+$agent = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_ASSETS 'launcher-notice-agent.jar'
+if (-not $IconArchive) {
+    & (Join-Path $repository 'tools/Prepare-DesktopComponentTests.ps1')
+    $IconArchive = Join-Path $env:LANMINECRAFT_DESKTOP_TEST_COMPONENTS 'assets/MinecraftWindowIconAssets.jar'
+}
 $IconArchive = [IO.Path]::GetFullPath($IconArchive)
 $java = if ($JavaExecutable) { $JavaExecutable } else { Join-Path $JavaHome 'bin/java.exe' }
 $javac = Join-Path $JavaHome 'bin/javac.exe'

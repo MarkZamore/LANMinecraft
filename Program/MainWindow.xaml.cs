@@ -329,6 +329,7 @@ public partial class MainWindow : Window
             RefreshUi();
             _ = CheckForUpdatesAsync(_lifetimeCts.Token);
             _uiTimer.Start();
+            DesktopBootstrapCache.CommitSuccessful(_paths, _logger);
             _maintenance.Start();
             StartupTrace.Mark("интерфейс");
             _logger.Info("Minecraft portable launcher started.");

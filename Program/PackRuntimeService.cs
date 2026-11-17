@@ -3,7 +3,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -1418,8 +1417,6 @@ internal static class RuntimeRetry
 
 internal static class WindowIconAssetService
 {
-    private const string ResourceName = "Minecraft.WindowIconAssets.jar";
-
     [SuppressMessage("Security", "CA5350", Justification = "Minecraft asset object names use SHA-1 by protocol.")]
     public static void Apply(string assetsRoot, IVersion profile)
     {
@@ -1428,8 +1425,7 @@ internal static class WindowIconAssetService
         var indexPath = Path.Combine(assetsRoot, "indexes", assetId + ".json");
         if (!File.Exists(indexPath)) return;
 
-        using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(ResourceName);
-        if (resource is null) return;
+        using var resource = LauncherAssets.OpenGameIcons();
         using var archive = new ZipArchive(resource, ZipArchiveMode.Read);
         using var document = JsonDocument.Parse(File.ReadAllText(indexPath));
         var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(document.RootElement.GetRawText())!;

@@ -3,8 +3,8 @@
 namespace Minecraft.Tests;
 
 /// <summary>
-/// The Steam bootstrap has two halves that must not drift: the vendored
-/// steam_api64.dll the launcher embeds, and the service that turns a missing
+/// The Steam bootstrap has two halves that must not drift: the prepared
+/// steam_api64.dll paired with the managed SDK, and the service that turns a missing
 /// or signed-out Steam into a status instead of a crash.
 /// </summary>
 public sealed class SteamBootstrapTests : IDisposable
@@ -21,10 +21,8 @@ public sealed class SteamBootstrapTests : IDisposable
     [Fact]
     public void VendoredSteamNative_MatchesThePinnedBytes()
     {
-        var path = Path.Combine(
-            FindRepositoryDirectory("Program", "Native"),
-            SteamNativeLibraryService.NativeFileName);
-        Assert.True(File.Exists(path), "The vendored Steamworks native is missing.");
+        var path = LauncherAssets.SteamNativePath;
+        Assert.True(File.Exists(path), "The prepared Steamworks native is missing.");
         Assert.Equal(SteamNativeLibraryService.NativeSizeBytes, new FileInfo(path).Length);
         using var stream = File.OpenRead(path);
         Assert.Equal(
@@ -35,7 +33,8 @@ public sealed class SteamBootstrapTests : IDisposable
     [Fact]
     public void EmbeddedSteamNative_IsTheVendoredFile()
     {
-        var bytes = SteamNativeLibraryService.ReadEmbeddedNative();
+        var bytes = SteamNativeLibraryService.ReadPreparedNative();
+        Assert.Null(typeof(SteamNativeLibraryService).Assembly.GetManifestResourceStream("Minecraft.SteamApi64.dll"));
         Assert.Equal(SteamNativeLibraryService.NativeSizeBytes, bytes.LongLength);
         Assert.Equal(
             SteamNativeLibraryService.NativeSha256,
@@ -56,10 +55,21 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.Equal(first, second);
         Assert.Equal(firstWrite, File.GetLastWriteTimeUtc(second));
 
-        File.WriteAllBytes(first, [1, 2, 3]);
-        var repaired = service.Extract();
-        Assert.Equal(first, repaired);
-        Assert.Equal(SteamNativeLibraryService.NativeSizeBytes, new FileInfo(repaired).Length);
+        // Native bootstrap owns repair before managed startup. The managed reader
+        // rejects modified bytes rather than overwriting a leased shared component.
+        var selected = BootstrapLaunchContext.Current.Components.Single(component => component.Kind == "steam-native");
+        var isolated = Directory.CreateDirectory(Path.Combine(_root, "steam-fixture")).FullName;
+        var manifest = Path.Combine(_root, "steam-native.manifest");
+        File.Copy(selected.ManifestPath, manifest);
+        var copy = Path.Combine(isolated, SteamNativeLibraryService.NativeFileName);
+        File.Copy(first, copy);
+        var components = BootstrapLaunchContext.Current.Components.Select(component => component.Kind == "steam-native"
+            ? component with { Root = isolated, ManifestPath = manifest } : component).ToArray();
+        var context = BootstrapLaunchContext.CreateTestContext(_root, components);
+        File.WriteAllBytes(copy, [1, 2, 3]);
+        Assert.Throws<InvalidDataException>(() => context.Resolve("steam-native", SteamNativeLibraryService.NativeFileName));
+        File.WriteAllBytes(copy, SteamNativeLibraryService.ReadPreparedNative());
+        Assert.Equal(copy, context.Resolve("steam-native", SteamNativeLibraryService.NativeFileName));
     }
 
     [Fact]
@@ -597,19 +607,6 @@ public sealed class SteamBootstrapTests : IDisposable
         Assert.Equal("1", api.Presence["lanmc"]);
     }
 
-    private static string FindRepositoryDirectory(params string[] relativeParts)
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            var candidate = relativeParts.Aggregate(current.FullName, Path.Combine);
-            if (Directory.Exists(candidate)) return candidate;
-            current = current.Parent;
-        }
-
-        throw new DirectoryNotFoundException(
-            $"Repository directory was not found: {Path.Combine(relativeParts)}");
-    }
 }
 
 /// <summary>In-memory Steam client for tests: no Steamworks, no native library.</summary>

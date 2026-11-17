@@ -20,6 +20,8 @@ internal static class Program
             ?? throw new InvalidDataException("No messages supplied.");
         var output = Path.GetFullPath(args[1]);
         Directory.CreateDirectory(output);
+        typeof(App).Assembly.GetType("Minecraft.BootstrapLaunchContext", throwOnError: true)!
+            .GetMethod("InitializeTestComponentsFromEnvironment", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.InitializeComponent(); // No Run: no launcher startup, Steam, network, or game.
         var results = new List<object>();

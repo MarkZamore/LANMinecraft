@@ -43,6 +43,8 @@ internal static class Probe
         var prepareBackdrop = !args.Contains("--original-backdrop");
         var screens = Option(args, "--screen") is { } screen ? new[] { screen } : new[] { "main", "overview", "detail" };
         if (screens.Any(value => value is not ("main" or "overview" or "detail"))) throw new ArgumentException("Unknown screen.");
+        typeof(Minecraft.App).Assembly.GetType("Minecraft.BootstrapLaunchContext", throwOnError: true)!
+            .GetMethod("InitializeTestComponentsFromEnvironment", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
         var app = new Minecraft.App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.InitializeComponent();
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;

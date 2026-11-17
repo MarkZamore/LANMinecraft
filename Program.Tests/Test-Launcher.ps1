@@ -21,7 +21,7 @@ if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is support
 if ($ReleaseImpactPlan -and ($Profile -ne 'Release' -or $WithAdapters)) {
     throw '-ReleaseImpactPlan requires -Profile Release without -WithAdapters.'
 }
-$caseBudget = if ($WithAdapters) { 788 } else { 714 }
+$caseBudget = if ($WithAdapters) { 807 } else { 733 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
@@ -151,6 +151,7 @@ try {
     $session = Join-Path $resultsBase ($Profile + '-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($session)
     & (Join-Path $repository 'tools/Prepare-ComponentTests.ps1')
+    & (Join-Path $repository 'tools/Prepare-DesktopComponentTests.ps1')
     $restoreArguments = if ($NoRestore) { @('--no-restore') } else { @() }
     if (-not $NoBuild) {
         # Component fixtures are checked separately from the production EXE.

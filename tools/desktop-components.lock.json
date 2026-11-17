@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "revision": "desktop-components-1",
+  "sourceCommit": "f7fde987196149537171487a4e36a6cbe6a1402c",
+  "components": [
+    {
+      "kind": "desktop-runtime",
+      "id": "dotnet-10.0.14-win-x64",
+      "url": "https://github.com/MarkZamore/LANMinecraft-Components/releases/download/desktop-components-1/dotnet-10.0.14-win-x64.pak",
+      "apiUrl": "https://api.github.com/repos/MarkZamore/LANMinecraft-Components/releases/assets/760481451",
+      "entryPath": "host/fxr/10.0.14/hostfxr.dll",
+      "sizeBytes": 179719147,
+      "sha256": "1f7864d6efce66447dc61c7a684bb929ce03e8b661ca67475d8ad620569c9a68",
+      "manifestSizeBytes": 60628,
+      "manifestSha256": "8385594d138b261cea1330cac199a8e8d3794fd74c30a338ffd6474387c43168",
+      "runtimeVersion": "10.0.14"
+    },
+    {
+      "kind": "assets",
+      "id": "launcher-assets-1",
+      "url": "https://github.com/MarkZamore/LANMinecraft-Components/releases/download/desktop-components-1/launcher-assets-1.pak",
+      "apiUrl": "https://api.github.com/repos/MarkZamore/LANMinecraft-Components/releases/assets/760481447",
+      "entryPath": "Background.png",
+      "sizeBytes": 1551281,
+      "sha256": "17efaf1093759778966312d9d78b3dcc469b6ac97dd6b57ce617a55d3f595efd",
+      "manifestSizeBytes": 233,
+      "manifestSha256": "73f019dea66a16853aa527c24b806bb5921e10527a69023480b45a93a251e006"
+    },
+    {
+      "kind": "steam-native",
+      "id": "steam-native-1",
+      "url": "https://github.com/MarkZamore/LANMinecraft-Components/releases/download/desktop-components-1/steam-native-1.pak",
+      "apiUrl": "https://api.github.com/repos/MarkZamore/LANMinecraft-Components/releases/assets/760481444",
+      "entryPath": "steam_api64.dll",
+      "sizeBytes": 301732,
+      "sha256": "3865a1ae81c961a84aa295088f278fdf48be3a279a6491ede89f9885aba5cba2",
+      "manifestSizeBytes": 232,
+      "manifestSha256": "d197ad1e8eaa3c110ca2aca066debe6600ce816da00592d50144a392d992211e"
+    }
+  ]
+}

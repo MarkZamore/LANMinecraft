@@ -1,7 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using CmlLib.Core.Version;
@@ -20,8 +19,7 @@ internal static class GameWindowPresentation
         var icons = ReadRuntimeIcons(paths, runtime, profile);
         if (icons.Count == 0)
         {
-            using var fallback = Assembly.GetExecutingAssembly().GetManifestResourceStream("Minecraft.WindowIconAssets.jar")
-                ?? throw new InvalidOperationException("The game's window icons are missing.");
+            using var fallback = LauncherAssets.OpenGameIcons();
             ReadArchiveIcons(fallback, icons);
         }
         using var memory = new MemoryStream();

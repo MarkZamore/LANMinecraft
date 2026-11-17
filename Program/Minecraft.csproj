@@ -10,7 +10,6 @@
     <AssemblyName>LANMinecraft</AssemblyName>
     <RootNamespace>Minecraft</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>Minecraft.ico</ApplicationIcon>
     <ReleaseNumber Condition="'$(ReleaseNumber)' == ''">1</ReleaseNumber>
     <Version>1.0.$(ReleaseNumber)</Version>
     <FileVersion>1.0.$(ReleaseNumber).0</FileVersion>
@@ -23,10 +22,9 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <SelfContained>true</SelfContained>
-    <!-- Publish.ps1 embeds this ordinary folder deployment in the portable
-         native host. No .NET bundle may extract native files before managed
-         code gets a chance to select the launcher's own temporary directory. -->
+    <SelfContained>false</SelfContained>
+    <!-- Only application files are embedded. The native host prepares the
+         pinned external Desktop Runtime and resources before entering .NET. -->
     <PublishSingleFile>false</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <!--
@@ -61,19 +59,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Minecraft.ico" />
-    <Resource Include="Assets\Background.png" />
-    <EmbeddedResource Include="MinecraftWindowIconAssets.jar"
-                      LogicalName="Minecraft.WindowIconAssets.jar" />
     <!-- The version history the window shows; hand-written, one entry per
          commit, checked by the release workflow. See ChangelogService. -->
     <EmbeddedResource Include="Changelog.md"
                       LogicalName="Minecraft.Changelog.md" />
-    <!-- Steamworks SDK 1.60 native, the build Steamworks.NET 2024.8.0 targets.
-         Its NuGet package ships managed assemblies only, so the DLL is
-         vendored here and extracted at runtime by SteamNativeLibraryService. -->
-    <EmbeddedResource Include="Native\steam_api64.dll"
-                      LogicalName="Minecraft.SteamApi64.dll" />
+    <!-- The matching SDK 1.60 native is prepared by the bootstrap's pinned
+         steam-native component; this package supplies the managed API only. -->
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="CmlLib.Core" Version="4.0.6" />
     <PackageReference Include="BsDiff" Version="1.1.0" />

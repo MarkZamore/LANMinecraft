@@ -6,6 +6,11 @@ public sealed class AppPaths
 {
     public static string ResolveApplicationRoot()
     {
+        // The native host canonicalizes its guarded installation directory.
+        // Use that spelling even when Explorer/shortcuts started an 8.3 alias.
+        // Test-only component fixtures must never replace the real app root.
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(BootstrapLaunchContext.EnvironmentVariable)))
+            return BootstrapLaunchContext.Current.InstallationRoot;
         var processPath = Environment.ProcessPath;
         if (!string.IsNullOrWhiteSpace(processPath))
         {

@@ -182,7 +182,9 @@ jobs:
           # Restore is also the dependency audit: NuGetAudit in
           # Directory.Build.props turns a vulnerable package, direct or
           # transitive, into a restore error.
-          & dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release
+          $desktopPins = Get-Content tools/desktop-components.lock.json -Raw | ConvertFrom-Json
+          $desktopVersion = ($desktopPins.components | Where-Object kind -CEQ 'desktop-runtime').runtimeVersion
+          & dotnet restore Program\Minecraft.csproj -r win-x64 -p:Configuration=Release -p:SelfContained=false "-p:RuntimeFrameworkVersion=$desktopVersion" -p:RollForward=Disable -p:UseAppHost=false
           if ($LASTEXITCODE -ne 0) { throw "The launcher could not be restored." }
 
           $jobs = @($capture, $tool)

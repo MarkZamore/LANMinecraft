@@ -39,6 +39,8 @@ git merge --ff-only origin/main
 
 ## Найти сборки по текущему каталогу
 
+Среда самого лаунчера и ресурсы также вынесены в поставку компонентов. Выполнить `tools/Prepare-DesktopComponentTests.ps1` перед отдельными тестами; wrapper делает это автоматически. Устройство загрузчика и переносимых кешей описано в [DESKTOP-COMPONENTS.md](DESKTOP-COMPONENTS.md).
+
 ```powershell
 $catalog = (git show origin/pack-catalog:catalog.json | Out-String) | ConvertFrom-Json
 $catalog.packs | Select-Object id, relativePath, sourcePath, source

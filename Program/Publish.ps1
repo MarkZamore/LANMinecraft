@@ -6,7 +6,8 @@
     # Leaves bin/obj in place. Locally they are swept so the checkout stays
     # clean; on a build agent the checkout is thrown away, the sweep only costs
     # seconds, and the delta tool built alongside is needed by the next step.
-    [switch]$KeepBuildOutput
+    [switch]$KeepBuildOutput,
+    [string]$StagingDirectory = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +15,12 @@ $env:MSBUILDDISABLENODEREUSE = "1"
 $programDir = Split-Path -Parent $PSCommandPath
 $projectRoot = Split-Path -Parent $programDir
 $projectFile = Join-Path $programDir "Minecraft.csproj"
+$desktopLock = Get-Content -LiteralPath (Join-Path $projectRoot 'tools/desktop-components.lock.json') -Raw | ConvertFrom-Json
+$desktopRuntime = @($desktopLock.components | Where-Object kind -CEQ 'desktop-runtime')
+if ($desktopRuntime.Count -ne 1 -or $desktopRuntime[0].runtimeVersion -notmatch '^10\.0\.[0-9]+$') {
+    throw 'The publisher requires an exact .NET 10 Desktop Runtime pin.'
+}
+$desktopVersionProperty = '-p:RuntimeFrameworkVersion=' + $desktopRuntime[0].runtimeVersion
 $buildRoots = @(
     (Join-Path $programDir "bin"),
     (Join-Path $programDir "obj"),
@@ -144,26 +151,35 @@ if ($ReleaseNumber -eq 0) {
 }
 Write-Host "Release number: $ReleaseNumber"
 Test-ChangelogHasEntry $ReleaseNumber
-$portableStage = Join-Path $projectRoot ('artifacts\portable-publish\' + $ReleaseNumber + '-' + [Guid]::NewGuid().ToString('N'))
+$portableStage = if ($StagingDirectory) { [IO.Path]::GetFullPath($StagingDirectory, $projectRoot) } else {
+    Join-Path $projectRoot ('artifacts\agent-runs\portable-publish-' + $ReleaseNumber + '-' + [Guid]::NewGuid().ToString('N'))
+}
+$stageBoundary = [IO.Path]::GetFullPath((Join-Path $projectRoot 'artifacts/agent-runs')) + [IO.Path]::DirectorySeparatorChar
+if (!$portableStage.StartsWith($stageBoundary, [StringComparison]::OrdinalIgnoreCase)) { throw 'Publication staging must be an owned agent-runs directory.' }
+[void][IO.Directory]::CreateDirectory($portableStage)
+@{owner='Publish.ps1';purpose='Reproducible application publish and native packaging';createdUtc=[DateTime]::UtcNow.ToString('o');expectedBytes=2GB;deleteByUtc=[DateTime]::UtcNow.AddDays(1).ToString('o');requiredResults=@('native/host-build.json')} |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $portableStage 'RUN.json') -Encoding utf8
 $managedPayload = Join-Path $portableStage 'payload'
 $nativeBuild = Join-Path $portableStage 'native'
 
 try {
     if (-not $NoRestore) {
-        & dotnet restore $projectFile -r win-x64 -p:Configuration=Release -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
+        & dotnet restore $projectFile -r win-x64 -p:Configuration=Release -p:SelfContained=false $desktopVersionProperty -p:RollForward=Disable -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=false
         if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed with exit code $LASTEXITCODE." }
     }
 
-    & dotnet build $projectFile -c Release --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
+    & dotnet build $projectFile -c Release --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" -p:SelfContained=false $desktopVersionProperty -p:RollForward=Disable -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE." }
 
     # WPF's markup pass creates a temporary assembly. Publishing without a second
     # build guarantees that the final pass-two assembly is the one bundled.
-    # A private folder deployment has no pre-CLR bundle extraction. The small
-    # native outer host embeds these ordinary self-contained files and starts
-    # their DLL entry point in its own process, after preparing portable temp.
-    & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$managedPayload" -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=true
+    # The small native host embeds application files, prepares the pinned
+    # external components and runs the entry point in its own STA process.
+    & dotnet publish $projectFile -c Release --no-build --no-restore "-p:SourceRevisionId=$SourceRevisionId" "-p:ReleaseNumber=$ReleaseNumber" "-p:PublishDir=$managedPayload" -p:SelfContained=false $desktopVersionProperty -p:RollForward=Disable -p:PublishSingleFile=false -p:IncludeNativeLibrariesForSelfExtract=false -p:UseAppHost=false
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
+    foreach ($runtimeFile in @('hostfxr.dll','coreclr.dll','hostpolicy.dll','PresentationFramework.dll')) {
+        if (Test-Path -LiteralPath (Join-Path $managedPayload $runtimeFile)) { throw ('Runtime files must remain outside the EXE: ' + $runtimeFile) }
+    }
 
     $executable = Join-Path $PublishDir "LANMinecraft.exe"
     & (Join-Path $programDir 'Bootstrap\Build-PortableHost.ps1') -PayloadDirectory $managedPayload `

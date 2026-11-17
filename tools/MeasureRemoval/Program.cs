@@ -11,6 +11,8 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        typeof(App).Assembly.GetType("Minecraft.BootstrapLaunchContext", throwOnError: true)!
+            .GetMethod("InitializeTestComponentsFromEnvironment", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
         var app = new App();
         app.InitializeComponent();
         var output = Path.GetFullPath("artifacts/MeasureRemoval");

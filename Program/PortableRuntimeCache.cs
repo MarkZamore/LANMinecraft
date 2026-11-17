@@ -7,7 +7,8 @@ namespace Minecraft;
 
 /// <summary>
 /// Bounds the native host's private .NET payloads, without touching Java or
-/// unowned files. Active leases and the two newest inactive generations stay.
+/// unowned files. Before desktop-cache migration the two newest inactive generations stay.
+/// A recorded successful desktop set makes all unleased flat generations obsolete.
 /// The tiny ownership leases stay even after their payload is removed: closing
 /// and then deleting a lease would race a host starting that generation.
 /// </summary>
@@ -51,9 +52,10 @@ internal static class PortableRuntimeCache
                 inactive.Add(new Generation(hash, directory, Directory.GetLastWriteTimeUtc(directory)));
             }
 
+            var retained = DesktopBootstrapCache.HasSuccessfulSet(paths) ? 0 : RetainedInactiveGenerations;
             foreach (var generation in inactive.OrderByDescending(item => item.LastWriteUtc)
                          .ThenBy(item => item.Hash, StringComparer.Ordinal)
-                         .Skip(RetainedInactiveGenerations))
+                         .Skip(retained))
             {
                 checkpoint?.Invoke();
                 // A generation may have become active since the inventory.
@@ -69,7 +71,7 @@ internal static class PortableRuntimeCache
         }
     }
 
-    private static FileStream? OpenOwnedLease(string root, string hash)
+    internal static FileStream? OpenOwnedLease(string root, string hash, string? kind = null)
     {
         var path = Path.Combine(root, hash + ".lease");
         if (!IsDirectChild(root, path)) return null;
@@ -81,9 +83,10 @@ internal static class PortableRuntimeCache
             if (handle.IsInvalid || !IsPlainFile(handle)) return null;
             lease = new FileStream(handle, FileAccess.ReadWrite);
             handle = null;
-            var expected = Encoding.ASCII.GetBytes($"LMHOST01\n{hash}\n");
+            var expected = Encoding.ASCII.GetBytes(kind is null
+                ? $"LMHOST01\n{hash}\n" : $"LMDESK01\n{kind}\n{hash}\n");
             if (lease.Length != expected.Length) return null;
-            Span<byte> actual = stackalloc byte[74];
+            Span<byte> actual = stackalloc byte[expected.Length];
             lease.ReadExactly(actual);
             if (!actual.SequenceEqual(expected)) return null;
             var owned = lease;
@@ -101,7 +104,7 @@ internal static class PortableRuntimeCache
         }
     }
 
-    private static void TryDeleteGeneration(string root, string generation, Action? checkpoint)
+    internal static void TryDeleteGeneration(string root, string generation, Action? checkpoint)
     {
         try
         {
@@ -219,7 +222,7 @@ internal static class PortableRuntimeCache
     /// ancestor cannot be replaced or converted into a reparse point in place.
     /// OPEN_REPARSE_POINT also checks the opened object rather than its target.
     /// </summary>
-    private sealed class DirectoryLocks : IDisposable
+    internal sealed class DirectoryLocks : IDisposable
     {
         private readonly Dictionary<string, SafeFileHandle> handles = new(StringComparer.Ordinal);
 

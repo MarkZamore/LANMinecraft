@@ -205,7 +205,7 @@
                 <DrawingGroup>
                     <ImageDrawing Rect="{StaticResource Size.BackdropBounds}">
                         <ImageDrawing.ImageSource>
-                            <BitmapImage UriSource="pack://application:,,,/LANMinecraft;component/Assets/Background.png" CacheOption="OnLoad"/>
+                            <bridge:LauncherBackgroundExtension/>
                         </ImageDrawing.ImageSource>
                     </ImageDrawing>
                     <GeometryDrawing Brush="{StaticResource Brush.BackdropShade}">

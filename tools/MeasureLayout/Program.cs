@@ -33,6 +33,8 @@ internal static class Program
         // its real startup handlers or initializing Steam/network services.
         RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
         Repository = FindRepository(args);
+        typeof(MainWindow).Assembly.GetType("Minecraft.BootstrapLaunchContext", throwOnError: true)!
+            .GetMethod("InitializeTestComponentsFromEnvironment", AnyStatic)!.Invoke(null, null);
         var artifactRoot = Path.GetFullPath(Path.Combine(Repository, "artifacts"));
         var requestedOutput = args.FirstOrDefault(arg => arg.StartsWith("--output=", StringComparison.Ordinal));
         var output = Path.GetFullPath(requestedOutput is null

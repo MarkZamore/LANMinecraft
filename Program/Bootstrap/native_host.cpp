@@ -7,6 +7,7 @@
 #include <shellapi.h>
 #include <objbase.h>
 #include <dwmapi.h>
+#include <winhttp.h>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -19,6 +20,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include <functional>
+#include <chrono>
+#include <sstream>
+#include <iomanip>
 
 namespace
 {
@@ -275,14 +283,11 @@ std::wstring DecodePath(const unsigned char* bytes, std::uint32_t length)
 struct Entry { std::wstring path; std::uint64_t offset; std::uint64_t length; Digest digest; };
 struct Packet { const unsigned char* data; std::uint64_t dataLength; std::wstring entry; Digest digest; std::vector<Entry> files; };
 
-Packet ReadPacket(HMODULE module)
+Packet ParsePacket(const unsigned char* bytes, std::size_t size, std::uint64_t packetSize,
+    bool application, bool includesData)
 {
-    HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(PayloadResource), RT_RCDATA);
-    if (resource == nullptr) Fail(L"FindResourceW");
-    const DWORD resourceSize = SizeofResource(module, resource);
-    HGLOBAL loaded = LoadResource(module, resource);
-    const auto* bytes = static_cast<const unsigned char*>(LockResource(loaded));
-    if (bytes == nullptr || resourceSize < HeaderSize || resourceSize > MaximumPayload) throw Failure(L"Invalid launcher runtime packet size");
+    if (bytes == nullptr || size < HeaderSize || packetSize < size || packetSize > MaximumPayload)
+        throw Failure(L"Invalid launcher runtime packet size");
     Reader header(bytes, HeaderSize);
     if (std::memcmp(header.Take(8), "LMHOST01", 8) != 0 || header.U32() != 1) throw Failure(L"Unsupported launcher runtime packet");
     const auto count = header.U32();
@@ -292,14 +297,15 @@ Packet ReadPacket(HMODULE module)
     const auto dataLength = header.U64();
     Packet packet{};
     std::memcpy(packet.digest.data(), header.Take(packet.digest.size()), packet.digest.size());
-    if (tableLength > resourceSize - HeaderSize || dataLength != resourceSize - HeaderSize - tableLength ||
+    if (tableLength > size - HeaderSize || dataLength != packetSize - HeaderSize - tableLength ||
+        size != HeaderSize + tableLength + (includesData ? dataLength : 0) ||
         tableLength < entryLength || entryLength == 0 || entryLength > MaximumPathBytes) throw Failure(L"Invalid launcher runtime packet bounds");
-    if (HashBytes(bytes + HeaderSize, resourceSize - HeaderSize) != packet.digest) throw Failure(L"Launcher runtime packet SHA256 mismatch");
+    if (includesData && HashBytes(bytes + HeaderSize, size - HeaderSize) != packet.digest) throw Failure(L"Launcher runtime packet SHA256 mismatch");
     Reader table(bytes + HeaderSize, static_cast<std::size_t>(tableLength));
     packet.entry = DecodePath(table.Take(entryLength), entryLength);
-    if (packet.entry.find(L'/') != std::wstring::npos || packet.entry.size() < 5 || !EqualOrdinal(packet.entry.substr(packet.entry.size() - 4), L".dll"))
+    if (application && (packet.entry.find(L'/') != std::wstring::npos || packet.entry.size() < 5 || !EqualOrdinal(packet.entry.substr(packet.entry.size() - 4), L".dll")))
         throw Failure(L"Invalid managed launcher entry point");
-    packet.data = bytes + HeaderSize + static_cast<std::size_t>(tableLength);
+    packet.data = includesData ? bytes + HeaderSize + static_cast<std::size_t>(tableLength) : nullptr;
     packet.dataLength = dataLength;
     std::set<std::wstring, CaseLess> paths;
     std::uint64_t nextOffset = 0;
@@ -312,13 +318,12 @@ Packet ReadPacket(HMODULE module)
         std::memcpy(file.digest.data(), table.Take(file.digest.size()), file.digest.size());
         if (!paths.insert(file.path).second || file.offset != nextOffset || file.length > dataLength - nextOffset)
             throw Failure(L"Duplicate, overlapping or out-of-bounds runtime file");
-        if (HashBytes(packet.data + static_cast<std::size_t>(file.offset), static_cast<std::size_t>(file.length)) != file.digest)
+        if (includesData && HashBytes(packet.data + static_cast<std::size_t>(file.offset), static_cast<std::size_t>(file.length)) != file.digest)
             throw Failure(L"Embedded runtime file SHA256 mismatch");
         nextOffset += file.length;
         packet.files.push_back(std::move(file));
     }
-    if (table.Remaining() != 0 || nextOffset != dataLength || paths.find(packet.entry) == paths.end() ||
-        paths.find(L"hostfxr.dll") == paths.end() || paths.find(L"hostpolicy.dll") == paths.end() || paths.find(L"coreclr.dll") == paths.end())
+    if (table.Remaining() != 0 || nextOffset != dataLength || paths.find(packet.entry) == paths.end())
         throw Failure(L"Incomplete launcher runtime packet");
     for (const auto& path : paths)
     {
@@ -330,6 +335,15 @@ Packet ReadPacket(HMODULE module)
         }
     }
     return packet;
+}
+
+Packet ReadPacket(HMODULE module)
+{
+    HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(PayloadResource), RT_RCDATA);
+    if (resource == nullptr) Fail(L"FindResourceW");
+    const DWORD size = SizeofResource(module, resource);
+    HGLOBAL loaded = LoadResource(module, resource);
+    return ParsePacket(static_cast<const unsigned char*>(LockResource(loaded)), size, size, true, true);
 }
 
 class Directories
@@ -543,6 +557,31 @@ void Inventory(Directories& directories, const std::wstring& base, const std::ws
     FindClose(found);
 }
 
+class RetryablePreparationFailure : public Failure
+{
+public:
+    explicit RetryablePreparationFailure(std::wstring text, unsigned long code = 0) : Failure(std::move(text), code) {}
+};
+
+unsigned long RetryableIoCode(unsigned long code)
+{
+    // Preserve fatal NT path/security failures. Only known ordinary I/O
+    // conditions can be retried after the user fixes access or frees space.
+    switch (code)
+    {
+    case 0xC0000043ul: return ERROR_SHARING_VIOLATION;
+    case 0xC0000022ul: return ERROR_ACCESS_DENIED;
+    case 0xC000007Ful: return ERROR_DISK_FULL;
+    case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: case ERROR_ACCESS_DENIED:
+    case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: case ERROR_WRITE_FAULT:
+    case ERROR_READ_FAULT: case ERROR_NOT_READY: case ERROR_IO_DEVICE: return code;
+    default: return 0;
+    }
+}
+
+#include "bootstrap_progress.h"
+#include "bootstrap_dependencies.h"
+
 struct HostParameters { std::size_t size; const wchar_t* hostPath; const wchar_t* dotnetRoot; };
 using HostHandle = void*;
 using HostInitialize = std::int32_t(__cdecl*)(int, const wchar_t**, const HostParameters*, HostHandle*);
@@ -552,13 +591,18 @@ using HostWriter = void(__cdecl*)(const wchar_t*);
 using SetHostWriter = HostWriter(__cdecl*)(HostWriter);
 void __cdecl HostError(const wchar_t* message) { Log(std::wstring(L"hostfxr: ") + message); }
 
-int RunManaged(const std::wstring& executable, Directories& directories, const std::wstring& runtime, const std::wstring& entry)
+int RunManaged(const std::wstring& executable, Directories& directories, const std::wstring& hostingRoot,
+    const std::wstring& hostEntry, const std::wstring& application, const std::wstring& entry)
 {
     if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS)) Fail(L"SetDefaultDllDirectories");
-    const auto runtimePath = directories.Absolute(runtime);
+    // Keep extended paths for our guarded file I/O, but expose ordinary DOS/UNC
+    // paths to the CLR. WPF's PenIMC registration-free COM helper retrieves its
+    // loaded module path into a MAX_PATH buffer; an unnecessary \\?\ prefix
+    // can turn a valid 259-character framework path into a truncated one.
+    const auto& runtimePath = hostingRoot;
     const auto cookie = AddDllDirectory(runtimePath.c_str());
     if (cookie == nullptr) Fail(L"AddDllDirectory");
-    const auto fxrPath = runtimePath + L"\\hostfxr.dll";
+    const auto fxrPath = HostedPath(runtimePath, hostEntry);
     HMODULE library = LoadLibraryExW(fxrPath.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
     if (library == nullptr) Fail(L"Load private hostfxr.dll");
     auto initialize = reinterpret_cast<HostInitialize>(GetProcAddress(library, "hostfxr_initialize_for_dotnet_command_line"));
@@ -570,14 +614,15 @@ int RunManaged(const std::wstring& executable, Directories& directories, const s
     int argc = 0;
     auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv == nullptr || argc == 0) Fail(L"CommandLineToArgvW");
-    const auto appPath = runtimePath + L"\\" + entry;
+    const auto appPath = PublicPath(directories.Absolute(application + L"/" + entry));
     std::vector<const wchar_t*> arguments{ appPath.c_str() };
     for (int index = 1; index < argc; ++index) arguments.push_back(argv[index]);
-    const HostParameters parameters{ sizeof(HostParameters), executable.c_str(), runtimePath.c_str() };
+    const auto hostPath = PublicPath(executable);
+    const HostParameters parameters{ sizeof(HostParameters), hostPath.c_str(), runtimePath.c_str() };
     HostHandle context = nullptr;
     const auto result = initialize(static_cast<int>(arguments.size()), arguments.data(), &parameters, &context);
     if (result < 0 || context == nullptr) { LocalFree(argv); Fail(L"Initialize private .NET runtime", static_cast<unsigned long>(result)); }
-    Log(L"Running verified private .NET runtime " + runtime);
+    Log(L"Running verified private .NET runtime " + runtimePath);
     const int appResult = run(context);
     close(context); LocalFree(argv); RemoveDllDirectory(cookie);
     return appResult;
@@ -585,6 +630,7 @@ int RunManaged(const std::wstring& executable, Directories& directories, const s
 
 // A native startup failure cannot use the WPF dialogs it failed to load. This
 // small dark window uses normal system chrome and never starts another process.
+bool longRuntimePathFailure = false;
 LRESULT CALLBACK ErrorWindow(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     if (message == WM_CLOSE || (message == WM_KEYDOWN && (wparam == VK_RETURN || wparam == VK_ESCAPE))) { DestroyWindow(hwnd); return 0; }
@@ -599,15 +645,18 @@ LRESULT CALLBACK ErrorWindow(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         auto font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         auto old = SelectObject(dc, font);
-        constexpr wchar_t text[] = L"Не удалось подготовить файлы лаунчера.\n\nПроверьте доступ к папке LANMinecraft и запустите его снова. Подробности сохранены в Minecraft\\Launcher\\bootstrap.log, если папка доступна для записи.\n\nЗакройте это окно или нажмите Enter.";
+        const wchar_t* text = longRuntimePathFailure
+            ? L"Путь к папке лаунчера слишком длинный для компонентов интерфейса Windows.\n\nПереместите всю папку лаунчера ближе к корню диска и запустите его снова.\n\nПодробности сохранены в Minecraft\\Launcher\\bootstrap.log."
+            : L"Не удалось подготовить файлы лаунчера.\n\nПроверьте доступ к папке LANMinecraft и запустите его снова. Подробности сохранены в Minecraft\\Launcher\\bootstrap.log, если папка доступна для записи.\n\nЗакройте это окно или нажмите Enter.";
         DrawTextW(dc, text, -1, &area, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(dc, old); DeleteObject(font); EndPaint(hwnd, &paint); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void ShowFailure()
+void ShowFailure(unsigned long code)
 {
+    longRuntimePathFailure = code == ERROR_FILENAME_EXCED_RANGE;
     WNDCLASSW type{}; type.lpfnWndProc = ErrorWindow; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = L"LANMinecraft.BootstrapError";
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW); type.hIcon = LoadIconW(type.hInstance, MAKEINTRESOURCEW(1));
     if (RegisterClassW(&type) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
@@ -645,6 +694,7 @@ bool ReportFailureToRedirectedOutput(const std::wstring& detail) noexcept
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
     std::wstring failure = L"Unknown native error";
+    unsigned long failureCode = 0;
     try
     {
         const auto native = GetModuleHandleW(L"ntdll.dll");
@@ -664,46 +714,54 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         if (!SetEnvironmentVariableW(L"TEMP", temporary.c_str()) || !SetEnvironmentVariableW(L"TMP", temporary.c_str()) ||
             !SetEnvironmentVariableW(L"DOTNET_BUNDLE_EXTRACT_BASE_DIR", bundles.c_str())) Fail(L"Set portable runtime environment");
         const auto packet = ReadPacket(instance);
-        const auto key = Hex(packet.digest);
-        const auto rootHash = HashBytes(reinterpret_cast<const unsigned char*>(directories.Root().data()), directories.Root().size() * sizeof(wchar_t));
-        const auto mutexName = L"Local\\LANMinecraft.Runtime." + Hex(rootHash) + L"." + key;
-        Handle mutex(CreateMutexW(nullptr, FALSE, mutexName.c_str()));
-        if (!mutex) Fail(L"Create runtime preparation mutex");
-        const auto waited = WaitForSingleObject(mutex.get(), 30000);
-        if (waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED) throw Failure(L"Another launcher could not finish preparing its runtime");
-        const auto runtime = L"Minecraft/Launcher/Runtime/" + key;
-        Handle activeLease;
-        std::vector<Handle> verifiedFiles;
-        try
+        const auto specifications = ReadDependencies(instance);
+        std::vector<PreparedDependency> dependencies;
+        PreparedApplication application;
+        std::set<const Dependency*> pendingDownloads;
+        PreparationUi preparation;
+        if (!preparation.Run([&](PreparationProgress& progress)
         {
-            activeLease = AcquireLease(directories, key);
-            directories.Get(runtime);
-            std::set<std::wstring, CaseLess> expectedFiles;
-            std::set<std::wstring, CaseLess> expectedDirectories;
-            for (const auto& file : packet.files)
+            dependencies.clear();
+            try
             {
-                expectedFiles.insert(file.path);
-                std::size_t at = file.path.find(L'/');
-                while (at != std::wstring::npos) { expectedDirectories.insert(file.path.substr(0, at)); at = file.path.find(L'/', at + 1); }
-                const auto slash = file.path.find_last_of(L'/');
-                const auto parent = slash == std::wstring::npos ? runtime : runtime + L"/" + file.path.substr(0, slash);
-                const auto leaf = slash == std::wstring::npos ? file.path : file.path.substr(slash + 1);
-                verifiedFiles.push_back(Materialize(directories, directories.Get(parent), leaf, file, packet));
+                for (const auto& dependency : specifications)
+                {
+                    // Remember a failed later component while Retry rechecks
+                    // earlier warm dependencies, so Cancel removes every
+                    // partial retained by this preparation attempt.
+                    pendingDownloads.insert(&dependency);
+                    dependencies.push_back(PrepareDependency(directories, dependency, progress));
+                    pendingDownloads.erase(&dependency);
+                }
+                application = PrepareApplication(directories, packet, progress);
             }
-            Inventory(directories, runtime, L"", expectedFiles, expectedDirectories);
+            catch (const Failure& error)
+            {
+                if (RetryableIoCode(error.code()) != 0) throw RetryablePreparationFailure(error.text(), RetryableIoCode(error.code()));
+                throw;
+            }
+        }))
+        {
+            for (const auto* pending : pendingDownloads) RemoveCancelledPart(directories, *pending);
+            ReportCancellation(); return ERROR_CANCELLED;
         }
-        catch (...) { ReleaseMutex(mutex.get()); throw; }
-        ReleaseMutex(mutex.get());
+        const auto& runtime = dependencies.at(0);
+        const auto hosting = SelectHostingRuntime(directories, runtime);
+        const auto& runtimePath = hosting.path;
+        if (!SetEnvironmentVariableW(L"DOTNET_ROOT", runtimePath.c_str()) || !SetEnvironmentVariableW(L"DOTNET_ROOT_X64", runtimePath.c_str()) ||
+            !SetEnvironmentVariableW(L"DOTNET_MULTILEVEL_LOOKUP", L"0") || !SetEnvironmentVariableW(L"DOTNET_ROLL_FORWARD", L"Disable"))
+            Fail(L"Set private desktop runtime environment");
+        BootstrapSession session(directories, executable, application, dependencies);
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(apartment)) Fail(L"Initialize STA", static_cast<unsigned long>(apartment));
-        const int result = RunManaged(executable, directories, runtime, packet.entry);
+        const int result = RunManaged(executable, directories, hosting.path, runtime.specification.entry, application.root, packet.entry);
         CoUninitialize();
         Log(L"Managed application exited " + std::to_wstring(result));
         return result;
     }
-    catch (const Failure& error) { failure = error.text(); Log(L"Startup failed: " + failure); }
+    catch (const Failure& error) { failure = error.text(); failureCode = error.code(); Log(L"Startup failed: " + failure); }
     catch (const std::exception&) { failure = L"Native exception"; Log(L"Startup failed: native exception"); }
     catch (...) { Log(L"Startup failed: unknown native error"); }
-    if (!ReportFailureToRedirectedOutput(failure)) ShowFailure();
+    if (!ReportFailureToRedirectedOutput(failure)) ShowFailure(failureCode);
     return 120;
 }

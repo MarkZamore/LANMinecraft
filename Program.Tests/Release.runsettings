@@ -464,6 +464,19 @@
       FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.AbandonedPartIsRemovedWhileFreshPartAndUnknownFilesStay|
       FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.UnreadableSelectionProtectsAnOtherwiseUnreferencedObject|
       FullyQualifiedName=Minecraft.Tests.RuntimeComponentCleanupTests.ARecordedJavaArchiveCanBeCollectedAfterItsCatalogPinDisappears|
-      FullyQualifiedName=Minecraft.Tests.RuntimeCatalogJavaTests.InvalidRemoteJavaSelectionIsRejectedBeforeActivation</TestCaseFilter>
+      FullyQualifiedName=Minecraft.Tests.RuntimeCatalogJavaTests.InvalidRemoteJavaSelectionIsRejectedBeforeActivation|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.OnlyCurrentAndPreviousSuccessfulSetsRemain|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.StagedUpdateProtectsItsComponentsUntilTheStageIsRemoved|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.AnOlderRunningHostProtectsItsWholeSetWithLeases|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.AnUnreadableSetDefersAllSweeping|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.ALeaseWithAnotherOwnershipMarkerDoesNotAuthorizeDeletion|
+      FullyQualifiedName=Minecraft.Tests.DesktopBootstrapCacheTests.SuccessfulMigrationCollectsOldFlatGenerationsAfterTheirLeasesEnd|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.ExternalColdPreparationDownloadsPinnedComponentsOnceAndRunsOfflineWarm|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.CancellingNativePreparationRemovesItsPartialAndNeverEntersManagedCode|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.InterruptedExternalTransferResumesAfterNativeRetryAndHandlesIgnoredRange|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.CorruptExternalDownloadStaysUnpublishedUntilNativeRetryVerifiesThePinnedBytes|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.DamagedExternalRuntimeIsRepairedFromThePinnedSource|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.PreparationUiKeepsControlsReadableThroughProgrammaticDpiChanges|
+      FullyQualifiedName=Minecraft.Tests.NativePortableHostTests.InvalidExternalDependencyDescriptorsAreRejectedBeforeDownload</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>

@@ -6,10 +6,14 @@ param(
     [Parameter(Mandatory = $true)][ValidateRange(1,65535)][int]$ReleaseNumber,
     [string]$SourceRevisionId = '',
     [string]$EntryAssembly = 'LANMinecraft.dll',
-    [string]$ArtifactsDirectory
+    [string]$ArtifactsDirectory,
+    [string]$ComponentLockPath = '',
+    [switch]$AllowTestComponentSources,
+    [string]$NativeSourcePath = ''
 )
 $ErrorActionPreference = 'Stop'
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+if (!$ComponentLockPath) { $ComponentLockPath = Join-Path $repository 'tools/desktop-components.lock.json' }
 $payloadRoot = [IO.Path]::GetFullPath($PayloadDirectory).TrimEnd('\','/')
 $destination = [IO.Path]::GetFullPath($OutputExecutable)
 $maximumPayload = 512MB
@@ -21,7 +25,7 @@ $artifactBoundary = [IO.Path]::GetFullPath((Join-Path $repository 'artifacts')) 
 if (-not $stage.StartsWith($artifactBoundary, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Native host build files must stay inside repository artifacts.'
 }
-if (-not (Test-Path -LiteralPath $payloadRoot -PathType Container)) { throw 'The self-contained payload folder is missing.' }
+if (-not (Test-Path -LiteralPath $payloadRoot -PathType Container)) { throw 'The application payload folder is missing.' }
 if ($SourceRevisionId -and $SourceRevisionId -notmatch '^[a-fA-F0-9]{40}$') { throw 'Invalid source revision.' }
 [void][IO.Directory]::CreateDirectory($stage)
 
@@ -33,7 +37,7 @@ function Assert-RelativePayloadPath([string]$Path) {
     foreach ($component in $Path.Split('/')) {
         if (-not $component -or $component -in @('.', '..') -or $component.StartsWith(' ') -or $component.EndsWith('.') -or $component.EndsWith(' ') -or
             $component.Length -gt 255 -or $component -match '[<>"|?*]' -or
-            $component -match '^(?i:CON|PRN|AUX|NUL|COM[1-9\u00b9\u00b2\u00b3]|LPT[1-9\u00b9\u00b2\u00b3])(?:\..*)?$') {
+            $component -match '^(?i:CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|COM[0-9\u00b9\u00b2\u00b3]|LPT[0-9\u00b9\u00b2\u00b3])(?:\..*)?$') {
             throw ('Invalid portable payload component: ' + $Path)
         }
     }
@@ -67,7 +71,7 @@ while ($pendingDirectories.Count) {
     }
 }
 if ($filesByPath.Count -lt 1 -or $filesByPath.Count -gt 4096) { throw 'The native payload file count is outside its bounded range.' }
-foreach ($required in @($EntryAssembly, 'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll')) {
+foreach ($required in @($EntryAssembly)) {
     if (-not $filesByPath.ContainsKey($required)) { throw ('The self-contained payload is missing ' + $required) }
 }
 $orderedPaths = [string[]]@($filesByPath.Keys)
@@ -142,6 +146,65 @@ try {
 finally { $tableWriter.Dispose(); $table.Dispose() }
 
 function Escape-ResourcePath([string]$Path) { $Path.Replace('\','\\').Replace('"','\"') }
+$lock = Get-Content -LiteralPath $ComponentLockPath -Raw | ConvertFrom-Json
+if ($lock.schemaVersion -ne 1 -or $lock.protocolVersion -ne 1 -or @($lock.components).Count -ne 3) {
+    throw 'Unsupported desktop component lock.'
+}
+$dependencyPath = Join-Path $stage 'desktop-dependencies.bin'
+$dependencyBuffer = [IO.MemoryStream]::new()
+$dependencyWriter = [IO.BinaryWriter]::new($dependencyBuffer, [Text.UTF8Encoding]::new($false), $true)
+function Write-DependencyText([string]$Value) {
+    $encoded = [Text.Encoding]::UTF8.GetBytes($Value)
+    if ($encoded.Length -gt 8192) { throw 'Oversized dependency descriptor value.' }
+    $dependencyWriter.Write([uint32]$encoded.Length)
+    $dependencyWriter.Write($encoded)
+}
+function Assert-ComponentUrl([string]$Value, [bool]$Api) {
+    if (!$Value -and $Api) { return }
+    $uri = [Uri]$Value
+    if (!$uri.IsAbsoluteUri -or $uri.UserInfo -or $uri.Fragment) { throw 'Invalid desktop component address.' }
+    if ($AllowTestComponentSources -and $uri.Scheme -eq 'http' -and $uri.Host -in @('localhost','127.0.0.1')) { return }
+    $pattern = if ($Api) { '^/repos/MarkZamore/LANMinecraft-Components/releases/assets/[0-9]+$' } else {
+        '^/MarkZamore/LANMinecraft-Components/releases/download/(?!latest/)[A-Za-z0-9._-]+/[^/]+$'
+    }
+    $hostName = if ($Api) { 'api.github.com' } else { 'github.com' }
+    if ($uri.Scheme -ne 'https' -or !$uri.IsDefaultPort -or $uri.Host -cne $hostName -or $uri.Query -or $uri.AbsolutePath -cnotmatch $pattern) {
+        throw 'Desktop components require pinned immutable publisher release addresses.'
+    }
+}
+try {
+    $dependencyWriter.Write([Text.Encoding]::ASCII.GetBytes('LMDESK01'))
+    $dependencyWriter.Write([uint32]1)
+    $dependencyWriter.Write([uint32]3)
+    $kindNumber = 0
+    foreach ($kind in @('desktop-runtime','assets','steam-native')) {
+        $kindNumber++
+        $matches = @($lock.components | Where-Object kind -CEQ $kind)
+        if ($matches.Count -ne 1) { throw ('Missing or duplicate desktop component: ' + $kind) }
+        $component = $matches[0]
+        if ($component.id -cnotmatch '^[a-z0-9][a-z0-9._-]{0,127}$' -or
+            $component.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $component.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+            [long]$component.sizeBytes -le 72 -or [long]$component.sizeBytes -gt $maximumPayload -or
+            [long]$component.manifestSizeBytes -lt 72 -or [long]$component.manifestSizeBytes -gt 4MB -or
+            [long]$component.manifestSizeBytes -ge [long]$component.sizeBytes) { throw 'Invalid desktop component pin.' }
+        Assert-RelativePayloadPath ([string]$component.entryPath)
+        Assert-ComponentUrl ([string]$component.url) $false
+        Assert-ComponentUrl ([string]$component.apiUrl) $true
+        $dependencyWriter.Write([uint32]$kindNumber)
+        Write-DependencyText ([string]$component.id)
+        Write-DependencyText ([string]$component.url)
+        Write-DependencyText ([string]$component.apiUrl)
+        Write-DependencyText ([string]$component.entryPath)
+        $dependencyWriter.Write([uint64]$component.sizeBytes)
+        $dependencyWriter.Write([Convert]::FromHexString($component.sha256))
+        $dependencyWriter.Write([uint64]$component.manifestSizeBytes)
+        $dependencyWriter.Write([Convert]::FromHexString($component.manifestSha256))
+    }
+    $dependencyWriter.Flush()
+    if ($dependencyBuffer.Length -gt 64KB) { throw 'Oversized dependency resource.' }
+    [IO.File]::WriteAllBytes($dependencyPath, $dependencyBuffer.ToArray())
+} finally { $dependencyWriter.Dispose(); $dependencyBuffer.Dispose() }
+$dependencyResource = Escape-ResourcePath $dependencyPath
 $icon = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Minecraft.ico')))
 $packetResource = Escape-ResourcePath $packetPath
 $productVersion = '1.0.' + $ReleaseNumber + $(if ($SourceRevisionId) { '+' + $SourceRevisionId.ToLowerInvariant() } else { '' })
@@ -149,6 +212,7 @@ $resources = @"
 #include <windows.h>
 1 ICON "$icon"
 101 RCDATA "$packetResource"
+102 RCDATA "$dependencyResource"
 1 VERSIONINFO
  FILEVERSION 1,0,$ReleaseNumber,0
  PRODUCTVERSION 1,0,$ReleaseNumber,0
@@ -185,14 +249,26 @@ if (-not $visualStudio) { throw 'Install the Visual Studio x64 C++ tools and Win
 $developerCommand = Join-Path $visualStudio 'Common7\Tools\VsDevCmd.bat'
 if (-not (Test-Path -LiteralPath $developerCommand) -or $developerCommand.Contains('%')) { throw 'Unsupported Visual Studio developer command path.' }
 $nativeSource = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'native_host.cpp'))
+if ($NativeSourcePath) {
+    if (!$AllowTestComponentSources) { throw 'A baseline native source override requires the explicit test-only build mode.' }
+    $nativeSource = [IO.Path]::GetFullPath($NativeSourcePath, $repository)
+    $sourceBoundary = [IO.Path]::GetFullPath((Join-Path $repository 'LocalSources')) + [IO.Path]::DirectorySeparatorChar
+    if (!$nativeSource.StartsWith($sourceBoundary, [StringComparison]::OrdinalIgnoreCase) -or
+        !(Test-Path -LiteralPath $nativeSource -PathType Leaf) -or
+        ((Get-Item -LiteralPath $nativeSource).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'A baseline source must be an ordinary canonical LocalSources checkout file.'
+    }
+}
 $manifest = [IO.Path]::GetFullPath((Join-Path $repository 'Program\app.manifest'))
+$testSourcesDefine = if ($AllowTestComponentSources) { '/DLANMINECRAFT_BOOTSTRAP_TEST_SOURCES=1' } else { '' }
 $response = @"
 /nologo /O2 /W4 /EHsc /MT /std:c++17 /utf-8 /DUNICODE /D_UNICODE /guard:cf
+$testSourcesDefine
 "$nativeSource"
 resources.res
 /Fo:native_host.obj
 /Fe:LANMinecraft.exe
-/link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf /Brepro /MANIFEST:EMBED /MANIFESTINPUT:"$manifest" kernel32.lib shell32.lib ole32.lib bcrypt.lib user32.lib gdi32.lib dwmapi.lib
+/link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /guard:cf /Brepro /MANIFEST:EMBED /MANIFESTINPUT:"$manifest" kernel32.lib shell32.lib ole32.lib bcrypt.lib user32.lib gdi32.lib dwmapi.lib winhttp.lib comctl32.lib
 "@
 [IO.File]::WriteAllText((Join-Path $stage 'compile.rsp'), $response, [Text.UnicodeEncoding]::new($false, $true))
 $buildCommand = @"
@@ -230,7 +306,9 @@ if ($version.FileBuildPart -ne $ReleaseNumber -or $version.FileMajorPart -ne 1 -
 [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
 [IO.File]::Copy($built, $destination, $true)
 $summary = [ordered]@{
-    Format = 1; EntryAssembly = $EntryAssembly; PayloadSha256 = $payloadHash; Files = $records.Count
+    Format = 2; EntryAssembly = $EntryAssembly; PayloadSha256 = $payloadHash; Files = $records.Count
+    ComponentLock = [IO.Path]::GetFullPath($ComponentLockPath); TestComponentSources = [bool]$AllowTestComponentSources
+    NativeSource = $nativeSource; NativeSourceSha256 = (Get-FileHash -LiteralPath $nativeSource -Algorithm SHA256).Hash.ToLowerInvariant()
     DataBytes = $dataLength; PacketBytes = ([IO.FileInfo]::new($packetPath)).Length
     Executable = $destination; ExecutableSha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     ReleaseNumber = $ReleaseNumber; SourceRevisionId = $SourceRevisionId; FileRecords = @($records | Select-Object Path, Offset, Length, Sha256)

@@ -123,6 +123,11 @@ foreach ($name in @('CmlLib.Core.Commons.dll', 'CmlLib.Core.dll', 'LANMinecraft.
     $assembly = [Reflection.Assembly]::LoadFrom($dependency)
 }
 $buildFlags = [Reflection.BindingFlags]'NonPublic, Static'
+if (!$env:LANMINECRAFT_BOOTSTRAP_CONTEXT) {
+    if (!$env:LANMINECRAFT_DESKTOP_TEST_COMPONENTS) { . (Join-Path $workspace 'tools/Prepare-DesktopComponentTests.ps1') }
+    [void]$assembly.GetType('Minecraft.BootstrapLaunchContext', $true)
+        .GetMethod('InitializeTestComponentsFromEnvironment', $buildFlags).Invoke($null, $null)
+}
 $instanceFlags = [Reflection.BindingFlags]'NonPublic, Instance'
 $buildProcess = $assembly.GetType('Minecraft.MinecraftLaunchArguments', $true).GetMethod('BuildProcess', $buildFlags)
 if (!$buildProcess) { throw 'This launcher assembly has no production BuildProcess entrypoint.' }

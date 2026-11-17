@@ -50,8 +50,8 @@ public sealed class GameWindowPresentationTests : IDisposable
         var paths = new AppPaths(_root);
         paths.Ensure();
         var runtime = Runtime(paths);
-        var small = EmbeddedIcon("icon_16x16.png");
-        var large = EmbeddedIcon("icon_32x32.png");
+        var small = PreparedIcon("icon_16x16.png");
+        var large = PreparedIcon("icon_32x32.png");
 #pragma warning disable CA5350 // Official asset protocol uses SHA-1.
         var hash = Convert.ToHexString(SHA1.HashData(small)).ToLowerInvariant();
 #pragma warning restore CA5350
@@ -89,9 +89,9 @@ public sealed class GameWindowPresentationTests : IDisposable
         ? """{"id":"fixture","assetIndex":{"id":"fixture","sha1":"","url":"https://example.invalid/index.json","size":1,"totalSize":1}}"""
         : """{"id":"fixture"}"""), new JsonVersionParserOptions());
 
-    private static byte[] EmbeddedIcon(string name)
+    private static byte[] PreparedIcon(string name)
     {
-        using var resource = typeof(MainWindow).Assembly.GetManifestResourceStream("Minecraft.WindowIconAssets.jar")!;
+        using var resource = LauncherAssets.OpenGameIcons();
         using var archive = new ZipArchive(resource);
         using var input = archive.GetEntry("icons/" + name)!.Open();
         using var copy = new MemoryStream(); input.CopyTo(copy); return copy.ToArray();

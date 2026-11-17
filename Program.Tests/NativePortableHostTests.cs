@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +13,7 @@ namespace Minecraft.Tests;
 public sealed class NativePortableHostCollection { }
 
 // Every process and filesystem mutation belongs to this disposable installation.
-// A shared, freshly published payload avoids copying the private CLR per case.
+// A shared verified component source avoids copying runtime packets per case.
 [Collection("Native portable host")]
 public sealed class NativePortableHostTests(NativePortableHostFixture fixture) : IClassFixture<NativePortableHostFixture>
 {
@@ -53,8 +52,11 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         Assert.Equal(fixture.Packet, NativeHostResources.Read(fixture.Executable, 10, 101));
         var paths = fixture.Records.Select(record => record.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("PortabilityAuditHost.exe", paths);
-        foreach (var required in new[] { "PortabilityAuditHost.dll", "hostfxr.dll", "hostpolicy.dll", "coreclr.dll", "wpfgfx_cor3.dll" })
+        foreach (var required in new[] { "PortabilityAuditHost.dll", "PortabilityAuditHost.runtimeconfig.json", "PortabilityAuditHost.deps.json" })
             Assert.Contains(required, paths);
+        foreach (var external in new[] { "hostfxr.dll", "hostpolicy.dll", "coreclr.dll", "wpfgfx_cor3.dll", "Background.png", "steam_api64.dll" })
+            Assert.DoesNotContain(external, paths);
+        fixture.AssertDependencyResource();
         Assert.True(File.Exists(Path.Combine(fixture.Payload, "PortabilityAuditHost.exe")), "The SDK apphost must exist before the production packer deliberately omits it.");
     }
 
@@ -66,10 +68,18 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         fixture.AssertPortable(cold);
         var entry = Path.Combine(fixture.Cache, "PortabilityAuditHost.dll");
         var timestamp = File.GetLastWriteTimeUtc(entry);
+        var componentRequests = fixture.ComponentRequests;
         var warm = await fixture.Probe();
         fixture.AssertPortable(warm);
         Assert.Equal(timestamp, File.GetLastWriteTimeUtc(entry));
         Assert.Equal(cold.Json.GetProperty("appBaseDirectory").GetString(), warm.Json.GetProperty("appBaseDirectory").GetString());
+        Assert.Equal(componentRequests, fixture.ComponentRequests);
+        var shortExecutable = fixture.ShortExecutablePath();
+        if (shortExecutable is not null)
+        {
+            fixture.AssertPortable(await fixture.Probe(shortExecutable), fixture.Executable);
+            Assert.Equal(componentRequests, fixture.ComponentRequests);
+        }
         Assert.False(Directory.Exists(Path.Combine(fixture.Installation, "Minecraft", "Launcher", "Temp", ".net")));
     }
 
@@ -94,6 +104,8 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     [Fact]
     public async Task NativeUpdaterWaitsForTheOuterProcessAndRestartsTheVerifiedReplacementAtItsPortableRoot()
     {
+        fixture.AssertPortable(await fixture.Probe());
+        var componentRequests = fixture.ComponentRequests;
         var paths = new AppPaths(fixture.Installation);
         paths.Ensure();
         var updates = Path.Combine(paths.Personal, "Updates");
@@ -199,6 +211,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 Directory.EnumerateFiles(fixture.Cache, "*", SearchOption.AllDirectories)
                     .Select(path => Path.GetRelativePath(fixture.Cache, path).Replace('\\', '/')).Order(StringComparer.Ordinal));
             fixture.AssertPortable(await fixture.Probe(target), target);
+            Assert.Equal(componentRequests, fixture.ComponentRequests);
         }
         catch (Exception error)
         {
@@ -261,12 +274,15 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     [Fact]
     public async Task ParallelStartsReleasePreparationBeforeManagedExecutionAndHoldVerifiedFilesReadOnly()
     {
+        fixture.AssertPortable(await fixture.Probe(timeoutSeconds: 90));
         fixture.RemoveCache();
+        fixture.RemoveExternalCache("desktop-runtime");
+        var runtimeRequests = fixture.Server.Requests.Count(request => request.Kind == "desktop-runtime");
         using var first = fixture.Start(arguments: ["--rendering-probe", "--probe-hold-ms=8000"]);
         var firstErrors = first.StandardError.ReadToEndAsync();
         try
         {
-            var line = await first.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(25));
+            var line = await first.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(90));
             Assert.NotNull(line);
             using var entry = JsonDocument.Parse(line);
             Assert.Equal(first.Id, entry.RootElement.GetProperty("processId").GetInt32());
@@ -274,11 +290,15 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             {
                 using var denied = File.Open(Path.Combine(fixture.Cache, "PortabilityAuditHost.dll"), FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
             });
+            var core = Path.Combine(fixture.ComponentCache("desktop-runtime"), "shared", "Microsoft.NETCore.App",
+                fixture.Components["desktop-runtime"].EntryPath.Split('/')[2], "coreclr.dll");
+            Assert.Throws<IOException>(() => { using var denied = File.Open(core, FileMode.Open, FileAccess.Write, FileShare.ReadWrite); });
             var second = await fixture.Probe(timeoutSeconds: 6);
             fixture.AssertPortable(second);
             Assert.False(first.HasExited, "A second managed entry must run while the first entry still owns its verified runtime files.");
             await first.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(12));
             Assert.True(first.ExitCode == 0, await firstErrors);
+            Assert.Equal(runtimeRequests + 1, fixture.Server.Requests.Count(request => request.Kind == "desktop-runtime"));
         }
         finally
         {
@@ -400,6 +420,237 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         }
     }
 
+    [Fact]
+    public async Task ExternalColdPreparationDownloadsPinnedComponentsOnceAndRunsOfflineWarm()
+    {
+        fixture.Server.ResetFaults();
+        foreach (var kind in fixture.Components.Keys) fixture.RemoveExternalCache(kind);
+        var before = fixture.ComponentRequests;
+        try
+        {
+            fixture.AssertPortable(await fixture.Probe(timeoutSeconds: 90));
+            Assert.Equal(before + 3, fixture.ComponentRequests);
+            foreach (var component in fixture.Components.Values)
+            {
+                var cache = fixture.ComponentCache(component.Kind);
+                Assert.True(File.Exists(Path.Combine(cache, component.EntryPath.Replace('/', Path.DirectorySeparatorChar))));
+                Assert.Equal(component.ManifestSha256, NativePortableHostFixture.HashFile(cache + ".manifest"), ignoreCase: true);
+                Assert.Equal($"LMDESK01\n{component.Kind}\n{component.Sha256}\n", File.ReadAllText(cache + ".lease"));
+                Assert.False(File.Exists(cache + ".part"));
+            }
+            var requests = fixture.ComponentRequests;
+            fixture.Server.Offline = true;
+            fixture.AssertPortable(await fixture.Probe());
+            Assert.Equal(requests, fixture.ComponentRequests);
+        }
+        finally { fixture.Server.ResetFaults(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancellingNativePreparationRemovesItsPartialAndNeverEntersManagedCode(bool afterError)
+    {
+        fixture.Server.ResetFaults();
+        fixture.RemoveExternalCache("desktop-runtime");
+        fixture.Server.ChunkDelayMilliseconds = afterError ? 0 : 4;
+        fixture.Server.FaultKind = "desktop-runtime";
+        fixture.Server.Fault = afterError ? NativeDesktopFault.DisconnectOnce : NativeDesktopFault.None;
+        using var process = fixture.Start();
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        try
+        {
+            var window = await NativeDesktopPreparationUi.Wait(process, afterError ? NativeDesktopPreparationUi.RetryReady : null);
+            await WaitUntil(() => File.Exists(fixture.ComponentCache("desktop-runtime") + ".part") &&
+                new FileInfo(fixture.ComponentCache("desktop-runtime") + ".part").Length > 0, TimeSpan.FromSeconds(15));
+            NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Cancel);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(1223, process.ExitCode);
+            Assert.Equal("", (await output).Trim());
+            Assert.Contains("LANMinecraft bootstrap cancelled", await error, StringComparison.Ordinal);
+            Assert.False(File.Exists(fixture.ComponentCache("desktop-runtime") + ".part"));
+            fixture.AssertComponentUnpublished("desktop-runtime");
+            fixture.Server.ResetFaults();
+            fixture.AssertPortable(await fixture.Probe(timeoutSeconds: 90));
+            if (afterError)
+                foreach (var failedKind in new[] { "assets", "steam-native" })
+                    await CancelImmediatelyAfterRetryWithAnEarlierPartial(failedKind);
+        }
+        finally
+        {
+            fixture.Server.ResetFaults();
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    private async Task CancelImmediatelyAfterRetryWithAnEarlierPartial(string kind)
+    {
+        fixture.Server.ResetFaults();
+        fixture.RemoveExternalCache(kind);
+        fixture.Server.FaultKind = kind;
+        fixture.Server.Fault = NativeDesktopFault.DisconnectOnce;
+        fixture.Server.DisconnectAfterBytes = 131072;
+        using var process = fixture.Start();
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        try
+        {
+            var window = await NativeDesktopPreparationUi.Wait(process, NativeDesktopPreparationUi.RetryReady);
+            var partial = fixture.ComponentCache(kind) + ".part";
+            Assert.True(File.Exists(partial));
+            Assert.True(new FileInfo(partial).Length > 0);
+            var failedRequests = fixture.Server.Requests.Count(request => request.Kind == kind);
+            NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Retry);
+            NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Cancel);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.Equal(1223, process.ExitCode);
+            Assert.Equal("", (await output).Trim());
+            Assert.Contains("LANMinecraft bootstrap cancelled", await error, StringComparison.Ordinal);
+            // Retry is still checking the previously cached runtime. This
+            // proves the old failed component's partial also gets removed.
+            Assert.Equal(failedRequests, fixture.Server.Requests.Count(request => request.Kind == kind));
+            Assert.False(File.Exists(partial));
+        }
+        finally
+        {
+            fixture.Server.ResetFaults();
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InterruptedExternalTransferResumesAfterNativeRetryAndHandlesIgnoredRange(bool ignoreRange)
+    {
+        fixture.Server.ResetFaults();
+        fixture.RemoveExternalCache("desktop-runtime");
+        fixture.Server.FaultKind = "desktop-runtime";
+        fixture.Server.Fault = ignoreRange ? NativeDesktopFault.IgnoreRange : NativeDesktopFault.DisconnectOnce;
+        var before = fixture.ComponentRequests;
+        using var process = fixture.Start();
+        try
+        {
+            var window = await NativeDesktopPreparationUi.Wait(process, NativeDesktopPreparationUi.RetryReady);
+            var partial = fixture.ComponentCache("desktop-runtime") + ".part";
+            Assert.True(File.Exists(partial));
+            var length = new FileInfo(partial).Length;
+            Assert.InRange(length, 1, fixture.Components["desktop-runtime"].SizeBytes - 1);
+            fixture.AssertComponentUnpublished("desktop-runtime");
+            NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Retry);
+            fixture.AssertPortable(await fixture.CompleteProbe(process, 90));
+            var resumed = fixture.Server.Requests.Skip(before).Where(request => request.Kind == "desktop-runtime").ToArray();
+            Assert.Equal(2, resumed.Length);
+            Assert.Null(resumed[0].Range);
+            Assert.Equal("bytes=" + length + "-", resumed[1].Range);
+            Assert.Equal(ignoreRange ? 200 : 206, resumed[1].Status);
+            Assert.False(File.Exists(partial));
+        }
+        finally
+        {
+            fixture.Server.ResetFaults();
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    [Fact]
+    public async Task CorruptExternalDownloadStaysUnpublishedUntilNativeRetryVerifiesThePinnedBytes()
+    {
+        fixture.Server.ResetFaults();
+        fixture.RemoveExternalCache("desktop-runtime");
+        fixture.Server.FaultKind = "desktop-runtime";
+        fixture.Server.Fault = NativeDesktopFault.CorruptOnce;
+        using var process = fixture.Start();
+        try
+        {
+            var window = await NativeDesktopPreparationUi.Wait(process, NativeDesktopPreparationUi.RetryReady, 90);
+            fixture.AssertComponentUnpublished("desktop-runtime");
+            NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Retry);
+            fixture.AssertPortable(await fixture.CompleteProbe(process, 90));
+            var requests = fixture.ComponentRequests;
+            fixture.Server.Offline = true;
+            fixture.AssertPortable(await fixture.Probe());
+            Assert.Equal(requests, fixture.ComponentRequests);
+        }
+        finally
+        {
+            fixture.Server.ResetFaults();
+            if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DamagedExternalRuntimeIsRepairedFromThePinnedSource(bool missing)
+    {
+        fixture.AssertPortable(await fixture.Probe(timeoutSeconds: 90));
+        var target = Path.Combine(fixture.ComponentCache("desktop-runtime"), "shared", "Microsoft.NETCore.App",
+            fixture.Components["desktop-runtime"].EntryPath.Split('/')[2], "coreclr.dll");
+        if (missing) File.Delete(target);
+        else File.WriteAllText(target, "Corrupt private pinned runtime, system .NET must not substitute it.");
+        var requests = fixture.ComponentRequests;
+        fixture.AssertPortable(await fixture.Probe(timeoutSeconds: 90));
+        Assert.Equal(requests + 1, fixture.ComponentRequests);
+    }
+
+    [Fact]
+    public async Task PreparationUiKeepsControlsReadableThroughProgrammaticDpiChanges()
+    {
+        var layouts = new List<object>();
+        foreach (var afterError in new[] { false, true })
+        {
+            fixture.Server.ResetFaults();
+            fixture.RemoveExternalCache("desktop-runtime");
+            fixture.Server.FaultKind = "desktop-runtime";
+            fixture.Server.Fault = afterError ? NativeDesktopFault.HttpFailureOnce : NativeDesktopFault.None;
+            fixture.Server.ChunkDelayMilliseconds = afterError ? 0 : 4;
+            using var process = fixture.Start();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try
+            {
+                var window = await NativeDesktopPreparationUi.Wait(process,
+                    afterError ? NativeDesktopPreparationUi.RetryReady : NativeDesktopPreparationUi.HasProgressMetrics);
+                foreach (var dpi in new[] { 96, 144, 192 })
+                    layouts.Add(new { state = afterError ? "retryable-error" : "active-transfer",
+                        layout = NativeDesktopPreparationUi.AssertLayout(process, window, dpi) });
+                NativeDesktopPreparationUi.Command(process, window, NativeDesktopPreparationUi.Cancel);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.Equal(1223, process.ExitCode);
+                Assert.Equal("", (await output).Trim());
+                Assert.Contains("LANMinecraft bootstrap cancelled", await error, StringComparison.Ordinal);
+            }
+            finally
+            {
+                fixture.Server.ResetFaults();
+                if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); }
+            }
+        }
+        File.WriteAllText(Path.Combine(fixture.Root, "native-preparation-dpi.json"), JsonSerializer.Serialize(layouts));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvalidExternalDependencyDescriptorsAreRejectedBeforeDownload(bool duplicateKind)
+    {
+        var descriptor = NativeHostResources.Read(fixture.Executable, 10, 102);
+        if (duplicateKind) BinaryPrimitives.WriteUInt32LittleEndian(descriptor.AsSpan(16), 2);
+        else descriptor[0] ^= 0xff;
+        var executable = Path.Combine(fixture.Installation, "invalid-component-descriptor.exe");
+        File.Copy(fixture.Executable, executable, overwrite: true);
+        try
+        {
+            NativeHostResources.ReplaceResource(executable, 102, descriptor);
+            var requests = fixture.ComponentRequests;
+            await fixture.AssertRejected(executable: executable);
+            Assert.Equal(requests, fixture.ComponentRequests);
+        }
+        finally { File.Delete(executable); }
+    }
+
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr securityAttributes);
@@ -415,16 +666,30 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
     public string Payload => Path.Combine(Root, "payload");
     public byte[] Packet { get; private set; } = [];
     public NativeHostRecord[] Records { get; private set; } = [];
-    public string Cache => Path.Combine(Installation, "Minecraft", "Launcher", "Runtime", Convert.ToHexString(Packet.AsSpan(40, 32)).ToLowerInvariant());
+    public string Bootstrap => Path.Combine(Installation, "Minecraft", "Launcher", "Bootstrap");
+    public string Cache => Path.Combine(Bootstrap, "app", Convert.ToHexString(Packet.AsSpan(40, 32)).ToLowerInvariant());
+    internal IReadOnlyDictionary<string, NativeDesktopComponent> Components { get; private set; } = new Dictionary<string, NativeDesktopComponent>();
+    internal NativeDesktopComponentServer Server { get; private set; } = null!;
+    public int ComponentRequests => Server.Requests.Count;
+    private string ComponentLock => Path.Combine(Root, "desktop-components.test.lock.json");
+    private string RuntimeVersion => Components["desktop-runtime"].EntryPath.Split('/')[2];
     private int run;
     private readonly List<(int Id, DateTime StartUtc, string Executable)> ownedProcesses = [];
     private readonly DateTime createdUtc = DateTime.UtcNow;
 
     public NativePortableHostFixture()
     {
-        Root = Path.Combine(Repository, "artifacts", "native-host-tests", Guid.NewGuid().ToString("N"));
+        Root = Path.Combine(Repository, "artifacts", "agent-runs", "native-desktop-host-tests-" + Guid.NewGuid().ToString("N"));
         Installation = Path.Combine(Root, "installation Я 日本語");
+        for (var ancestor = new DirectoryInfo(Root); ancestor is not null && ancestor.FullName.Length >= Repository.Length; ancestor = ancestor.Parent)
+            if (ancestor.Exists) Assert.False((ancestor.Attributes & FileAttributes.ReparsePoint) != 0);
         Directory.CreateDirectory(Installation);
+        File.WriteAllText(Path.Combine(Root, "RUN.json"), JsonSerializer.Serialize(new
+        {
+            owner = "NativePortableHostTests", purpose = "Isolated native external-desktop regression fixture",
+            createdUtc, expectedBytes = 1024L * 1024 * 1024, deleteByUtc = createdUtc.AddHours(4),
+            requiredResults = new[] { "run-*.json", "native-build-host-build.json", "cleanup.json", "component-requests.json" }
+        }));
     }
 
     public async Task InitializeAsync()
@@ -434,31 +699,26 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
 #else
         const string configuration = "Release";
 #endif
-        var projectRoot = Path.Combine(Root, "managed-project");
-        Directory.CreateDirectory(projectRoot);
-        var hostSource = SecurityElement.Escape(Path.Combine(Repository, "tools", "PortabilityAuditHost", "Program.cs"));
-        var programProject = SecurityElement.Escape(Path.Combine(Repository, "Program", "Minecraft.csproj"));
-        var project = Path.Combine(projectRoot, "PortabilityAuditHost.csproj");
-        File.WriteAllText(project, $$"""
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework>
-                <RuntimeIdentifier>win-x64</RuntimeIdentifier><UseWPF>true</UseWPF>
-                <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-                <SelfContained>true</SelfContained><UseAppHost>true</UseAppHost>
-                <PublishSingleFile>false</PublishSingleFile><IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
-                <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
-              </PropertyGroup>
-              <ItemGroup>
-                <Compile Include="{{hostSource}}" Link="Program.cs" />
-                <ProjectReference Include="{{programProject}}" AdditionalProperties="SkipPortableIdentityAdapter=true" />
-                <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles" Value="true" />
-              </ItemGroup>
-            </Project>
-            """);
-        await Command("dotnet", ["restore", project, "--no-dependencies", "-p:Configuration=" + configuration], "restore");
+        var shared = Environment.GetEnvironmentVariable("LANMINECRAFT_DESKTOP_TEST_COMPONENTS")
+            ?? throw new InvalidOperationException("Run tools/Prepare-DesktopComponentTests.ps1 before native tests.");
+        var catalogJson = File.ReadAllText(Path.Combine(shared, "desktop-components.json"));
+        File.WriteAllText(Path.Combine(Root, "desktop-components.snapshot.json"), catalogJson);
+        Components = LoadComponents(catalogJson);
+        Server = new NativeDesktopComponentServer(Components);
+        Server.WriteLock(catalogJson, ComponentLock);
+        var project = Path.Combine(Repository, "tools", "NativeDesktopAuditHost", "NativeDesktopAuditHost.csproj");
+        await Command("dotnet", ["restore", project, "--no-dependencies", "--disable-parallel", "-nr:false", "-p:Configuration=" + configuration,
+            "-p:RuntimeFrameworkVersion=" + RuntimeVersion], "restore");
         await Command("dotnet", ["publish", project, "--no-restore", "-c", configuration, "-o", Payload,
-            "-p:BuildProjectReferences=false", "-p:SkipPortableIdentityAdapter=true"], "publish");
+            "--disable-build-servers", "-m:1", "-nr:false", "-p:BuildProjectReferences=false", "-p:SkipPortableIdentityAdapter=true",
+            "-p:RuntimeFrameworkVersion=" + RuntimeVersion], "publish");
+        using (var runtimeConfig = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Payload, "PortabilityAuditHost.runtimeconfig.json"))))
+        {
+            var options = runtimeConfig.RootElement.GetProperty("runtimeOptions");
+            Assert.Equal("Disable", options.GetProperty("rollForward").GetString());
+            foreach (var framework in options.GetProperty("frameworks").EnumerateArray())
+                Assert.Equal(RuntimeVersion, framework.GetProperty("version").GetString());
+        }
         await Pack(Executable, 65001, "native-build", Revision);
         var stage = Path.Combine(Root, "native-build");
         Packet = File.ReadAllBytes(Path.Combine(stage, "payload.packet"));
@@ -472,7 +732,84 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         AssertInsideRoot(stage);
         await Command("pwsh", ["-NoProfile", "-NonInteractive", "-File", Path.Combine(Repository, "Program", "Bootstrap", "Build-PortableHost.ps1"),
             "-PayloadDirectory", Payload, "-OutputExecutable", output, "-ReleaseNumber", release.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "-SourceRevisionId", revision, "-EntryAssembly", "PortabilityAuditHost.dll", "-ArtifactsDirectory", stage], stageName + "-pack");
+            "-SourceRevisionId", revision, "-EntryAssembly", "PortabilityAuditHost.dll", "-ArtifactsDirectory", stage,
+            "-ComponentLockPath", ComponentLock, "-AllowTestComponentSources"], stageName + "-pack");
+    }
+
+    private IReadOnlyDictionary<string, NativeDesktopComponent> LoadComponents(string catalogJson)
+    {
+        var shared = Environment.GetEnvironmentVariable("LANMINECRAFT_DESKTOP_TEST_COMPONENTS");
+        if (string.IsNullOrWhiteSpace(shared))
+            throw new InvalidOperationException("Run tools/Prepare-DesktopComponentTests.ps1 once and set LANMINECRAFT_DESKTOP_TEST_COMPONENTS before native tests. System .NET is not a fallback.");
+        using var document = JsonDocument.Parse(catalogJson);
+        Assert.Equal(1, document.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(1, document.RootElement.GetProperty("protocolVersion").GetInt32());
+        var components = new Dictionary<string, NativeDesktopComponent>(StringComparer.Ordinal);
+        foreach (var item in document.RootElement.GetProperty("components").EnumerateArray())
+        {
+            var kind = item.GetProperty("kind").GetString()!;
+            var url = new Uri(item.GetProperty("url").GetString()!);
+            var packet = Path.Combine(Path.GetFullPath(shared), Path.GetFileName(url.AbsolutePath));
+            var component = new NativeDesktopComponent(kind, item.GetProperty("id").GetString()!, item.GetProperty("entryPath").GetString()!,
+                item.GetProperty("sizeBytes").GetInt64(), item.GetProperty("sha256").GetString()!,
+                item.GetProperty("manifestSizeBytes").GetInt64(), item.GetProperty("manifestSha256").GetString()!, packet);
+            Assert.Equal(component.SizeBytes, new FileInfo(packet).Length);
+            Assert.Equal(component.Sha256, HashFile(packet), ignoreCase: true);
+            var manifest = Path.Combine(shared, kind + ".manifest");
+            Assert.Equal(component.ManifestSizeBytes, new FileInfo(manifest).Length);
+            Assert.Equal(component.ManifestSha256, HashFile(manifest), ignoreCase: true);
+            using (var stream = File.OpenRead(packet))
+            {
+                var prefix = new byte[checked((int)component.ManifestSizeBytes)];
+                stream.ReadExactly(prefix);
+                Assert.Equal(File.ReadAllBytes(manifest), prefix);
+            }
+            components.Add(kind, component);
+        }
+        Assert.Equal(new[] { "assets", "desktop-runtime", "steam-native" }, components.Keys.Order(StringComparer.Ordinal));
+        return components;
+    }
+
+    public string ComponentCache(string kind) => Path.Combine(Bootstrap, kind, Components[kind].Sha256);
+
+    public void AssertComponentUnpublished(string kind)
+    {
+        var component = Components[kind];
+        Assert.False(File.Exists(Path.Combine(ComponentCache(kind), component.EntryPath.Replace('/', Path.DirectorySeparatorChar))));
+        Assert.False(File.Exists(ComponentCache(kind) + ".manifest"));
+    }
+
+    public void RemoveExternalCache(string kind)
+    {
+        var directory = Path.Combine(Bootstrap, kind);
+        AssertInsideRoot(directory);
+        if (!Directory.Exists(directory)) return;
+        Assert.True(HasOnlyOrdinaryDescendants(directory));
+        Directory.Delete(directory, recursive: true);
+    }
+
+    public void AssertDependencyResource()
+    {
+        using var stream = new MemoryStream(NativeHostResources.Read(Executable, 10, 102));
+        using var reader = new BinaryReader(stream, Encoding.UTF8);
+        Assert.Equal("LMDESK01", Encoding.ASCII.GetString(reader.ReadBytes(8)));
+        Assert.Equal(1u, reader.ReadUInt32());
+        Assert.Equal(3u, reader.ReadUInt32());
+        foreach (var kind in new[] { "desktop-runtime", "assets", "steam-native" })
+        {
+            var expected = Components[kind];
+            Assert.Equal((uint)(kind == "desktop-runtime" ? 1 : kind == "assets" ? 2 : 3), reader.ReadUInt32());
+            Assert.Equal(expected.Id, ReadString());
+            Assert.Equal(new Uri(Server.BaseUri, kind + ".pak").AbsoluteUri, ReadString());
+            Assert.Equal("", ReadString());
+            Assert.Equal(expected.EntryPath, ReadString());
+            Assert.Equal((ulong)expected.SizeBytes, reader.ReadUInt64());
+            Assert.Equal(Convert.FromHexString(expected.Sha256), reader.ReadBytes(32));
+            Assert.Equal((ulong)expected.ManifestSizeBytes, reader.ReadUInt64());
+            Assert.Equal(Convert.FromHexString(expected.ManifestSha256), reader.ReadBytes(32));
+        }
+        Assert.Equal(stream.Length, stream.Position);
+        string ReadString() => new UTF8Encoding(false, true).GetString(reader.ReadBytes(checked((int)reader.ReadUInt32())));
     }
 
     public static string HashFile(string path)
@@ -481,38 +818,51 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         return Convert.ToHexString(SHA256.HashData(file)).ToLowerInvariant();
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         // Only this exact newly-created GUID can be cleaned. Previous runs,
         // including failed or externally retained evidence, are never visited.
-        var boundary = Path.GetFullPath(Path.Combine(Repository, "artifacts", "native-host-tests"));
+        var boundary = Path.GetFullPath(Path.Combine(Repository, "artifacts", "agent-runs"));
         Assert.Equal(boundary, Path.GetDirectoryName(Path.GetFullPath(Root)), ignoreCase: true);
-        Assert.True(Guid.TryParseExact(Path.GetFileName(Root), "N", out _));
+        Assert.StartsWith("native-desktop-host-tests-", Path.GetFileName(Root));
+        Assert.True(Guid.TryParseExact(Path.GetFileName(Root)["native-desktop-host-tests-".Length..], "N", out _));
         Assert.False((File.GetAttributes(Root) & FileAttributes.ReparsePoint) != 0);
         var actions = new List<string>();
-        foreach (var owned in ownedProcesses)
+        try
         {
-            try
+            foreach (var owned in ownedProcesses)
             {
-                using var process = Process.GetProcessById(owned.Id);
-                if (!process.HasExited && process.StartTime.ToUniversalTime() == owned.StartUtc &&
-                    string.Equals(NormalizePath(ProcessImagePath(process)), NormalizePath(owned.Executable), StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    actions.Add("Kept bulky fixture files because an owned process is still running.");
+                    using var process = Process.GetProcessById(owned.Id);
+                    if (!process.HasExited && process.StartTime.ToUniversalTime() == owned.StartUtc &&
+                        string.Equals(NormalizePath(ProcessImagePath(process)), NormalizePath(owned.Executable), StringComparison.OrdinalIgnoreCase))
+                    {
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                        actions.Add("Stopped exactly identified owned process " + owned.Id + ".");
+                    }
+                }
+                catch (ArgumentException) { } // The exact owned process has exited.
+                catch (InvalidOperationException) { }
+                catch (Win32Exception)
+                {
+                    actions.Add("Kept bulky fixture files because an owned process could not be checked.");
                     File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
-                    return Task.CompletedTask;
+                    return;
                 }
             }
-            catch (ArgumentException) { } // The exact owned process has exited.
-            catch (InvalidOperationException) { }
-            catch (Win32Exception)
+        }
+        finally
+        {
+            if (Server is not null)
             {
-                actions.Add("Kept bulky fixture files because an owned process could not be checked.");
-                File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
-                return Task.CompletedTask;
+                await Server.DisposeAsync();
+                File.WriteAllText(Path.Combine(Root, "component-requests.json"), JsonSerializer.Serialize(Server.Requests.Select(request =>
+                    new { request.Kind, request.Range, request.Attempt, request.Status, request.BytesSent })));
             }
         }
-        foreach (var name in new[] { "managed-project", "native-build", "native-update-build", "payload", Path.GetFileName(Installation) })
+        foreach (var name in new[] { "native-build", "native-update-build", "payload", Path.GetFileName(Installation), "inherited-temp" })
         {
             var directory = Path.Combine(Root, name);
             AssertInsideRoot(directory);
@@ -540,7 +890,6 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         File.WriteAllText(Path.Combine(Root, "cleanup.json"), JsonSerializer.Serialize(actions));
         Packet = [];
         Records = [];
-        return Task.CompletedTask;
     }
 
     private bool HasOnlyOrdinaryDescendants(string directory)
@@ -621,7 +970,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         var start = new ProcessStartInfo(executable ?? Executable) { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = cwd ?? Root };
         foreach (var argument in arguments ?? ["--rendering-probe"]) start.ArgumentList.Add(argument);
-        // The private SC runtime must work without an installed dotnet/runtime
+        // The private pinned runtime must work without an installed dotnet/runtime
         // on PATH. Do not spoof Windows Known Folders or the user's profile.
         var system32 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32");
         start.Environment["PATH"] = system32 + (allowPowerShell ? ";" + Path.Combine(system32, "WindowsPowerShell", "v1.0") : string.Empty);
@@ -644,6 +993,19 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         return new NativeHostProbe(result.ProcessId, json.RootElement.Clone());
     }
 
+    public async Task<NativeHostProbe> CompleteProbe(Process process, int timeoutSeconds)
+    {
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(timeoutSeconds));
+        var stdout = await output;
+        var stderr = await error;
+        File.WriteAllText(Path.Combine(Root, $"run-{Interlocked.Increment(ref run):D2}.json"), JsonSerializer.Serialize(new { process.Id, process.ExitCode, stdout, stderr }));
+        Assert.True(process.ExitCode == 0, $"Native probe exited {process.ExitCode}: {stderr}\n{stdout}");
+        using var document = JsonDocument.Parse(stdout);
+        return new NativeHostProbe(process.Id, document.RootElement.Clone());
+    }
+
     public async Task AssertRejected(string? expectedError = null, string? executable = null)
     {
         var result = await Run(executable, timeoutSeconds: 15);
@@ -662,7 +1024,7 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         catch { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } throw; }
         var stdout = await output;
         var stderr = await error;
-        File.WriteAllText(Path.Combine(Root, $"run-{++run:D2}.json"), JsonSerializer.Serialize(new { process.Id, process.ExitCode, stdout, stderr }));
+        File.WriteAllText(Path.Combine(Root, $"run-{Interlocked.Increment(ref run):D2}.json"), JsonSerializer.Serialize(new { process.Id, process.ExitCode, stdout, stderr }));
         return (process.Id, process.ExitCode, stdout, stderr);
     }
 
@@ -672,34 +1034,75 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         Assert.Equal(probe.ProcessId, json.GetProperty("processId").GetInt32());
         SamePath(executable ?? Executable, json.GetProperty("processPath").GetString());
         SamePath(Installation, json.GetProperty("applicationRoot").GetString());
+        Assert.Equal(Path.GetFullPath(Installation), Path.GetFullPath(json.GetProperty("applicationRoot").GetString()!), ignoreCase: true);
         SamePath(Cache, json.GetProperty("appBaseDirectory").GetString());
-        SamePath(Cache, json.GetProperty("runtimeDirectory").GetString());
+        var runtime = ComponentCache("desktop-runtime");
+        var core = Path.Combine(runtime, "shared", "Microsoft.NETCore.App", RuntimeVersion);
+        var desktop = Path.Combine(runtime, "shared", "Microsoft.WindowsDesktop.App", RuntimeVersion);
+        SamePath(core, json.GetProperty("runtimeDirectory").GetString());
         Assert.Equal("STA", json.GetProperty("entryApartment").GetString());
         var temp = Path.Combine(Installation, "Minecraft", "Launcher", "Temp");
         foreach (var property in new[] { "temporaryDirectory", "temporaryEnvironment", "temporaryEnvironmentAlias" })
             SamePath(temp, json.GetProperty(property).GetString());
         SamePath(Path.Combine(Installation, "Minecraft", "Launcher", "DotNetBundles"), json.GetProperty("bundleExtractEnvironment").GetString());
         var modules = json.GetProperty("runtimeModules");
-        foreach (var name in new[] { "hostfxr.dll", "hostpolicy.dll", "coreclr.dll", "wpfgfx_cor3.dll" })
-            SamePath(Path.Combine(Cache, name), modules.GetProperty(name).GetString());
+        SamePath(Path.Combine(runtime, Components["desktop-runtime"].EntryPath.Replace('/', Path.DirectorySeparatorChar)), modules.GetProperty("hostfxr.dll").GetString());
+        foreach (var name in new[] { "hostpolicy.dll", "coreclr.dll" })
+            SamePath(Path.Combine(core, name), modules.GetProperty(name).GetString());
+        SamePath(Path.Combine(desktop, "wpfgfx_cor3.dll"), modules.GetProperty("wpfgfx_cor3.dll").GetString());
+        var pen = Assert.Single(modules.EnumerateObject(), module => module.Name.Equals("PenImc_cor3.dll", StringComparison.OrdinalIgnoreCase));
+        SamePath(Path.Combine(desktop, "PenImc_cor3.dll"), pen.Value.GetString());
         foreach (var module in modules.EnumerateObject())
-            SamePath(Path.Combine(Cache, module.Name), module.Value.GetString());
+            Assert.StartsWith(NormalizePath(runtime) + Path.DirectorySeparatorChar, NormalizePath(module.Value.GetString()!), StringComparison.OrdinalIgnoreCase);
         Assert.True(json.GetProperty("switchEnabled").GetBoolean());
         Assert.True(json.GetProperty("wpfCachedDisableDirtyRectangles").GetBoolean());
         Assert.Equal("SoftwareOnly", json.GetProperty("processRenderMode").GetString());
         Assert.Equal(5, json.GetProperty("preparedDialogWindows").GetInt32());
         Assert.Equal(0, json.GetProperty("windowsAfterDialogCleanup").GetInt32());
+        Assert.True(json.GetProperty("probeWindowContentRendered").GetBoolean());
+        Assert.True(json.GetProperty("probeWindowClosed").GetBoolean());
+        Assert.True(json.GetProperty("probeWindowHadHwnd").GetBoolean());
+        Assert.True(json.GetProperty("probeStartupSuppressed").GetBoolean());
+        Assert.True(json.GetProperty("tabletDeviceCount").GetInt32() >= 0);
     }
 
     public static void SamePath(string expected, string? actual)
     {
         Assert.NotNull(actual);
+        Assert.True(File.Exists(expected) || Directory.Exists(expected), "Expected portable path is missing: " + expected);
+        Assert.True(File.Exists(actual) || Directory.Exists(actual), "Reported portable path is missing: " + actual);
         Assert.Equal(NormalizePath(expected), NormalizePath(actual), ignoreCase: true);
     }
+
+    public string? ShortExecutablePath()
+    {
+        var buffer = new char[32768];
+        var length = GetShortPathName(Executable, buffer, (uint)buffer.Length);
+        if (length == 0 || length >= buffer.Length) return null;
+        var shortPath = new string(buffer, 0, (int)length);
+        if (string.Equals(shortPath, Executable, StringComparison.OrdinalIgnoreCase)) return null;
+        SamePath(Executable, shortPath);
+        File.WriteAllText(Path.Combine(Root, "short-executable-path.json"), JsonSerializer.Serialize(new { shortPath, canonicalPath = Executable }));
+        return shortPath;
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathName(string longPath, [Out] char[] shortPath, uint size);
 
     private static string NormalizePath(string path)
     {
         var full = Path.GetFullPath(path).TrimEnd('\\');
+        if (File.Exists(full) || Directory.Exists(full))
+        {
+            var extended = full.StartsWith(@"\\?\", StringComparison.Ordinal) ? full
+                : full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full[2..] : @"\\?\" + full;
+            using var handle = OpenPhysicalPath(extended, 0x80, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var buffer = new char[32768];
+            var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
+            if (length == 0 || length >= buffer.Length) throw new Win32Exception(Marshal.GetLastWin32Error());
+            full = new string(buffer, 0, (int)length).TrimEnd('\\');
+        }
         if (full.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + full[8..];
         return full.StartsWith(@"\\?\", StringComparison.Ordinal) ? full[4..] : full;
     }
@@ -707,8 +1110,18 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
     public void AssertInsideRoot(string path)
     {
         var full = Path.GetFullPath(path);
-        Assert.StartsWith(Path.GetFullPath(Root).TrimEnd('\\') + "\\", full, StringComparison.OrdinalIgnoreCase);
+        var ancestor = full;
+        while (!File.Exists(ancestor) && !Directory.Exists(ancestor))
+            ancestor = Path.GetDirectoryName(ancestor) ?? throw new IOException("No existing cleanup ancestor.");
+        var canonical = Path.GetFullPath(Path.Combine(NormalizePath(ancestor), Path.GetRelativePath(ancestor, full)));
+        Assert.StartsWith(NormalizePath(Root) + "\\", canonical, StringComparison.OrdinalIgnoreCase);
     }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle OpenPhysicalPath(string path, uint access, uint share,
+        IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file, [Out] char[] path, uint size, uint flags);
 
     public void RemoveCache()
     {
@@ -732,8 +1145,8 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         {
             case "invalid UTF8": records[harmless] = records[harmless] with { Name = [0xff] }; break;
             case "unsafe path": records[harmless] = records[harmless] with { Name = Encoding.UTF8.GetBytes("../outside.dll") }; break;
-            case "duplicate path": records[harmless] = records[harmless] with { Name = Encoding.UTF8.GetBytes("HOSTFXR.DLL") }; break;
-            case "file directory conflict": records[harmless] = records[harmless] with { Name = Encoding.UTF8.GetBytes("hostfxr.dll/child.dll") }; break;
+            case "duplicate path": records[harmless] = records[harmless] with { Name = Encoding.UTF8.GetBytes("PORTABILITYAUDITHOST.DLL") }; break;
+            case "file directory conflict": records[harmless] = records[harmless] with { Name = Encoding.UTF8.GetBytes("PortabilityAuditHost.dll/child.dll") }; break;
             case "file hash": records[harmless].Hash[0] ^= 0xff; break;
         }
         using var table = new MemoryStream();
@@ -807,6 +1220,9 @@ internal static class NativeHostResources
     }
 
     public static void ReplacePacket(string executable, byte[] packet)
+        => ReplaceResource(executable, 101, packet);
+
+    public static void ReplaceResource(string executable, int id, byte[] packet)
     {
         var module = LoadLibraryEx(executable, IntPtr.Zero, 0x00000002 | 0x00000020);
         if (module == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -814,7 +1230,7 @@ internal static class NativeHostResources
         ResourceLanguage callback = (_, _, _, language, _) => { languages.Add(language); return true; };
         try
         {
-            if (!EnumResourceLanguages(module, (IntPtr)10, (IntPtr)101, callback, IntPtr.Zero))
+            if (!EnumResourceLanguages(module, (IntPtr)10, (IntPtr)id, callback, IntPtr.Zero))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         finally { FreeLibrary(module); }
@@ -823,7 +1239,7 @@ internal static class NativeHostResources
         if (update == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
         try
         {
-            if (!UpdateResource(update, (IntPtr)10, (IntPtr)101, languages[0], packet, (uint)packet.Length))
+            if (!UpdateResource(update, (IntPtr)10, (IntPtr)id, languages[0], packet, (uint)packet.Length))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             if (!EndUpdateResource(update, false)) throw new Win32Exception(Marshal.GetLastWin32Error());
             update = IntPtr.Zero;

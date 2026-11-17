@@ -13,6 +13,8 @@ internal static class Program
     {
         if (args.FirstOrDefault() == "--rendering-probe")
         {
+            typeof(Minecraft.App).Assembly.GetType("Minecraft.BootstrapLaunchContext", throwOnError: true)!
+                .GetMethod("InitializeTestComponentsFromEnvironment", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
             const string switchName = "Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles";
             var switchDefined = AppContext.TryGetSwitch(switchName, out var switchEnabled);
             var switches = typeof(RenderOptions).Assembly.GetType("MS.Internal.CoreAppContextSwitches", throwOnError: true)!;
@@ -26,16 +28,48 @@ internal static class Program
             var windowsAfterInitializeComponent = -1;
             var preparedDialogWindows = -1;
             var windowsAfterDialogCleanup = -1;
+            var probeWindowContentRendered = false;
+            var probeWindowClosed = false;
+            var probeWindowHadHwnd = false;
+            var tabletDeviceCount = -1;
+            var probeStartupSuppressed = false;
             Exception? applicationFailure = null;
             var applicationThread = new Thread(() =>
             {
                 try
                 {
-                    // Exercise the production constructor, without Run/OnStartup:
-                    // no Steam, persistence, single-instance guard or launcher window.
-                    var application = new Minecraft.App();
+                    // Keep production Application startup on an unpumped STA.
+                    // A separate owned STA renders the HWND without dispatching
+                    // launcher services, Steam or the user's main window.
+                    var application = new Minecraft.App
+                    {
+                        ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown
+                    };
+                    var startupObserved = false;
+                    application.Startup += (_, _) => startupObserved = true;
                     modeBeforeInitializeComponent = RenderOptions.ProcessRenderMode;
                     windowsBeforeInitializeComponent = application.Windows.Count;
+                    OwnedWindowResult? rendered = null;
+                    Exception? renderFailure = null;
+                    var renderThread = new Thread(() =>
+                    {
+                        try { rendered = RenderOwnedWindow(); }
+                        catch (Exception error) { renderFailure = error; }
+                    });
+                    renderThread.SetApartmentState(ApartmentState.STA);
+                    using (application.Dispatcher.DisableProcessing())
+                    {
+                        renderThread.Start();
+                        if (!renderThread.Join(TimeSpan.FromSeconds(8)))
+                            throw new TimeoutException("The owned render STA did not finish.");
+                    }
+                    if (renderFailure is not null) throw new InvalidOperationException("Native WPF render/pen initialization failed.", renderFailure);
+                    if (rendered is null) throw new InvalidOperationException("Missing native WPF rendering result.");
+                    probeWindowContentRendered = rendered.ContentRendered;
+                    probeWindowClosed = rendered.Closed;
+                    probeWindowHadHwnd = rendered.HadHwnd;
+                    tabletDeviceCount = rendered.TabletDeviceCount;
+                    probeStartupSuppressed = !startupObserved;
                     application.InitializeComponent();
                     modeAfterInitializeComponent = RenderOptions.ProcessRenderMode;
                     windowsAfterInitializeComponent = application.Windows.Count;
@@ -52,14 +86,14 @@ internal static class Program
             applicationThread.SetApartmentState(ApartmentState.STA);
             applicationThread.Start();
             if (!applicationThread.Join(TimeSpan.FromSeconds(10)))
-                throw new TimeoutException("The windowless application rendering probe did not finish.");
+                throw new TimeoutException("The owned WPF window rendering probe did not finish.");
             if (applicationFailure is not null)
-                throw new InvalidOperationException("The windowless application rendering probe failed.", applicationFailure);
+                throw new InvalidOperationException("The owned WPF window rendering probe failed.", applicationFailure);
             var processRenderMode = RenderOptions.ProcessRenderMode;
             using var process = Process.GetCurrentProcess();
             var runtimeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "hostfxr.dll", "hostpolicy.dll", "coreclr.dll", "wpfgfx_cor3.dll", "PresentationNative_cor3.dll"
+                "hostfxr.dll", "hostpolicy.dll", "coreclr.dll", "wpfgfx_cor3.dll", "PresentationNative_cor3.dll", "PenImc_cor3.dll"
             };
             var runtimeModules = process.Modules.Cast<ProcessModule>().Where(module => runtimeNames.Contains(module.ModuleName))
                 .ToDictionary(module => module.ModuleName, module => module.FileName, StringComparer.OrdinalIgnoreCase);
@@ -71,6 +105,7 @@ internal static class Program
                 modeBeforeInitializeComponent = modeBeforeInitializeComponent.ToString(),
                 modeAfterInitializeComponent = modeAfterInitializeComponent.ToString(),
                 windowsBeforeInitializeComponent, windowsAfterInitializeComponent, preparedDialogWindows, windowsAfterDialogCleanup,
+                probeWindowContentRendered, probeWindowClosed, probeWindowHadHwnd, tabletDeviceCount, probeStartupSuppressed,
                 processRenderMode = processRenderMode.ToString(),
                 processId = Environment.ProcessId,
                 processPath = Environment.ProcessPath,
@@ -95,7 +130,9 @@ internal static class Program
                 modeAfterInitializeComponent == System.Windows.Interop.RenderMode.SoftwareOnly &&
                 processRenderMode == System.Windows.Interop.RenderMode.SoftwareOnly &&
                 windowsBeforeInitializeComponent == 0 && windowsAfterInitializeComponent == 0 &&
-                preparedDialogWindows == 5 && windowsAfterDialogCleanup == 0 ? 0 : 1;
+                preparedDialogWindows == 5 && windowsAfterDialogCleanup == 0 &&
+                probeWindowContentRendered && probeWindowClosed && probeWindowHadHwnd &&
+                tabletDeviceCount >= 0 && probeStartupSuppressed ? 0 : 1;
         }
 
         // A short-lived caller for the production updater. It is never included in the
@@ -136,6 +173,65 @@ internal static class Program
         }
         finally { helper?.Dispose(); }
         return 0;
+    }
+
+    private sealed record OwnedWindowResult(bool ContentRendered, bool Closed, bool HadHwnd, int TabletDeviceCount);
+
+    private static OwnedWindowResult RenderOwnedWindow()
+    {
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var window = new System.Windows.Window
+        {
+            Title = "LANMinecraft native rendering QA", Width = 320, Height = 180,
+            ShowActivated = false, ShowInTaskbar = false,
+            WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
+            Content = new System.Windows.Controls.TextBlock { Text = "Native WPF rendering probe", Margin = new System.Windows.Thickness(16) }
+        };
+        var rendered = false;
+        var closed = false;
+        var hadHwnd = false;
+        var tabletCount = -1;
+        Exception? failure = null;
+        var timeout = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Send)
+            { Interval = TimeSpan.FromSeconds(6) };
+        void Close()
+        {
+            timeout.Stop();
+            window.Close();
+            frame.Continue = false;
+        }
+        window.Closed += (_, _) => closed = true;
+        window.ContentRendered += (_, _) =>
+        {
+            rendered = true;
+            hadHwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle != IntPtr.Zero;
+            try
+            {
+                // Force normal WPF tablet/stylus initialization after the HWND
+                // exists, including the native PenIMC activation-context path.
+                tabletCount = System.Windows.Input.Tablet.TabletDevices.Count;
+            }
+            catch (Exception error) { failure = error; }
+            window.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, (Action)Close);
+        };
+        timeout.Tick += (_, _) => { failure ??= new TimeoutException("The owned WPF window never rendered its first frame."); Close(); };
+        try
+        {
+            timeout.Start();
+            new System.Windows.Interop.WindowInteropHelper(window).EnsureHandle();
+            window.Show();
+            // This frame belongs to the separate render STA, never the
+            // production Application's dispatcher or Application.Run.
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            if (failure is not null) throw failure;
+            return new OwnedWindowResult(rendered, closed, hadHwnd, tabletCount);
+        }
+        finally
+        {
+            timeout.Stop();
+            if (!closed) window.Close();
+            window.Dispatcher.InvokeShutdown();
+        }
     }
 
     private static void HoldForFixture(string[] args)

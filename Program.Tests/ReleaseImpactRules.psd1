@@ -117,7 +117,7 @@
         @{ Paths = @('Program/CatalogModPages.cs'); Suites = @('LibraryLinks') }
         @{ Paths = @('Program/LibraryTreeMotion.cs'); Suites = @('LibraryMotion') }
         @{
-            Paths = @('Program/Assets/Background.png', 'Program/BackdropSurfaceBorder.cs', 'Program/BackdropSurfaceCache.cs', 'Program/PreparedWindowBackdrop.cs')
+            Paths = @('Program/BackdropSurfaceBorder.cs', 'Program/BackdropSurfaceCache.cs', 'Program/PreparedWindowBackdrop.cs')
             Suites = @('BackdropRendering')
         }
         @{ Paths = @('Program/MainWindow.MaintenanceStatus.cs'); Suites = @('MaintenanceStatus') }
