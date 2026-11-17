@@ -2476,22 +2476,39 @@ public partial class MainWindow : Window
     private static string LatestVersionText() =>
         $"Вы на последней версии ({UpdateService.CurrentReleaseNumber})";
 
-    /// <summary>
-    /// Fills "Что нового" from the history embedded in the executable and marks
-    /// the version this build is. Newest first, so the current one is at the
-    /// top; a missing or broken history shows one line instead of an empty box.
-    /// </summary>
+    /// <summary>Shows cached history immediately, then refreshes it without blocking startup.</summary>
     private void LoadChangelog()
     {
-        var entries = ChangelogService.Load(_logger);
+        if (_paths is null || _shutdownStarted) return;
+        var cachePath = Path.Combine(_paths.Launcher, "Changelog.md");
+        ChangelogList.ItemsSource = _changelogShown;
+        ChangelogScroll.ScrollChanged -= ChangelogScroll_ScrollChanged;
+        ChangelogScroll.ScrollChanged += ChangelogScroll_ScrollChanged;
+        _ = RefreshChangelogAsync(cachePath, _lifetimeCts.Token);
+    }
+
+    private async Task RefreshChangelogAsync(string cachePath, CancellationToken token)
+    {
+        try
+        {
+            var cached = await Task.Run(() => ChangelogService.LoadCached(cachePath, _logger), token);
+            if (_shutdownStarted || token.IsCancellationRequested) return;
+            ApplyChangelog(cached);
+            var entries = await Task.Run(() => ChangelogService.RefreshAsync(cachePath, token, _logger), token);
+            if (_shutdownStarted || token.IsCancellationRequested || cached.SequenceEqual(entries)) return;
+            ApplyChangelog(entries);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
+
+    private void ApplyChangelog(IReadOnlyList<ChangelogEntry> entries)
+    {
+        var shown = Math.Max(ChangelogPager.PageSize, _changelogPager?.Shown ?? 0);
         _changelogPager = new ChangelogPager(entries);
         _changelogShown.Clear();
-        ChangelogList.ItemsSource = _changelogShown;
         ShowMoreChangelog();
+        while (_changelogPager.HasMore && _changelogPager.Shown < shown) ShowMoreChangelog();
         ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // The history only grows, so the panel takes it a page at a time and
-        // asks for the next one when the reader reaches the end of this one.
-        ChangelogScroll.ScrollChanged += ChangelogScroll_ScrollChanged;
     }
 
     private void ShowMoreChangelog()

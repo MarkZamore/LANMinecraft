@@ -59,10 +59,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The version history the window shows; hand-written, one entry per
-         commit, checked by the release workflow. See ChangelogService. -->
-    <EmbeddedResource Include="Changelog.md"
-                      LogicalName="Minecraft.Changelog.md" />
     <!-- The matching SDK 1.60 native is prepared by the bootstrap's pinned
          steam-native component; this package supplies the managed API only. -->
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />

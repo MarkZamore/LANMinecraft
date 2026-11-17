@@ -1,4 +1,5 @@
-﻿using Minecraft;
+using System.IO;
+using Minecraft;
 
 namespace Minecraft.Tests;
 
@@ -8,10 +9,13 @@ namespace Minecraft.Tests;
 /// </summary>
 public sealed class ChangelogTests
 {
+    private static IReadOnlyList<ChangelogEntry> ReadSourceHistory() =>
+        ChangelogService.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "SourceChangelog.md")));
+
     [Fact]
-    public void EmbeddedChangelog_IsCompleteAndNewestFirst()
+    public void SourceChangelog_IsCompleteAndNewestFirst()
     {
-        var entries = ChangelogService.Load();
+        var entries = ReadSourceHistory();
 
         Assert.NotEmpty(entries);
         Assert.All(entries, entry => Assert.True(entry.Version >= 1, $"version {entry.Version}"));
@@ -47,7 +51,7 @@ public sealed class ChangelogTests
     {
         if (!TryCountCommits(out var commits)) return;
 
-        var newest = ChangelogService.Load()[0].Version;
+        var newest = ReadSourceHistory()[0].Version;
         // Two numbers reach a player - the one in the window, which is the
         // commit count the build was made from, and the one at the top of "Что
         // нового" - and they have to be the same number. They stopped being it
@@ -134,7 +138,7 @@ public sealed class ChangelogTests
     public void EveryVersion_IsTwoShortSentences()
     {
         const int limit = 240;
-        foreach (var entry in ChangelogService.Load())
+        foreach (var entry in ReadSourceHistory())
         {
             Assert.True(
                 entry.Text.Length <= limit,
@@ -190,9 +194,10 @@ public sealed class ChangelogTests
     }
 
     [Fact]
-    public void Load_ReturnsNothingWhenTheResourceIsMissing()
+    public void HistoryIsNotEmbedded_AndMissingCacheReturnsNothing()
     {
-        var entries = ChangelogService.Load(typeof(ChangelogService).Assembly, "Minecraft.NoSuchChangelog.md");
+        Assert.DoesNotContain("Minecraft.Changelog.md", typeof(ChangelogService).Assembly.GetManifestResourceNames());
+        var entries = ChangelogService.LoadCached(Path.Combine(AppContext.BaseDirectory, "missing-history.md"));
 
         Assert.Empty(entries);
     }

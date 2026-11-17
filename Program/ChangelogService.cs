@@ -1,6 +1,6 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO;
-using System.Reflection;
+using System.Net.Http;
 using System.Text;
 
 namespace Minecraft;
@@ -8,41 +8,73 @@ namespace Minecraft;
 /// <summary>One version of the launcher and what it changed, in the player's words.</summary>
 public sealed record ChangelogEntry(int Version, string Text);
 
-/// <summary>
-/// Reads the version history the window shows.
-///
-/// The history is a hand-written Markdown file embedded in the executable:
-/// a <c>## N</c> heading per version, newest first, each followed by one
-/// <c>- </c> paragraph in plain Russian - one version reads as one thought,
-/// so the list stays skimmable. N is the commit count the release was built from,
-/// so a version on screen and a commit in git name the same thing. The
-/// release workflow refuses to build a number the file does not know.
-///
-/// The parser is strict on purpose: a slip in the file must fail the test
-/// run, not ship a half-read list.
-/// </summary>
+/// <summary>Loads GitHub history and retains a validated local copy for offline reading.</summary>
 public static class ChangelogService
 {
-    internal const string ResourceName = "Minecraft.Changelog.md";
+    internal const int MaximumBytes = 2 * 1024 * 1024;
+    private const string SourceUrl = "https://raw.githubusercontent.com/MarkZamore/LANMinecraft/main/Program/Changelog.md";
 
-    /// <summary>Newest first; empty when the resource is missing or malformed. Never throws.</summary>
-    public static IReadOnlyList<ChangelogEntry> Load(Logger? logger = null) =>
-        Load(typeof(ChangelogService).Assembly, ResourceName, logger);
-
-    internal static IReadOnlyList<ChangelogEntry> Load(Assembly assembly, string resourceName, Logger? logger = null)
+    public static IReadOnlyList<ChangelogEntry> LoadCached(string cachePath, Logger? logger = null)
     {
         try
         {
-            using var stream = assembly.GetManifestResourceStream(resourceName)
-                ?? throw new InvalidOperationException($"Embedded resource is missing: {resourceName}.");
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            return Parse(reader.ReadToEnd());
+            if (!File.Exists(cachePath)) return [];
+            if (new FileInfo(cachePath).Length > MaximumBytes) throw new IOException("History exceeds the size limit.");
+            return Validate(File.ReadAllText(cachePath, Encoding.UTF8));
         }
-        catch (Exception ex) when (ex is InvalidOperationException or FormatException or IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException)
         {
-            logger?.Warn($"The changelog could not be read: {ex.Message}");
+            logger?.Warn($"The cached changelog could not be read: {ex.Message}");
             return [];
         }
+    }
+
+    public static async Task<IReadOnlyList<ChangelogEntry>> RefreshAsync(string cachePath,
+        CancellationToken token, Logger? logger = null, HttpClient? client = null)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, SourceUrl + "?fresh=" + Guid.NewGuid().ToString("N"));
+            request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+            using var response = await (client ?? PortableHttpClient.Shared).SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength > MaximumBytes) throw new IOException("History exceeds the size limit.");
+            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            using var bytes = new MemoryStream();
+            var buffer = new byte[8192];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) != 0)
+            {
+                if (bytes.Length + read > MaximumBytes) throw new IOException("History exceeds the size limit.");
+                bytes.Write(buffer, 0, read);
+            }
+            var markdown = new UTF8Encoding(false, true).GetString(bytes.ToArray()).TrimStart('\uFEFF');
+            var entries = Validate(markdown);
+            token.ThrowIfCancellationRequested();
+            try { AtomicFile.WriteAllTextIfChanged(cachePath, markdown); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger?.Warn($"The changelog could not be cached: {ex.Message}");
+            }
+            return entries;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or FormatException or DecoderFallbackException ||
+                                   ex is OperationCanceledException && !token.IsCancellationRequested)
+        {
+            logger?.Warn($"The changelog could not be refreshed: {ex.Message}");
+            return LoadCached(cachePath, logger);
+        }
+    }
+
+    private static IReadOnlyList<ChangelogEntry> Validate(string markdown)
+    {
+        var entries = Parse(markdown);
+        if (entries.Count == 0 || entries[^1].Version != 1 || entries[0].Version != entries.Count)
+            throw new FormatException("The changelog must contain every version through the first release.");
+        return entries;
     }
 
     /// <summary>

@@ -28,6 +28,7 @@ public sealed class LauncherStorageCleanupTests : IDisposable
             Path.Combine(_paths.Service, "Archive", "shaderpacks", "shader.zip"),
             Path.Combine(_paths.Launcher, "Archive", "TexturePacks", "texture.zip"),
             Path.Combine(_paths.Launcher, "bootstrap.log"),
+            Path.Combine(_paths.Launcher, "Changelog.md"),
             Path.Combine(_paths.Launcher, "DotNetBundles", "helper.bin"),
             Path.Combine(_paths.Launcher, "LocalAI", "cached-model.bin"),
             Path.Combine(_paths.Personal, "Updates", "Ready", "update.json"),

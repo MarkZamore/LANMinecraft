@@ -2,6 +2,7 @@
 # Suite dependencies add coverage for linked views and callers of the changed component.
 @{
     Always = @(
+        'ChangelogTests.SourceChangelog_IsCompleteAndNewestFirst'
         'ChangelogTests.TheNewestVersion_IsTheCommitItIsWrittenFor'
         'ChangelogTests.EveryVersion_IsTwoShortSentences'
         'ReleaseWorkflowTests.BuildAndVerificationRunIndependently_AndBothGatePublication'

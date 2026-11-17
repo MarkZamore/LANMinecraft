@@ -134,6 +134,9 @@
       FullyQualifiedName=Minecraft.Tests.PortableJavaEnvironmentTests.Disposing_a_live_helper_preserves_its_scope_and_the_loader_cannot_delete_its_parent|
       FullyQualifiedName=Minecraft.Tests.HeapTuningArgumentTests.EachListUnlocksBeforeItUsesAnExperimentalOption|
       FullyQualifiedName=Minecraft.Tests.PackHashServiceTests.SyncedPeers_HaveTheSameHashDespitePreservedUnknownCanonicalFiles|
+      FullyQualifiedName=Minecraft.Tests.ChangelogTests.SourceChangelog_IsCompleteAndNewestFirst|
+      FullyQualifiedName=Minecraft.Tests.ChangelogTests.HistoryIsNotEmbedded_AndMissingCacheReturnsNothing|
+      FullyQualifiedName=Minecraft.Tests.ChangelogRemoteTests.RefreshCachesValidatedHistoryAndPreservesItAcrossFailuresAndOfflineStarts|
       FullyQualifiedName=Minecraft.Tests.ChangelogTests.TheNewestVersion_IsTheCommitItIsWrittenFor|
       FullyQualifiedName=Minecraft.Tests.ChangelogTests.EveryVersion_IsTwoShortSentences|
       FullyQualifiedName=Minecraft.Tests.ReleaseWorkflowTests.TheDependencyAudit_IsPartOfEveryRestore|

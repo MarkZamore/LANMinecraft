@@ -33,7 +33,7 @@ internal static class LauncherStorageCleanup
     {
         "Temp", "DotNetBundles", "Runtime", "Runtimes", "JavaRuntimes", "Shared", "Steam", "ManagedComponents",
         "Library", "IdentityAdapters", "NoticeOverlay", "WindowPresentation", "LaunchArguments", "NativeInterop",
-        "Bootstrap", "Components", "ComponentCatalog", "LocalAI", "PowerShell", "bootstrap.log", ".shared-runtime.lock", LauncherMaintenance.CompletionFileName
+        "Bootstrap", "Components", "ComponentCatalog", "LocalAI", "PowerShell", "bootstrap.log", "Changelog.md", ".shared-runtime.lock", LauncherMaintenance.CompletionFileName
     };
 
     private static readonly HashSet<string> PersonalEntries = new(StringComparer.OrdinalIgnoreCase)
