@@ -61,20 +61,35 @@ jobs:
           dotnet restore Program.Tests/Program.Tests.csproj -r win-x64 -p:Configuration=Debug
           if ($LASTEXITCODE -ne 0) { throw 'The tests could not be restored.' }
 
+      - name: Test release impact selection
+        shell: pwsh
+        run: ./Program.Tests/Test-ReleaseImpact.ps1
+
       - name: Run Release tests
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $commitNumber = [int](git rev-list --count HEAD)
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to count commits.' }
-          $previousCommit = git rev-parse HEAD^
-          if ($LASTEXITCODE -ne 0 -and $commitNumber -gt 1) { throw 'Unable to resolve the previous commit.' }
-          # Release 519 changes the pipeline only. All subsequent releases
-          # use the standard Release gate until another scope is reviewed.
-          if ($commitNumber -eq 519 -and $previousCommit -eq '478bb732f600d6fbeb8a304fe3d1c63cffef7769') {
-            & .\Program.Tests\Test-Launcher.ps1 -Profile Release -ReleaseScope Pipeline -Configuration Debug -NoRestore
-          } else {
-            & .\Program.Tests\Test-Launcher.ps1 -Profile Release -Configuration Debug -NoRestore
+          . ./.github/scripts/GhRetry.ps1
+          $baseCommit = ''
+          try {
+            $manifest = Invoke-Gh release download latest --repo $env:GITHUB_REPOSITORY --pattern update.json --output -
+            if ($LASTEXITCODE -ne 0) { throw 'Published update.json could not be downloaded.' }
+            $previous = ($manifest -join "`n") | ConvertFrom-Json
+            if ($previous.schemaVersion -ne 2 -or $previous.assetName -cne 'LANMinecraft.exe' -or
+                [int]$previous.releaseNumber -lt 1 -or [long]$previous.sizeBytes -le 0 -or
+                $previous.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or $previous.commitSha -notmatch '^[0-9a-fA-F]{40}$') {
+              throw 'Published update.json has no valid release identity.'
+            }
+            $baseCommit = [string]$previous.commitSha
+          } catch {
+            Write-Warning ('Using full Release because the published baseline is unavailable. ' + $_.Exception.Message)
           }
+          $plan = & .\Program.Tests\Get-ReleaseImpact.ps1 -BaseCommit $baseCommit -HeadCommit $env:GITHUB_SHA
+          $planPath = Join-Path $env:RUNNER_TEMP 'launcher-release-impact.json'
+          $plan | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $planPath -Encoding utf8
+          Write-Host ("Release scope: {0}. {1}" -f $plan.Scope, $plan.Reason)
+          & .\Program.Tests\Test-Launcher.ps1 -Profile Release -Configuration Debug -NoRestore -ReleaseImpactPlan $planPath
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed.' }
 
       - name: Test hosted Defender publication policy

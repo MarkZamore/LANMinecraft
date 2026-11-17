@@ -10,39 +10,73 @@ param(
     [string]$HostPath,
     [string]$ResultsDirectory,
     [string]$ValidateTrx,
-    [ValidateSet('Standard', 'Pipeline')][string]$ReleaseScope = 'Standard'
+    [string]$ReleaseImpactPlan
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ReleaseProfile.ps1')
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$settingsName = if ($ReleaseScope -eq 'Pipeline') { 'Release.Pipeline' } else { $Profile }
-$settingsPath = Join-Path $PSScriptRoot ($settingsName + '.runsettings')
+$settingsPath = Join-Path $PSScriptRoot ($Profile + '.runsettings')
 $testsProject = Join-Path $PSScriptRoot 'Program.Tests.csproj'
 if ($WithAdapters -and $Profile -ne 'Release') { throw '-WithAdapters is supported only with -Profile Release.' }
-if ($ReleaseScope -eq 'Pipeline' -and ($Profile -ne 'Release' -or $WithAdapters)) {
-    throw '-ReleaseScope Pipeline requires -Profile Release without -WithAdapters.'
+if ($ReleaseImpactPlan -and ($Profile -ne 'Release' -or $WithAdapters)) {
+    throw '-ReleaseImpactPlan requires -Profile Release without -WithAdapters.'
 }
-$caseBudget = if ($ReleaseScope -eq 'Pipeline') { 10 } elseif ($WithAdapters) { 754 } else { 680 }
+$caseBudget = if ($WithAdapters) { 754 } else { 680 }
 
 function Invoke-Dotnet([string[]]$DotnetArguments) {
     & dotnet @DotnetArguments
     if ($LASTEXITCODE -ne 0) { throw ('dotnet failed with exit code ' + $LASTEXITCODE) }
 }
 
-function Read-ReleaseSelectors([string]$ProfileName = 'Release') {
-    [xml]$settings = Get-Content -LiteralPath (Join-Path $PSScriptRoot ($ProfileName + '.runsettings')) -Raw
-    $filter = [string]$settings.RunSettings.RunConfiguration.TestCaseFilter
-    if ([string]::IsNullOrWhiteSpace($filter)) { throw 'The release filter is empty.' }
-    $selectors = @($filter.Split('|') | ForEach-Object {
-        $part = $_.Trim()
-        if ($part -notmatch '^FullyQualifiedName=(Minecraft\.Tests\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+)$') {
-            throw ('Unsupported release selector: ' + $part)
+function Read-ReleaseImpactPlan([string]$Path, [string[]]$StandardSelectors) {
+    try {
+        $plan = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+        if ($plan -isnot [Collections.IDictionary] -or $plan.SchemaVersion -isnot [long] -or
+            $plan.SchemaVersion -ne 1 -or $plan.Scope -isnot [string] -or
+            $plan.Scope -cnotin @('Standard', 'Impact') -or $plan.Methods -isnot [array] -or
+            $plan.Paths -isnot [array] -or $plan.Reason -isnot [string]) {
+            throw 'Invalid release impact plan schema.'
         }
-        $matches[1]
-    })
-    if ($selectors.Count -eq 0 -or @($selectors | Select-Object -Unique).Count -ne $selectors.Count) {
-        throw 'The release profile has no selectors or contains duplicates.'
+        if ($plan.Scope -ceq 'Standard') {
+            if ($plan.Methods.Count -ne 0) { throw 'A standard release impact plan cannot select individual methods.' }
+            return $null
+        }
+        if ($plan.BaseCommit -isnot [string] -or $plan.HeadCommit -isnot [string] -or
+            $plan.BaseCommit -cnotmatch '^[a-f0-9]{40}$' -or $plan.HeadCommit -cnotmatch '^[a-f0-9]{40}$' -or
+            $plan.Methods.Count -eq 0 -or $plan.Methods.Count -ge $StandardSelectors.Count) {
+            throw 'An impact plan must specify exact commits and a nonempty, strict subset of Release.'
+        }
+
+        $allowed = [Collections.Generic.HashSet[string]]::new($StandardSelectors, [StringComparer]::Ordinal)
+        $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($method in $plan.Methods) {
+            if ($method -isnot [string] -or $method -cnotmatch '^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$') {
+                throw 'An impact test method must have the exact Class.Method form.'
+            }
+            $selector = 'Minecraft.Tests.' + $method
+            if (!$allowed.Contains($selector) -or !$selected.Add($selector)) {
+                throw "Unknown or duplicate release impact method: $method."
+            }
+        }
+
+        $head = & git -C $repository rev-parse --verify HEAD
+        if ($LASTEXITCODE -ne 0 -or $head -cne $plan.HeadCommit) { throw 'Release impact plan does not match HEAD.' }
+        $pending = & git -C $repository status --porcelain=v1 --untracked-files=normal
+        if ($LASTEXITCODE -ne 0 -or $pending) { throw 'Release impact requires a clean working tree.' }
+
+        $confirmed = & (Join-Path $PSScriptRoot 'Get-ReleaseImpact.ps1') -RepositoryRoot $repository `
+            -BaseCommit $plan.BaseCommit -HeadCommit $plan.HeadCommit
+        if ($confirmed.Scope -cne 'Impact' -or $confirmed.BaseCommit -cne $plan.BaseCommit -or
+            $confirmed.HeadCommit -cne $plan.HeadCommit -or
+            !$selected.SetEquals([string[]]@($confirmed.Methods | ForEach-Object { 'Minecraft.Tests.' + $_ }))) {
+            throw 'The current dependency rules do not confirm the release impact plan.'
+        }
+        return [pscustomobject]@{ Selectors = @($StandardSelectors | Where-Object { $selected.Contains($_) }) }
     }
-    return $selectors
+    catch {
+        Write-Warning ('Release impact plan could not be verified. Running full Release. ' + $_.Exception.Message)
+        return $null
+    }
 }
 
 function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$CaseBudget) {
@@ -56,9 +90,6 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$Cas
     if ([int]$counters.total -ne $results.Count -or [int]$counters.passed -ne $results.Count -or
         @($results | Where-Object outcome -ne 'Passed').Count -ne 0) {
         throw 'Every selected release case must pass; failures and skipped cases reject the release.'
-    }
-    if ($ReleaseScope -eq 'Pipeline' -and $results.Count -ne $CaseBudget) {
-        throw ('The pipeline profile must execute exactly ' + $CaseBudget + ' cases.')
     }
     # Keep the compact profile and the adapter union bounded.
     if ($results.Count -gt $CaseBudget) { throw ('The release profile exceeded its ' + $CaseBudget + '-case budget; review its selectors.') }
@@ -88,21 +119,21 @@ function Assert-ReleaseResults([string]$TrxPath, [string[]]$Selectors, [int]$Cas
     return [pscustomobject]@{ Passed = $results.Count; Selectors = $Selectors.Count; Profile = 'Release' }
 }
 
+$impact = $null
 if ($Profile -eq 'Release' -or $ValidateTrx) {
     $selectors = @(Read-ReleaseSelectors)
-    if ($ReleaseScope -eq 'Pipeline') {
-        $pipeline = @(Read-ReleaseSelectors $settingsName)
-        $outsideRelease = @($pipeline | Where-Object { $_ -cnotin $selectors })
-        if ($outsideRelease.Count -ne 0 -or $pipeline.Count -ge $selectors.Count) {
-            throw ('The pipeline profile must be a strict subset of Release. Unknown selectors: ' + ($outsideRelease -join ', '))
+    if ($ReleaseImpactPlan) {
+        $impact = Read-ReleaseImpactPlan $ReleaseImpactPlan $selectors
+        if ($null -ne $impact) {
+            $selectors = $impact.Selectors
         }
-        $selectors = $pipeline
     }
     elseif ($WithAdapters) {
         $selectors = @($selectors + @(Read-ReleaseSelectors 'Adapters') | Select-Object -Unique)
     }
 }
 
+$releaseScope = if ($null -eq $impact) { 'Standard' } else { 'Impact' }
 if ($ValidateTrx) {
     # Exercises the real guard against saved/synthetic results without a build,
     # process launch, environment override or test run.
@@ -130,10 +161,11 @@ try {
     }
 
     if ($Profile -eq 'Release') {
-        if ($WithAdapters) {
+        if ($WithAdapters -or $null -ne $impact) {
             [xml]$combined = Get-Content -LiteralPath $settingsPath -Raw
             $combined.RunSettings.RunConfiguration.TestCaseFilter = ($selectors | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'
-            $settingsPath = Join-Path $session 'ReleaseWithAdapters.runsettings'
+            $settingsName = if ($WithAdapters) { 'ReleaseWithAdapters.runsettings' } else { 'ReleaseImpact.runsettings' }
+            $settingsPath = Join-Path $session $settingsName
             $combined.Save($settingsPath)
         }
         if (-not $HostPath) {
@@ -154,6 +186,7 @@ try {
         '--settings', $settingsPath, '--logger', 'trx;LogFileName=tests.trx', '--results-directory', $session)
     if ($Profile -eq 'Release') {
         $summary = Assert-ReleaseResults (Join-Path $session 'tests.trx') $selectors $caseBudget
+        $summary | Add-Member -NotePropertyName Scope -NotePropertyValue $releaseScope
         $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $session 'summary.json') -Encoding utf8
         Write-Host ("Release gate: {0} passed cases across {1} selected methods." -f $summary.Passed, $summary.Selectors)
         foreach ($name in @('fixtures', 'host')) {

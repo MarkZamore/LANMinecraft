@@ -34,7 +34,12 @@ public sealed class ReleaseWorkflowTests
         Assert.Contains("Program\\Publish.ps1", build, StringComparison.Ordinal);
         Assert.DoesNotContain("Test-Launcher.ps1", build, StringComparison.Ordinal);
         Assert.Contains("Test-Launcher.ps1", verify, StringComparison.Ordinal);
-        Assert.Matches(@"(?m)^\s*& .*Test-Launcher\.ps1 -Profile Release (?!-ReleaseScope\b)", verify);
+        Assert.Contains("Invoke-Gh release download latest", verify, StringComparison.Ordinal);
+        Assert.Contains("--pattern update.json", verify, StringComparison.Ordinal);
+        Assert.Contains("$baseCommit = [string]$previous.commitSha", verify, StringComparison.Ordinal);
+        Assert.Contains("Get-ReleaseImpact.ps1 -BaseCommit $baseCommit -HeadCommit $env:GITHUB_SHA", verify, StringComparison.Ordinal);
+        Assert.Contains("-ReleaseImpactPlan $planPath", verify, StringComparison.Ordinal);
+        Assert.DoesNotContain("-ReleaseScope Pipeline", verify, StringComparison.Ordinal);
         Assert.DoesNotContain("Program\\Publish.ps1", verify, StringComparison.Ordinal);
 
         var needs = Regex.Match(publish, @"(?m)^    needs: \[([^\]\r\n]+)\]\r?$");
