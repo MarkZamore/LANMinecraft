@@ -1,0 +1,16 @@
+{
+  "sourceCommit": "93221ec4d6de78b891d015cde98e651fe7eb9346",
+  "graphifyVersion": "0.9.111",
+  "scopeTrees": {
+    "Program": "289becbd1085ace094173004e85954efde562100",
+    "Program.Tests": "6a5e7c892b1c9f7abf101b0e4ddace76304639ff",
+    "tools": "f4774c9541abd58e4319f4a9f826a58062da31de",
+    ".github": "90935cf34ed9624e74908af2997ea74f47304f5c"
+  },
+  "scopeFingerprint": "c3074fe941fa97dd64fc7adce04787ba7107e131275032eb91d0a2160de7777b",
+  "trackedFiles": 771,
+  "indexedFiles": 673,
+  "nodes": 11222,
+  "links": 38789,
+  "graphSha256": "090b4310c1f55e35ce01cfc79a2703eafad55a7dcd58e0a8d9ab8494f4ecb0c2"
+}

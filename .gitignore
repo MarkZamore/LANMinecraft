@@ -67,3 +67,8 @@ usernamecache.json
 **/*minecraft*client*.jar
 **/*minecraft*server*.jar
 server.jar
+
+# Track the portable project graph and its provenance only.
+/graphify-out/*
+!/graphify-out/graph.json
+!/graphify-out/source.json
