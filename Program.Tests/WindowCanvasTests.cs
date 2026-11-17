@@ -29,7 +29,7 @@ public sealed class WindowCanvasTests
         {
             var window = LoadWindow();
             ExpandSections(window);
-            Element<Button>(window, "ChangePlayerNameButton").Content = "Сохранить";
+            Element<Button>(window, "ChangePlayerNameButton").Content = "Сохранить никнейм";
             LayoutWindow(window, new Size(width, height));
             var root = Element<Grid>(window, "RootGrid");
             var body = Element<ScrollViewer>(window, "BodyScroll");
@@ -100,7 +100,22 @@ public sealed class WindowCanvasTests
             Assert.Equal(ResizeMode.CanResize, window.ResizeMode);
             Assert.True(double.IsNaN(Element<Grid>(window, "RootGrid").Width));
             Assert.DoesNotContain("<Viewbox", File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml")), StringComparison.Ordinal);
+            var placeholder = Element<TextBlock>(window, "BuildPlaceholderText");
+            placeholder.Visibility = Visibility.Visible;
             LayoutWindow(window, new Size(804, 521));
+            var nickname = Element<TextBox>(window, "PlayerNameTextBox");
+            var nicknameHint = Assert.Single(((Grid)nickname.Parent).Children.OfType<TextBlock>());
+            Assert.Equal("Придумайте никнейм", nicknameHint.Text);
+            Assert.Equal(Visibility.Visible, nicknameHint.Visibility);
+            var caret = window.FindResource("Brush.TextCaret");
+            Assert.Same(caret, nickname.CaretBrush);
+            Assert.Same(caret, Element<TextBox>(window, "BugReportMessageTextBox").CaretBrush);
+            Assert.Equal("Выберите сборку в библиотеке", placeholder.Text);
+            var text = new FormattedText(placeholder.Text, System.Globalization.CultureInfo.InvariantCulture,
+                placeholder.FlowDirection, new Typeface(placeholder.FontFamily, placeholder.FontStyle,
+                    placeholder.FontWeight, placeholder.FontStretch), placeholder.FontSize, placeholder.Foreground,
+                VisualTreeHelper.GetDpi(placeholder).PixelsPerDip);
+            Assert.True(text.Width <= placeholder.ActualWidth, $"Build placeholder needs {text.Width:F1} DIP, available {placeholder.ActualWidth:F1} DIP.");
             foreach (var name in SectionNames)
             {
                 var section = Element<Expander>(window, name);

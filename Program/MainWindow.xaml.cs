@@ -573,6 +573,7 @@ public partial class MainWindow : Window
         // the order they happen to be written down in.
         builds = ListOrder.Builds(builds).ToList();
 
+        var hadBuilds = _builds.Count != 0;
         var buildPathsMatch = _builds.Count == builds.Count &&
             _builds.Zip(builds).All(pair =>
                 string.Equals(pair.First.RelativePath, pair.Second.RelativePath, StringComparison.OrdinalIgnoreCase) &&
@@ -615,11 +616,6 @@ public partial class MainWindow : Window
         {
             _suppressBuildPersistence = false;
         }
-        if (selectedBuild is null)
-        {
-            BuildComboBox.SelectedItem = null;
-        }
-
         // A build the launcher chose on its own is still the player's build: it
         // is written down like any other choice, and its preset is looked at
         // straight away, because the selection handler is suppressed for it.
@@ -632,6 +628,11 @@ public partial class MainWindow : Window
             RefreshControlsPresetStatus();
             _ = RefreshLauncherDataAsync();
             _ = RefreshPackHashAndNetworkingAsync();
+        }
+        // Replace the displayed estimate when switching between a PC and a pack.
+        else if (hadBuilds != (selectedBuild is not null) && (hadBuilds || _recommendedMemoryGb.HasValue))
+        {
+            RefreshPackMemory();
         }
         _ = PrepareSelectedLaunchAsync();
     }
@@ -1341,7 +1342,10 @@ public partial class MainWindow : Window
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady || _minecraft is null || _transfer is null) return;
+        var steamStatus = _steamClient?.Status;
+        if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady ||
+            !SteamRecoveryPolicy.HasMatchingIdentity(steamStatus, _identityService?.Binding) ||
+            HasUnsavedPlayerName || _minecraft is null || _transfer is null) return;
         using var packUse = BuildComboBox.SelectedItem is ClientBuildViewModel selected
             ? _maintenance?.ProtectPack(selected.RelativePath) : null;
         _playRequested = true;
@@ -1355,9 +1359,14 @@ public partial class MainWindow : Window
             {
                 throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
             }
-            ApplyPlayerName();
-            if (!_selectedNativeRuntime) ApplyMemoryText();
             var settings = RequireSettings();
+            var launchNickname = GetLaunchNickname(steamStatus);
+            CommitPlayerName(launchNickname);
+            if (launchNickname.Length == 0)
+            {
+                throw new InvalidOperationException("Не удалось взять никнейм из Steam. Придумайте и сохраните никнейм.");
+            }
+            if (!_selectedNativeRuntime) ApplyMemoryText();
             if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
             {
                 throw new InvalidOperationException("В папке Minecraft/Packs не найдены сборки. Добавьте папку сборки с подпапкой mods.");
@@ -1877,9 +1886,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool IsPlayerNameInEditMode => _isEditingPlayerName ||
+        (_settings is { } settings && string.IsNullOrWhiteSpace(settings.PlayerName));
+    private bool HasUnsavedPlayerName => _isEditingPlayerName && !string.IsNullOrWhiteSpace(PlayerNameTextBox.Text);
+
+    private void RefreshPlayerNameEditor(bool settingsEnabled)
+    {
+        var editing = IsPlayerNameInEditMode;
+        PlayerNameTextBox.IsEnabled = settingsEnabled;
+        PlayerNameTextBox.IsReadOnly = !editing || !settingsEnabled;
+        ChangePlayerNameButton.IsEnabled = settingsEnabled;
+        ChangePlayerNameButton.Content = editing ? "Сохранить никнейм" : "Поменять никнейм";
+        _playerNameMarquee?.SetAllowed(!editing);
+    }
+
     private void PlayerNameTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_suppressTextPersistence || !_isEditingPlayerName) return;
+        if (_suppressTextPersistence || !IsPlayerNameInEditMode) return;
+        _isEditingPlayerName = true;
         RefreshUi();
     }
 
@@ -1920,7 +1944,7 @@ public partial class MainWindow : Window
 
     private async void PlayerNameTextBox_KeyDown(object sender, KeyEventArgs e)
     {
-        if (!_isEditingPlayerName) return;
+        if (!IsPlayerNameInEditMode) return;
         if (e.Key == Key.Escape)
         {
             CancelPlayerNameEdit();
@@ -1936,15 +1960,13 @@ public partial class MainWindow : Window
 
     private async void ChangePlayerNameButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy) return;
-        if (!_isEditingPlayerName)
+        if (_busy || _settings is null) return;
+        if (!IsPlayerNameInEditMode)
         {
             _isEditingPlayerName = true;
-            PlayerNameTextBox.IsReadOnly = false;
-            ChangePlayerNameButton.Content = "Сохранить";
+            RefreshUi();
             PlayerNameTextBox.Focus();
             PlayerNameTextBox.SelectAll();
-            RefreshUi();
             return;
         }
 
@@ -1956,35 +1978,33 @@ public partial class MainWindow : Window
         var candidate = PlayerNameTextBox.Text;
         await RunUiActionAsync(() =>
         {
-            var settings = RequireSettings();
-            if (!LocalIdentityService.TryNormalizeNewNickname(candidate, out var normalized, out var error))
+            var normalized = string.Empty;
+            if (!string.IsNullOrWhiteSpace(candidate) &&
+                !LocalIdentityService.TryNormalizeNewNickname(candidate, out normalized, out var error))
             {
                 throw new InvalidOperationException(error);
-            }
-            var previousName = LocalIdentityService.NormalizedOrNothing(settings.PlayerName);
-            if (string.Equals(previousName, normalized, StringComparison.Ordinal))
-            {
-                FinishPlayerNameEdit(normalized);
-                return Task.CompletedTask;
             }
             if (_minecraft?.IsClientRunning == true)
             {
                 throw new InvalidOperationException("Close Minecraft before changing the nickname.");
             }
-            settings.PreviousPlayerName = string.Equals(previousName, normalized, StringComparison.Ordinal)
-                ? settings.PreviousPlayerName
-                : previousName;
-            settings.PlayerName = normalized;
-            PersistActivePlayerIdentity();
-            // The file the running game reads its names from is rewritten here
-            // rather than at the next launch. A name that only travels when the
-            // game starts is a name nobody else's server knows yet, and the
-            // adapter on the other end re-reads this file whenever its timestamp
-            // moves - so a rename can reach a world somebody is already in.
-            RefreshIdentityRegistry();
-            FinishPlayerNameEdit(normalized);
+            CommitPlayerName(normalized);
             return Task.CompletedTask;
         });
+    }
+
+    private void CommitPlayerName(string name)
+    {
+        var settings = RequireSettings();
+        var previousName = LocalIdentityService.NormalizedOrNothing(settings.PlayerName);
+        if (!string.Equals(previousName, name, StringComparison.Ordinal))
+        {
+            if (previousName.Length != 0) settings.PreviousPlayerName = previousName;
+            settings.PlayerName = name;
+            PersistActivePlayerIdentity();
+            if (name.Length != 0) RefreshIdentityRegistry();
+        }
+        FinishPlayerNameEdit(name);
     }
 
     private void CancelPlayerNameEdit()
@@ -2006,8 +2026,6 @@ public partial class MainWindow : Window
         }
 
         _isEditingPlayerName = false;
-        PlayerNameTextBox.IsReadOnly = true;
-        ChangePlayerNameButton.Content = "Поменять никнейм";
         RefreshUi();
     }
 
@@ -2039,7 +2057,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            ResolveAndPersistLocalIdentity(status.PersonaName);
+            ResolveAndPersistLocalIdentity();
             // A recovered Steam session has to bring the network up too;
             // during startup this runs once more, and starting is idempotent.
             if (_startupComplete) await StartNetworkingAsync().ConfigureAwait(true);
@@ -2127,22 +2145,11 @@ public partial class MainWindow : Window
     /// <summary>
     /// Settles who this machine plays as, now that Steam has answered.
     /// </summary>
-    /// <remarks>
-    /// A name the player has already chosen is left exactly as it is - the one
-    /// they have been playing under for a year, and equally the one they typed
-    /// a minute ago while this very connection was still being made. Only an
-    /// install with no name at all takes Steam's, and only as much of it as
-    /// Minecraft can address.
-    /// </remarks>
-    private void ResolveAndPersistLocalIdentity(string personaName)
+    private void ResolveAndPersistLocalIdentity()
     {
         if (_identityService is null || _settings is null || _settingsService is null) return;
 
         _settings.PlayerName = LocalIdentityService.NormalizedOrNothing(_settings.PlayerName);
-        if (_settings.PlayerName.Length == 0)
-        {
-            _settings.PlayerName = LocalIdentityService.NicknameFromPersona(personaName);
-        }
         var resolvedContext = _identityService.ResolveContext(_settings);
         var updated = false;
 
@@ -2168,7 +2175,7 @@ public partial class MainWindow : Window
 
     private void RefreshPlayerIdentityDisplay()
     {
-        if (_isEditingPlayerName || PlayerNameTextBox.IsKeyboardFocusWithin)
+        if (_isEditingPlayerName)
         {
             return;
         }
@@ -2190,28 +2197,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyPlayerName()
+    private string GetLaunchNickname(SteamClientStatus? steamStatus)
     {
-        if (_settings is null || _identityService is null || _settingsService is null)
-        {
-            return;
-        }
-
-        var normalized = LocalIdentityService.NormalizedOrNothing(PlayerNameTextBox.Text);
-
-        _suppressTextPersistence = true;
-        try
-        {
-            PlayerNameTextBox.Text = normalized;
-            PlayerNameTextBox.CaretIndex = normalized.Length;
-        }
-        finally
-        {
-            _suppressTextPersistence = false;
-        }
-
-        _settings.PlayerName = normalized;
-        PersistActivePlayerIdentity();
+        if (!_isEditingPlayerName && _settings is { PlayerName.Length: > 0 } settings)
+            return settings.PlayerName;
+        return steamStatus is { IsReady: true } status
+            ? LocalIdentityService.NicknameFromPersona(status.PersonaName)
+            : string.Empty;
     }
 
     /// <summary>
@@ -2246,11 +2238,15 @@ public partial class MainWindow : Window
     {
         if (_settings is null || _settingsService is null) return;
 
-        if (_identityService is { IsBound: true } && !string.IsNullOrWhiteSpace(_settings.PlayerName))
+        if (_identityService is { IsBound: true })
         {
             var identity = _identityService.ResolveContext(_settings);
             _settings.LocalIdentityId = identity.SteamId64.ToString();
             _settings.LocalIdentityName = identity.IdentityName;
+        }
+        else if (_settings.PlayerName.Length == 0)
+        {
+            _settings.LocalIdentityName = string.Empty;
         }
 
         _settingsService.Save(_settings);
@@ -2890,10 +2886,12 @@ public partial class MainWindow : Window
         // it is thinking, and the walk happens off this thread.
         var wanted = _settings.ClientRelativePath;
         var generation = ++_packMemoryGeneration;
-        _selectedNativeRuntime = SelectedPackUsesNativeRuntime(wanted);
-        if (_selectedNativeRuntime)
+        var hasBuilds = _builds.Count != 0;
+        _selectedNativeRuntime = hasBuilds && SelectedPackUsesNativeRuntime(wanted);
+        if (!hasBuilds || _selectedNativeRuntime)
         {
             StopMemoryEstimateWait();
+            if (!hasBuilds) MemoryTextBox.ToolTip = null;
             RefreshMemoryEstimate();
             return Task.CompletedTask;
         }
@@ -3033,7 +3031,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshMemoryEstimate()
     {
-        if (_selectedNativeRuntime)
+        var hasBuilds = _builds.Count != 0;
+        if (hasBuilds && _selectedNativeRuntime)
         {
             _recommendedMemoryGb = null;
             MemoryTextBox.ToolTip = "Памятью управляет сама игра.";
@@ -3042,12 +3041,14 @@ public partial class MainWindow : Window
             MemoryEstimateText.ToolTip = MemoryTextBox.ToolTip;
             return;
         }
-        var estimateGb = MemorySizingService.GetRecommendedMemoryGb(
-            PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory());
+        var estimateGb = hasBuilds
+            ? MemorySizingService.GetRecommendedMemoryGb(PackForMemory(), VideoMemoryProfile.Measure(), MeasuredForMemory())
+            : MemorySizingService.GetDefaultHeapGb();
         _recommendedMemoryGb = estimateGb;
         MemoryEstimateButton.IsEnabled = MemoryTextBox.IsEnabled && _memoryEstimateWait?.IsEnabled != true;
         MemoryEstimateText.Text = $"Рекомендуется от {estimateGb} ГБ";
-        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ для этой сборки. Нажмите, чтобы установить это значение для всех сборок.";
+        var estimateScope = hasBuilds ? "для этой сборки" : "для этого ПК";
+        MemoryEstimateText.ToolTip = $"Рекомендуется от {estimateGb} ГБ {estimateScope}. Нажмите, чтобы установить это значение для всех сборок.";
     }
 
     /// <summary>
@@ -3139,18 +3140,13 @@ public partial class MainWindow : Window
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
-        var hasName = !string.IsNullOrWhiteSpace(_settings.PlayerName);
         var selectedRecipient = OnlinePlayerComboBox.SelectedItem as PeerViewModel;
         // The name and the memory size are read when the game starts, so they
         // stay editable while the pack downloads - that wait is long, and there
         // is nothing in it these two could spoil. Once the game holds them, they
         // are locked.
         var settingsEnabled = !_busy && !_minecraftRunning;
-        PlayerNameTextBox.IsEnabled = settingsEnabled;
-        PlayerNameTextBox.IsReadOnly = !_isEditingPlayerName || !PlayerNameTextBox.IsEnabled;
-        ChangePlayerNameButton.IsEnabled = settingsEnabled;
-        ChangePlayerNameButton.Content = _isEditingPlayerName ? "Сохранить" : "Поменять никнейм";
-        _playerNameMarquee?.SetAllowed(!_isEditingPlayerName);
+        RefreshPlayerNameEditor(settingsEnabled);
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         // Three states of one control: idle, preparing (the fill and the stage
@@ -3175,17 +3171,14 @@ public partial class MainWindow : Window
             PlayButtonText.Text = "Играть";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
-            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !_isEditingPlayerName && hasName &&
+            PlayButton.IsEnabled = configurationEnabled && IsIdentityBound && hasBuild && !HasUnsavedPlayerName &&
                 _minecraft is not null && _transfer is not null && SelectedBuildIsReady;
             if (!PlayButton.IsEnabled && (_steamClient?.Status.IsReady != true || !IsIdentityBound))
                 PlayButtonText.Text = "Включите Steam";
             else if (hasBuild && !SelectedBuildIsReady)
                 PlayButtonText.Text = _selectedLaunchError is null ? "Проверка сборки" : "Сборка недоступна";
         }
-        // The name is the one thing the launcher will not invent, so it is also
-        // the one thing it has to ask for. Without this the button is simply
-        // dead and nothing on the window says why.
-        PlayButton.ToolTip = !hasName ? "Сначала задайте ник" : hasBuild ? _selectedLaunchError : null;
+        PlayButton.ToolTip = HasUnsavedPlayerName ? "Сначала сохраните никнейм" : hasBuild ? _selectedLaunchError : null;
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;

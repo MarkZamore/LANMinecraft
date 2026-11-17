@@ -1,4 +1,7 @@
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Windows.Controls;
 using Xunit;
 
 namespace Minecraft.Tests;
@@ -10,10 +13,57 @@ namespace Minecraft.Tests;
 /// failing that the literal "Player". Nobody chose either, and yet that is the
 /// name a friend then sees on a shared world - which is how somebody ends up
 /// playing as "PC". The name is now the player's to give, and Steam's to offer
-/// only if the player has not given one by the time Steam answers.
+/// only when the player starts the game without a saved nickname.
 /// </summary>
 public sealed class FirstRunNicknameTests
 {
+    [Fact]
+    public void EmptyNickname_IsReadyToEditAndSave()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var controls = WindowCanvasTests.LoadWindow();
+            var input = Assert.IsType<TextBox>(controls.FindName("PlayerNameTextBox"));
+            var button = Assert.IsType<Button>(controls.FindName("ChangePlayerNameButton"));
+            var settings = new AppSettings();
+            var window = (MainWindow)RuntimeHelpers.GetUninitializedObject(typeof(MainWindow));
+            const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+            void Set(string name, object value) => typeof(MainWindow).GetField(name, fields)!.SetValue(window, value);
+            void Refresh(bool enabled) => typeof(MainWindow).GetMethod("RefreshPlayerNameEditor", fields)!.Invoke(window, [enabled]);
+            string LaunchNickname(SteamClientStatus status) => Assert.IsType<string>(
+                typeof(MainWindow).GetMethod("GetLaunchNickname", fields)!.Invoke(window, [status]));
+            Set("_settings", settings);
+            Set("PlayerNameTextBox", input);
+            Set("ChangePlayerNameButton", button);
+
+            Refresh(true);
+            Assert.False(input.IsReadOnly);
+            Assert.Equal("Сохранить никнейм", button.Content);
+            var steam = new SteamClientStatus(SteamAvailability.Ready, 76561198000000000, "Steam Player", "");
+            Assert.Equal("SteamPlayer", LaunchNickname(steam));
+            Assert.Empty(LaunchNickname(steam with { PersonaName = "Женя" }));
+            Assert.Empty(settings.PlayerName);
+
+            settings.PlayerName = "PlayerOne";
+            Refresh(true);
+            Assert.True(input.IsReadOnly);
+            Assert.Equal("Поменять никнейм", button.Content);
+            Assert.Equal("PlayerOne", LaunchNickname(steam));
+
+            Set("_isEditingPlayerName", true);
+            Refresh(true);
+            Assert.False(input.IsReadOnly);
+            Assert.Equal("Сохранить никнейм", button.Content);
+            Assert.Equal("SteamPlayer", LaunchNickname(steam));
+            Assert.Empty(LaunchNickname(steam with { PersonaName = "Женя" }));
+
+            Refresh(false);
+            Assert.True(input.IsReadOnly);
+            Assert.False(button.IsEnabled);
+            return true;
+        });
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -78,40 +128,19 @@ public sealed class FirstRunNicknameTests
             "These invent a name out of the Windows account: " + string.Join(", ", offenders));
     }
 
-    /// <summary>
-    /// The three moments the rule is made of, pinned where they are written:
-    /// a stored name is kept, an empty one asks Steam, and a nameless launcher
-    /// will not start a game.
-    /// </summary>
     [Fact]
-    public void TheRuleIsWiredWhereSteamAnswers()
+    public void SteamNicknameIsCommittedByPlayBeforeStartingTheGame()
     {
         var window = File.ReadAllText(FindRepositoryFile("Program", "MainWindow.xaml.cs"));
         var settling = Between(window, "private void ResolveAndPersistLocalIdentity(", "\n    }");
 
-        // A stored name is normalised and kept; Steam is asked only for what is
-        // still missing after that.
-        var kept = settling.IndexOf(
-            "_settings.PlayerName = LocalIdentityService.NormalizedOrNothing(_settings.PlayerName);",
-            StringComparison.Ordinal);
-        var guard = settling.IndexOf("if (_settings.PlayerName.Length == 0)", StringComparison.Ordinal);
-        var asked = settling.IndexOf(
-            "LocalIdentityService.NicknameFromPersona(personaName)", StringComparison.Ordinal);
-        Assert.True(kept >= 0, "The stored name is no longer kept.");
-        Assert.True(guard > kept, "Steam is asked before the stored name is looked at.");
-        Assert.True(asked > guard, "The persona is taken without checking for a name first.");
-
-        // And the persona that reaches it is the one Steam just gave.
-        Assert.Contains(
-            "ResolveAndPersistLocalIdentity(status.PersonaName);", window, StringComparison.Ordinal);
-
-        // A game started with no name is a player nobody can address, so the
-        // button waits rather than inventing one at the last moment.
-        Assert.Contains("&& !_isEditingPlayerName && hasName &&", window, StringComparison.Ordinal);
-        Assert.Contains(
-            "var hasName = !string.IsNullOrWhiteSpace(_settings.PlayerName);",
-            window,
-            StringComparison.Ordinal);
+        Assert.DoesNotContain("NicknameFromPersona", settling, StringComparison.Ordinal);
+        var play = Between(window, "private async void PlayButton_Click(", "\n    }");
+        var choose = play.IndexOf("GetLaunchNickname(steamStatus)", StringComparison.Ordinal);
+        var commit = play.IndexOf("CommitPlayerName(launchNickname)", StringComparison.Ordinal);
+        var reject = play.IndexOf("if (launchNickname.Length == 0)", StringComparison.Ordinal);
+        var start = play.IndexOf("StartClientAsync(", StringComparison.Ordinal);
+        Assert.True(choose >= 0 && choose < commit && commit < reject && reject < start);
     }
 
     /// <summary>

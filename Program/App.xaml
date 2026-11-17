@@ -70,6 +70,12 @@
         <SolidColorBrush x:Key="Brush.ProgressFill" Color="{StaticResource Color.ProgressFill}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumb" Color="{StaticResource Color.ScrollThumb}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumbHover" Color="{StaticResource Color.ScrollThumbHover}"/>
+        <LinearGradientBrush x:Key="Brush.TextCaret" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="Transparent" Offset="0.15"/>
+            <GradientStop Color="{StaticResource Color.Text}" Offset="0.15"/>
+            <GradientStop Color="{StaticResource Color.Text}" Offset="0.85"/>
+            <GradientStop Color="Transparent" Offset="0.85"/>
+        </LinearGradientBrush>
         <LinearGradientBrush x:Key="Brush.ProgressGlow" StartPoint="0,0" EndPoint="1,0">
             <GradientStop Color="{StaticResource Color.ProgressTrack}" Offset="0"/>
             <GradientStop Color="{StaticResource Color.ProgressFill}" Offset="0.5"/>

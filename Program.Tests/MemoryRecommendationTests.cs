@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -35,11 +36,20 @@ public sealed class MemoryRecommendationTests
                     BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [new Button(), new RoutedEventArgs()]);
                 Set("_settings", settings);
                 Set("_settingsService", service);
+                var builds = new ObservableCollection<ClientBuildViewModel>();
+                var estimate = new TextBlock();
+                Set("_builds", builds);
                 Set("MemoryTextBox", memory);
-                Set("MemoryEstimateText", new TextBlock());
+                Set("MemoryEstimateText", estimate);
                 Set("MemoryEstimateButton", new Button());
                 Click(); // No finished recommendation yet.
                 Assert.Equal("4", memory.Text);
+                builds.Add(new ClientBuildViewModel
+                {
+                    Name = "RecommendationTest",
+                    RelativePath = "RecommendationTest",
+                    FullPath = paths.CombineUnderPacks("RecommendationTest")
+                });
                 Set("_recommendedMemoryGb", 2);
                 memory.IsEnabled = false;
                 Click();
@@ -54,9 +64,26 @@ public sealed class MemoryRecommendationTests
                 Click();
                 Assert.Equal("2", memory.Text);
                 Assert.Equal(2, settings.MaxHeapGb);
+                var packEstimate = MemorySizingService.GetRecommendedMemoryGb(
+                    service.PackMemory, VideoMemoryProfile.Measure(), service.MeasuredMemory);
+                Assert.Equal($"Рекомендуется от {packEstimate} ГБ", estimate.Text);
                 var reloaded = service.Load();
                 Assert.Equal(2, reloaded.MaxHeapGb);
                 Assert.Equal(3, reloaded.MemoryByPack["OtherPack"]);
+
+                builds.Clear();
+                timer.Start();
+                try
+                {
+                    var refresh = (Task)typeof(MainWindow).GetMethod("RefreshPackMemoryAsync",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+                    Assert.True(refresh.IsCompletedSuccessfully);
+                    Assert.False(timer.IsEnabled);
+                    Assert.Equal($"Рекомендуется от {MemorySizingService.GetDefaultHeapGb()} ГБ", estimate.Text);
+                    Assert.Contains("для этого ПК", Assert.IsType<string>(estimate.ToolTip));
+                }
+                finally { timer.Stop(); }
+
                 memory.TextChanged += (_, e) => typeof(MainWindow).GetMethod("MemoryTextBox_TextChanged",
                     BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, [memory, e]);
                 memory.Text = "3";
