@@ -2,197 +2,215 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "minecraft-17",
-      "relativePath": "Antimatter Chemistry Reforged",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Antimatter-Chemistry-Reforged",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-22",
-      "relativePath": "Clayblock",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Clayblock",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-19",
-      "relativePath": "Desolate Planet",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Desolate-Planet",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-20",
-      "relativePath": "Escape The End",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Escape-The-End",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-12",
-      "relativePath": "FTB Inferno",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "FTB-Inferno",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-15",
-      "relativePath": "Liminal Industries",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Liminal-Industries",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-21",
-      "relativePath": "Reclamation",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Reclamation",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-18",
-      "relativePath": "UniversIO",
-      "libraryGroup": "В необычном мире",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "UniversIO",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "attack-on-titan",
-      "numberedId": "minecraft-7",
-      "relativePath": "Awakening Of The Titans",
-      "libraryGroup": "Сюжетные",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Awakening-Of-The-Titans",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "caves-and-dungeons",
-      "numberedId": "minecraft-4",
-      "relativePath": "Caves and Dungeons",
-      "libraryGroup": "Сюжетные",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Caves-and-Dungeons",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-23",
-      "relativePath": "Fear Nightfall",
-      "libraryGroup": "Сюжетные",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Fear-Nightfall",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "terrafirma-rebirth",
-      "numberedId": "minecraft-2",
-      "relativePath": "TerraFirma Rebirth 2",
-      "libraryGroup": "Сюжетные",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "TerraFirma-Rebirth-2",
-        "tag": "pack-latest"
-      }
-    },
-    {
       "id": "all-the-mods-10",
       "numberedId": "minecraft-1",
       "relativePath": "All the Mods 10",
-      "libraryGroup": "Много модов",
+      "libraryGroup": "Глобальные сборки",
       "source": {
         "owner": "MarkZamore",
         "repo": "All-the-Mods-10",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "high"
     },
     {
       "id": "all-the-mods-9",
       "numberedId": "minecraft-5",
       "relativePath": "All the Mods 9",
-      "libraryGroup": "Много модов",
+      "libraryGroup": "Глобальные сборки",
       "source": {
         "owner": "MarkZamore",
         "repo": "All-the-Mods-9",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "high"
     },
     {
       "id": "all-the-mods-9-modified",
       "numberedId": "minecraft-6",
       "relativePath": "All the Mods 9 Modified",
-      "libraryGroup": "Много модов",
+      "libraryGroup": "Глобальные сборки",
       "source": {
         "owner": "MarkZamore",
         "repo": "All-the-Mods-9-Modified",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "attack-on-titan",
+      "numberedId": "minecraft-7",
+      "relativePath": "Awakening Of The Titans",
+      "libraryGroup": "Приключения и кампании",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Awakening-Of-The-Titans",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "medium"
+    },
+    {
+      "id": "caves-and-dungeons",
+      "numberedId": "minecraft-4",
+      "relativePath": "Caves and Dungeons",
+      "libraryGroup": "Приключения и кампании",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-23",
+      "relativePath": "Fear Nightfall",
+      "libraryGroup": "Приключения и кампании",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Fear-Nightfall",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "minecraft-17",
+      "relativePath": "Antimatter Chemistry Reforged",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Antimatter-Chemistry-Reforged",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "medium"
+    },
+    {
+      "id": "minecraft-22",
+      "relativePath": "Clayblock",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Clayblock",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-19",
+      "relativePath": "Desolate Planet",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Desolate-Planet",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "minecraft-20",
+      "relativePath": "Escape The End",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Escape-The-End",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-12",
+      "relativePath": "FTB Inferno",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "FTB-Inferno",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "medium"
+    },
+    {
+      "id": "minecraft-15",
+      "relativePath": "Liminal Industries",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Liminal-Industries",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-21",
+      "relativePath": "Reclamation",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Reclamation",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "medium"
+    },
+    {
+      "id": "minecraft-18",
+      "relativePath": "UniversIO",
+      "libraryGroup": "Необычные миры",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "UniversIO",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "medium"
+    },
+    {
+      "id": "terrafirma-rebirth",
+      "numberedId": "minecraft-2",
+      "relativePath": "TerraFirma Rebirth 2",
+      "libraryGroup": "Хардкор и технологии",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "TerraFirma-Rebirth-2",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "high"
     },
     {
       "id": "better-than-wolves",
       "numberedId": "minecraft-8",
       "relativePath": "Better Than Wolves",
-      "libraryGroup": "Мало модов",
+      "libraryGroup": "Хардкор и технологии",
       "source": {
         "owner": "MarkZamore",
         "repo": "Better-Than-Wolves",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-24",
+      "relativePath": "Nuclear Tech Reborn",
+      "libraryGroup": "Хардкор и технологии",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Nuclear-Tech-Reborn",
+        "tag": "pack-latest"
+      },
+      "requirementsLevel": "low"
     },
     {
       "id": "minecraft-25",
       "relativePath": "Better Vanilla",
-      "libraryGroup": "Мало модов",
+      "libraryGroup": "Классика и альтернативные режимы",
       "source": {
         "owner": "MarkZamore",
         "repo": "Better-Vanilla",
         "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "minecraft-11",
-      "relativePath": "Hide and Hunt",
-      "libraryGroup": "Мало модов",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Hide-and-Hunt",
-        "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "medium"
     },
     {
       "id": "minecraft-26-2",
       "numberedId": "minecraft-3",
       "relativePath": "Minecraft Java Edition",
-      "libraryGroup": "Мало модов",
+      "libraryGroup": "Классика и альтернативные режимы",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-Java-Edition",
@@ -209,37 +227,41 @@
           "repo": "Minecraft-26.2",
           "tag": "pack-latest"
         }
-      ]
+      ],
+      "requirementsLevel": "medium"
     },
     {
       "id": "minecraft-9",
       "relativePath": "Minecraft Rust Edition",
-      "libraryGroup": "Мало модов",
+      "libraryGroup": "Классика и альтернативные режимы",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-Rust-Edition",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "medium"
     },
     {
       "id": "minecraft-10",
       "relativePath": "Minecraft Rust Mods",
-      "libraryGroup": "Мало модов",
+      "libraryGroup": "Классика и альтернативные режимы",
       "source": {
         "owner": "MarkZamore",
         "repo": "Minecraft-Rust-Mods",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "medium"
     },
     {
-      "id": "minecraft-24",
-      "relativePath": "Nuclear Tech Reborn",
-      "libraryGroup": "Мало модов",
+      "id": "minecraft-11",
+      "relativePath": "Hide and Hunt",
+      "libraryGroup": "Классика и альтернативные режимы",
       "source": {
         "owner": "MarkZamore",
-        "repo": "Nuclear-Tech-Reborn",
+        "repo": "Hide-and-Hunt",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "medium"
     },
     {
       "id": "minecraft-14",
@@ -249,7 +271,8 @@
         "owner": "MarkZamore",
         "repo": "All-in-One",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "low"
     },
     {
       "id": "minecraft-13",
@@ -259,7 +282,8 @@
         "owner": "MarkZamore",
         "repo": "All-the-Mods-10-To-the-Sky",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "high"
     },
     {
       "id": "minecraft-16",
@@ -269,7 +293,8 @@
         "owner": "MarkZamore",
         "repo": "Beebeeblock",
         "tag": "pack-latest"
-      }
+      },
+      "requirementsLevel": "high"
     }
   ]
 }
