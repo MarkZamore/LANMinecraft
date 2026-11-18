@@ -18,14 +18,14 @@
     },
     {
       "kind": "assets",
-      "id": "launcher-assets-1",
-      "url": "https://github.com/MarkZamore/LANMinecraft-Components/releases/download/desktop-components-1/launcher-assets-1.pak",
-      "apiUrl": "https://api.github.com/repos/MarkZamore/LANMinecraft-Components/releases/assets/760481447",
+      "id": "launcher-assets-3",
+      "url": "https://github.com/MarkZamore/LANMinecraft-Components/releases/download/launcher-assets-3/launcher-assets-3.pak",
+      "apiUrl": "https://api.github.com/repos/MarkZamore/LANMinecraft-Components/releases/assets/762946819",
       "entryPath": "Background.png",
-      "sizeBytes": 1551281,
-      "sha256": "17efaf1093759778966312d9d78b3dcc469b6ac97dd6b57ce617a55d3f595efd",
-      "manifestSizeBytes": 233,
-      "manifestSha256": "73f019dea66a16853aa527c24b806bb5921e10527a69023480b45a93a251e006"
+      "sizeBytes": 2748042,
+      "sha256": "e0602abf9c78c706ebaeb4b32d27a0de01fadbdbebda3fe429488593c9d964d3",
+      "manifestSizeBytes": 932,
+      "manifestSha256": "7411f82e7102f148485dfcce45b28c30949dba9b8f11fad86f8f1bde64bdd847"
     },
     {
       "kind": "steam-native",

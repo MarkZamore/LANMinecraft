@@ -50,6 +50,9 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                     .Select(attribute => (attribute.Name, attribute.Value)).OrderBy(attribute => attribute.Name.ToString()));
         }
         Assert.Equal(fixture.Packet, NativeHostResources.Read(fixture.Executable, 10, 101));
+        var fonts = Path.Combine(fixture.Repository, "Program", "Assets", "Fonts");
+        Assert.Equal(File.ReadAllBytes(Path.Combine(fonts, "Roboto-Regular.ttf")), NativeHostResources.Read(fixture.Executable, 10, 103));
+        Assert.Equal(File.ReadAllBytes(Path.Combine(fonts, "Roboto-SemiBold.ttf")), NativeHostResources.Read(fixture.Executable, 10, 104));
         var paths = fixture.Records.Select(record => record.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("PortabilityAuditHost.exe", paths);
         foreach (var required in new[] { "PortabilityAuditHost.dll", "PortabilityAuditHost.runtimeconfig.json", "PortabilityAuditHost.deps.json" })
@@ -802,13 +805,14 @@ public sealed class NativePortableHostFixture : IAsyncLifetime
         {
             var kind = item.GetProperty("kind").GetString()!;
             var url = new Uri(item.GetProperty("url").GetString()!);
-            var packet = Path.Combine(Path.GetFullPath(shared), Path.GetFileName(url.AbsolutePath));
+            var store = BootstrapLaunchContext.TestComponentStore(shared, kind);
+            var packet = Path.Combine(store, Path.GetFileName(url.AbsolutePath));
             var component = new NativeDesktopComponent(kind, item.GetProperty("id").GetString()!, item.GetProperty("entryPath").GetString()!,
                 item.GetProperty("sizeBytes").GetInt64(), item.GetProperty("sha256").GetString()!,
                 item.GetProperty("manifestSizeBytes").GetInt64(), item.GetProperty("manifestSha256").GetString()!, packet);
             Assert.Equal(component.SizeBytes, new FileInfo(packet).Length);
             Assert.Equal(component.Sha256, HashFile(packet), ignoreCase: true);
-            var manifest = Path.Combine(shared, kind + ".manifest");
+            var manifest = Path.Combine(store, kind + ".manifest");
             Assert.Equal(component.ManifestSizeBytes, new FileInfo(manifest).Length);
             Assert.Equal(component.ManifestSha256, HashFile(manifest), ignoreCase: true);
             using (var stream = File.OpenRead(packet))

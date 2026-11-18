@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Resources;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,6 +13,13 @@ namespace Minecraft;
 public sealed class GameNoticeOverlayService
 {
     internal const string NativeFeature = "native-launcher-notices-v1";
+    internal const string BundledFontMode = "roboto-v1";
+    private static readonly (string Name, int Length, string Sha256)[] NoticeFonts =
+    [
+        ("Roboto-Regular.ttf", 123720, "dece7c71bbe61710787f0839c722c65e87355dd2eb4a823e6b5488121ff81e4b"),
+        ("Roboto-SemiBold.ttf", 124288, "f478ba88b0292e685e487901dfbb1401457d32d6ebee4030cdfd5698235bffa8")
+    ];
+    private static readonly Lazy<byte[][]> BundledFonts = new(ReadBundledFonts);
     private static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(7);
     private static readonly TimeSpan HeartbeatLifetime = TimeSpan.FromSeconds(2);
     private readonly AppPaths _paths;
@@ -25,7 +33,7 @@ public sealed class GameNoticeOverlayService
     private readonly Func<int, double> _displayScale;
     private readonly Func<int, int, bool> _isDescendant;
     private readonly Func<int, bool> _fullscreenPresentation;
-    private IReadOnlyDictionary<string, string> _style = new Dictionary<string, string>();
+    private IReadOnlyDictionary<string, string> _style = WithBundledFonts(new Dictionary<string, string>());
 
     public GameNoticeOverlayService(AppPaths paths, Logger logger)
         : this(paths, logger, () => DateTimeOffset.UtcNow, ForegroundProcessId, ProcessStartTicks) { }
@@ -56,7 +64,7 @@ public sealed class GameNoticeOverlayService
     {
         lock (_gate)
         {
-            _style = new Dictionary<string, string>(style, StringComparer.Ordinal);
+            _style = WithBundledFonts(style);
             foreach (var session in _sessions.Values)
             {
                 try { WriteProperties(Path.Combine(session.Directory, "style.properties"), _style); }
@@ -68,11 +76,72 @@ public sealed class GameNoticeOverlayService
         }
     }
 
+    private static Dictionary<string, string> WithBundledFonts(IReadOnlyDictionary<string, string> style) =>
+        new(style, StringComparer.Ordinal) { ["fontFamily"] = "Roboto", ["fontMode"] = BundledFontMode };
+
+    private static byte[][] ReadBundledFonts()
+    {
+        // Read the WPF resource without an Application dispatcher or a network dependency.
+        var assembly = typeof(GameNoticeOverlayService).Assembly;
+        var resources = new ResourceManager(assembly.GetName().Name + ".g", assembly);
+        try
+        {
+            return NoticeFonts.Select(font =>
+            {
+                using var stream = resources.GetStream("assets/fonts/" + font.Name.ToLowerInvariant(), CultureInfo.InvariantCulture);
+                if (stream is null || stream.Length != font.Length)
+                    throw new InvalidDataException($"Missing or invalid bundled font: {font.Name}");
+                var bytes = new byte[font.Length];
+                stream.ReadExactly(bytes);
+                if (!Convert.ToHexStringLower(SHA256.HashData(bytes)).Equals(font.Sha256, StringComparison.Ordinal))
+                    throw new InvalidDataException($"Bundled font differs from its pin: {font.Name}");
+                return bytes;
+            }).ToArray();
+        }
+        finally { resources.ReleaseAllResources(); }
+    }
+
+    private void PublishSessionFonts(string directory)
+    {
+        try
+        {
+            var fonts = BundledFonts.Value;
+            for (var index = 0; index < fonts.Length; index++)
+                AtomicWrite(Path.Combine(directory, NoticeFonts[index].Name), fonts[index]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or MissingManifestResourceException)
+        {
+            // Keep the game launch available. Without a matching font heartbeat
+            // TryShow uses the ordinary desktop notification.
+            _logger.Warn($"Could not prepare the in-game notice fonts: {ex.Message}");
+        }
+    }
+
+    private void DeleteSessionFonts(string directory)
+    {
+        foreach (var font in NoticeFonts)
+        {
+            var file = Path.Combine(directory, font.Name);
+            try
+            {
+                EnsureOrdinaryDirectory(directory);
+                if (!File.Exists(file)) continue;
+                EnsureOrdinaryFile(file);
+                File.Delete(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn($"Could not clear an in-game notice font: {ex.Message}");
+            }
+        }
+    }
+
     internal PreparedOverlay PrepareSession(bool native = false)
     {
         var agent = native ? null : ExtractAgent();
         var directory = Path.Combine(SessionsRoot, Guid.NewGuid().ToString("N"));
         EnsureOrdinaryDirectory(directory);
+        PublishSessionFonts(directory);
         var session = new OverlaySession(directory, 0, 0, native);
         lock (_gate)
         {
@@ -137,6 +206,7 @@ public sealed class GameNoticeOverlayService
     {
         var heartbeat = ReadProperties(Path.Combine(session.Directory, "heartbeat.properties"));
         return string.IsNullOrEmpty(heartbeat.GetValueOrDefault("error")) &&
+               heartbeat.GetValueOrDefault("fontMode") == BundledFontMode &&
                int.TryParse(heartbeat.GetValueOrDefault("pid"), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) &&
                pid == processId &&
                long.TryParse(heartbeat.GetValueOrDefault("timestampUnixMs"), NumberStyles.None, CultureInfo.InvariantCulture, out var stamp) &&
@@ -280,6 +350,7 @@ public sealed class GameNoticeOverlayService
             {
                 _logger.Warn($"Could not clear a finished notice session: {ex.Message}");
             }
+            DeleteSessionFonts(session.Directory);
         }
     }
 
@@ -299,10 +370,19 @@ public sealed class GameNoticeOverlayService
             {
                 EnsureOrdinaryDirectory(directory);
                 var metadataPath = Path.Combine(directory, "session.json");
-                if (!File.Exists(metadataPath)) continue;
+                if (!File.Exists(metadataPath))
+                {
+                    if (Guid.TryParseExact(Path.GetFileName(directory), "N", out _)) DeleteSessionFonts(directory);
+                    continue;
+                }
                 EnsureOrdinaryFile(metadataPath);
                 var metadata = JsonSerializer.Deserialize<SessionMetadata>(File.ReadAllBytes(metadataPath));
-                if (metadata is null || metadata.ProcessId <= 0 || _processStartTicks(metadata.ProcessId) != metadata.StartedUtcTicks) continue;
+                if (metadata is null || metadata.ProcessId <= 0) continue;
+                if (_processStartTicks(metadata.ProcessId) != metadata.StartedUtcTicks)
+                {
+                    if (Guid.TryParseExact(Path.GetFileName(directory), "N", out _)) DeleteSessionFonts(directory);
+                    continue;
+                }
                 var session = new OverlaySession(directory, metadata.ProcessId, metadata.StartedUtcTicks, metadata.NativeProcessTree);
                 // The previous launcher's messages must not reappear after a restart.
                 WriteSnapshot(session);

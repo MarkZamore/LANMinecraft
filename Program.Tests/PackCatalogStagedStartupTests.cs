@@ -603,7 +603,7 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
         internal CatalogHost()
         {
             Client = new HttpClient(this);
-            using var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
+            using var seed = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!;
             using var archive = new ZipArchive(seed, ZipArchiveMode.Read);
             using var stream = archive.GetEntry("preview.jpg")!.Open();
             using var bytes = new MemoryStream(); stream.CopyTo(bytes); preview = bytes.ToArray();

@@ -59,7 +59,7 @@
                         Padding="{DynamicResource Pad.None}" BorderThickness="{DynamicResource Border.None}" Background="Transparent"
                         Foreground="{DynamicResource Brush.TextMuted}" Focusable="False"
                         IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-                        <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Grid Background="Transparent"><Path x:Name="Chevron" Width="{DynamicResource Font.SizeBody}" Height="{DynamicResource Font.SizeBody}" Stretch="Fill" Data="M 0,0 L 5,5 L 10,0" Stroke="{TemplateBinding Foreground}" StrokeThickness="{DynamicResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform/></Path.RenderTransform></Path></Grid></ControlTemplate></ToggleButton.Template>
+                        <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Grid Background="Transparent"><Path x:Name="Chevron" Width="{DynamicResource Font.SizeBody}" Height="{DynamicResource Font.SizeBody}" Stretch="Fill" Data="{local:LauncherSvg chevron}" Stroke="{TemplateBinding Foreground}" StrokeThickness="{DynamicResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform/></Path.RenderTransform></Path></Grid></ControlTemplate></ToggleButton.Template>
                     </ToggleButton>
                     <Border x:Name="HeaderSurface" Grid.Column="1" Padding="{DynamicResource Pad.Small}" MinHeight="{DynamicResource Font.LineHeightBody}" CornerRadius="{DynamicResource Radius.Control}">
                         <ContentPresenter x:Name="PART_Header" ContentSource="Header" VerticalAlignment="Center"/>
@@ -99,13 +99,25 @@
         </Grid>
         <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="CatalogOverviewHost">
+                <ItemsControl x:Name="RequirementsLegend" ItemsSource="{x:Static local:PackRequirementTag.All}"
+                              ItemTemplate="{DynamicResource LibraryRequirementLegendTemplate}"
+                              Margin="{DynamicResource Gap.Below2}" Focusable="False">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                </ItemsControl>
                 <ItemsControl x:Name="CatalogCards">
                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:LibraryColumnsPanel MinimumColumnWidth="{DynamicResource Size.LibraryCardWidth}" FixedColumnWidth="{DynamicResource Size.LibraryCardWidth}" UniformItemHeight="True" Gap="{DynamicResource Space.4}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                     <ItemsControl.Resources>
                         <DataTemplate DataType="{x:Type local:CatalogPack}">
-                            <Button Style="{StaticResource LibraryCardStyle}" Click="PackCard_Click" AutomationProperties.Name="{Binding Name}">
+                            <Button Style="{StaticResource LibraryCardStyle}" Click="PackCard_Click"
+                                    AutomationProperties.Name="{Binding Name}" AutomationProperties.HelpText="{Binding Requirements.Label}">
                                 <StackPanel>
-                                    <local:LibraryPreviewImage Source="{Binding Preview}" Stretch="UniformToFill"/>
+                                    <Grid>
+                                        <local:LibraryPreviewImage Source="{Binding Preview}" Stretch="UniformToFill"/>
+                                        <Path x:Name="RequirementsDot" DataContext="{Binding Requirements}" Data="{local:LauncherSvg requirements-dot}"
+                                              Style="{DynamicResource LibraryRequirementDotStyle}" ToolTip="{Binding Label}"
+                                              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="{DynamicResource Pad.LibraryCard}"
+                                              Stroke="{DynamicResource Brush.Canvas}" StrokeThickness="{DynamicResource Size.BorderWidth}"/>
+                                    </Grid>
                                     <StackPanel Margin="{DynamicResource Pad.LibraryCard}">
                                         <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextWrapping="Wrap" ToolTip="{Binding Name}"/>
                                         <TextBlock Text="{Binding VersionLabel}" TextWrapping="Wrap" Foreground="{DynamicResource Brush.TextMuted}" FontSize="{DynamicResource Font.SizeCaption}" Margin="{DynamicResource Gap.Above1}"/>

@@ -980,7 +980,8 @@ public sealed class WindowCanvasTests
         var estimate = Element<TextBlock>(window, "MemoryEstimateText");
         Assert.Equal(TextWrapping.NoWrap, estimate.TextWrapping);
         Assert.Equal(Element<TextBox>(window, "PlayerNameTextBox").FontSize, estimate.FontSize);
-        Assert.True(estimate.DesiredSize.Width <= estimate.ActualWidth + estimate.Margin.Left + estimate.Margin.Right + 0.5,
+        var estimateButton = Element<Button>(window, "MemoryEstimateButton");
+        Assert.True(Bounds(estimate, estimateButton).Right <= estimateButton.ActualWidth + 0.5,
             "The RAM recommendation is clipped.");
         Assert.Equal(Element<Grid>(window, "PresetSettingsRow").ColumnDefinitions[2].ActualWidth,
             preset.ActualWidth + preset.Margin.Left + preset.Margin.Right, 3);

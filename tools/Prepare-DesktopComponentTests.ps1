@@ -6,12 +6,17 @@ Set-StrictMode -Version Latest
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $customLock = [bool]$LockPath
 $candidateDirectory = ''
+$assetCandidateDirectory = ''
 if (!$LockPath -and $env:LANMINECRAFT_DESKTOP_TEST_CANDIDATE) {
     $candidateDirectory = [IO.Path]::GetFullPath($env:LANMINECRAFT_DESKTOP_TEST_CANDIDATE)
     $LockPath = Join-Path $candidateDirectory 'desktop-components.json'
 }
 if (!$LockPath) { $LockPath = Join-Path $PSScriptRoot 'desktop-components.lock.json' }
 $LockPath = [IO.Path]::GetFullPath($LockPath)
+if ($env:LANMINECRAFT_DESKTOP_TEST_ASSETS_CANDIDATE) {
+    if ($customLock -or $candidateDirectory) { throw 'Choose either a full lock or an assets-only candidate for desktop tests.' }
+    $assetCandidateDirectory = [IO.Path]::GetFullPath($env:LANMINECRAFT_DESKTOP_TEST_ASSETS_CANDIDATE)
+}
 function Assert-DesktopRelativePath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or [Text.Encoding]::UTF8.GetByteCount($Path) -gt 1024 -or
         $Path.Contains('\') -or $Path.StartsWith('/') -or $Path.Contains(':') -or $Path -match '[\x00-\x1f\x7f]') { throw "Unsafe component path: $Path" }
@@ -113,6 +118,13 @@ function Test-DesktopPacket {
 
 $lock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
 if ($lock.schemaVersion -ne 1 -or $lock.protocolVersion -ne 1 -or @($lock.components).Count -ne 3) { throw 'Unsupported desktop component lock.' }
+if ($assetCandidateDirectory) {
+    $candidate = Get-Content -LiteralPath (Join-Path $assetCandidateDirectory 'launcher-assets.json') -Raw | ConvertFrom-Json
+    if ($candidate.schemaVersion -ne 1 -or $candidate.protocolVersion -ne 1 -or $candidate.component.kind -cne 'assets') {
+        throw 'Unsupported assets-only desktop candidate.'
+    }
+    $lock.components = @($lock.components | ForEach-Object { if ($_.kind -ceq 'assets') { $candidate.component } else { $_ } })
+}
 $identities = [Collections.Generic.List[string]]::new()
 foreach ($kind in @('desktop-runtime','assets','steam-native')) {
     $rows = @($lock.components | Where-Object kind -CEQ $kind)
@@ -148,11 +160,33 @@ while (!$lease) {
     catch [IO.IOException] { if ([DateTime]::UtcNow -ge $deadline) { throw 'Another process is still preparing desktop component tests.' }; Start-Sleep -Milliseconds 200 }
 }
 try {
+    $locations = [ordered]@{}
     foreach ($component in $lock.components) {
-        $packet = Join-Path $fixture ($component.id+'.pak')
+        # Independent components retain their own immutable cache, so a new
+        # artwork pin does not duplicate the .NET and Steam payloads.
+        $store = Join-Path $taskRoot ("component-$($component.kind)-$($component.sha256)")
+        $packetName = $component.id+'.pak'
+        if (!(Test-Path -LiteralPath (Join-Path $store $packetName) -PathType Leaf)) {
+            foreach ($legacy in Get-ChildItem -LiteralPath $taskRoot -Directory) {
+                if ($legacy.Name -cnotmatch '^[0-9a-f]{64}$' -or ($legacy.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+                $oldPacket = Join-Path $legacy.FullName $packetName
+                Assert-DesktopOrdinaryPath $oldPacket
+                if ((Test-Path -LiteralPath $oldPacket -PathType Leaf) -and
+                    (Get-Item -LiteralPath $oldPacket).Length -eq $component.sizeBytes -and
+                    (Get-DesktopSha256 $oldPacket) -ceq $component.sha256) {
+                    $store = $legacy.FullName
+                    break
+                }
+            }
+        }
+        Assert-DesktopOrdinaryPath $store
+        [void][IO.Directory]::CreateDirectory($store)
+        $packet = Join-Path $store $packetName
         Assert-DesktopOrdinaryPath $packet
-        if ($candidateDirectory) {
-            $candidate = Join-Path $candidateDirectory ($component.id+'.pak')
+        $provided = if ($candidateDirectory) { $candidateDirectory } elseif ($component.kind -ceq 'assets') { $assetCandidateDirectory } else { '' }
+        if ($provided) {
+            $candidate = Join-Path $provided $packetName
+            Assert-DesktopOrdinaryPath $candidate
             if (!(Test-Path -LiteralPath $candidate -PathType Leaf) -or (Get-Item -LiteralPath $candidate).Length -ne $component.sizeBytes -or
                 (Get-DesktopSha256 $candidate) -cne $component.sha256) { throw 'Candidate desktop packet differs from its exact catalog pin.' }
             if (!(Test-Path -LiteralPath $packet)) { Copy-DesktopFileAtomic $candidate $packet }
@@ -167,9 +201,15 @@ try {
                 Move-Item -LiteralPath $part -Destination $packet
             } finally { if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force } }
         }
-        $null = Test-DesktopPacket -Component $component -PacketPath $packet -ManifestPath (Join-Path $fixture ($component.kind+'.manifest')) -ExtractDirectory (Join-Path $fixture $component.kind)
+        $null = Test-DesktopPacket -Component $component -PacketPath $packet -ManifestPath (Join-Path $store ($component.kind+'.manifest')) -ExtractDirectory (Join-Path $store $component.kind)
+        $locations[$component.kind] = [IO.Path]::GetRelativePath($taskRoot, $store)
     }
-    Copy-DesktopFileAtomic $LockPath (Join-Path $fixture 'desktop-components.json')
+    if ($assetCandidateDirectory) {
+        Write-DesktopBytesAtomic (Join-Path $fixture 'desktop-components.json') ([Text.UTF8Encoding]::new($false).GetBytes(($lock|ConvertTo-Json -Depth 8)+"`n"))
+    } else {
+        Copy-DesktopFileAtomic $LockPath (Join-Path $fixture 'desktop-components.json')
+    }
+    Write-DesktopBytesAtomic (Join-Path $fixture 'locations.json') ([Text.UTF8Encoding]::new($false).GetBytes(($locations|ConvertTo-Json -Depth 4)+"`n"))
 } finally { $lease.Dispose() }
 $env:LANMINECRAFT_DESKTOP_TEST_COMPONENTS = $fixture
 Write-Host "Desktop component test dependencies verified: $fixture"

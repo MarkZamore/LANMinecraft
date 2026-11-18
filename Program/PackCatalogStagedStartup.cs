@@ -395,7 +395,7 @@ public sealed partial class PackCatalogService
             if (!VerifyHash(bundle, descriptor)) throw new InvalidDataException("Library bundle hash/size mismatch.");
             var revision = document.RootElement.TryGetProperty("revision", out var declared) ? declared.GetString() : null;
             if (descriptor.GetProperty("revision").GetString() != revision) throw new InvalidDataException("Library descriptor revision mismatch.");
-            pack = DecodeBundle(entry, bundle, revision);
+            pack = DecodeBundle(entry, bundle, revision, ReadPublishedModCount(document.RootElement));
         }
         token.ThrowIfCancellationRequested();
         var presentationChanged = false;
@@ -449,7 +449,7 @@ public sealed partial class PackCatalogService
                     candidate.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
                 if (current is null || (entry.Source != current.Source && entry.Source != _effectiveSources[entry.RelativePath].Source))
                     return false;
-                _packs[entry.RelativePath] = pack.WithLibraryGroup(current.LibraryGroup);
+                _packs[entry.RelativePath] = pack.WithLibraryPresentation(current);
             }
             return true;
         }
@@ -473,6 +473,7 @@ public sealed partial class PackCatalogService
             {
                 var candidate = next[index];
                 next[index] = _overviewSnapshot.FirstOrDefault(previous => previous.Entry == candidate.Entry &&
+                    previous.PublishedModCount == candidate.PublishedModCount &&
                     candidate.ContentIdentity.Length > 0 && previous.ContentIdentity == candidate.ContentIdentity) ?? candidate;
             }
             var changed = ready != _overviewReady || !_overviewSnapshot.SequenceEqual(next);
@@ -487,13 +488,13 @@ public sealed partial class PackCatalogService
         try
         {
             lock (_gate) if (_packs.ContainsKey(entry.RelativePath)) return;
-            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.StorageId + ".zip");
+            using var stream = LauncherAssets.OpenLibrarySeed(entry.StorageId);
             if (stream is null) return;
             using var bytes = new MemoryStream();
             stream.CopyTo(bytes);
             var pack = DecodeBundle(entry, bytes.ToArray(), null);
             lock (_gate) if (IsCurrentEntry(entry))
-                _packs.TryAdd(entry.RelativePath, pack.WithLibraryGroup(_effectiveSources[entry.RelativePath].LibraryGroup));
+                _packs.TryAdd(entry.RelativePath, pack.WithLibraryPresentation(_effectiveSources[entry.RelativePath]));
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library fallback: " + ex.Message); }
     }

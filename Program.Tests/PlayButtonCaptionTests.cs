@@ -111,16 +111,21 @@ public sealed class PlayButtonCaptionTests
         var pending = new RuntimePreparationProgress(RuntimePreparationStage.RepairingPackStructure, "");
         var waiting = PlayButtonCaption.For(pending, 0);
         Assert.Equal("Восстановление сборки", waiting);
-        EveryCaption_FitsInsideTheButton(waiting);
         var download = pending with { Fraction = 0.99, DownloadedBytes = JustUnderAGigabyte - 1, TotalBytes = JustUnderAGigabyte };
         var progress = PlayButtonCaption.For(download, FastDownload);
         Assert.StartsWith(waiting, progress, StringComparison.Ordinal);
-        EveryCaption_FitsInsideTheButton(progress);
+        foreach (var scale in new[] { 1d, 1.25d, 1.5d, 2d })
+        {
+            AssertCaptionFits(waiting, scale);
+            AssertCaptionFits(progress, scale);
+        }
     }
 
     [Theory]
     [MemberData(nameof(EveryCaption))]
-    public void EveryCaption_FitsInsideTheButton(string caption)
+    public void EveryCaption_FitsInsideTheButton(string caption) => AssertCaptionFits(caption, 1);
+
+    private static void AssertCaptionFits(string caption, double scale)
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
@@ -129,7 +134,14 @@ public sealed class PlayButtonCaptionTests
             var text = Assert.IsType<TextBlock>(window.FindName("PlayButtonText"));
             text.Text = caption;
             button.IsHitTestVisible = false;
+            var dpi = new DpiScale(scale, scale);
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi((FrameworkElement)window.Content, dpi);
             WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi((FrameworkElement)window.Content, dpi);
+            WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
+            Assert.Equal(scale, VisualTreeHelper.GetDpi(text).DpiScaleX, 6);
 
             Assert.Equal((FontFamily)window.FindResource("Font.Family"), text.FontFamily);
             Assert.Equal((FontWeight)window.FindResource("Font.WeightEmphasis"), text.FontWeight);
@@ -138,7 +150,8 @@ public sealed class PlayButtonCaptionTests
             var actions = Assert.IsType<Grid>(window.FindName("LaunchActions"));
             Assert.Equal(Assert.IsType<Grid>(window.FindName("PlayArea")).ColumnDefinitions[0].ActualWidth, actions.ActualWidth, 3);
             Assert.Equal(Assert.IsType<Grid>(window.FindName("BodyGrid")).ActualWidth, actions.ActualWidth, 3);
-            Assert.Equal(Assert.IsType<Button>(window.FindName("LibraryButton")).ActualWidth * 1.5, button.ActualWidth, 3);
+            Assert.InRange(Math.Abs(Assert.IsType<Button>(window.FindName("LibraryButton")).ActualWidth * 1.5 -
+                                    button.ActualWidth), 0, 1.5 / scale);
             var bounds = text.TransformToAncestor(button)
                 .TransformBounds(new Rect(new Point(), text.RenderSize));
             Assert.True(bounds.Left >= button.BorderThickness.Left - 0.5 &&

@@ -807,7 +807,7 @@ public sealed class PackCatalogTests : IDisposable
             _revision = revision;
             _publishedModCount = publishedModCount;
             Client = new HttpClient(this);
-            using var original = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
+            using var original = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!;
             using var zip = new ZipArchive(original, ZipArchiveMode.Read);
             using var reader = zip.GetEntry("library.json")!.Open();
             var description = JsonSerializer.Deserialize<CatalogDescription>(reader, Options)!;

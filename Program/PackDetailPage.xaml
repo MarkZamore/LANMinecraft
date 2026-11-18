@@ -40,7 +40,7 @@
                         Padding="{DynamicResource Pad.None}" BorderThickness="{DynamicResource Border.None}" Background="Transparent"
                         Foreground="{DynamicResource Brush.TextMuted}" Focusable="False"
                         IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
-                        <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Grid Background="Transparent"><Path x:Name="Chevron" Width="{DynamicResource Font.SizeBody}" Height="{DynamicResource Font.SizeBody}" Stretch="Fill" Data="M 0,0 L 5,5 L 10,0" Stroke="{TemplateBinding Foreground}" StrokeThickness="{DynamicResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform/></Path.RenderTransform></Path></Grid></ControlTemplate></ToggleButton.Template>
+                        <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Grid Background="Transparent"><Path x:Name="Chevron" Width="{DynamicResource Font.SizeBody}" Height="{DynamicResource Font.SizeBody}" Stretch="Fill" Data="{local:LauncherSvg chevron}" Stroke="{TemplateBinding Foreground}" StrokeThickness="{DynamicResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" VerticalAlignment="Center" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform/></Path.RenderTransform></Path></Grid></ControlTemplate></ToggleButton.Template>
                     </ToggleButton>
                     <Border x:Name="HeaderSurface" Grid.Column="1" Padding="{DynamicResource Pad.Small}" MinHeight="{DynamicResource Font.LineHeightBody}" CornerRadius="{DynamicResource Radius.Control}">
                         <ContentPresenter x:Name="PART_Header" ContentSource="Header" VerticalAlignment="Center"/>
@@ -68,7 +68,18 @@
                         <Border Background="{DynamicResource Brush.LibraryHeroOverlay}"/>
                         <Grid Margin="{DynamicResource Pad.Panel}">
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                            <Button Content="← Назад" Click="ReturnCatalog_Click" HorizontalAlignment="Left"/>
+                            <Button Click="ReturnCatalog_Click" HorizontalAlignment="Left" AutomationProperties.Name="Назад">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path Data="{local:LauncherSvg back}" Width="{DynamicResource Size.Icon}" Height="{DynamicResource Size.Icon}"
+                                          Stretch="Uniform" VerticalAlignment="Center" Margin="{DynamicResource Gap.Right2}"
+                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="{DynamicResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    <TextBlock Text="Назад" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <ContentControl x:Name="RequirementsBadge" Content="{Binding Requirements}"
+                                            ContentTemplate="{DynamicResource LibraryRequirementDetailTemplate}"
+                                            HorizontalAlignment="Right" VerticalAlignment="Top" Focusable="False"/>
                             <Grid Grid.Row="2">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Bottom" Margin="{DynamicResource Gap.Right3}">

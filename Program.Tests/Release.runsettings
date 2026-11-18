@@ -169,6 +169,11 @@
       FullyQualifiedName=Minecraft.Tests.PackDisplayNamesResolverTests.UnverifiedAuthorFilesCannotOverrideTheResolverOrTheTitle|
       FullyQualifiedName=Minecraft.Tests.PackDisplayNamesResolverTests.VerifiedNetworkCacheAndStagedStartupPreserveTheAuthorsExactName|
       FullyQualifiedName=Minecraft.Tests.DesignTokensTests.AppXaml_DefinesEveryTokenDesignMdNames_AndNoOthers|
+      FullyQualifiedName=Minecraft.Tests.DesignTokensTests.RobotoTypefaces_ResolveFromApplicationResourcesWithExactWeights|
+      FullyQualifiedName=Minecraft.Tests.LauncherAssetsTests.VerifiedPackageSuppliesOfflinePreviewsAndSvgGeometry|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.RequirementsFollowVerifiedIndexAndPersistAcrossOfflineStartup|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogOverviewTests.InvalidRequirementLevelKeepsTheLastVerifiedIndex|
+      FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.RequirementLegendCardDotAndOpenedBadgeShowTheSameLevel|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.PreparationAndRunningGameLeaveCatalogueAndDetailsScrollable|
       FullyQualifiedName=Minecraft.Tests.LibraryAvailabilityTests.LibraryScrollbarIsAutomaticWhenItsContentDoesNotOverflow|
       FullyQualifiedName=Minecraft.Tests.LibraryStartupRefreshTests.EarlyOpenShowsAvailableCardAndMembershipBeforeOtherCardsFinish|

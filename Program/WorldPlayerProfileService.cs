@@ -583,11 +583,11 @@ internal sealed class NbtFile
                     StringComparison.OrdinalIgnoreCase)
                     ? Path.Combine(directory, LauncherBackupFileName)
                     : null;
-                ReplaceWithRetry(temporaryPath, fullPath, backupPath);
+                PublishNbtWithRetry(temporaryPath, fullPath, backupPath, replace: true);
             }
             else
             {
-                File.Move(temporaryPath, fullPath);
+                PublishNbtWithRetry(temporaryPath, fullPath, backup: null, replace: false);
             }
             _ = Read(fullPath);
         }
@@ -597,22 +597,20 @@ internal sealed class NbtFile
         }
     }
 
-    // ReplaceFile deletes the previous backup and renames two files in one
-    // shot; a real-time scanner (Defender) that has just opened level.dat_old
-    // or the freshly written temp file makes the whole call fail with
-    // "unable to remove replaced file". The hold lasts milliseconds, so a few
-    // short retries make the launch reliable without weakening atomicity.
-    private static void ReplaceWithRetry(string source, string destination, string? backup)
+    // A scanner can open the temporary file during either atomic rename.
+    // A first write keeps no-overwrite semantics throughout the retries.
+    private static void PublishNbtWithRetry(string source, string destination, string? backup, bool replace)
     {
         const int attempts = 6;
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                File.Replace(source, destination, backup, ignoreMetadataErrors: true);
+                if (replace) File.Replace(source, destination, backup, ignoreMetadataErrors: true);
+                else File.Move(source, destination);
                 return;
             }
-            catch (IOException) when (attempt < attempts)
+            catch (IOException ex) when (attempt < attempts && (replace || (ex.HResult & 0xffff) is 32 or 33))
             {
                 Thread.Sleep(50 * attempt);
             }

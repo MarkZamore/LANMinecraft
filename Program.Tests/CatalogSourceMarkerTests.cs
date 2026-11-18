@@ -141,7 +141,7 @@ public sealed class CatalogSourceMarkerTests : IDisposable
             var payload = Encoding.UTF8.GetBytes(source.Repo);
             var runtime = Encoding.UTF8.GetBytes("""{"schemaVersion":1,"minecraftVersion":"26.2","loader":{"type":"vanilla"}}""");
             using var buffer = new MemoryStream();
-            using (var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!)
+            using (var seed = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!)
             using (var original = new ZipArchive(seed))
             using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, true))
             {

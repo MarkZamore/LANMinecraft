@@ -206,6 +206,8 @@ try {
 } finally { $dependencyWriter.Dispose(); $dependencyBuffer.Dispose() }
 $dependencyResource = Escape-ResourcePath $dependencyPath
 $icon = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Minecraft.ico')))
+$regularFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-Regular.ttf')))
+$semiboldFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-SemiBold.ttf')))
 $packetResource = Escape-ResourcePath $packetPath
 $productVersion = '1.0.' + $ReleaseNumber + $(if ($SourceRevisionId) { '+' + $SourceRevisionId.ToLowerInvariant() } else { '' })
 $resources = @"
@@ -213,6 +215,8 @@ $resources = @"
 1 ICON "$icon"
 101 RCDATA "$packetResource"
 102 RCDATA "$dependencyResource"
+103 RCDATA "$regularFont"
+104 RCDATA "$semiboldFont"
 1 VERSIONINFO
  FILEVERSION 1,0,$ReleaseNumber,0
  PRODUCTVERSION 1,0,$ReleaseNumber,0

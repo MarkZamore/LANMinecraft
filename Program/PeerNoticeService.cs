@@ -37,7 +37,6 @@ public sealed class PeerNoticeService : IDisposable
             {
                 ["bgArgb"] = Color("Brush.Popup"), ["borderArgb"] = Color("Brush.Border"),
                 ["textArgb"] = Color("Brush.Text"), ["mutedArgb"] = Color("Brush.TextMuted"),
-                ["fontFamily"] = (_owner.TryFindResource("Font.Family") as FontFamily)?.Source.Split(',')[0].Trim() ?? "Segoe UI",
                 ["fontSize"] = Number("Font.SizeBody"), ["width"] = Number("Size.NoticeWidth"),
                 ["gap"] = (_owner.TryFindResource("Gap.Canvas") is Thickness gap ? gap.Left : 24).ToString(CultureInfo.InvariantCulture),
                 ["padding"] = (_owner.TryFindResource("Pad.Panel") is Thickness padding ? padding.Left : 16).ToString(CultureInfo.InvariantCulture),

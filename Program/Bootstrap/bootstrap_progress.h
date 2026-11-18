@@ -98,8 +98,6 @@ public:
         state_.Cancel();
         if (worker_.joinable()) worker_.join();
         CloseWindow();
-        if (font_) DeleteObject(font_);
-        if (headingFont_) DeleteObject(headingFont_);
         UnregisterClassW(L"LANMinecraft.BootstrapPreparation", GetModuleHandleW(nullptr));
         if (canvas_) DeleteObject(canvas_);
     }
@@ -168,6 +166,7 @@ private:
     HWND progress_ = nullptr;
     HWND cancel_ = nullptr;
     HWND retry_ = nullptr;
+    BootstrapFonts fonts_;
     HFONT font_ = nullptr;
     HFONT headingFont_ = nullptr;
     HBRUSH canvas_ = nullptr;
@@ -251,36 +250,18 @@ private:
         if (window_) DestroyWindow(window_);
         window_ = nullptr;
         heading_ = stage_ = metrics_ = progress_ = cancel_ = retry_ = nullptr;
+        if (font_) DeleteObject(std::exchange(font_, nullptr));
+        if (headingFont_) DeleteObject(std::exchange(headingFont_, nullptr));
+        fonts_.Clear();
         shownStage_.clear(); shownMetrics_.clear(); shownProgress_.clear();
         layoutWidth_ = layoutHeight_ = 0; layoutDpi_ = 0;
-    }
-    HFONT UiFont(int height, int weight)
-    {
-        auto create = [&](const wchar_t* family) { return CreateFontW(-Scale(height), 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, family); };
-        auto font = create(L"Segoe UI Variable Text");
-        HDC dc = GetDC(nullptr);
-        wchar_t actual[LF_FACESIZE]{};
-        if (dc && font)
-        {
-            const auto previous = SelectObject(dc, font);
-            GetTextFaceW(dc, LF_FACESIZE, actual);
-            SelectObject(dc, previous);
-        }
-        if (dc) ReleaseDC(nullptr, dc);
-        if (!EqualOrdinal(actual, L"Segoe UI Variable Text"))
-        {
-            if (font) DeleteObject(font);
-            font = create(L"Segoe UI");
-        }
-        return font;
     }
     void Fonts()
     {
         const auto previous = font_;
         const auto previousHeading = headingFont_;
-        font_ = UiFont(14, FW_NORMAL);
-        headingFont_ = UiFont(18, FW_SEMIBOLD);
+        font_ = fonts_.Create(Scale(14), FW_NORMAL);
+        headingFont_ = fonts_.Create(Scale(18), FW_SEMIBOLD);
         for (auto control : { heading_, stage_, metrics_, progress_, cancel_, retry_ })
             if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(control == heading_ ? headingFont_ : font_), FALSE);
         if (previous) DeleteObject(previous);
@@ -530,6 +511,22 @@ private:
             }
             self->UpdateControls();
             return 1;
+        }
+        case WM_APP + 0x54:
+        {
+            const int id = static_cast<int>(wparam);
+            if (id != HeadingId && id != StageId && id != MetricsId && id != IDCANCEL && id != IDRETRY) return 0;
+            const auto child = GetDlgItem(window, id);
+            if (!child) return 0;
+            const auto font = reinterpret_cast<HFONT>(SendMessageW(child, WM_GETFONT, 0, 0));
+            const auto dc = GetDC(child);
+            if (!dc) return 0;
+            const auto previous = font ? SelectObject(dc, font) : nullptr;
+            const bool selected = previous && previous != HGDI_ERROR;
+            const int weight = selected ? BootstrapFonts::VerifiedRobotoWeight(dc) : 0;
+            if (selected) SelectObject(dc, previous);
+            ReleaseDC(child, dc);
+            return weight;
         }
         case WM_APP + 0x51:
         {

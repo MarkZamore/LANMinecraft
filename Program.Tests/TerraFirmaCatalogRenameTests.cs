@@ -131,7 +131,7 @@ public sealed class TerraFirmaCatalogRenameTests : IDisposable
 
     private string WriteLegacyCache(bool damageBundle)
     {
-        using var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + StableId + ".zip")!;
+        using var seed = LauncherAssets.OpenLibrarySeed(StableId)!;
         using var original = new ZipArchive(seed, ZipArchiveMode.Read);
         using var metadata = original.GetEntry("library.json")!.Open();
         var description = JsonSerializer.Deserialize<CatalogDescription>(metadata, JsonOptions)!;

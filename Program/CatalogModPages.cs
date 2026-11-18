@@ -25,11 +25,10 @@ internal static class CatalogModPages
     private static Dictionary<(string Pack, string Mod), string> LoadSeedPages()
     {
         var pages = new Dictionary<(string Pack, string Mod), string>();
-        var assembly = typeof(CatalogModPages).Assembly;
-        foreach (var name in assembly.GetManifestResourceNames().Where(n =>
-                     n.StartsWith("Minecraft.Library.", StringComparison.Ordinal) && n.EndsWith(".zip", StringComparison.Ordinal)))
+        foreach (var id in PackCatalogService.SeedSources().Select(source => source.StorageId).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            using var stream = assembly.GetManifestResourceStream(name)!;
+            using var stream = LauncherAssets.OpenLibrarySeed(id);
+            if (stream is null) continue;
             using var archive = new ZipArchive(stream);
             using var json = archive.GetEntry("library.json")!.Open();
             var content = JsonSerializer.Deserialize<CatalogDescription>(json, JsonOptions)!;

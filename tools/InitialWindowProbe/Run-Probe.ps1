@@ -16,7 +16,12 @@ $output = Join-Path $repository ('artifacts/agent-runs/initial-window-probe/' + 
 $agent = Join-Path $env:LANMINECRAFT_COMPONENT_TEST_ASSETS 'launcher-notice-agent.jar'
 if (-not $IconArchive) {
     & (Join-Path $repository 'tools/Prepare-DesktopComponentTests.ps1')
-    $IconArchive = Join-Path $env:LANMINECRAFT_DESKTOP_TEST_COMPONENTS 'assets/MinecraftWindowIconAssets.jar'
+    $selection = $env:LANMINECRAFT_DESKTOP_TEST_COMPONENTS
+    $locations = Join-Path $selection 'locations.json'
+    $store = if (Test-Path -LiteralPath $locations) {
+        Join-Path (Split-Path -Parent $selection) ((Get-Content -LiteralPath $locations -Raw | ConvertFrom-Json).assets)
+    } else { $selection }
+    $IconArchive = Join-Path $store 'assets/MinecraftWindowIconAssets.jar'
 }
 $IconArchive = [IO.Path]::GetFullPath($IconArchive)
 $java = if ($JavaExecutable) { $JavaExecutable } else { Join-Path $JavaHome 'bin/java.exe' }

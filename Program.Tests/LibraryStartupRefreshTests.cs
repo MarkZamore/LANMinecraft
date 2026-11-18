@@ -232,7 +232,7 @@ public sealed class LibraryStartupRefreshTests
         internal CatalogHost()
         {
             Client = new HttpClient(this);
-            using var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
+            using var seed = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!;
             using var archive = new ZipArchive(seed, ZipArchiveMode.Read);
             using var stream = archive.GetEntry("preview.jpg")!.Open();
             using var image = new MemoryStream(); stream.CopyTo(image);

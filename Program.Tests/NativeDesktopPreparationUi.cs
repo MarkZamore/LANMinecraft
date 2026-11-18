@@ -173,6 +173,14 @@ internal static class NativeDesktopPreparationUi
             var text = Text(child);
             var measuredWidth = 0;
             var measuredHeight = 0;
+            var fontWeight = 0;
+            if (id != Progress)
+            {
+                // The test hook compares the full selected GDI font with the PE
+                // resource and reads its real static weight inside the child.
+                fontWeight = checked((int)Send(window, 0x8054, (nuint)id, 0));
+                Assert.Equal(id == 1101 ? 600 : 400, fontWeight);
+            }
             if (id != Progress && text.Length > 0)
             {
                 GetClientRect(child, out var available);
@@ -186,7 +194,7 @@ internal static class NativeDesktopPreparationUi
                 Assert.True(measuredWidth <= available.Right && measuredHeight <= available.Bottom,
                     $"Control {id} clips '{text}' at {dpi} DPI: {measuredWidth}x{measuredHeight} > {available.Right}x{available.Bottom}");
             }
-            children.Add(new { id, text, measuredWidth, measuredHeight, left = topLeft.X, top = topLeft.Y, right = bottomRight.X, bottom = bottomRight.Y });
+            children.Add(new { id, text, fontWeight, measuredWidth, measuredHeight, left = topLeft.X, top = topLeft.Y, right = bottomRight.X, bottom = bottomRight.Y });
         }
         return new { requestedDpi = dpi, actualMonitorDpi = actualDpi, width = parent.Right, height = parent.Bottom, children };
     }

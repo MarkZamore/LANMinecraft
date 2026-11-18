@@ -27,6 +27,70 @@ public sealed class PackCatalogOverviewTests : IDisposable
     public void Dispose() => TempTree.Delete(_root);
 
     [Fact]
+    public async Task RequirementsFollowVerifiedIndexAndPersistAcrossOfflineStartup()
+    {
+        using var host = new OverviewHost();
+        var inferred = host.Add("inferred", "Inferred Pack", "Inferred-Pack");
+        host.Publish(inferred, "one", modCount: 350);
+        var explicitLevel = host.Add("level", "Explicit Pack", "Explicit-Pack") with
+        {
+            LibraryGroup = "First group", RequirementsLevel = "medium"
+        };
+        host.Index = [explicitLevel, inferred];
+
+        var first = Staged(host);
+        await first.InitializeIndexAsync().WaitAsync(Deadline);
+        await first.PrepareLibraryAsync().WaitAsync(Deadline);
+        Assert.Equal(new[] { "level", "inferred" }, first.Packs.Select(pack => pack.Entry.Id));
+        Assert.Equal(PackRequirementTag.Medium, first.Packs[0].Requirements);
+        Assert.Equal(2, first.Packs[1].ModCount);
+        Assert.Equal(PackRequirementTag.High, first.Packs[1].Requirements);
+
+        host.Index = [inferred, explicitLevel with { LibraryGroup = "Second group", RequirementsLevel = "low" }];
+        using var cancelled = new CancellationTokenSource();
+        var blocked = host.BlockManifest(explicitLevel);
+        var current = Staged(host);
+        await current.InitializeIndexAsync().WaitAsync(Deadline);
+        var preparing = current.PrepareLibraryAsync(cancelled.Token);
+        try
+        {
+            await blocked.Requested.Task.WaitAsync(Deadline);
+            Assert.Equal(new[] { "inferred", "level" }, current.Packs.Select(pack => pack.Entry.Id));
+            Assert.Equal("Second group", current.Packs[1].Entry.LibraryGroup);
+            Assert.Equal(PackRequirementTag.Low, current.Packs[1].Requirements);
+        }
+        finally
+        {
+            blocked.Release.TrySetResult();
+            await preparing.WaitAsync(Deadline);
+        }
+
+        host.Offline = true;
+        var offline = Staged(host);
+        await offline.InitializeIndexAsync().WaitAsync(Deadline);
+        await offline.PrepareLibraryAsync().WaitAsync(Deadline);
+        Assert.Equal(new[] { PackRequirementTag.High, PackRequirementTag.Low }, offline.Packs.Select(pack => pack.Requirements));
+    }
+
+    [Fact]
+    public async Task InvalidRequirementLevelKeepsTheLastVerifiedIndex()
+    {
+        using var host = new OverviewHost();
+        var entry = host.Add("level", "Pack", "Valid-Pack") with { RequirementsLevel = "medium" };
+        host.Index = [entry];
+        var first = Staged(host);
+        await first.InitializeIndexAsync().WaitAsync(Deadline);
+        await first.PrepareLibraryAsync().WaitAsync(Deadline);
+
+        host.Index = [entry with { RequirementsLevel = "extreme" }];
+        var next = Staged(host);
+        await next.InitializeIndexAsync().WaitAsync(Deadline);
+        await next.PrepareLibraryAsync().WaitAsync(Deadline);
+        Assert.Equal("medium", Assert.Single(next.Sources).RequirementsLevel);
+        Assert.Equal(PackRequirementTag.Medium, Assert.Single(next.Packs).Requirements);
+    }
+
+    [Fact]
     public async Task CheckedCachePublishesTogetherThenEachFreshCardUpdatesWithoutWaitingForOtherRequests()
     {
         using var host = new OverviewHost();
@@ -288,8 +352,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
     public async Task EmbeddedOverviewPublishesAllCardsBeforeFreshMetadataReturns()
     {
         using var host = new OverviewHost();
-        host.Index = PackCatalogService.SeedSources().Where(entry => typeof(PackCatalogService).Assembly
-            .GetManifestResourceInfo("Minecraft.Library." + entry.StorageId + ".zip") is not null).Take(2).ToArray();
+        host.Index = PackCatalogService.SeedSources().Where(entry => LauncherAssets.HasLibrarySeed(entry.StorageId)).Take(2).ToArray();
         Assert.Equal(2, host.Index.Length);
         foreach (var entry in host.Index) host.Publish(entry, "fresh");
         var gates = host.Index.Select(host.BlockManifest).ToArray();
@@ -384,9 +447,8 @@ public sealed class PackCatalogOverviewTests : IDisposable
         internal OverviewHost()
         {
             Client = new HttpClient(this);
-            var assembly = typeof(PackCatalogService).Assembly;
-            var resource = assembly.GetManifestResourceNames().First(name => name.StartsWith("Minecraft.Library.", StringComparison.Ordinal) && name.EndsWith(".zip", StringComparison.Ordinal));
-            using var stream = assembly.GetManifestResourceStream(resource)!;
+            var storageId = PackCatalogService.SeedSources().First(entry => LauncherAssets.HasLibrarySeed(entry.StorageId)).StorageId;
+            using var stream = LauncherAssets.OpenLibrarySeed(storageId)!;
             using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
             using var image = zip.GetEntry("preview.jpg")!.Open();
             using var copy = new MemoryStream(); image.CopyTo(copy); _preview = copy.ToArray();
@@ -398,7 +460,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
             Publish(entry, "one");
             return entry;
         }
-        internal void Publish(CatalogSource entry, string revision)
+        internal void Publish(CatalogSource entry, string revision, int? modCount = null)
         {
             using var output = new MemoryStream();
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
@@ -418,7 +480,7 @@ public sealed class PackCatalogOverviewTests : IDisposable
             var payload = Encoding.UTF8.GetBytes("fixture payload");
             var manifest = JsonSerializer.SerializeToUtf8Bytes(new
             {
-                schemaVersion = 1, revision, minecraftVersion = "1.20.1",
+                schemaVersion = 1, revision, minecraftVersion = "1.20.1", modCount,
                 files = new[] { new { path = "mods/payload.jar", sizeBytes = payload.Length, sha256 = Convert.ToHexStringLower(SHA256.HashData(payload)) } },
                 assets = new[] { new { name = "payload.jar", kind = "jar", sizeBytes = payload.Length, sha256 = Convert.ToHexStringLower(SHA256.HashData(payload)), covers = new[] { "mods/payload.jar" } } },
                 library = new { name = asset, sizeBytes = bundle.Length, sha256 = hash, revision }

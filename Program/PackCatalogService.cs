@@ -16,6 +16,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
     public string? InstallationPath { get; init; }
     public string? CompatibilityPath { get; init; }
     public string? LibraryGroup { get; init; }
+    public string? RequirementsLevel { get; init; }
     public List<string> LegacyRelativePaths { get; init; } = [];
     public List<PackSyncSource> LegacySources { get; init; } = [];
 
@@ -33,6 +34,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
         LegacyId == other.LegacyId && NumberedId == other.NumberedId &&
         InstallationPath == other.InstallationPath &&
         CompatibilityPath == other.CompatibilityPath && LibraryGroup == other.LibraryGroup &&
+        RequirementsLevel == other.RequirementsLevel &&
         (LegacyRelativePaths is null ? other.LegacyRelativePaths is null :
             other.LegacyRelativePaths is not null && LegacyRelativePaths.SequenceEqual(other.LegacyRelativePaths, StringComparer.Ordinal)) &&
         (LegacySources is null ? other.LegacySources is null :
@@ -49,6 +51,7 @@ public sealed record CatalogSource(string Id, string RelativePath, PackSyncSourc
         hash.Add(InstallationPath, StringComparer.Ordinal);
         hash.Add(CompatibilityPath, StringComparer.Ordinal);
         hash.Add(LibraryGroup, StringComparer.Ordinal);
+        hash.Add(RequirementsLevel, StringComparer.Ordinal);
         hash.Add(LegacyRelativePaths?.Count ?? -1);
         if (LegacyRelativePaths is not null)
             foreach (var path in LegacyRelativePaths) hash.Add(path, StringComparer.Ordinal);
@@ -115,11 +118,14 @@ public sealed class CatalogPack
     public required CatalogDescription Content { get; init; }
     public required BitmapImage Preview { get; init; }
     public string ContentIdentity { get; init; } = "";
+    internal int? PublishedModCount { get; init; }
     public string Name => Content.Name;
     // Published metadata contains the actual loaded mod IDs, including embedded
     // dependencies. The library flag only controls the presentation category.
     public int ModCount => Content.Mods.Where(mod => mod.IsLoadedMod)
         .Select(mod => mod.Id).Distinct(StringComparer.Ordinal).Count();
+    public PackRequirementTag Requirements => PackRequirementTag.FromCatalogCode(Entry.RequirementsLevel) ??
+        PackRequirementTag.Estimate(Content.MinecraftVersion, PublishedModCount ?? ModCount, Content.NativeProject is not null);
     // Player-facing counts follow the actual main tree, including collapsed
     // addons. Native inventory and memory estimates retain their full counts.
     public int DisplayModCount
@@ -172,15 +178,16 @@ public sealed class CatalogPack
     public bool ShowModSection => Content.NativeProject is null || Mods.Count != 0 || HasLibraries;
     internal IReadOnlySet<string> AllContentModIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
 
-    internal CatalogPack WithLibraryGroup(string? group)
+    internal CatalogPack WithLibraryPresentation(CatalogSource current)
     {
-        if (Entry.LibraryGroup == group) return this;
+        if (Entry.LibraryGroup == current.LibraryGroup && Entry.RequirementsLevel == current.RequirementsLevel) return this;
         var updated = new CatalogPack
         {
-            Entry = Entry with { LibraryGroup = group },
+            Entry = Entry with { LibraryGroup = current.LibraryGroup, RequirementsLevel = current.RequirementsLevel },
             Content = Content,
             Preview = Preview,
             ContentIdentity = ContentIdentity,
+            PublishedModCount = PublishedModCount,
             AllContentModIds = AllContentModIds
         };
         updated.Mods.AddRange(Mods);
@@ -265,7 +272,7 @@ public sealed partial class PackCatalogService
             _knownCatalogPaths.Add(entry.RelativePath);
             _knownCatalogPaths.UnionWith(entry.LegacyRelativePaths);
             if (IsStaged) continue;
-            using var stream = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library." + entry.StorageId + ".zip");
+            using var stream = LauncherAssets.OpenLibrarySeed(entry.StorageId);
             if (stream is null) continue;
             using var bytes = new MemoryStream();
             stream.CopyTo(bytes);
@@ -519,7 +526,7 @@ public sealed partial class PackCatalogService
             if (!VerifyHash(bundle, descriptor)) throw new InvalidDataException("Library bundle hash/size mismatch.");
             var revision = doc.RootElement.GetProperty("revision").GetString();
             if (descriptor.GetProperty("revision").GetString() != revision) throw new InvalidDataException("Library descriptor revision mismatch.");
-            pack = DecodeBundle(entry, bundle, revision);
+            pack = DecodeBundle(entry, bundle, revision, ReadPublishedModCount(doc.RootElement));
         }
         // A source may still publish the old game-only format.
         var value = new CachedEntry { Entry = entry, Manifest = raw, Bundle = bundle };
@@ -573,7 +580,7 @@ public sealed partial class PackCatalogService
         var revision = manifest.GetProperty("revision").GetString();
         if (string.IsNullOrWhiteSpace(revision) || descriptor.GetProperty("revision").GetString() != revision)
             throw new InvalidDataException("Corrupt library cache revision.");
-        return DecodeBundle(entry, cached.Bundle, revision);
+        return DecodeBundle(entry, cached.Bundle, revision, ReadPublishedModCount(manifest));
     }
 
     private CachedEntry? ReadCache(CatalogSource entry)
@@ -629,7 +636,11 @@ public sealed partial class PackCatalogService
         bytes.LongLength == descriptor.GetProperty("sizeBytes").GetInt64() &&
         Convert.ToHexString(SHA256.HashData(bytes)).Equals(descriptor.GetProperty("sha256").GetString(), StringComparison.OrdinalIgnoreCase);
 
-    private static CatalogPack DecodeBundle(CatalogSource entry, byte[] bytes, string? revision)
+    private static int? ReadPublishedModCount(JsonElement manifest) =>
+        manifest.TryGetProperty("modCount", out var property) && property.ValueKind == JsonValueKind.Number &&
+        property.TryGetInt32(out var count) && count >= 0 ? count : null;
+
+    private static CatalogPack DecodeBundle(CatalogSource entry, byte[] bytes, string? revision, int? publishedModCount = null)
     {
         using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
         if (zip.Entries.Count != 2 || zip.Entries.Any(e => e.FullName is not ("library.json" or "preview.jpg") || e.Length > MaximumBundleBytes))
@@ -662,7 +673,14 @@ public sealed partial class PackCatalogService
         image.StreamSource = imageBytes;
         image.EndInit();
         image.Freeze();
-        var pack = new CatalogPack { Entry = entry, Content = content, Preview = image, ContentIdentity = Convert.ToHexString(SHA256.HashData(bytes)) };
+        var pack = new CatalogPack
+        {
+            Entry = entry,
+            Content = content,
+            Preview = image,
+            ContentIdentity = Convert.ToHexString(SHA256.HashData(bytes)),
+            PublishedModCount = publishedModCount
+        };
         pack.BuildTree();
         return pack;
     }
@@ -724,6 +742,8 @@ public sealed partial class PackCatalogService
             if (entry.LibraryGroup is { } group && (group.Length > 80 || string.IsNullOrWhiteSpace(group) ||
                 group != group.Trim() || group.Any(char.IsControl)))
                 throw new InvalidDataException("Invalid library group name.");
+            if (entry.RequirementsLevel is not null && PackRequirementTag.FromCatalogCode(entry.RequirementsLevel) is null)
+                throw new InvalidDataException("Invalid library requirements level.");
             if ((entry.InstallationPath is not null && !ValidFolder(entry.InstallationPath)) ||
                 (entry.CompatibilityPath is not null && !ValidFolder(entry.CompatibilityPath)))
                 throw new InvalidDataException("Invalid library installation path.");
@@ -791,12 +811,19 @@ public sealed partial class PackCatalogService
             _knownCatalogPaths.Add(entry.RelativePath);
             _knownCatalogPaths.UnionWith(entry.LegacyRelativePaths);
             _effectiveSources[entry.RelativePath] = previous.TryGetValue(entry.RelativePath, out var old) && entry.AcceptsIdentity(old)
-                ? old with { Id = entry.Id, LegacyId = entry.LegacyId, LibraryGroup = entry.LibraryGroup } : entry;
+                ? old with
+                {
+                    Id = entry.Id,
+                    LegacyId = entry.LegacyId,
+                    LibraryGroup = entry.LibraryGroup,
+                    RequirementsLevel = entry.RequirementsLevel
+                }
+                : entry;
         }
         foreach (var (path, pack) in _packs.ToArray())
         {
             if (_effectiveSources.TryGetValue(path, out var current) && current.Id == pack.Entry.Id)
-                _packs[path] = pack.WithLibraryGroup(current.LibraryGroup);
+                _packs[path] = pack.WithLibraryPresentation(current);
             else
                 _packs.Remove(path);
         }
@@ -849,7 +876,12 @@ public sealed partial class PackCatalogService
                     current.RelativePath.Equals(entry.RelativePath, StringComparison.OrdinalIgnoreCase));
                 if (active is not null)
                     _effectiveSources[active.RelativePath] = entry with
-                        { Id = active.Id, LegacyId = active.LegacyId, LibraryGroup = active.LibraryGroup };
+                    {
+                        Id = active.Id,
+                        LegacyId = active.LegacyId,
+                        LibraryGroup = active.LibraryGroup,
+                        RequirementsLevel = active.RequirementsLevel
+                    };
             }
         }
         catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library effective source cache: " + ex.Message); }

@@ -2538,10 +2538,11 @@ public partial class MainWindow : Window
         {
             var cached = await Task.Run(() => ChangelogService.LoadCached(cachePath, _logger), token);
             if (_shutdownStarted || token.IsCancellationRequested) return;
-            ApplyChangelog(cached);
+            if (cached.Count > 0) ApplyChangelog(cached);
             var entries = await Task.Run(() => ChangelogService.RefreshAsync(cachePath, token, _logger), token);
-            if (_shutdownStarted || token.IsCancellationRequested || cached.SequenceEqual(entries)) return;
-            ApplyChangelog(entries);
+            if (_shutdownStarted || token.IsCancellationRequested) return;
+            if (!cached.SequenceEqual(entries)) ApplyChangelog(entries);
+            ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
@@ -2553,7 +2554,6 @@ public partial class MainWindow : Window
         _changelogShown.Clear();
         ShowMoreChangelog();
         while (_changelogPager.HasMore && _changelogPager.Shown < shown) ShowMoreChangelog();
-        ChangelogUnavailableText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ShowMoreChangelog()

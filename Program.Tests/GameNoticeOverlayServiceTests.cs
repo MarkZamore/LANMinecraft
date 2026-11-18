@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Minecraft.Tests;
@@ -13,8 +14,22 @@ public sealed class GameNoticeOverlayServiceTests
         using var fixture = new Fixture();
         var service = fixture.CreateService();
         using var session = service.PrepareSession(native);
+        Assert.Contains("fontMode=roboto-v1", File.ReadAllText(Path.Combine(session.Directory, "style.properties")));
+        Assert.Contains("fontFamily=Roboto", File.ReadAllText(Path.Combine(session.Directory, "style.properties")));
+        foreach (var (name, expected) in new[]
+        {
+            ("Roboto-Regular.ttf", "dece7c71bbe61710787f0839c722c65e87355dd2eb4a823e6b5488121ff81e4b"),
+            ("Roboto-SemiBold.ttf", "f478ba88b0292e685e487901dfbb1401457d32d6ebee4030cdfd5698235bffa8")
+        })
+        {
+            using var font = File.OpenRead(Path.Combine(session.Directory, name));
+            Assert.Equal(expected, Convert.ToHexStringLower(SHA256.HashData(font)));
+        }
         session.BindProcess(Fixture.ProcessId, Fixture.StartedTicks);
-        fixture.Heartbeat(session.Directory, backend: native ? "native-ui-v1" : "lwjgl3");
+        var backend = native ? "native-ui-v1" : "lwjgl3";
+        fixture.Heartbeat(session.Directory, backend: backend, fontMode: "");
+        Assert.False(service.TryShow(new PeerNotice("Старый рендерер", "На дисплее")));
+        fixture.Heartbeat(session.Directory, backend: backend);
         fixture.Fullscreen = false;
         Assert.False(service.TryShow(new PeerNotice("Оконный режим", "На дисплее")));
         Assert.Contains("count=0", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
@@ -31,6 +46,7 @@ public sealed class GameNoticeOverlayServiceTests
         Assert.Contains("count=0", File.ReadAllText(Path.Combine(session.Directory, "notices.properties")));
         Assert.False(service.TryShow(new PeerNotice("Снова оконный", "На дисплее")));
         service.ProcessExited(Fixture.ProcessId);
+        Assert.Empty(Directory.EnumerateFiles(session.Directory, "*.ttf"));
     }
     [Theory]
     [InlineData(1.25, "1.25")]
@@ -262,11 +278,13 @@ public sealed class GameNoticeOverlayServiceTests
             () => new MemoryStream(Encoding.UTF8.GetBytes("launcher-owned fixture agent bytes"), writable: false),
             _ => DisplayScale, (root, candidate) => root == ProcessId && candidate == ProcessId + 10,
             _ => Fullscreen);
-        internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "", string backend = "lwjgl3") =>
+        internal void Heartbeat(string directory, int processId = ProcessId, DateTimeOffset? stamp = null, string error = "", string backend = "lwjgl3",
+            string fontMode = GameNoticeOverlayService.BundledFontMode) =>
             GameNoticeOverlayService.WriteProperties(Path.Combine(directory, "heartbeat.properties"), new Dictionary<string, string>
             {
                 ["timestampUnixMs"] = (stamp ?? Now).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
-                ["backend"] = backend, ["renderedCount"] = "0", ["pid"] = processId.ToString(CultureInfo.InvariantCulture), ["error"] = error
+                ["backend"] = backend, ["fontMode"] = fontMode, ["renderedCount"] = "0",
+                ["pid"] = processId.ToString(CultureInfo.InvariantCulture), ["error"] = error
             });
         public void Dispose() => TempTree.Delete(_root);
 

@@ -69,6 +69,12 @@ internal sealed class BootstrapLaunchContext
     }
 
     internal string RequiredKindRoot(string kind) => Components.Single(component => component.Kind == kind).Root;
+
+    internal bool ContainsFile(string kind, string relativePath)
+    {
+        ValidateRelative(relativePath);
+        return files.TryGetValue(kind, out var component) && component.Records.ContainsKey(relativePath);
+    }
     internal static bool TryGet(out BootstrapLaunchContext? context)
     {
         if (Volatile.Read(ref testContext) is { } fixture) { context = fixture; return true; }
@@ -92,8 +98,9 @@ internal sealed class BootstrapLaunchContext
         var components = document.RootElement.GetProperty("components").EnumerateArray().Select(row =>
         {
             var kind = Text(row, "kind");
-            return new BootstrapComponent(kind, Text(row, "id"), Path.Combine(root, kind), Text(row, "entryPath"),
-                Text(row, "sha256"), Path.Combine(root, kind + ".manifest"), Text(row, "manifestSha256"));
+            var store = TestComponentStore(root, kind);
+            return new BootstrapComponent(kind, Text(row, "id"), Path.Combine(store, kind), Text(row, "entryPath"),
+                Text(row, "sha256"), Path.Combine(store, kind + ".manifest"), Text(row, "manifestSha256"));
         }).ToArray();
         SetTestComponents(root, components);
         foreach (var origin in new[] { AppContext.BaseDirectory, root })
@@ -105,6 +112,23 @@ internal sealed class BootstrapLaunchContext
             return;
         }
         throw new FileNotFoundException("The technical launcher icon source was not found.");
+    }
+
+    internal static string TestComponentStore(string fixtureRoot, string kind)
+    {
+        var locations = Path.Combine(fixtureRoot, "locations.json");
+        if (!File.Exists(locations)) return fixtureRoot;
+        Ordinary(locations);
+        using var input = File.OpenRead(locations);
+        using var document = JsonDocument.Parse(input);
+        var subdirectory = Text(document.RootElement, kind);
+        ValidateRelative(subdirectory);
+        if (subdirectory.Contains('/')) throw new InvalidDataException("Unexpected desktop test component store.");
+        var parent = Path.GetDirectoryName(Path.GetFullPath(fixtureRoot))
+            ?? throw new InvalidDataException("Missing desktop test cache parent.");
+        var store = Path.Combine(parent, subdirectory);
+        Ordinary(store);
+        return store;
     }
 
     private static BootstrapLaunchContext Load()

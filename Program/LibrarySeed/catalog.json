@@ -2,28 +2,6 @@
   "schemaVersion": 1,
   "packs": [
     {
-      "id": "minecraft-4",
-      "legacyId": "caves-and-dungeons",
-      "relativePath": "Caves and Dungeons",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Caves-and-Dungeons",
-        "tag": "pack-latest"
-      },
-      "libraryGroup": "Сюжетные"
-    },
-    {
-      "id": "minecraft-2",
-      "legacyId": "terrafirma-rebirth",
-      "relativePath": "TerraFirma Rebirth",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "TerraFirma-Rebirth-2",
-        "tag": "pack-latest"
-      },
-      "libraryGroup": "Сюжетные"
-    },
-    {
       "id": "minecraft-1",
       "legacyId": "all-the-mods-10",
       "relativePath": "All The Mods 10",
@@ -32,7 +10,8 @@
         "repo": "All-The-Mods-10",
         "tag": "pack-latest"
       },
-      "libraryGroup": "Много модов"
+      "libraryGroup": "Глобальные сборки",
+      "requirementsLevel": "high"
     },
     {
       "id": "minecraft-5",
@@ -43,7 +22,32 @@
         "repo": "All-The-Mods-9",
         "tag": "pack-latest"
       },
-      "libraryGroup": "Много модов"
+      "libraryGroup": "Глобальные сборки",
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "minecraft-4",
+      "legacyId": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Приключения и кампании",
+      "requirementsLevel": "low"
+    },
+    {
+      "id": "minecraft-2",
+      "legacyId": "terrafirma-rebirth",
+      "relativePath": "TerraFirma Rebirth",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "TerraFirma-Rebirth-2",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Хардкор и технологии",
+      "requirementsLevel": "high"
     },
     {
       "id": "minecraft-3",
@@ -70,7 +74,8 @@
           "tag": "pack-latest"
         }
       ],
-      "libraryGroup": "Мало модов"
+      "libraryGroup": "Классика и альтернативные режимы",
+      "requirementsLevel": "medium"
     }
   ]
 }

@@ -395,7 +395,7 @@ public sealed class PackDisplayNamesResolverTests : IDisposable
         {
             Client = new HttpClient(this);
             entry = new CatalogSource(id, path, new PackSyncSource("Fixture", "Display-Names", "pack-latest"));
-            using var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
+            using var seed = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!;
             using var original = new ZipArchive(seed, ZipArchiveMode.Read);
             using var metadata = original.GetEntry("library.json")!.Open();
             var content = JsonSerializer.Deserialize<CatalogDescription>(metadata, JsonOptions)!;

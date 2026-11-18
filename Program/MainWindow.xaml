@@ -191,22 +191,23 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0"
-                                x:Name="DeleteBuildButton"
+                                x:Name="DeleteBuildButton" AutomationProperties.Name="Удаление сборки"
                                 Style="{StaticResource IconActionButton}"
                                 Height="{StaticResource Size.CategoryHeader}"
                                 Padding="{StaticResource Pad.None}"
                                 Click="DeleteBuildButton_Click"
                                 IsEnabled="False"
                                 ToolTipService.ShowOnDisabled="True">
-                                <TextBlock Text="&#xE74D;"
-                                    FontFamily="{StaticResource Font.Icons}"
-                                    FontSize="{StaticResource Size.Icon}"
-                                    TextWrapping="NoWrap" />
+                                <Path Data="{local:LauncherSvg trash}"
+                                      Width="{StaticResource Size.Icon}" Height="{StaticResource Size.Icon}"
+                                      Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="{StaticResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                             </Button>
                             <Button Grid.Column="1" x:Name="MemoryEstimateButton"
                                 Style="{StaticResource MemoryRecommendationButtonStyle}"
                                 Click="MemoryEstimateButton_Click" IsEnabled="False"
-                                Margin="{StaticResource Gap.Left2}" ToolTipService.ShowOnDisabled="True">
+                                Margin="{StaticResource Gap.None}" ToolTipService.ShowOnDisabled="True">
                                 <TextBlock x:Name="MemoryEstimateText"
                                     Style="{StaticResource LabelTextStyle}"
                                     Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -303,17 +304,18 @@
                                             Visibility="Collapsed" />
                                     </Grid>
                                     <Button Grid.Column="2"
-                                        x:Name="DeleteWorldButton"
+                                        x:Name="DeleteWorldButton" AutomationProperties.Name="Удаление мира"
                                         Style="{StaticResource IconActionButton}"
                                         Margin="{StaticResource Gap.Left2}"
                                         Padding="{StaticResource Pad.None}"
                                         Click="DeleteWorldButton_Click"
                                         IsEnabled="False"
                                         ToolTipService.ShowOnDisabled="True">
-                                        <TextBlock Text="&#xE74D;"
-                                            FontFamily="{StaticResource Font.Icons}"
-                                            FontSize="{StaticResource Size.Icon}"
-                                            TextWrapping="NoWrap" />
+                                        <Path Data="{local:LauncherSvg trash}"
+                                              Width="{StaticResource Size.Icon}" Height="{StaticResource Size.Icon}"
+                                              Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="{StaticResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                                     </Button>
                                 </Grid>
                                 <Grid>
@@ -398,17 +400,18 @@
                                             Visibility="Collapsed" />
                                     </Grid>
                                     <Button Grid.Column="2"
-                                        x:Name="DeletePersonalPackButton"
+                                        x:Name="DeletePersonalPackButton" AutomationProperties.Name="Удаление личной сборки"
                                         Style="{StaticResource IconActionButton}"
                                         Margin="{StaticResource Gap.Left2}"
                                         Padding="{StaticResource Pad.None}"
                                         Click="DeletePersonalPackButton_Click"
                                         IsEnabled="False"
                                         ToolTipService.ShowOnDisabled="True">
-                                        <TextBlock Text="&#xE74D;"
-                                            FontFamily="{StaticResource Font.Icons}"
-                                            FontSize="{StaticResource Size.Icon}"
-                                            TextWrapping="NoWrap" />
+                                        <Path Data="{local:LauncherSvg trash}"
+                                              Width="{StaticResource Size.Icon}" Height="{StaticResource Size.Icon}"
+                                              Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="{StaticResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                                     </Button>
                                 </Grid>
                                 <Grid>

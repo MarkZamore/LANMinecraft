@@ -488,10 +488,10 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal("{StaticResource IconActionButton}", (string?)delete.Attribute("Style"));
         Assert.Null(delete.Attribute("Width"));
         Assert.Equal("{StaticResource Size.CategoryHeader}", (string?)delete.Attribute("Height"));
-        var deleteGlyph = Assert.Single(delete.Elements(presentation + "TextBlock"));
-        Assert.Equal("\uE74D", (string?)deleteGlyph.Attribute("Text"));
-        Assert.Equal("{StaticResource Font.Icons}", (string?)deleteGlyph.Attribute("FontFamily"));
-        Assert.Equal("{StaticResource Size.Icon}", (string?)deleteGlyph.Attribute("FontSize"));
+        var deleteGlyph = Assert.Single(delete.Elements(presentation + "Path"));
+        Assert.Equal("{local:LauncherSvg trash}", (string?)deleteGlyph.Attribute("Data"));
+        Assert.Equal("{StaticResource Size.Icon}", (string?)deleteGlyph.Attribute("Width"));
+        Assert.Equal("{StaticResource Size.Icon}", (string?)deleteGlyph.Attribute("Height"));
         Assert.Null(delete.Attribute("Foreground"));
         Assert.Equal("True", (string?)delete.Attribute("ToolTipService.ShowOnDisabled"));
         // Destructive actions share the reference design's neutral icon-button surface.

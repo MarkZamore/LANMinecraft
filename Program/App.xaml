@@ -38,6 +38,15 @@
         <Color x:Key="Color.ProgressFill">#4D97AFC3</Color>
         <Color x:Key="Color.ScrollThumb">#8BFFFFFF</Color>
         <Color x:Key="Color.ScrollThumbHover">#C5FFFFFF</Color>
+        <Color x:Key="Color.RequirementLow">#8CE2AA</Color>
+        <Color x:Key="Color.RequirementMedium">#FFC48A</Color>
+        <Color x:Key="Color.RequirementHigh">#FF9E98</Color>
+        <Color x:Key="Color.RequirementLowSurface">#DC24332A</Color>
+        <Color x:Key="Color.RequirementMediumSurface">#DC34281F</Color>
+        <Color x:Key="Color.RequirementHighSurface">#DC362323</Color>
+        <Color x:Key="Color.RequirementLowBorder">#8065BA85</Color>
+        <Color x:Key="Color.RequirementMediumBorder">#80D79C61</Color>
+        <Color x:Key="Color.RequirementHighBorder">#80DE7D77</Color>
         <SolidColorBrush x:Key="Brush.Canvas" Color="{StaticResource Color.Canvas}"/>
         <SolidColorBrush x:Key="Brush.CanvasSecondary" Color="{StaticResource Color.CanvasSecondary}"/>
         <SolidColorBrush x:Key="Brush.BackdropShade" Color="{StaticResource Color.BackdropShade}"/>
@@ -70,6 +79,15 @@
         <SolidColorBrush x:Key="Brush.ProgressFill" Color="{StaticResource Color.ProgressFill}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumb" Color="{StaticResource Color.ScrollThumb}"/>
         <SolidColorBrush x:Key="Brush.ScrollThumbHover" Color="{StaticResource Color.ScrollThumbHover}"/>
+        <SolidColorBrush x:Key="Brush.RequirementLow" Color="{StaticResource Color.RequirementLow}"/>
+        <SolidColorBrush x:Key="Brush.RequirementMedium" Color="{StaticResource Color.RequirementMedium}"/>
+        <SolidColorBrush x:Key="Brush.RequirementHigh" Color="{StaticResource Color.RequirementHigh}"/>
+        <SolidColorBrush x:Key="Brush.RequirementLowSurface" Color="{StaticResource Color.RequirementLowSurface}"/>
+        <SolidColorBrush x:Key="Brush.RequirementMediumSurface" Color="{StaticResource Color.RequirementMediumSurface}"/>
+        <SolidColorBrush x:Key="Brush.RequirementHighSurface" Color="{StaticResource Color.RequirementHighSurface}"/>
+        <SolidColorBrush x:Key="Brush.RequirementLowBorder" Color="{StaticResource Color.RequirementLowBorder}"/>
+        <SolidColorBrush x:Key="Brush.RequirementMediumBorder" Color="{StaticResource Color.RequirementMediumBorder}"/>
+        <SolidColorBrush x:Key="Brush.RequirementHighBorder" Color="{StaticResource Color.RequirementHighBorder}"/>
         <LinearGradientBrush x:Key="Brush.TextCaret" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="Transparent" Offset="0.15"/>
             <GradientStop Color="{StaticResource Color.Text}" Offset="0.15"/>
@@ -81,8 +99,8 @@
             <GradientStop Color="{StaticResource Color.ProgressFill}" Offset="0.5"/>
             <GradientStop Color="{StaticResource Color.ProgressTrack}" Offset="1"/>
         </LinearGradientBrush>
-        <FontFamily x:Key="Font.Family">Segoe UI Variable Text, Segoe UI</FontFamily>
-        <FontFamily x:Key="Font.Icons">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+        <FontFamily x:Key="Font.Family">/LANMinecraft;component/Assets/Fonts/#Roboto</FontFamily>
+
         <FontWeight x:Key="Font.WeightBody">Normal</FontWeight>
         <FontWeight x:Key="Font.WeightEmphasis">SemiBold</FontWeight>
         <sys:Double x:Key="Font.SizeCaption">12</sys:Double>
@@ -120,6 +138,7 @@
         <Thickness x:Key="Gap.BodyScroll">0,0,-20,16</Thickness>
         <Thickness x:Key="Gap.LibraryScroll">0,0,-20,0</Thickness>
         <Thickness x:Key="Gap.LibraryTopBar">0,0,20,16</Thickness>
+        <Thickness x:Key="Gap.RequirementLegendItem">0,0,8,8</Thickness>
         <Thickness x:Key="Gap.Chevron">16,0,0,0</Thickness>
         <Thickness x:Key="Gap.CategoryIcon">0,0,16,0</Thickness>
         <Thickness x:Key="Pad.None">0</Thickness>
@@ -155,6 +174,7 @@
         <GridLength x:Key="Size.LibraryActionGap">8</GridLength>
         <GridLength x:Key="Size.LibraryTreeIndent">16</GridLength>
         <sys:Double x:Key="Size.LibraryHero">240</sys:Double>
+        <sys:Double x:Key="Size.RequirementDot">8</sys:Double>
         <Color x:Key="Color.LibraryImageShade">#80202020</Color>
         <LinearGradientBrush x:Key="Brush.LibraryHeroOverlay" StartPoint="0,0" EndPoint="0,1">
             <GradientStop Color="{StaticResource Color.LibraryImageShade}" Offset="0"/>
@@ -200,6 +220,61 @@
         <CornerRadius x:Key="Radius.Panel">8</CornerRadius>
         <CornerRadius x:Key="Radius.Scrollbar">3</CornerRadius>
         <CornerRadius x:Key="Radius.SelectionMark">1.5</CornerRadius>
+        <CornerRadius x:Key="Radius.RequirementPill">16</CornerRadius>
+        <Style x:Key="LibraryRequirementDotStyle" TargetType="Path">
+            <Setter Property="Width" Value="{DynamicResource Size.RequirementDot}"/>
+            <Setter Property="Height" Value="{DynamicResource Size.RequirementDot}"/>
+            <Setter Property="Stretch" Value="Fill"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Fill" Value="{DynamicResource Brush.RequirementMedium}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="low">
+                    <Setter Property="Fill" Value="{DynamicResource Brush.RequirementLow}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="high">
+                    <Setter Property="Fill" Value="{DynamicResource Brush.RequirementHigh}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="LibraryRequirementPillStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="{DynamicResource Radius.RequirementPill}"/>
+            <Setter Property="Padding" Value="{DynamicResource Pad.Control}"/>
+            <Setter Property="BorderThickness" Value="{DynamicResource Border.Control}"/>
+            <Setter Property="Background" Value="{DynamicResource Brush.RequirementMediumSurface}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.RequirementMediumBorder}"/>
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.RequirementMedium}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="low">
+                    <Setter Property="Background" Value="{DynamicResource Brush.RequirementLowSurface}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.RequirementLowBorder}"/>
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.RequirementLow}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="high">
+                    <Setter Property="Background" Value="{DynamicResource Brush.RequirementHighSurface}"/>
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.RequirementHighBorder}"/>
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.RequirementHigh}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="LibraryRequirementTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="{DynamicResource Font.SizeCaption}"/>
+            <Setter Property="FontWeight" Value="{DynamicResource Font.WeightEmphasis}"/>
+            <Setter Property="LineHeight" Value="{DynamicResource Font.LineHeightCaption}"/>
+        </Style>
+        <DataTemplate x:Key="LibraryRequirementLegendTemplate">
+            <Border Style="{DynamicResource LibraryRequirementPillStyle}" Margin="{DynamicResource Gap.RequirementLegendItem}">
+                <StackPanel Orientation="Horizontal">
+                    <Path Data="{bridge:LauncherSvg requirements-dot}" Style="{DynamicResource LibraryRequirementDotStyle}"/>
+                    <TextBlock Text="{Binding Label}" Style="{DynamicResource LibraryRequirementTextStyle}" Margin="{DynamicResource Gap.Left2}"/>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="LibraryRequirementDetailTemplate">
+            <Border Style="{DynamicResource LibraryRequirementPillStyle}">
+                <TextBlock Text="{Binding Label}" Style="{DynamicResource LibraryRequirementTextStyle}"/>
+            </Border>
+        </DataTemplate>
         <DrawingBrush x:Key="Brush.WindowBackdrop" Stretch="UniformToFill">
             <DrawingBrush.Drawing>
                 <DrawingGroup>
@@ -261,6 +336,7 @@
             <Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource Brush.TextDisabled}"/></Trigger></Style.Triggers>
         </Style>
         <Style TargetType="Button">
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightEmphasis}"/>
             <Setter Property="MinHeight" Value="{StaticResource Size.Control}"/>
             <Setter Property="Padding" Value="{StaticResource Pad.Control}"/>
             <Setter Property="HorizontalAlignment" Value="Stretch"/>
@@ -284,6 +360,7 @@
             </ControlTemplate></Setter.Value></Setter>
         </Style>
         <Style x:Key="MemoryRecommendationButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="FontWeight" Value="{StaticResource Font.WeightBody}"/>
             <Setter Property="Padding" Value="{StaticResource Pad.None}"/>
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -319,7 +396,6 @@
         </Style>
         <Style x:Key="LibraryAddButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
             <Setter Property="FontSize" Value="{StaticResource Font.SizeBody}"/>
-            <Setter Property="FontWeight" Value="{StaticResource Font.WeightBody}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}"/>
             <Setter Property="BorderThickness" Value="{StaticResource Border.Control}"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
@@ -371,7 +447,7 @@
                 <Border x:Name="HeaderSurface" Background="Transparent" CornerRadius="{StaticResource Radius.Panel}" Padding="{TemplateBinding Padding}"><Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Stretch" RecognizesAccessKey="True"/>
-                    <Path x:Name="Chevron" Grid.Column="1" Width="{StaticResource Size.ChevronWidth}" Height="{StaticResource Size.ChevronHeight}" Data="M 0,0 L 5,5 L 10,0" Stroke="{DynamicResource Brush.Text}" StrokeThickness="{StaticResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Margin="{StaticResource Gap.Chevron}" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform Angle="-90"/></Path.RenderTransform></Path>
+                    <Path x:Name="Chevron" Grid.Column="1" Width="{StaticResource Size.ChevronWidth}" Height="{StaticResource Size.ChevronHeight}" Data="{bridge:LauncherSvg chevron}" Stroke="{DynamicResource Brush.Text}" StrokeThickness="{StaticResource Size.GlyphStroke}" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Margin="{StaticResource Gap.Chevron}" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform Angle="-90"/></Path.RenderTransform></Path>
                 </Grid></Border>
                 <ControlTemplate.Triggers>
                     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="HeaderSurface" Property="Background" Value="{DynamicResource Brush.CategoryHover}"/></Trigger>

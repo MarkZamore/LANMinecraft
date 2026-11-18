@@ -73,6 +73,7 @@ public partial class PackLibraryView : UserControl
     {
         if (disposed) return;
         var next = values.Select(value => packs.FirstOrDefault(old => old.Entry == value.Entry &&
+            old.PublishedModCount == value.PublishedModCount &&
             value.ContentIdentity.Length > 0 && old.ContentIdentity == value.ContentIdentity) ?? value).ToArray();
         var loadingChanged = overviewLoading != isLoading;
         overviewLoading = isLoading;
@@ -231,6 +232,7 @@ public partial class PackLibraryView : UserControl
         var ready = IsOverviewReady;
         CatalogScroll.Visibility = ready ? Visibility.Visible : Visibility.Hidden;
         CatalogCards.Visibility = ready ? Visibility.Visible : Visibility.Hidden;
+        RequirementsLegend.Visibility = packs.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         if (!ready && loadingDots is null)
         {
             CatalogLoadingText.Text = "Подготавливаем библиотеку";

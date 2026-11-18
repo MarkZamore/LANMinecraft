@@ -94,10 +94,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The launcher carries just the two typefaces and their unmodified license. -->
+    <Resource Include="Assets\Fonts\Roboto-Regular.ttf;Assets\Fonts\Roboto-SemiBold.ttf;Assets\Fonts\OFL.txt" />
     <!-- Offline fallback copied from the published GitHub pack-catalog index. -->
     <EmbeddedResource Include="LibrarySeed\catalog.json" LogicalName="Minecraft.Library.catalog.json" />
     <EmbeddedResource Include="Resources\pack-display-names.json" LogicalName="Minecraft.PackDisplayNames.json" />
-    <EmbeddedResource Include="LibrarySeed\*.zip" LogicalName="Minecraft.Library.%(Filename)%(Extension)" />
     <!-- Ignore generated outputs from nested tools, including removed projects. -->
     <Compile Remove="**\bin\**;**\obj\**" />
     <EmbeddedResource Remove="**\bin\**;**\obj\**" />

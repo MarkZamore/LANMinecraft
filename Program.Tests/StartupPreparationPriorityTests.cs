@@ -89,6 +89,11 @@ public sealed class StartupPreparationPriorityTests
         Assert.Contains("_secondaryPreparationStarted", prepare, StringComparison.Ordinal);
         Assert.Contains("Enqueue(\"news\"", prepare, StringComparison.Ordinal);
         Assert.Contains("yield return LoadChangelog;", Method(source, "private IEnumerable<Action> PrepareNews()"), StringComparison.Ordinal);
+        var refresh = Method(source, "private async Task RefreshChangelogAsync(");
+        var completedNetworkRead = refresh.IndexOf("await Task.Run(() => ChangelogService.RefreshAsync(", StringComparison.Ordinal);
+        Assert.True(completedNetworkRead >= 0);
+        Assert.True(refresh.IndexOf("ChangelogUnavailableText.Visibility", StringComparison.Ordinal) > completedNetworkRead);
+        Assert.DoesNotContain("ChangelogUnavailableText", Method(source, "private void ApplyChangelog("), StringComparison.Ordinal);
         Assert.DoesNotContain("SidePanelToggleButton_Click", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ShowSidePanel", source, StringComparison.Ordinal);
     }

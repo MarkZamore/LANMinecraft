@@ -2,7 +2,9 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using MediaPath = System.Windows.Shapes.Path;
 
 namespace Minecraft.Tests;
 
@@ -36,6 +38,60 @@ public sealed class CatalogPresentationTests
         };
         pack.BuildTree();
         return pack;
+    }
+
+    [Fact]
+    public void RequirementLegendCardDotAndOpenedBadgeShowTheSameLevel()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var pack = ModifiedPack();
+            Assert.Equal(PackRequirementTag.Low, pack.Requirements);
+            pack.Content.MinecraftVersion = "26.3";
+            Assert.Equal(PackRequirementTag.Medium, pack.Requirements);
+            pack.Content.MinecraftVersion = "1.20.1";
+            pack.Content.NativeProject = new CatalogNativeProject("Native", "Release", new string('a', 40));
+            Assert.Equal(PackRequirementTag.Medium, pack.Requirements);
+            pack = pack.WithLibraryPresentation(pack.Entry with
+                { LibraryGroup = "Test group", RequirementsLevel = "high" });
+            var window = WindowCanvasTests.LoadWindow();
+            var library = (PackLibraryView)window.FindName("LibraryView");
+            foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
+                if (child != library) child.Visibility = Visibility.Hidden;
+            library.Visibility = Visibility.Visible;
+            var legend = Assert.IsType<ItemsControl>(library.FindName("RequirementsLegend"));
+            var cards = Assert.IsType<ItemsControl>(library.FindName("CatalogCards"));
+            Assert.Equal(Visibility.Collapsed, legend.Visibility);
+            library.SetCatalog([pack]);
+            WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
+            Assert.Equal(Visibility.Visible, legend.Visibility);
+            Assert.Equal(PackRequirementTag.All, legend.Items.Cast<PackRequirementTag>());
+            Assert.Equal(3, Descendants<MediaPath>(legend).Count());
+            Assert.True(((StackPanel)cards.Parent).Children.IndexOf(legend) < ((StackPanel)cards.Parent).Children.IndexOf(cards));
+            var dot = Assert.Single(Descendants<MediaPath>(cards), path => path.Name == "RequirementsDot");
+            Assert.Equal(PackRequirementTag.High.Label, dot.ToolTip);
+            var high = Assert.IsType<SolidColorBrush>(window.FindResource("Brush.RequirementHigh"));
+            Assert.Equal(high.Color, Assert.IsType<SolidColorBrush>(dot.Fill).Color);
+
+            library.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(804, 521));
+            var badge = Assert.IsType<ContentControl>(library.FindName("RequirementsBadge"));
+            var label = Assert.Single(Descendants<TextBlock>(badge));
+            Assert.Equal(PackRequirementTag.High.Label, label.Text);
+            Assert.Equal(high.Color, Assert.IsType<SolidColorBrush>(label.Foreground).Color);
+            Assert.Empty(Descendants<MediaPath>(badge));
+            return true;
+        });
+
+        static IEnumerable<T> Descendants<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, index);
+                if (child is T typed) yield return typed;
+                foreach (var descendant in Descendants<T>(child)) yield return descendant;
+            }
+        }
     }
 
     [Fact]

@@ -8,7 +8,31 @@
         "owner": "MarkZamore",
         "repo": "All-the-Mods-10",
         "tag": "pack-latest"
-      }
+      },
+      "libraryGroup": "Глобальные сборки",
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "all-the-mods-9",
+      "relativePath": "All the Mods 9",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "All-the-Mods-9",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Глобальные сборки",
+      "requirementsLevel": "high"
+    },
+    {
+      "id": "caves-and-dungeons",
+      "relativePath": "Caves and Dungeons",
+      "source": {
+        "owner": "MarkZamore",
+        "repo": "Caves-and-Dungeons",
+        "tag": "pack-latest"
+      },
+      "libraryGroup": "Приключения и кампании",
+      "requirementsLevel": "low"
     },
     {
       "id": "terrafirma-rebirth",
@@ -18,7 +42,9 @@
         "repo": "TerraFirma-Rebirth-2",
         "tag": "pack-latest"
       },
-      "sourcePath": "TerraFirma Rebirth 2"
+      "sourcePath": "TerraFirma Rebirth 2",
+      "libraryGroup": "Хардкор и технологии",
+      "requirementsLevel": "high"
     },
     {
       "id": "minecraft-26-2",
@@ -39,25 +65,9 @@
           "repo": "Minecraft-26.2",
           "tag": "pack-latest"
         }
-      ]
-    },
-    {
-      "id": "caves-and-dungeons",
-      "relativePath": "Caves and Dungeons",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "Caves-and-Dungeons",
-        "tag": "pack-latest"
-      }
-    },
-    {
-      "id": "all-the-mods-9",
-      "relativePath": "All the Mods 9",
-      "source": {
-        "owner": "MarkZamore",
-        "repo": "All-the-Mods-9",
-        "tag": "pack-latest"
-      }
+      ],
+      "libraryGroup": "Классика и альтернативные режимы",
+      "requirementsLevel": "medium"
     }
   ]
 }

@@ -61,6 +61,11 @@ internal static class Program
             VisualTreeHelper.SetRootDpi(window, new DpiScale(dpi, dpi));
             VisualTreeHelper.SetRootDpi(content, new DpiScale(dpi, dpi));
             Populate(window);
+            if (args.Contains("--long-play") && viewport.Item1 == "minimum" && mode == "collapsed" &&
+                window.FindName("PlayButtonText") is TextBlock play)
+            {
+                play.Text = "Восстановление сборки: 1024 / 1024 МБ (123 МБ/с)";
+            }
             if (mode is "library" or "pack-detail" or "pack-mods")
             {
                 var view = (PackLibraryView)window.FindName("LibraryView");

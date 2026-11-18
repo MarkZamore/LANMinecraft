@@ -579,6 +579,7 @@ unsigned long RetryableIoCode(unsigned long code)
     }
 }
 
+#include "bootstrap_fonts.h"
 #include "bootstrap_progress.h"
 #include "bootstrap_dependencies.h"
 
@@ -633,6 +634,11 @@ int RunManaged(const std::wstring& executable, Directories& directories, const s
 bool longRuntimePathFailure = false;
 LRESULT CALLBACK ErrorWindow(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (message == WM_NCCREATE)
+    {
+        const auto create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
     if (message == WM_CLOSE || (message == WM_KEYDOWN && (wparam == VK_RETURN || wparam == VK_ESCAPE))) { DestroyWindow(hwnd); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     if (message == WM_PAINT)
@@ -642,14 +648,14 @@ LRESULT CALLBACK ErrorWindow(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         SetDCBrushColor(dc, RGB(32, 32, 32));
         FillRect(dc, &area, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         area.left += 24; area.top += 24; area.right -= 24; area.bottom -= 24;
-        auto font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        auto old = SelectObject(dc, font);
+        const auto font = reinterpret_cast<HFONT>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        const auto old = font ? SelectObject(dc, font) : nullptr;
         const wchar_t* text = longRuntimePathFailure
             ? L"Путь к папке лаунчера слишком длинный для компонентов интерфейса Windows.\n\nПереместите всю папку лаунчера ближе к корню диска и запустите его снова.\n\nПодробности сохранены в Minecraft\\Launcher\\bootstrap.log."
             : L"Не удалось подготовить файлы лаунчера.\n\nПроверьте доступ к папке LANMinecraft и запустите его снова. Подробности сохранены в Minecraft\\Launcher\\bootstrap.log, если папка доступна для записи.\n\nЗакройте это окно или нажмите Enter.";
         DrawTextW(dc, text, -1, &area, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
-        SelectObject(dc, old); DeleteObject(font); EndPaint(hwnd, &paint); return 0;
+        if (old && old != HGDI_ERROR) SelectObject(dc, old);
+        EndPaint(hwnd, &paint); return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
@@ -660,13 +666,19 @@ void ShowFailure(unsigned long code)
     WNDCLASSW type{}; type.lpfnWndProc = ErrorWindow; type.hInstance = GetModuleHandleW(nullptr); type.lpszClassName = L"LANMinecraft.BootstrapError";
     type.hCursor = LoadCursorW(nullptr, IDC_ARROW); type.hIcon = LoadIconW(type.hInstance, MAKEINTRESOURCEW(1));
     if (RegisterClassW(&type) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+    BootstrapFonts fonts;
+    const auto font = fonts.Create(16, FW_NORMAL);
     HWND window = CreateWindowExW(0, type.lpszClassName, L"LANMinecraft", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 280, nullptr, nullptr, type.hInstance, nullptr);
-    if (window == nullptr) return;
-    const int dark = 1; DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
-    ShowWindow(window, SW_SHOWNORMAL);
-    MSG message{};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 280, nullptr, nullptr, type.hInstance, font);
+    if (window)
+    {
+        const int dark = 1; DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+        ShowWindow(window, SW_SHOWNORMAL);
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
+        if (IsWindow(window)) DestroyWindow(window);
+    }
+    if (font) DeleteObject(font);
 }
 
 bool ReportFailureToRedirectedOutput(const std::wstring& detail) noexcept

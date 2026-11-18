@@ -123,7 +123,7 @@ public sealed class PackCatalogDisplayNameTests : IDisposable
         internal NameHost()
         {
             Client = new HttpClient(this);
-            using var seed = typeof(PackCatalogService).Assembly.GetManifestResourceStream("Minecraft.Library.minecraft-26-2.zip")!;
+            using var seed = LauncherAssets.OpenLibrarySeed("minecraft-26-2")!;
             using var zip = new ZipArchive(seed, ZipArchiveMode.Read);
             using var image = zip.GetEntry("preview.jpg")!.Open();
             using var output = new MemoryStream();
