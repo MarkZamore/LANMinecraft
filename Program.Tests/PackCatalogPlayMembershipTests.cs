@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Minecraft;
 
@@ -17,7 +18,7 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void GitHubRemovalHidesInstalledAndOfferedEntriesWithoutDeletingWorldsOrCustomPacks(bool installed)
+    public void GitHubRemovalKeepsCompleteInstalledPacksPersonalWithoutChangingWorlds(bool installed)
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
@@ -30,7 +31,8 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
             catalog.RefreshOnceAsync().GetAwaiter().GetResult();
             const string custom = "LL8 Extended";
             var installedJar = Path.Combine(paths.Packs, entry.RelativePath, "mods", "keep.jar");
-            if (installed) Write(installedJar, "existing managed mod bytes");
+            if (installed)
+                WriteInstalledFixture(paths.CombineUnderPacks(entry.RelativePath), "mods/keep.jar", "existing managed mod bytes");
             var customJar = Path.Combine(paths.Packs, custom, "mods", "personal.jar");
             Write(customJar, "custom mod bytes");
             var world = Path.Combine(paths.Worlds, entry.RelativePath, "World", "level.dat");
@@ -70,8 +72,8 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
             Assert.Contains(builds, build => build.RelativePath == entry.RelativePath && build.IsInstalled == installed);
             Assert.Equal(custom, Assert.IsType<ClientBuildViewModel>(dropdown.SelectedItem).RelativePath);
 
-            // A successful empty GitHub index is a real removal, while the
-            // installed folder and personal world remain available on disk.
+            // A verified installation stays selectable as a personal pack.
+            // An offered entry which was never downloaded simply disappears.
             host.Entry = null;
             var nextStartup = new PackCatalogService(paths, logger, host.Client);
             nextStartup.RefreshOnceAsync().GetAwaiter().GetResult();
@@ -79,8 +81,8 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
             Refresh();
             AssertRemoved(nextStartup);
 
-            // The saved authoritative empty index must keep the removed
-            // directory from reappearing as a custom pack on an offline run.
+            // The saved authoritative empty index keeps the library entry
+            // withdrawn and makes the same local installation usable offline.
             host.Offline = true;
             var offlineStartup = new PackCatalogService(paths, logger, host.Client);
             offlineStartup.RefreshOnceAsync().GetAwaiter().GetResult();
@@ -97,8 +99,11 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
                 Assert.False(current.IsWithdrawn(custom));
                 Assert.Empty(current.Sources);
                 Assert.Empty(current.PacksForDisplay(settings));
-                var remaining = Assert.Single(builds);
-                Assert.Equal(custom, remaining.RelativePath);
+                Assert.Equal(installed, current.IsRetiredInstalled(entry.RelativePath));
+                Assert.Equal(installed, current.IsPersonalInstalled(entry.RelativePath));
+                Assert.Equal(installed ? 2 : 1, builds.Count);
+                Assert.Equal(installed, builds.Any(build => build.RelativePath == entry.RelativePath && build.IsInstalled));
+                var remaining = Assert.Single(builds, build => build.RelativePath == custom);
                 Assert.Same(remaining, dropdown.SelectedItem);
                 Assert.Equal(custom, settings.ClientRelativePath);
                 Assert.Equal(custom + "/Personal world", settings.SelectedWorldRelativePath);
@@ -113,6 +118,20 @@ public sealed class PackCatalogPlayMembershipTests : IDisposable
                 else Assert.False(Directory.Exists(paths.CombineUnderPacks(entry.RelativePath)));
             }
         });
+    }
+
+    internal static void WriteInstalledFixture(string directory, string relativeFile, string content)
+    {
+        Write(Path.Combine(directory, PackManifestService.ManifestFileName),
+            """{"schemaVersion":1,"minecraftVersion":"1.20.1","loader":{"type":"vanilla"}}""");
+        Write(Path.Combine(directory, relativeFile), content);
+        var files = new[] { PackManifestService.ManifestFileName, relativeFile }.Select(relative =>
+        {
+            var bytes = File.ReadAllBytes(Path.Combine(directory, relative));
+            return new PortablePackSyncService.ManagedFileSnapshot(relative, bytes.Length,
+                Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        }).ToArray();
+        PortablePackSyncService.WriteImportedSnapshot(directory, files, []);
     }
 
     private static void Write(string path, string text)

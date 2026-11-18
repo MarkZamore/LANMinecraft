@@ -63,6 +63,17 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         public bool Complete => Kept.Count == 0;
     }
 
+    public sealed record RemovalBatchPlan(IReadOnlyList<RemovalPlan> Plans, bool WithWorlds)
+    {
+        public int Builds => Plans.Count;
+        public int Worlds => Plans.SelectMany(plan => plan.WorldDirectories)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+        public bool SameTargets(RemovalBatchPlan other) =>
+            WithWorlds == other.WithWorlds && Plans.Count == other.Plans.Count &&
+            Plans.Zip(other.Plans).All(pair => BuildRemovalService.SameTargets(pair.First, pair.Second));
+    }
+
     private readonly AppPaths _paths = paths;
     private readonly PackHashService? _hashes = hashes;
     private readonly Logger? _logger = logger;
@@ -75,96 +86,100 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
     public RemovalPlan Plan(string buildRelativePath, bool worldsToo)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(buildRelativePath);
-        var build = buildRelativePath.Trim().Trim('\\', '/');
-
-        var directories = new List<string>();
-        foreach (var candidate in BelongingTo(build))
-        {
-            if (candidate is not null && Directory.Exists(candidate)) directories.Add(candidate);
-        }
-
-        // Worlds live in a folder per build, but they only move there when that
-        // build is launched - WorldLocations.Migrate runs from Prepare and
-        // nowhere else. A build updated and then deleted without being played
-        // still has its worlds lying flat in the root of Worlds, and looking
-        // only at the folder found none of them: the window offered "and its
-        // worlds", the player agreed, and the worlds stayed. A build withdrawn
-        // from the list can never be launched again and so could never migrate
-        // at all.
-        var worldDirectories = new List<string>();
-        var packFolder = WorldLocations.ForBuild(_paths.Worlds, build);
-        var worlds = 0;
-        if (!string.Equals(packFolder, _paths.Worlds, StringComparison.OrdinalIgnoreCase) &&
-            Directory.Exists(packFolder))
-        {
-            worldDirectories.Add(packFolder);
-            worlds += CountWorlds(packFolder);
-        }
-        foreach (var stray in StrandedWorlds(build))
-        {
-            worldDirectories.Add(stray);
-            worlds++;
-        }
-        // Java has nothing to do with the worlds: it goes if the build that
-        // pinned it was the last one asking for it, either way round.
+        if (!PackCatalogService.ValidFolder(buildRelativePath))
+            return new RemovalPlan(buildRelativePath, [], [], 0, [], []);
+        var build = buildRelativePath;
+        var directories = BelongingTo(build).OfType<string>().Where(Directory.Exists).ToArray();
+        var worlds = new WorldRemovalService(_paths, _logger).PlanForBuild(build);
         var java = JavaNothingElseNeeds(build);
         return new RemovalPlan(
             build,
             directories,
-            worldsToo ? worldDirectories : [],
-            worlds,
+            worldsToo ? worlds : [],
+            worlds.Count,
             java.Select(directory => directory.Path).ToArray(),
             java.Select(directory => directory.MajorVersion).Distinct().Order().ToArray());
     }
 
-    /// <summary>
-    /// Worlds of this build still lying flat in the root of Worlds, which is
-    /// where every world lived before they were filed by build.
-    /// </summary>
-    /// <remarks>
-    /// The match is exact and deliberately not
-    /// <see cref="WorldMetadataService.BelongsToBuild"/>. That one answers yes
-    /// for a world that names no build at all, which is right when deciding what
-    /// to show - an unattributed world is shown to everybody rather than lost -
-    /// and would be a disaster here: it would delete every unattributed world on
-    /// the machine along with the first build a player removes. A world goes
-    /// only if it says, in as many words, that it is this build's.
-    /// </remarks>
-    private IEnumerable<string> StrandedWorlds(string build)
+    public RemovalBatchPlan PlanBatch(IEnumerable<string> paths, bool worldsToo)
     {
-        if (!Directory.Exists(_paths.Worlds)) yield break;
-
-        var metadata = new WorldMetadataService();
-        foreach (var candidate in Directory.EnumerateDirectories(_paths.Worlds))
-        {
-            if (!WorldLocations.IsWorld(candidate)) continue;
-            var recorded = metadata.Read(candidate)?.BuildRelativePath?.Trim().Trim('\\', '/');
-            if (string.IsNullOrEmpty(recorded)) continue;
-            if (string.Equals(recorded, build, StringComparison.OrdinalIgnoreCase)) yield return candidate;
-        }
+        EnsureOrdinaryPacksRoot();
+        var plans = paths.Where(PackCatalogService.ValidFolder)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Where(path => Directory.Exists(_paths.CombineUnderPacks(path)))
+            .Select(path => Plan(path, worldsToo)).ToArray();
+        return new RemovalBatchPlan(plans, worldsToo);
     }
 
-    /// <summary>Carries out a plan. Never throws for a folder that would not go.</summary>
-    public RemovalOutcome Remove(RemovalPlan plan)
+    public IReadOnlyDictionary<string, RemovalOutcome> RemoveBatch(RemovalBatchPlan approved)
     {
-        SharedRuntimeGate.MarkActivity(_paths);
-        using var sharedRuntime = SharedRuntimeGate.TryAcquire(_paths) ??
+        using var sharedRuntime = AcquireRemovalLease(_paths);
+        var current = PlanBatch(approved.Plans.Select(plan => plan.BuildRelativePath), approved.WithWorlds);
+        if (!approved.SameTargets(current)) throw new IOException("The builds or worlds to remove have changed.");
+        var worlds = new WorldRemovalService(_paths, _logger);
+        var pendingWorlds = current.Plans.SelectMany(plan => plan.WorldDirectories)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        worlds.EnsureClosed(pendingWorlds);
+        var outcomes = new Dictionary<string, RemovalOutcome>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in current.Plans)
+        {
+            // Canonical paths may let two historical names claim the same world.
+            // The approved world is attempted only once. Java is recalculated so
+            // a JVM shared by two builds can be freed when the last one leaves.
+            var java = JavaNothingElseNeeds(plan.BuildRelativePath);
+            var target = plan with
+            {
+                WorldDirectories = plan.WorldDirectories.Where(pendingWorlds.Remove).ToArray(),
+                JavaDirectories = java.Select(directory => directory.Path).ToArray()
+            };
+            outcomes.Add(plan.BuildRelativePath, RemoveUnderLease(target, worlds));
+        }
+        return outcomes;
+    }
+
+    public RemovalOutcome Remove(RemovalPlan approved)
+    {
+        using var sharedRuntime = AcquireRemovalLease(_paths);
+        EnsureOrdinaryPacksRoot();
+        var worlds = new WorldRemovalService(_paths, _logger);
+        var current = Plan(approved.BuildRelativePath, worldsToo: approved.WorldDirectories.Count != 0);
+        if (!SameTargets(approved, current))
+            throw new IOException("The build or worlds to remove have changed.");
+        worlds.EnsureClosed(approved.WorldDirectories);
+        return RemoveUnderLease(approved, worlds);
+    }
+
+    private static bool SameTargets(RemovalPlan a, RemovalPlan b) =>
+        a.BuildRelativePath.Equals(b.BuildRelativePath, StringComparison.OrdinalIgnoreCase) &&
+        a.Directories.SequenceEqual(b.Directories, StringComparer.OrdinalIgnoreCase) &&
+        a.WorldDirectories.SequenceEqual(b.WorldDirectories, StringComparer.OrdinalIgnoreCase);
+
+    private void EnsureOrdinaryPacksRoot()
+    {
+        if (Directory.Exists(_paths.Packs) && !MaintenancePath.TryRead(_paths, _paths.Packs, out _))
+            throw new IOException("The packs directory is redirected or inaccessible.");
+    }
+
+    internal static FileStream AcquireRemovalLease(AppPaths paths)
+    {
+        SharedRuntimeGate.MarkActivity(paths);
+        return SharedRuntimeGate.TryAcquire(paths) ??
             throw new InvalidOperationException("Another launcher is preparing the shared runtime.");
+    }
+
+    private RemovalOutcome RemoveUnderLease(RemovalPlan plan, WorldRemovalService worlds)
+    {
         var kept = new List<string>();
         var removed = 0;
         foreach (var directory in plan.Directories)
         {
-            if (RemoveTree(directory)) removed++;
+            if (RemoveOwnedTree(_paths, directory, _logger)) removed++;
             else kept.Add(directory);
         }
 
-        var worlds = 0;
-        foreach (var worldDirectory in plan.WorldDirectories)
-        {
-            var held = WorldLocations.IsWorld(worldDirectory) ? 1 : CountWorlds(worldDirectory);
-            if (RemoveTree(worldDirectory)) worlds += held;
-            else kept.Add(worldDirectory);
-        }
+        var worldOutcome = worlds.RemoveUnderLease(plan.WorldDirectories);
+        kept.AddRange(worldOutcome.Kept);
 
         IReadOnlyList<int> java = [];
         if (plan.JavaDirectories.Count > 0)
@@ -174,12 +189,11 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
                 using var gate = JavaRuntimeStorage.TryAcquire(_paths);
                 if (gate is not null)
                 {
-                    // The concrete references may have changed since the window displayed the plan.
                     var planned = plan.JavaDirectories.ToHashSet(StringComparer.OrdinalIgnoreCase);
                     var removedJava = new SortedSet<int>();
                     foreach (var runtime in JavaNothingElseNeeds(null).Where(directory => planned.Contains(directory.Path)))
                     {
-                        if (RemoveTree(runtime.Path)) removedJava.Add(runtime.MajorVersion);
+                        if (RemoveOwnedTree(_paths, runtime.Path, _logger)) removedJava.Add(runtime.MajorVersion);
                         else kept.Add(runtime.Path);
                     }
                     java = removedJava.ToArray();
@@ -191,9 +205,6 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
             }
         }
 
-        // The hash cache is keyed by pack folder, so an entry for a pack that is
-        // gone can never be hit again - and a pack downloaded again under the
-        // same name must not be compared against what the old one hashed to.
         try
         {
             _hashes?.ForgetPack(plan.BuildRelativePath);
@@ -203,15 +214,14 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
             _logger?.Warn($"Pack hashes for {plan.BuildRelativePath} were not forgotten: {ex.Message}");
         }
 
-        // Empty parents left behind read as a build that is still there.
-        TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads"));
-        TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp", "Java"));
-        TryRemoveIfEmpty(Path.Combine(_paths.Personal, "Temp"));
+        TryRemoveIfEmpty(_paths, Path.Combine(_paths.Personal, "Temp", "RuntimeDownloads"));
+        TryRemoveIfEmpty(_paths, Path.Combine(_paths.Personal, "Temp", "Java"));
+        TryRemoveIfEmpty(_paths, Path.Combine(_paths.Personal, "Temp"));
 
-        var outcome = new RemovalOutcome(removed, worlds, java, kept);
+        var outcome = new RemovalOutcome(removed, worldOutcome.Worlds, java, kept);
         _logger?.Info(
             $"Build removed: {plan.BuildRelativePath} - {removed} folder(s)" +
-            (worlds > 0 ? $", {worlds} world(s)" : ", worlds kept") +
+            (outcome.Worlds > 0 ? $", {outcome.Worlds} world(s)" : ", worlds kept") +
             (java.Count > 0 ? $", Java {string.Join(", ", java)}" : "") +
             (kept.Count > 0 ? $"; could not remove {string.Join(", ", kept)}" : "") + ".");
         return outcome;
@@ -294,98 +304,57 @@ public sealed class BuildRemovalService(AppPaths paths, PackHashService? hashes 
         return string.Concat(name.Select(ch => invalid.Contains(ch) || ch is '\\' or '/' ? '_' : ch));
     }
 
-    private static int CountWorlds(string buildWorlds)
+    /// <summary>Removes a known ordinary tree without following any junctions inside it.</summary>
+    internal static bool RemoveOwnedTree(AppPaths paths, string directory, Logger? logger)
     {
         try
         {
-            return Directory.EnumerateDirectories(buildWorlds).Count(WorldLocations.IsWorld);
+            if (string.Equals(Path.GetFullPath(directory), paths.Service, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!MaintenancePath.TryRead(paths, directory, out var attributes) ||
+                !attributes.HasFlag(FileAttributes.Directory)) return false;
+            RemoveTreeCore(paths, directory);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return 0;
-        }
-    }
-
-    private static string[] EnumerateDirectoriesSafe(string root)
-    {
-        try
-        {
-            if (!Directory.Exists(root)) return [];
-            return Directory.EnumerateDirectories(root).ToArray();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return [];
-        }
-    }
-
-    /// <summary>
-    /// Removes a folder and everything in it, and unlinks - never follows - a
-    /// junction found on the way down.
-    /// </summary>
-    /// <remarks>
-    /// This is the whole reason the walk is written out by hand. The instance's
-    /// <c>saves</c> holds one junction per world, pointing into <c>Worlds</c>,
-    /// and a recursive delete that steps through one of those takes the world
-    /// with it. <see cref="Directory.Delete(string, bool)"/> is believed not to
-    /// follow reparse points, but "believed not to" is not a thing to stake
-    /// somebody's world on when the alternative is thirty lines.
-    /// </remarks>
-    private bool RemoveTree(string directory)
-    {
-        try
-        {
-            if (!Directory.Exists(directory)) return true;
-            RemoveTreeCore(directory);
-            return !Directory.Exists(directory);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger?.Warn($"Could not remove {directory}: {ex.Message}");
+            logger?.Warn($"Could not remove {directory}: {ex.Message}");
             return false;
         }
     }
 
-    private static void RemoveTreeCore(string directory)
+    private static void RemoveTreeCore(AppPaths paths, string directory)
     {
-        foreach (var child in Directory.EnumerateDirectories(directory))
-        {
-            if (IsLink(child)) Directory.Delete(child);
-            else RemoveTreeCore(child);
-        }
+        if (!MaintenancePath.TryRead(paths, directory, out var attributes) ||
+            !attributes.HasFlag(FileAttributes.Directory))
+            throw new IOException("A directory being removed is redirected or inaccessible.");
 
-        foreach (var file in Directory.EnumerateFiles(directory))
+        foreach (var child in Directory.EnumerateFileSystemEntries(directory))
         {
-            // Read-only is what a jar unpacked from an archive often is, and it
-            // is not a reason to leave half a build behind.
-            var info = new FileInfo(file);
-            if (info.IsReadOnly) info.IsReadOnly = false;
-            info.Delete();
+            var childAttributes = File.GetAttributes(child);
+            if (childAttributes.HasFlag(FileAttributes.Directory))
+            {
+                if (childAttributes.HasFlag(FileAttributes.ReparsePoint)) Directory.Delete(child);
+                else RemoveTreeCore(paths, child);
+            }
+            else
+            {
+                if (!childAttributes.HasFlag(FileAttributes.ReparsePoint) &&
+                    childAttributes.HasFlag(FileAttributes.ReadOnly)) File.SetAttributes(child, childAttributes & ~FileAttributes.ReadOnly);
+                File.Delete(child);
+            }
         }
 
         Directory.Delete(directory);
     }
 
-    private static bool IsLink(string path)
+    internal static void TryRemoveIfEmpty(AppPaths paths, string directory)
     {
         try
         {
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return false;
-        }
-    }
-
-    private static void TryRemoveIfEmpty(string directory)
-    {
-        try
-        {
-            if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
-            {
+            if (MaintenancePath.TryRead(paths, directory, out var attributes) &&
+                attributes.HasFlag(FileAttributes.Directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
                 Directory.Delete(directory);
-            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

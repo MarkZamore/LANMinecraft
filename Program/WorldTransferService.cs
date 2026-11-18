@@ -124,6 +124,7 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
 
     internal Func<string, string>? CompatibilityPathFor { get; init; }
     internal Func<string, string>? InstallationPathFor { get; init; }
+    internal Func<bool>? MayStartTransfer { get; init; }
 
     public event Action<string>? StatusChanged;
     public event Action? BecameHost;
@@ -242,6 +243,9 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
         var gateReleased = false;
         try
         {
+            EnsureMinecraftAvailableForTransfer("sender");
+            if (MayStartTransfer?.Invoke() == false)
+                throw new InvalidOperationException("Дождитесь завершения передачи сборки или удаления файлов.");
             BeginProgress();
             try
             {
@@ -549,7 +553,8 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
             {
                 var available = _transferGate.CurrentCount > 0 &&
                                 !_minecraft.IsClientRunning &&
-                                !_minecraft.IsClientPreparing;
+                                !_minecraft.IsClientPreparing &&
+                                MayStartTransfer?.Invoke() != false;
                 await WriteJsonAsync(stream, new WorldTransferAck
                 {
                     Protocol = ProtocolName,
@@ -578,6 +583,8 @@ public sealed class WorldTransferService : IAsyncDisposable, IPortableProtocolHa
                 throw new InvalidOperationException("Another world transfer is already active.");
             }
             EnsureMinecraftAvailableForTransfer("receiver");
+            if (MayStartTransfer?.Invoke() == false)
+                throw new InvalidOperationException("Дождитесь завершения передачи сборки или удаления файлов.");
 
             // The bar starts before the question, not after it: the dialog puts
             // "Ожидание подтверждения" on screen itself, and a refusal returns

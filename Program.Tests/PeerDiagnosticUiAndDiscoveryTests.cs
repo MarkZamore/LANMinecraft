@@ -211,7 +211,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
 
         var title = document
             .Descendants(presentation + "TextBlock")
-            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Сообщить о проблеме");
+            .SingleOrDefault(element => (string?)element.Attribute("Text") == "Передача логов");
         Assert.NotNull(title);
         Assert.Contains(
             document.Descendants(),
@@ -250,8 +250,12 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
             .Single(element => (string?)element.Attribute(x + "Name") == "SettingsGrid");
         Assert.True(RowOf(settings) < transferRow);
         var reportRow = RowOf(reportSection);
-        Assert.True(transferRow < reportRow,
-            $"transfer row {transferRow}, report row {reportRow}");
+        var packSection = document.Descendants(presentation + "Expander")
+            .Single(element => (string?)element.Attribute(x + "Name") == "PackTransferExpander");
+        Assert.True(transferRow < RowOf(packSection) && RowOf(packSection) < reportRow);
+        Assert.Equal("Передача сборки", (string?)packSection.Attribute("AutomationProperties.Name"));
+        Assert.Contains(packSection.Descendants(), element => (string?)element.Attribute("Text") == "В ожидании сборки");
+        Assert.Contains(packSection.Descendants(), element => (string?)element.Attribute(x + "Name") == "DeletePersonalPackButton");
         var body = document.Descendants(presentation + "ScrollViewer")
             .Single(element => (string?)element.Attribute(x + "Name") == "BodyScroll");
         Assert.Contains(body, panel.Ancestors());
@@ -356,7 +360,7 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
     /// The two action sections start closed while the sidebar stays visible in its own card.
     /// </summary>
     [Fact]
-    public void MainWindowXaml_KeepsTwoColumnsTwoCollapsedSectionsAndPersistentSidebar()
+    public void MainWindowXaml_KeepsTwoColumnsThreeCollapsedSectionsAndPersistentSidebar()
     {
         var document = XDocument.Load(FindRepositoryFile("Program", "MainWindow.xaml"));
         XNamespace presentation =
@@ -391,8 +395,8 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Equal("0", (string?)bodyBar.Attribute("Grid.Row"));
         Assert.Equal("2", (string?)bodyBar.Attribute("Grid.RowSpan"));
         Assert.Equal("{StaticResource Gap.BodyScroll}", (string?)bodyBar.Attribute("Margin"));
-        Assert.Equal(2, document.Descendants(presentation + "Expander").Count());
-        foreach (var name in new[] { "WorldTransferExpander", "ReportExpander" })
+        Assert.Equal(3, document.Descendants(presentation + "Expander").Count());
+        foreach (var name in new[] { "WorldTransferExpander", "PackTransferExpander", "ReportExpander" })
         {
             var section = document.Descendants(presentation + "Expander")
                 .Single(element => (string?)element.Attribute(x + "Name") == name);

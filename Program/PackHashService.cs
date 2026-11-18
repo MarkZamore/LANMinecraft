@@ -21,7 +21,8 @@ public sealed class PackHashService : IDisposable
         "defaultconfigs",
         "resourcepacks",
         "data",
-        "patchouli_books"
+        "patchouli_books",
+        PackManifestService.NativePayloadRoot
     };
 
     private static readonly string[] IncludedFiles = { PackManifestService.ManifestFileName, "options.txt" };
@@ -145,7 +146,8 @@ public sealed class PackHashService : IDisposable
             if (!Directory.Exists(directory)) continue;
             foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
             {
-                if (!ShouldSkip(Path.GetRelativePath(clientDir, file))) yield return file;
+                var relative = Path.GetRelativePath(clientDir, file).Replace('\\', '/');
+                if (!ShouldSkip(relative) && !PackArchiveService.IsPrivatePayloadPath(relative)) yield return file;
             }
         }
 

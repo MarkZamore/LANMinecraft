@@ -18,39 +18,36 @@ public sealed class DialogLayoutTests
     {
         WindowCanvasTests.OnAStaThread(() =>
         {
-            var directory = new DirectoryInfo(AppContext.BaseDirectory);
-            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Program", "App.xaml")))
-                directory = directory.Parent;
-            Assert.NotNull(directory);
-            var app = XDocument.Load(Path.Combine(directory.FullName, "Program", "App.xaml"));
-            var markup = XDocument.Load(Path.Combine(directory.FullName, "Program", "BuildRemovalConfirmationDialog.xaml"));
-            var root = markup.Root!;
-            root.Attribute(XName.Get("Class", "http://schemas.microsoft.com/winfx/2006/xaml"))!.Remove();
-            foreach (var declaration in app.Root!.Attributes().Where(attribute => attribute.IsNamespaceDeclaration))
-                if (root.Attribute(declaration.Name) is null) root.Add(new XAttribute(declaration));
-            foreach (var handler in root.Descendants().Attributes("Click").ToArray()) handler.Remove();
-            root.Element(root.Name.Namespace + "Window.Resources")!.AddFirst(app.Root.Elements().Single().Elements());
-            var dialog = (Window)XamlReader.Parse(markup.ToString());
-            var panel = (StackPanel)dialog.FindName("RemovalPanel");
-            VisualTreeHelper.SetRootDpi(dialog, new DpiScale(dpi, dpi));
-            VisualTreeHelper.SetRootDpi(panel, new DpiScale(dpi, dpi));
-            DialogScale.FitToClientArea(dialog, panel, new Size(width, 1000));
-            panel.Measure(new Size(width, double.PositiveInfinity));
-            panel.Arrange(new Rect(new Point(), panel.DesiredSize));
-            panel.UpdateLayout();
-            var names = new[] { "ListOnlyButton", "BuildOnlyButton", "WithWorldsButton", "KeepButton" };
-            var labels = new[] { "Убрать из списка", "Удалить сборку", "Удалить сборку с мирами", "Не хочу" };
+            var buildDialog = MeasureDialog("BuildRemovalConfirmationDialog.xaml", dpi, width);
+            var names = new[] { "ListOnlyButton", "BuildOnlyButton", "WithWorldsButton", "AllBuildsButton", "AllWithWorldsButton" };
+            var labels = new[]
+            {
+                "Убрать из списка", "Удалить сборку", "Удалить сборку с мирами",
+                "Удалить все сборки", "Удалить все сборки с мирами"
+            };
             for (var i = 0; i < names.Length; i++)
             {
-                var button = (Button)dialog.FindName(names[i]);
-                Assert.Equal(labels[i], button.Content);
-                Assert.Equal(i == 3, button.IsDefault);
-                Assert.Equal(i == 3, button.IsCancel);
-                Assert.InRange(button.ActualWidth, 1, width);
+                var button = AssertChoice(buildDialog, names[i], labels[i], width);
                 Assert.Equal(i / 2 * 2, Grid.GetRow(button));
                 Assert.Equal(i % 2 * 2, Grid.GetColumn(button));
-                Assert.True(button.DesiredSize.Width <= button.ActualWidth, $"The choice '{labels[i]}' is clipped.");
+                Assert.Equal(i == 4 ? 3 : 1, Grid.GetColumnSpan(button));
             }
+            Assert.True(((Button)buildDialog.FindName("AllWithWorldsButton")).ActualWidth >
+                        ((Button)buildDialog.FindName("AllBuildsButton")).ActualWidth);
+            Assert.True(((TextBlock)buildDialog.FindName("QuestionText")).Focusable);
+
+            var worldDialog = MeasureDialog("WorldRemovalConfirmationDialog.xaml", dpi, width);
+            var single = AssertChoice(worldDialog, "DeleteButton", "Удалить мир", width);
+            var all = AssertChoice(worldDialog, "AllWorldsButton", "Удалить все миры", width);
+            Assert.Equal(0, Grid.GetColumn(single));
+            Assert.Equal(2, Grid.GetColumn(all));
+            Assert.True(((TextBlock)worldDialog.FindName("QuestionText")).Focusable);
+
+            var confirmation = MeasureDialog("RemovalBatchConfirmationDialog.xaml", dpi, width);
+            var choices = ((StackPanel)confirmation.FindName("RemovalPanel")).Children.OfType<Grid>()
+                .Single().Children.OfType<Button>().ToArray();
+            Assert.Equal("Отмена", Assert.Single(choices, button => button.IsDefault).Content);
+            Assert.Equal("Отмена", Assert.Single(choices, button => button.IsCancel).Content);
             return true;
         });
     }
@@ -146,6 +143,45 @@ public sealed class DialogLayoutTests
             Assert.True(surface.LayoutTransform.Value.IsIdentity);
             return true;
         });
+    }
+
+    private static Button AssertChoice(Window dialog, string name, string label, double width)
+    {
+        var button = (Button)dialog.FindName(name);
+        Assert.Equal(label, button.Content);
+        Assert.False(button.IsDefault);
+        Assert.False(button.IsCancel);
+        Assert.InRange(button.ActualWidth, 1, width);
+        Assert.True(button.DesiredSize.Width <= button.ActualWidth, $"The choice '{label}' is clipped.");
+        return button;
+    }
+
+    private static Window MeasureDialog(string file, double dpi, double width)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Program", "App.xaml")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var app = XDocument.Load(Path.Combine(directory.FullName, "Program", "App.xaml"));
+        var markup = XDocument.Load(Path.Combine(directory.FullName, "Program", file));
+        var root = markup.Root!;
+        root.Attribute(XName.Get("Class", "http://schemas.microsoft.com/winfx/2006/xaml"))!.Remove();
+        foreach (var declaration in app.Root!.Attributes().Where(attribute => attribute.IsNamespaceDeclaration))
+            if (root.Attribute(declaration.Name) is null) root.Add(new XAttribute(declaration));
+        foreach (var handler in root.Descendants().Attributes("Click").ToArray()) handler.Remove();
+        var resourcesName = root.Name.Namespace + "Window.Resources";
+        if (root.Element(resourcesName) is null) root.AddFirst(new XElement(resourcesName));
+        root.Element(resourcesName)!.AddFirst(app.Root.Elements().Single().Elements());
+        var dialog = (Window)XamlReader.Parse(markup.ToString().Replace(
+            "clr-namespace:Minecraft\"", "clr-namespace:Minecraft;assembly=LANMinecraft\"", StringComparison.Ordinal));
+        var panel = (StackPanel)dialog.FindName("RemovalPanel");
+        VisualTreeHelper.SetRootDpi(dialog, new DpiScale(dpi, dpi));
+        VisualTreeHelper.SetRootDpi(panel, new DpiScale(dpi, dpi));
+        DialogScale.FitToClientArea(dialog, panel, new Size(width, 1000));
+        panel.Measure(new Size(width, double.PositiveInfinity));
+        panel.Arrange(new Rect(new Point(), panel.DesiredSize));
+        panel.UpdateLayout();
+        return dialog;
     }
 
     private static Window Dialog(FrameworkElement content)

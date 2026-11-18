@@ -315,14 +315,38 @@ public sealed partial class PortablePackSyncService
         }
     }
 
-    private static FileStream CreateDownloadPlanLease(string stage)
+    private const string TransferStageOwnership = "LANMinecraft.PackTransfer stage v1\n";
+
+    internal static IDisposable CreateTransferStage(AppPaths paths, out string directory)
+    {
+        if (!MaintenancePath.TryRead(paths, paths.Launcher, out var attributes) ||
+            !attributes.HasFlag(FileAttributes.Directory))
+            throw new IOException("Папка для подготовки сборки недоступна.");
+        directory = Path.Combine(paths.Launcher, DownloadPlanDirectoryPrefix + Guid.NewGuid().ToString("N"));
+        return new TransferStageLease(paths, directory, CreateDownloadPlanLease(directory, TransferStageOwnership));
+    }
+
+    private sealed class TransferStageLease(AppPaths paths, string stage, FileStream owner) : IDisposable
+    {
+        private FileStream? _owner = owner;
+
+        public void Dispose()
+        {
+            var active = Interlocked.Exchange(ref _owner, null);
+            if (active is null) return;
+            active.Dispose();
+            TryDeleteDownloadPlanDirectory(paths.Launcher, stage, TransferStageOwnership);
+        }
+    }
+
+    private static FileStream CreateDownloadPlanLease(string stage, string ownership = DownloadPlanOwnership)
     {
         Directory.CreateDirectory(stage);
         var owner = new FileStream(Path.Combine(stage, DownloadPlanOwnershipFile), FileMode.CreateNew,
             FileAccess.Write, FileShare.Delete);
         try
         {
-            owner.Write(Encoding.UTF8.GetBytes(DownloadPlanOwnership));
+            owner.Write(Encoding.UTF8.GetBytes(ownership));
             owner.Flush();
             return owner;
         }
@@ -340,6 +364,9 @@ public sealed partial class PortablePackSyncService
         if (!MaintenancePath.TryRead(paths, rootDirectory, out var rootAttributes) ||
             !rootAttributes.HasFlag(FileAttributes.Directory)) return removed;
         var expected = Encoding.UTF8.GetBytes(DownloadPlanOwnership);
+        var transferProof = Encoding.UTF8.GetBytes(TransferStageOwnership);
+        var launcherRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory))
+            .Equals(paths.Launcher, StringComparison.OrdinalIgnoreCase);
         try
         {
             foreach (var stage in Directory.EnumerateDirectories(rootDirectory, DownloadPlanDirectoryPrefix + "*"))
@@ -357,11 +384,12 @@ public sealed partial class PortablePackSyncService
                 {
                     using (var lease = new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.Delete))
                     {
-                        if (lease.Length != expected.Length) continue;
-                        var actual = new byte[expected.Length];
+                        if (lease.Length != expected.Length && (!launcherRoot || lease.Length != transferProof.Length)) continue;
+                        var actual = new byte[(int)lease.Length];
                         lease.ReadExactly(actual);
-                        if (!actual.AsSpan().SequenceEqual(expected)) continue;
-                        removed += DeleteStageContents(paths, stage, marker, checkpoint, token, depth: 0);
+                        var ownedTransfer = launcherRoot && actual.AsSpan().SequenceEqual(transferProof);
+                        if (!ownedTransfer && !actual.AsSpan().SequenceEqual(expected)) continue;
+                        removed += DeleteStageContents(paths, stage, marker, checkpoint, token, depth: 0, ownedTransfer);
                         if (Directory.EnumerateFileSystemEntries(stage).Any(path => !path.Equals(marker, StringComparison.OrdinalIgnoreCase)))
                             continue;
                     }
@@ -393,7 +421,7 @@ public sealed partial class PortablePackSyncService
     }
 
     private static int DeleteStageContents(AppPaths paths, string directory, string? keep,
-        Action<CancellationToken> checkpoint, CancellationToken token, int depth)
+        Action<CancellationToken> checkpoint, CancellationToken token, int depth, bool ownedTransfer = false)
     {
         if (depth > 128 || !MaintenancePath.TryRead(paths, directory, out var attributes) ||
             !attributes.HasFlag(FileAttributes.Directory)) return 0;
@@ -401,13 +429,16 @@ public sealed partial class PortablePackSyncService
         foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
         {
             checkpoint(token);
-            if (entry.Equals(keep, StringComparison.OrdinalIgnoreCase) || MaintenancePath.IsProtectedAssetName(Path.GetFileName(entry)) ||
+            if (entry.Equals(keep, StringComparison.OrdinalIgnoreCase) ||
+                !ownedTransfer && MaintenancePath.IsProtectedAssetName(Path.GetFileName(entry)) ||
                 !MaintenancePath.TryRead(paths, entry, out var entryAttributes)) continue;
             var isDirectory = entryAttributes.HasFlag(FileAttributes.Directory);
-            if (isDirectory) removed += DeleteStageContents(paths, entry, keep, checkpoint, token, depth + 1);
+            if (isDirectory) removed += DeleteStageContents(paths, entry, keep, checkpoint, token, depth + 1, ownedTransfer);
             checkpoint(token);
             token.ThrowIfCancellationRequested();
-            if (MaintenancePath.TryDelete(paths, entry, isDirectory)) removed++;
+            if (ownedTransfer
+                ? PortableRuntimeCache.TryDeleteOrdinaryEntry(entry, isDirectory)
+                : MaintenancePath.TryDelete(paths, entry, isDirectory)) removed++;
         }
         return removed;
     }

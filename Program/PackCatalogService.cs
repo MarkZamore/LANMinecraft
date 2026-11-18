@@ -318,7 +318,11 @@ public sealed partial class PackCatalogService
             if (effective.Source != entry.Source) LoadCachedEntry(effective, token: startupToken);
             LoadCachedEntry(entry, token: startupToken);
         }
-        foreach (var entry in _markerSources) { startupToken.ThrowIfCancellationRequested(); LoadCachedEntry(entry, presentation: false, token: startupToken); }
+        foreach (var entry in _markerSources.Where(entry => !IsWithdrawn(entry.RelativePath)))
+        {
+            startupToken.ThrowIfCancellationRequested();
+            LoadCachedEntry(entry, presentation: false, token: startupToken);
+        }
     }
 
     public bool IsReady { get; private set; }
@@ -369,6 +373,48 @@ public sealed partial class PackCatalogService
     public bool IsKnownCatalogPath(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath); }
     public bool IsWithdrawn(string relativePath) { lock (_gate) return _knownCatalogPaths.Contains(relativePath) &&
         !_sources.Any(entry => entry.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)); }
+
+    private bool IsActiveInstallationName(string relativePath) => _sources.Any(entry =>
+        entry.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase) ||
+        entry.LegacyRelativePaths.Contains(relativePath, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>A selectable local installation, including a formerly published pack.</summary>
+    internal bool IsPersonalInstalled(string relativePath)
+    {
+        if (!ValidFolder(relativePath)) return false;
+        bool wasPublished;
+        lock (_gate)
+        {
+            if (IsActiveInstallationName(relativePath)) return false;
+            wasPublished = _knownCatalogPaths.Contains(relativePath);
+        }
+        if (wasPublished) return HasRetiredInstallation(relativePath);
+        var directory = _paths.CombineUnderPacks(relativePath);
+        return MaintenancePath.TryRead(_paths, directory, out var attributes) &&
+            attributes.HasFlag(FileAttributes.Directory) && MinecraftProcessService.HasPackData(directory);
+    }
+
+    internal bool IsRetiredInstalled(string relativePath)
+    {
+        if (!ValidFolder(relativePath)) return false;
+        lock (_gate)
+            if (!_knownCatalogPaths.Contains(relativePath) || IsActiveInstallationName(relativePath)) return false;
+        return HasRetiredInstallation(relativePath);
+    }
+
+    private bool HasRetiredInstallation(string relativePath)
+    {
+        // Keep damaged installations selectable for deletion and for a useful
+        // launch error. Never mistake an offered card or a folder of fragments
+        // for a previously installed published pack.
+        var directory = _paths.CombineUnderPacks(relativePath);
+        return IsOrdinaryFile(PackManifestService.ManifestFileName) &&
+            IsOrdinaryFile(PortablePackSyncService.SyncStateFileName);
+
+        bool IsOrdinaryFile(string name) =>
+            MaintenancePath.TryRead(_paths, Path.Combine(directory, name), out var attributes) &&
+            !attributes.HasFlag(FileAttributes.Directory);
+    }
     public PackSyncSource ResolveHistoricalSourceMarker(string relativePath, PackSyncSource marker)
     {
         lock (_gate)
@@ -426,7 +472,8 @@ public sealed partial class PackCatalogService
             catch (Exception ex) when (IsRecoverable(ex)) { _logger.Warn("Library discovery: " + ex.Message); }
             using var parallel = new SemaphoreSlim(4);
             var checks = candidates.Select(s => (Entry: s, Presentation: true))
-                .Concat(_markerSources.Select(s => (Entry: s, Presentation: false)))
+                .Concat(_markerSources.Where(s => !IsWithdrawn(s.RelativePath))
+                    .Select(s => (Entry: s, Presentation: false)))
                 .DistinctBy(check => Key(check.Entry.Source), StringComparer.OrdinalIgnoreCase).ToArray();
             await Task.WhenAll(checks.Select(async check =>
             {

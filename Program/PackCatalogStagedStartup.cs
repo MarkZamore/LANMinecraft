@@ -129,7 +129,16 @@ public sealed partial class PackCatalogService
         await indexStartup.ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         _ = _paths.CombineUnderPacks(relativePath);
-        if (IsWithdrawn(relativePath)) throw new IOException("Эта сборка удалена из каталога GitHub.");
+        if (IsWithdrawn(relativePath))
+        {
+            if (!IsRetiredInstalled(relativePath))
+                throw new IOException("Сборка снята с публикации и не установлена полностью.");
+            // A former public pack uses the existing installation in place.
+            // Do not read its old source marker or create a remote launch plan.
+            PortablePackSyncService.ReadInstalledSnapshot(_paths, _paths.CombineUnderPacks(relativePath));
+            lock (_gate) _launchReadyPaths.Add(relativePath);
+            return;
+        }
 
         // Reuse the existing rules for explicit custom forks, renamed markers
         // and historical default repositories, reading only the selected marker.

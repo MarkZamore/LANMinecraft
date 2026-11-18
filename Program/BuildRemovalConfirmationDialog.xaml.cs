@@ -1,4 +1,6 @@
 ﻿using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace Minecraft;
 
@@ -15,16 +17,14 @@ public enum BuildRemovalAnswer
     BuildOnly,
 
     /// <summary>The build goes and its worlds go with it.</summary>
-    WithWorlds
+    WithWorlds,
+
+    AllBuilds,
+
+    AllBuildsWithWorlds
 }
 
-/// <summary>
-/// Offers hiding a build or deleting it with or without worlds.
-/// </summary>
-/// <remarks>
-/// It is a window of ours rather than a MessageBox for two reasons. The system
-/// box cannot offer the four explicit choices with the launcher's theme.
-/// </remarks>
+/// <summary>Asks which installed builds and associated worlds to remove.</summary>
 public partial class BuildRemovalConfirmationDialog : Window
 {
     private BuildRemovalConfirmationDialog(string buildName)
@@ -32,7 +32,17 @@ public partial class BuildRemovalConfirmationDialog : Window
         InitializeComponent();
         DarkTitleBar.Apply(this);
         QuestionText.Text = $"Что сделать со сборкой {buildName}?";
-        Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
+        Loaded += (_, _) =>
+        {
+            DialogScale.MatchOwner(this, RemovalPanel);
+            QuestionText.Focus();
+        };
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape) return;
+            e.Handled = true;
+            Close(BuildRemovalAnswer.Keep);
+        };
     }
 
     public BuildRemovalAnswer Answer { get; private set; } = BuildRemovalAnswer.Keep;
@@ -40,15 +50,30 @@ public partial class BuildRemovalConfirmationDialog : Window
     /// <summary>Asks, and answers Keep for a dialog closed any other way.</summary>
     internal static BuildRemovalConfirmationDialog Prepared() => new("");
 
-    public static BuildRemovalAnswer Ask(Window? owner, string buildName, bool canDeleteFiles)
+    public static BuildRemovalAnswer Ask(Window? owner, string buildName, bool canDeleteFiles,
+        bool personalOnly = false, bool canDeleteAll = true, bool showBatch = true)
     {
         var dialog = DialogPreloadCache.Take(() => new BuildRemovalConfirmationDialog(buildName));
-        dialog.QuestionText.Text = $"Что сделать со сборкой {buildName}?";
-        dialog.BuildOnlyButton.IsEnabled = canDeleteFiles;
-        dialog.WithWorldsButton.IsEnabled = canDeleteFiles;
+        dialog.Configure(buildName, canDeleteFiles, personalOnly, canDeleteAll, showBatch);
         if (owner is not null && owner.IsLoaded) dialog.Owner = owner;
         dialog.ShowDialog();
         return dialog.Answer;
+    }
+
+    internal void Configure(string buildName, bool canDeleteFiles, bool personalOnly, bool canDeleteAll, bool showBatch = true)
+    {
+        QuestionText.Text = $"Что сделать со сборкой {buildName}?";
+        ListOnlyButton.Visibility = personalOnly ? Visibility.Collapsed : Visibility.Visible;
+        AllBuildsButton.Visibility = personalOnly || !showBatch ? Visibility.Collapsed : Visibility.Visible;
+        AllWithWorldsButton.Visibility = showBatch ? Visibility.Visible : Visibility.Collapsed;
+        Grid.SetColumn(BuildOnlyButton, personalOnly ? 0 : 2);
+        Grid.SetColumn(WithWorldsButton, personalOnly ? 2 : 0);
+        Grid.SetRow(WithWorldsButton, personalOnly ? 0 : 2);
+        Grid.SetRow(AllWithWorldsButton, personalOnly ? 2 : 4);
+        var rows = ((Grid)AllWithWorldsButton.Parent).RowDefinitions;
+        rows[3].Height = personalOnly || !showBatch ? new GridLength(0) : (GridLength)FindResource("Size.DialogActionGap");
+        BuildOnlyButton.IsEnabled = WithWorldsButton.IsEnabled = canDeleteFiles;
+        AllBuildsButton.IsEnabled = AllWithWorldsButton.IsEnabled = canDeleteAll;
     }
 
     /// <summary>«3 мира», «21 мир», «14 миров» - the form the number takes.</summary>
@@ -69,12 +94,13 @@ public partial class BuildRemovalConfirmationDialog : Window
 
     private void WithWorldsButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.WithWorlds);
 
-    private void KeepButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.Keep);
+    private void AllBuildsButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.AllBuilds);
+
+    private void AllWithWorldsButton_Click(object sender, RoutedEventArgs e) => Close(BuildRemovalAnswer.AllBuildsWithWorlds);
 
     private void Close(BuildRemovalAnswer answer)
     {
         Answer = answer;
         DialogResult = answer != BuildRemovalAnswer.Keep;
-        Close();
     }
 }

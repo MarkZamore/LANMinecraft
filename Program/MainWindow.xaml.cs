@@ -140,6 +140,12 @@ public partial class MainWindow : Window
         SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         BodyScroll.SizeChanged += (_, _) => AdaptiveLauncherLayout.Apply(this);
         WorldTransferExpander.Expanded += (_, _) => { _preload?.Promote("transfer"); _preload?.Promote("world-menu"); _preload?.Promote("peer-menu"); };
+        PackTransferExpander.Expanded += (_, _) =>
+        {
+            _preload?.Promote("pack-transfer");
+            _preload?.Promote("personal-pack-menu");
+            _preload?.Promote("pack-recipient-menu");
+        };
         ReportExpander.Expanded += (_, _) => { _preload?.Promote("report"); _preload?.Promote("report-menu"); };
         DarkTitleBar.Apply(this);
         ContentRendered += (_, _) => { StartupTrace.Mark("отрисовка"); _framePainted = true; _firstFrame.TrySetResult(); ReportStartupTrace(); };
@@ -147,6 +153,8 @@ public partial class MainWindow : Window
         _windowPlacement.Apply(this);
         BuildComboBox.ItemsSource = _builds;
         OnlinePlayerComboBox.ItemsSource = _peers;
+        PackRecipientComboBox.ItemsSource = _peers;
+        PersonalPackComboBox.ItemsSource = _personalPacks;
         WorldComboBox.ItemsSource = _worlds;
         LibraryView.ReturnRequested += () => ShowLibrary(false);
         LibraryView.MembershipRequested += ChangeLibraryMembership;
@@ -291,7 +299,9 @@ public partial class MainWindow : Window
                 confirmation: new WpfWorldTransferConfirmation(this), recoverAtStartup: false)
             {
                 CompatibilityPathFor = path => _catalog?.CompatibilityPathFor(path) ?? path,
-                InstallationPathFor = path => _catalog?.InstallationPathFor(path) ?? path
+                InstallationPathFor = path => _catalog?.InstallationPathFor(path) ?? path,
+                MayStartTransfer = () => !Volatile.Read(ref _shutdownStarted) && !Volatile.Read(ref _removingPackFiles) &&
+                    !Volatile.Read(ref _playRequested) && !PackTransferActive
             };
             _bugReports = new BugReportService(
                 _paths,
@@ -308,6 +318,7 @@ public partial class MainWindow : Window
             _greetings.Greeted += presence => _peerDirectory?.Introduce(presence);
             _peerRouter.Register(_greetings);
             _peerRouter.RegisterFallback(_transfer);
+            InitializePackTransfer();
             _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
@@ -414,6 +425,7 @@ public partial class MainWindow : Window
             try { await Task.WhenAll(_launcherDataByPack.Values.ToArray()).WaitAsync(TimeSpan.FromSeconds(1)); }
             catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
             if (_peerRouter is not null) await _peerRouter.DisposeAsync();
+            if (_packTransfer is not null) await _packTransfer.DisposeAsync();
             if (_transfer is not null) await _transfer.DisposeAsync();
             if (_waypointSync is not null) await _waypointSync.DisposeAsync();
             if (_skinService is not null) await _skinService.DisposeAsync();
@@ -506,13 +518,23 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshPackHashAsync(CancellationToken token = default)
+    private async Task RefreshPackHashAsync(CancellationToken token = default, bool requireAvailable = false)
     {
         if (!token.CanBeCanceled) token = _lifetimeCts.Token;
         var settings = RequireSettings();
         var paths = RequirePaths();
         var relativePath = settings.ClientRelativePath;
-        var hash = await RequirePackHash().CalculateAsync(paths.CombineUnderPacks(relativePath), token);
+        string hash;
+        try
+        {
+            hash = await RequirePackHash().CalculateAsync(paths.CombineUnderPacks(relativePath), token);
+        }
+        catch (Exception ex) when (!requireAvailable &&
+                                   ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            _logger?.Warn($"Pack compatibility hash unavailable for {relativePath}: {ex.Message}");
+            hash = "";
+        }
         if (!string.Equals(RequireSettings().ClientRelativePath, relativePath, StringComparison.OrdinalIgnoreCase)) return;
         _localPackHash = hash;
         PackHashText.Text = _localPackHash.Length > 12 ? _localPackHash[..12] : _localPackHash;
@@ -525,13 +547,14 @@ public partial class MainWindow : Window
 
         PublishPackDisplayNames();
         Directory.CreateDirectory(_paths.Packs);
+        RefreshPersonalPacks();
         var selectedRelativePath = (BuildComboBox.SelectedItem as ClientBuildViewModel)?.RelativePath;
         var builds = Directory.EnumerateDirectories(_paths.Packs)
             .Where(MinecraftProcessService.HasPackData)
-            .Where(path => _catalog?.IsWithdrawn(Path.GetFileName(path)) != true)
+            .Where(path => !_catalog.IsWithdrawn(Path.GetFileName(path)) || _catalog.IsRetiredInstalled(Path.GetFileName(path)))
             .Where(path => PackMembership.ShouldListInstalled(_settings, Path.GetFileName(path),
-                isCatalogPack: _catalog?.IsKnownCatalogPath(Path.GetFileName(path)) ??
-                               (PortablePackSyncService.KnownSourceFor(Path.GetFileName(path)) is not null)))
+                isCatalogPack: _catalog.IsKnownCatalogPath(Path.GetFileName(path)) &&
+                               !_catalog.IsRetiredInstalled(Path.GetFileName(path))))
             .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
             .Select(path => new ClientBuildViewModel
             {
@@ -1353,9 +1376,9 @@ public partial class MainWindow : Window
         RefreshUi();
         try
         {
-            if (RequireTransfer().IsOperationActive)
+            if (RequireTransfer().IsOperationActive || PackTransferActive || _removingPackFiles)
             {
-                throw new InvalidOperationException("Wait for the world transfer to finish before starting Minecraft.");
+                throw new InvalidOperationException("Дождитесь завершения передачи перед запуском игры.");
             }
             var settings = RequireSettings();
             var launchNickname = GetLaunchNickname(steamStatus);
@@ -1412,7 +1435,7 @@ public partial class MainWindow : Window
                 await _autoManifest.EnsureAsync(build.RelativePath, _lifetimeCts.Token);
             }
 
-            await RefreshPackHashAsync();
+            await RefreshPackHashAsync(requireAvailable: true);
             // The pack that just arrived may weigh something else than the one
             // that was here: the split, and a suggestion nobody has overruled,
             // are worked out again before the game is told its heap size.
@@ -1626,93 +1649,108 @@ public partial class MainWindow : Window
         RemoveBuild(build.RelativePath, build.Name, installed: true);
     }
 
-    private void RemoveBuild(string relativePath, string name, bool installed)
+    private void DeletePersonalPackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PersonalPackComboBox.SelectedItem is ClientBuildViewModel pack && IsPersonalPack(pack.RelativePath))
+            RemoveBuild(pack.RelativePath, pack.Name, installed: true, personalOnly: true);
+    }
+
+    private void RemoveBuild(string relativePath, string name, bool installed, bool personalOnly = false, bool showBatch = true)
     {
         if (!CanChangeLibrary || _paths is null || _settings is null || _settingsService is null) return;
-        var build = new ClientBuildViewModel { RelativePath = relativePath, Name = name, FullPath = _paths.CombineUnderPacks(relativePath), IsInstalled = installed };
         if (!installed)
         {
             PackMembership.Remove(_settings, relativePath);
             BuildRemovalService.Forget(_settings, relativePath);
             _settingsService.Save(_settings);
-            RefreshBuilds();
-            RefreshWorlds();
-            RefreshControlsPresetStatus();
-            RefreshUi();
+            RefreshAfterRemoval();
             return;
         }
 
-        var answer = BuildRemovalConfirmationDialog.Ask(this, build.Name, CanDeletePackFiles(relativePath));
-        if (answer == BuildRemovalAnswer.Keep || !CanChangeLibrary || _catalog?.IsWithdrawn(relativePath) == true) return;
-        if (TryRemoveBuildFromList(_settings, build.RelativePath, answer))
+        try
         {
-            _settingsService.Save(_settings);
-            RefreshBuilds();
-            RefreshWorlds();
-            RefreshControlsPresetStatus();
-            RefreshUi();
-            return;
-        }
+            var answer = BuildRemovalConfirmationDialog.Ask(this, name, CanDeletePackFiles(relativePath),
+                personalOnly: personalOnly, canDeleteAll: showBatch && CanRemovePacks(InstalledRemovalTargets(personalOnly)),
+                showBatch: showBatch);
+            if (answer == BuildRemovalAnswer.Keep || !CanChangeLibrary || (personalOnly && !IsPersonalPack(relativePath))) return;
+            if (TryRemoveBuildFromList(_settings, relativePath, answer))
+            {
+                _settingsService.Save(_settings);
+                RefreshAfterRemoval();
+                return;
+            }
 
-        // A modal dialog pumps the dispatcher. Check again before touching files.
-        if (!CanDeletePackFiles(relativePath))
+            var batch = answer is BuildRemovalAnswer.AllBuilds or BuildRemovalAnswer.AllBuildsWithWorlds;
+            var worldsToo = answer is BuildRemovalAnswer.WithWorlds or BuildRemovalAnswer.AllBuildsWithWorlds;
+            var targets = batch ? InstalledRemovalTargets(personalOnly) : [relativePath];
+            if (!CanRemovePacks(targets)) return;
+            var removal = new BuildRemovalService(_paths, _packHash, _logger);
+            var plan = removal.PlanBatch(targets, worldsToo);
+            if (batch)
+            {
+                if (!RemovalBatchConfirmationDialog.Ask(this, plan.Builds, worldsToo ? plan.Worlds : null)) return;
+                var current = InstalledRemovalTargets(personalOnly);
+                if (!CanRemovePacks(current) || !plan.SameTargets(removal.PlanBatch(current, worldsToo)))
+                {
+                    SetState("Список для удаления изменился. Откройте диалог ещё раз.");
+                    return;
+                }
+            }
+
+            var protections = new List<IDisposable>();
+            _removingPackFiles = true;
+            try
+            {
+                if (TransferInProgress || GameNeedsLauncher) return;
+                foreach (var path in targets)
+                    if (_maintenance is not null) protections.Add(_maintenance.ProtectPack(path));
+                var outcomes = removal.RemoveBatch(plan);
+                foreach (var (path, outcome) in outcomes)
+                {
+                    if (!outcome.Complete && MinecraftProcessService.HasPackData(_paths.CombineUnderPacks(path))) continue;
+                    PackMembership.Remove(_settings, path);
+                    BuildRemovalService.Forget(_settings, path);
+                }
+                _settingsService.Save(_settings);
+                var kept = outcomes.Values.SelectMany(outcome => outcome.Kept).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (kept.Length > 0)
+                    NoticeDialog.Show(this, "Удаление завершилось не полностью", string.Join(Environment.NewLine, kept));
+                else
+                    SetState(batch ? $"Удалено сборок: {outcomes.Count}" : $"Сборка удалена: {name}");
+            }
+            finally
+            {
+                for (var index = protections.Count - 1; index >= 0; index--) protections[index].Dispose();
+                _removingPackFiles = false;
+                RefreshAfterRemoval();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
-            SetState("Дождитесь завершения игры, обновления сборки или передачи мира.");
-            return;
+            RequireLogger().Warn($"Could not remove packs: {ex.Message}");
+            NoticeDialog.Show(this, "Не удалось удалить сборки", ex.Message);
         }
-
-        using var packUse = _maintenance?.ProtectPack(build.RelativePath);
-        _removingPackFiles = true;
-        BuildRemovalService.RemovalOutcome? outcome;
-        try { outcome = RemoveInstalledPackFiles(build.RelativePath, answer); }
-        finally
-        {
-            _removingPackFiles = false;
-        }
-        if (outcome is not { } removed) return;
-        PackMembership.Remove(_settings, build.RelativePath);
-        BuildRemovalService.Forget(_settings, build.RelativePath);
-        _settingsService.Save(_settings);
-
-        RefreshBuilds();
-        RefreshControlsPresetStatus();
-        RefreshUi();
-        SetState(removed.Complete
-            ? $"Сборка удалена: {build.Name}" +
-              (removed.Worlds > 0 ? $", {BuildRemovalConfirmationDialog.Worlds(removed.Worlds)}" : "") +
-              (removed.Java.Count > 0 ? $", Java {string.Join(", ", removed.Java)}" : "")
-            // A part that would not go is almost always the game or an
-            // explorer window holding a file open, and saying which folder
-            // stayed is the difference between closing it and reinstalling.
-            : $"Сборка удалена не полностью - осталось: {string.Join(", ", removed.Kept)}");
     }
 
-    private BuildRemovalService.RemovalOutcome? RemoveInstalledPackFiles(string relativePath, BuildRemovalAnswer answer)
+    private string[] InstalledRemovalTargets(bool personalOnly)
     {
-        var removal = new BuildRemovalService(RequirePaths(), _packHash, _logger);
-        BuildRemovalService.RemovalPlan plan;
-        try
-        {
-            plan = removal.Plan(relativePath, worldsToo: answer == BuildRemovalAnswer.WithWorlds);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or InvalidOperationException or ArgumentException)
-        {
-            RequireLogger().Warn($"Build removal could not be planned for {relativePath}: {ex.Message}");
-            SetState("Не удалось прочитать, из чего состоит сборка");
-            return null;
-        }
+        if (_paths is null || !Directory.Exists(_paths.Packs)) return [];
+        return Directory.EnumerateDirectories(_paths.Packs)
+            .Where(MinecraftProcessService.HasPackData)
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .Where(path => PackCatalogService.ValidFolder(path) && (!personalOnly || IsPersonalPack(path)))
+            .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
-        try
-        {
-            return removal.Remove(plan);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            RequireLogger().Warn($"Build removal could not finish for {relativePath}: {ex.Message}");
-            SetState("Не удалось удалить сборку. Если лаунчер готовит игру, дождитесь завершения подготовки.");
-            return null;
-        }
+    private bool CanRemovePacks(string[] paths) => paths.Length > 0 && paths.All(CanDeletePackFiles);
+
+    private void RefreshAfterRemoval()
+    {
+        RefreshBuilds();
+        RefreshWorlds();
+        RefreshControlsPresetStatus();
+        RefreshUi();
     }
 
     internal static bool TryRemoveBuildFromList(AppSettings settings, string relativePath, BuildRemovalAnswer answer)
@@ -1722,44 +1760,51 @@ public partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>
-    /// Deletes the selected world, once the player has said so in as many words.
-    /// </summary>
-    /// <remarks>
-    /// The question names the world exactly as the list above the button names
-    /// it - the world and its build - because two builds can each hold a "New
-    /// World" and the name alone would not say which one is going.
-    ///
-    /// The world itself is deleted, not the junction an instance keeps into it.
-    /// Those are left dangling on purpose: the next Prepare sweeps a junction
-    /// whose world has gone, and doing it here would mean walking every
-    /// instance for a link that may not exist.
-    /// </remarks>
     private void DeleteWorldButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_catalog?.IsIndexReady != true || _minecraftRunning || _paths is null) return;
-        if (WorldComboBox.SelectedItem is not WorldViewModel world) return;
-        if (!Directory.Exists(world.Path)) return;
+        if (_catalog?.IsIndexReady != true || !CanChangeLibrary || _paths is null ||
+            _settings is null || _settingsService is null || WorldComboBox.SelectedItem is not WorldViewModel world) return;
 
-        if (!WorldRemovalConfirmationDialog.Ask(this, world.DisplayName)) return;
-
+        var answer = WorldRemovalConfirmationDialog.Ask(this, world.DisplayName);
+        if (answer == WorldRemovalAnswer.Keep || !CanChangeLibrary) return;
+        var all = answer == WorldRemovalAnswer.AllWorlds;
+        var removal = new WorldRemovalService(_paths, _logger);
         try
         {
-            Directory.Delete(world.Path, recursive: true);
-            RequireLogger().Info($"World {world.DisplayName} was deleted at the player's request.");
-            SetState($"Мир удалён: {world.DisplayName}");
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Almost always the game or an explorer window holding a file in it,
-            // and saying so is the difference between closing that and trying
-            // again forever.
-            RequireLogger().Warn($"World {world.DisplayName} could not be deleted: {ex.Message}");
-            SetState($"Мир не удалён - его файлы сейчас заняты: {world.Name}");
-        }
+            var plan = removal.Plan(all ? null : world.Path);
+            if (plan.Worlds == 0) return;
+            if (all && (!RemovalBatchConfirmationDialog.Ask(this, null, plan.Worlds) || !CanChangeLibrary)) return;
+            if (!plan.SameTargets(removal.Plan(all ? null : world.Path)))
+            {
+                SetState("Список миров изменился. Откройте диалог ещё раз.");
+                return;
+            }
 
-        RefreshWorlds();
-        RefreshUi();
+            _removingPackFiles = true;
+            if (TransferInProgress || GameNeedsLauncher) return;
+            var outcome = removal.Remove(plan);
+            if (!string.IsNullOrWhiteSpace(_settings.SelectedWorldRelativePath) &&
+                !Directory.Exists(Path.Combine(_paths.Worlds, _settings.SelectedWorldRelativePath)))
+            {
+                _settings.SelectedWorldRelativePath = "";
+                _settingsService.Save(_settings);
+            }
+            if (!outcome.Complete)
+                NoticeDialog.Show(this, "Некоторые миры не удалены", string.Join(Environment.NewLine, outcome.Kept));
+            else
+                SetState(all ? $"Удалено миров: {outcome.Worlds}" : $"Мир удалён: {world.DisplayName}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+        {
+            RequireLogger().Warn($"Could not remove worlds: {ex.Message}");
+            NoticeDialog.Show(this, "Не удалось удалить миры", ex.Message);
+        }
+        finally
+        {
+            _removingPackFiles = false;
+            RefreshWorlds();
+            RefreshUi();
+        }
     }
 
     private void SkinButton_Click(object sender, RoutedEventArgs e)
@@ -1816,7 +1861,7 @@ public partial class MainWindow : Window
 
     private async void TransferButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_transferActive || _minecraftRunning || _minecraftPreparing)
+        if (_transferActive || PackTransferActive || _removingPackFiles || _minecraftRunning || _minecraftPreparing)
         {
             return;
         }
@@ -3138,7 +3183,7 @@ public partial class MainWindow : Window
         // was down. So the identity gates those two and nothing else.
         var interactiveEnabled = !_busy;
         var configurationEnabled = interactiveEnabled &&
-                                   !_transferActive &&
+                                   !TransferInProgress && !_removingPackFiles &&
                                    !_minecraftRunning &&
                                    !_minecraftPreparing;
         var hasBuild = BuildComboBox.SelectedItem is ClientBuildViewModel;
@@ -3205,7 +3250,7 @@ public partial class MainWindow : Window
         // The same three states for the world beside it, and the same reason for
         // each: nothing chosen, the game is holding it, or it can go.
         var worldChosen = WorldComboBox.SelectedItem is WorldViewModel;
-        DeleteWorldButton.IsEnabled = worldChosen && !_minecraftRunning;
+        DeleteWorldButton.IsEnabled = worldChosen && CanChangeLibrary && _catalog?.IsIndexReady == true;
         DeleteWorldButton.ToolTip = !worldChosen
             ? "Мир не выбран"
             : _minecraftRunning
@@ -3237,7 +3282,7 @@ public partial class MainWindow : Window
         WorldPlaceholderText.Visibility = _worlds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         OnlinePlayerPlaceholderText.Visibility = _peers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         var canTransfer = interactiveEnabled && IsIdentityBound && _transfer is not null &&
-                          !_transferActive && !_minecraftRunning && !_minecraftPreparing &&
+                          !TransferInProgress && !_removingPackFiles && !_minecraftRunning && !_minecraftPreparing &&
                           WorldComboBox.SelectedItem is WorldViewModel &&
                           selectedRecipient is not null &&
                           !selectedRecipient.IsMinecraftRunning &&
@@ -3257,6 +3302,7 @@ public partial class MainWindow : Window
 
         RefreshDiagnosticsPanel();
         RefreshTransferStatus();
+        RefreshPackTransferControls();
         LibraryView.CanChangeMembership = CanChangeLibrary;
         LibraryView.RefreshMembership();
         if (_libraryVisible) HideLauncherVisibility();
@@ -3270,7 +3316,7 @@ public partial class MainWindow : Window
     }
 
     private bool CanChangeLibrary => !_shutdownStarted && !_busy && !_minecraftRunning && !_minecraftPreparing &&
-        !_transferActive && _paths is not null && _settings is not null && _settingsService is not null && _catalog is not null;
+        !TransferInProgress && !_removingPackFiles && _paths is not null && _settings is not null && _settingsService is not null && _catalog is not null;
 
     private bool CanDeletePackFiles(string path) => CanChangeLibrary && _catalog?.IsIndexReady == true &&
         _launcherDataByPack?.GetValueOrDefault(path)?.IsCompleted != false;
@@ -3418,6 +3464,9 @@ public partial class MainWindow : Window
         _preload?.Enqueue("news", 40, PrepareNews());
         _preload?.Enqueue("transfer", 50, UiPreparation.Prepare(WorldTransferPanel));
         _preload?.Enqueue("world-menu", 50, WorldComboBox.Prepare());
+        _preload?.Enqueue("pack-transfer", 55, UiPreparation.Prepare(PackTransferPanel));
+        _preload?.Enqueue("personal-pack-menu", 55, PersonalPackComboBox.Prepare());
+        _preload?.Enqueue("pack-recipient-menu", 55, PackRecipientComboBox.Prepare());
         _preload?.Enqueue("peer-menu", 50, OnlinePlayerComboBox.Prepare());
         _preload?.Enqueue("report", 60, UiPreparation.Prepare(ReportPanel));
         _preload?.Enqueue("report-menu", 60, DiagnosticLogTargetComboBox.Prepare());
@@ -3523,7 +3572,7 @@ public partial class MainWindow : Window
         if (_catalog?.IsWithdrawn(path) == true) { RefreshLibraryCatalog(); return; }
         if (PackMembership.Contains(_settings, path))
         {
-            RemoveBuild(path, pack.Name, MinecraftProcessService.HasPackData(_paths.CombineUnderPacks(path)));
+            RemoveBuild(path, pack.Name, MinecraftProcessService.HasPackData(_paths.CombineUnderPacks(path)), showBatch: false);
         }
         else if (PackMembership.Add(_settings, path))
         {

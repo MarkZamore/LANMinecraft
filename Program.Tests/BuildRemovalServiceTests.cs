@@ -483,6 +483,114 @@ public sealed class BuildRemovalServiceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(stranded, "level.dat")));
     }
 
+    [Fact]
+    public void BatchRemovalDeduplicatesAliasedWorldsAndKeepsBackups()
+    {
+        var legacy = PortablePackSyncService.LegacyTerraFirmaRelativePath;
+        var current = PortablePackSyncService.TerraFirmaRelativePath;
+        Install(legacy, "1.21.1");
+        Install(current, "1.21.1");
+        Install(Other, "1.20.1");
+        var shared = MakeWorld(current, "Общий мир");
+        var backup = MakeWorld(current, "Общий мир.backup-20261118");
+        var otherWorld = MakeWorld(Other, "Чужой мир");
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.PlanBatch([legacy, current, current.ToLowerInvariant()], worldsToo: true);
+        Assert.Equal(2, plan.Builds);
+        Assert.Equal(1, plan.Worlds);
+        var outcomes = service.RemoveBatch(plan);
+
+        Assert.Equal(2, outcomes.Count);
+        Assert.All(outcomes.Values, outcome => Assert.True(outcome.Complete));
+        Assert.Equal(1, outcomes.Values.Sum(outcome => outcome.Worlds));
+        Assert.False(Directory.Exists(shared));
+        Assert.True(Directory.Exists(backup));
+        Assert.True(Directory.Exists(otherWorld));
+        Assert.True(Directory.Exists(_paths.CombineUnderPacks(Other)));
+    }
+
+    [Fact]
+    public void AllWorldsIncludesUninstalledAndFlatWorldsButNeverFollowsLinks()
+    {
+        Install(Build, "1.21.1");
+        var installed = MakeWorld(Build, "Дом");
+        var uninstalled = MakeWorld(Other, "Мир удалённой сборки");
+        var flat = MakeStrandedWorld(null, "Мир старой структуры");
+        var backup = MakeWorld(Other, "Мир.backup-20261118");
+        var outside = Path.Combine(_root, "Outside", "Outside world");
+        Write(Path.Combine(outside, "level.dat"), "keep");
+        var linked = Path.Combine(_paths.Worlds, "Linked build");
+        SavesFolderService.CreateJunction(linked, Path.GetDirectoryName(outside)!);
+
+        try
+        {
+            var service = new WorldRemovalService(_paths);
+            var plan = service.Plan();
+            Assert.Equal(3, plan.Worlds);
+            Assert.Contains(uninstalled, plan.Targets);
+            Assert.Contains(flat, plan.Targets);
+            Assert.Equal(new[] { installed }, service.Plan(installed).Targets);
+
+            var addedLater = MakeWorld(Other, "Новый мир");
+            Assert.Throws<IOException>(() => service.Remove(plan));
+            Assert.True(Directory.Exists(installed));
+            Assert.True(Directory.Exists(addedLater));
+
+            var result = service.Remove(service.Plan());
+            Assert.True(result.Complete);
+            Assert.Equal(4, result.Worlds);
+            Assert.False(Directory.Exists(installed));
+            Assert.False(Directory.Exists(uninstalled));
+            Assert.False(Directory.Exists(flat));
+            Assert.True(Directory.Exists(backup));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(outside, "level.dat")));
+            Assert.True(Directory.Exists(_paths.CombineUnderPacks(Build)));
+        }
+        finally
+        {
+            Directory.Delete(linked);
+        }
+    }
+
+    [Fact]
+    public void BusyWorldRejectsBatchBeforeDeletingAnyBuild()
+    {
+        Install(Build, "1.21.1");
+        Install(Other, "1.20.1");
+        var world = MakeWorld(Build, "Открытый мир");
+        var worldLock = Path.Combine(world, "session.lock");
+        Write(worldLock, "held");
+        using var game = new FileStream(worldLock, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var service = new BuildRemovalService(_paths);
+        var plan = service.PlanBatch([Other, Build], worldsToo: true);
+        Assert.Throws<InvalidOperationException>(() => service.RemoveBatch(plan));
+        Assert.True(Directory.Exists(_paths.CombineUnderPacks(Build)));
+        Assert.True(Directory.Exists(_paths.CombineUnderPacks(Other)));
+        Assert.True(Directory.Exists(world));
+    }
+
+    [Fact]
+    public void BatchRemovalRefusesAJunctionAtThePacksRoot()
+    {
+        var outside = Path.Combine(_root, "Elsewhere", Build, "portable-pack.json");
+        Write(outside, "keep");
+        Directory.Delete(_paths.Packs);
+        SavesFolderService.CreateJunction(_paths.Packs, Path.Combine(_root, "Elsewhere"));
+        try
+        {
+            var service = new BuildRemovalService(_paths);
+            Assert.Throws<IOException>(() => service.PlanBatch([Build], worldsToo: true));
+            Assert.Throws<IOException>(() => service.Remove(service.Plan(Build, worldsToo: false)));
+            Assert.Equal("keep", File.ReadAllText(outside));
+        }
+        finally
+        {
+            Directory.Delete(_paths.Packs);
+        }
+    }
+
     private string MakeWorld(string build, string name)
     {
         var world = Path.Combine(WorldLocations.ForBuild(_paths.Worlds, build), name);

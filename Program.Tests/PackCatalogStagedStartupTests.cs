@@ -210,7 +210,64 @@ public sealed class PackCatalogStagedStartupTests : IDisposable
             Assert.False(current.IsLaunchReady(removed.RelativePath));
             var sync = new PortablePackSyncService(paths, logger, host.Client) { Catalog = current };
             Assert.Null(sync.TryResolveSource(removed.RelativePath));
-            Assert.Equal(PackSyncOutcome.SkippedNoSource, (await sync.SyncAsync(removed.RelativePath, null, default)).Outcome);
+            await Assert.ThrowsAsync<IOException>(() => sync.SyncAsync(removed.RelativePath, null, default));
+        }
+    }
+
+    [Fact]
+    public async Task WithdrawnCompletePackLaunchesLocallyAndRejectsDamagedFiles()
+    {
+        using var host = new CatalogHost();
+        var removed = host.Add("removed", "Installed pack", "Deleted-Pack");
+        host.Index = [removed];
+        await Staged(host).InitializeIndexAsync().WaitAsync(Deadline);
+
+        var directory = paths.CombineUnderPacks(removed.RelativePath);
+        const string file = "mods/game.jar";
+        const string pristine = "verified file";
+        PackCatalogPlayMembershipTests.WriteInstalledFixture(directory, file, pristine);
+        Marker(removed);
+        var receipt = File.ReadAllBytes(Path.Combine(directory, PortablePackSyncService.SyncStateFileName));
+        var world = Path.Combine(paths.Worlds, removed.RelativePath, "World", "level.dat");
+        var player = Path.Combine(paths.Worlds, removed.RelativePath, "World", "playerdata", "player.dat");
+        Write(world, "world data");
+        Write(player, "player progress");
+
+        host.Index = [];
+        await AssertLocal(Staged(host));
+        host.Offline = true;
+        var offline = Staged(host);
+        var sync = await AssertLocal(offline);
+
+        var bundled = Path.Combine(directory, file);
+        File.WriteAllText(bundled, "modified file");
+        await Assert.ThrowsAsync<IOException>(() => sync.SyncAsync(removed.RelativePath, null, default));
+        File.Delete(bundled);
+        await Assert.ThrowsAsync<IOException>(() => sync.SyncAsync(removed.RelativePath, null, default));
+        Write(bundled, pristine);
+        Write(Path.Combine(directory, PortablePackSyncService.ApplyPendingFileName), "{}");
+        await Assert.ThrowsAsync<IOException>(() => sync.SyncAsync(removed.RelativePath, null, default));
+        await Assert.ThrowsAsync<IOException>(() => Staged(host).EnsureLaunchReadyAsync(removed.RelativePath));
+
+        Assert.Equal(0, host.ManifestRequests(removed));
+        Assert.Equal(receipt, File.ReadAllBytes(Path.Combine(directory, PortablePackSyncService.SyncStateFileName)));
+        Assert.Equal("world data", File.ReadAllText(world));
+        Assert.Equal("player progress", File.ReadAllText(player));
+
+        async Task<PortablePackSyncService> AssertLocal(PackCatalogService current)
+        {
+            await current.InitializeIndexAsync().WaitAsync(Deadline);
+            Assert.Empty(current.Sources);
+            Assert.Empty(current.Packs);
+            Assert.True(current.IsWithdrawn(removed.RelativePath));
+            Assert.True(current.IsPersonalInstalled(removed.RelativePath));
+            await current.EnsureLaunchReadyAsync(removed.RelativePath).WaitAsync(Deadline);
+            Assert.True(current.IsLaunchReady(removed.RelativePath));
+            var service = new PortablePackSyncService(paths, logger, host.Client) { Catalog = current };
+            Assert.Null(service.TryResolveSource(removed.RelativePath));
+            Assert.Equal(PackSyncOutcome.SkippedNoSource,
+                (await service.SyncAsync(removed.RelativePath, null, default).WaitAsync(Deadline)).Outcome);
+            return service;
         }
     }
 

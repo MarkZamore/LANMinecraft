@@ -44,6 +44,7 @@ public sealed class LibraryAvailabilityTests
                         field.SetValue(owner, element);
                 Set("_settings", new AppSettings { PlayerName = "Library Reader" });
                 Set("_builds", new ObservableCollection<ClientBuildViewModel>());
+                Set("_personalPacks", new ObservableCollection<ClientBuildViewModel>());
                 Set("_worlds", new ObservableCollection<WorldViewModel>());
                 Set("_peers", new ObservableCollection<PeerViewModel>());
                 Set("_launcherVisibility", new Dictionary<UIElement, Visibility>());

@@ -896,7 +896,7 @@ public sealed class WindowCanvasTests
         });
     }
 
-    private static readonly string[] SectionNames = ["WorldTransferExpander", "ReportExpander"];
+    private static readonly string[] SectionNames = ["WorldTransferExpander", "PackTransferExpander", "ReportExpander"];
 
     private static void AssertSidebarUpdateAlignment(Window window)
     {

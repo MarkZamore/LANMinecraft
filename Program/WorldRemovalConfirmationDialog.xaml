@@ -7,25 +7,31 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
         Style="{DynamicResource WindowStyle}">
+    <Window.Resources>
+        <DataTemplate x:Key="RemovalChoiceContentTemplate">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center"/>
+        </DataTemplate>
+    </Window.Resources>
     <StackPanel x:Name="RemovalPanel"
                 Width="{StaticResource Size.DialogWidth}"
                 Margin="{StaticResource Gap.Canvas}">
         <TextBlock x:Name="QuestionText"
                    FontSize="{StaticResource Font.SizeHeading}"
                    Style="{StaticResource EmphasisTextStyle}"
+                   Focusable="True"
                    TextWrapping="Wrap"/>
-        <TextBlock x:Name="ExplanationText"
-                   Margin="{StaticResource Gap.Above2}"
-                   Style="{StaticResource ParagraphTextStyle}"
-                   TextWrapping="Wrap"/>
-        <!-- Two answers, and the one that does nothing is what Enter and Esc
-             both give. Deleting has to be pressed on purpose. -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="{StaticResource Gap.Above4}">
-            <Button x:Name="DeleteButton" Content="Да"
+        <Grid Margin="{StaticResource Gap.Above4}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="{StaticResource Size.DialogActionGap}"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="DeleteButton" Grid.Column="0" Content="Удалить мир"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
                     Padding="{StaticResource Pad.Wide}" Click="DeleteButton_Click"/>
-            <Button x:Name="KeepButton" Content="Нет" IsCancel="True" IsDefault="True"
-                    Margin="{StaticResource Gap.Left2}" Padding="{StaticResource Pad.Wide}"
-                    Click="KeepButton_Click"/>
-        </StackPanel>
+            <Button x:Name="AllWorldsButton" Grid.Column="2" Content="Удалить все миры"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
+                    Padding="{StaticResource Pad.Wide}" Click="AllWorldsButton_Click"/>
+        </Grid>
     </StackPanel>
 </Window>

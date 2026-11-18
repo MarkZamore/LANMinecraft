@@ -4,7 +4,7 @@ using System.Linq;
 namespace Minecraft.Tests;
 
 /// <summary>
-/// "Сообщить о проблеме" answers for itself by what it lets a player touch,
+/// "Передача логов" answers for itself by what it lets a player touch,
 /// not by a line of prose.
 /// </summary>
 /// <remarks>

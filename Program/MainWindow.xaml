@@ -114,6 +114,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Grid.Column="0" Margin="{StaticResource Gap.Below4}" x:Name="SettingsGrid">
                         <Grid.ColumnDefinitions>
@@ -360,12 +361,107 @@
                             </Grid>
                         </Grid>
                     </Expander>
-                    <Expander x:Name="ReportExpander"
+                    <Expander x:Name="PackTransferExpander"
                         Grid.Row="2"
                         IsExpanded="False"
-                        AutomationProperties.Name="Сообщить о проблеме">
+                        Margin="{StaticResource Gap.Below2}"
+                        AutomationProperties.Name="Передача сборки">
                         <Expander.Header>
-                            <TextBlock Text="Сообщить о проблеме"
+                            <TextBlock Text="Передача сборки"
+                                Style="{StaticResource SectionTitleStyle}"
+                                Margin="{StaticResource Gap.None}" />
+                        </Expander.Header>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="1"
+                                Margin="{StaticResource Gap.Below2}"
+                                x:Name="PackTransferPanel">
+                                <Grid Margin="{StaticResource Gap.Below2}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Сборка" Style="{StaticResource LabelTextStyle}" />
+                                    <Grid Grid.Column="1">
+                                        <local:CenteredDropDown x:Name="PersonalPackComboBox"
+                                            ItemTemplate="{StaticResource BuildItemTemplate}"
+                                            SelectionChanged="PackTransferSelectionChanged" />
+                                        <TextBlock x:Name="PersonalPackPlaceholderText"
+                                            Text="Нет личных сборок для передачи"
+                                            Style="{StaticResource PlaceholderTextStyle}"
+                                            Visibility="Collapsed" />
+                                    </Grid>
+                                    <Button Grid.Column="2"
+                                        x:Name="DeletePersonalPackButton"
+                                        Style="{StaticResource IconActionButton}"
+                                        Margin="{StaticResource Gap.Left2}"
+                                        Padding="{StaticResource Pad.None}"
+                                        Click="DeletePersonalPackButton_Click"
+                                        IsEnabled="False"
+                                        ToolTipService.ShowOnDisabled="True">
+                                        <TextBlock Text="&#xE74D;"
+                                            FontFamily="{StaticResource Font.Icons}"
+                                            FontSize="{StaticResource Size.Icon}"
+                                            TextWrapping="NoWrap" />
+                                    </Button>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="{StaticResource Size.LabelColumn}" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Игрок" Style="{StaticResource LabelTextStyle}" />
+                                    <Grid Grid.Column="1">
+                                        <local:CenteredDropDown x:Name="PackRecipientComboBox"
+                                            ItemTemplate="{StaticResource PeerItemTemplate}"
+                                            SelectionChanged="PackTransferSelectionChanged" />
+                                        <TextBlock x:Name="PackRecipientPlaceholderText"
+                                            Text="Нет игроков в сети"
+                                            Style="{StaticResource PlaceholderTextStyle}"
+                                            Visibility="Collapsed" />
+                                    </Grid>
+                                </Grid>
+                            </StackPanel>
+                            <Grid Grid.Row="1"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="1"
+                                Margin="{StaticResource Gap.None}"
+                                x:Name="PackTransferArea">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid Grid.Column="0" x:Name="PackTransferProgressArea" IsEnabled="False">
+                                    <ProgressBar x:Name="PackTransferProgressBar"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Foreground="Transparent" />
+                                    <TextBlock x:Name="PackTransferProgressText"
+                                        Text="В ожидании сборки"
+                                        Style="{StaticResource ProgressTextStyle}" />
+                                </Grid>
+                                <Button Grid.Column="1"
+                                    x:Name="PackTransferButton"
+                                    Content="Передать"
+                                    Click="PackTransferButton_Click"
+                                    Margin="{StaticResource Gap.Left2}"
+                                    MinWidth="{StaticResource Size.ButtonMin}"
+                                    Width="{StaticResource Size.ButtonMax}" />
+                            </Grid>
+                        </Grid>
+                    </Expander>
+                    <Expander x:Name="ReportExpander"
+                        Grid.Row="3"
+                        IsExpanded="False"
+                        AutomationProperties.Name="Передача логов">
+                        <Expander.Header>
+                            <TextBlock Text="Передача логов"
                                 Style="{StaticResource SectionTitleStyle}"
                                 Margin="{StaticResource Gap.None}" />
                         </Expander.Header>

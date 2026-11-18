@@ -1,53 +1,59 @@
 using System.Windows;
+using System.Windows.Input;
 
 namespace Minecraft;
 
-/// <summary>
-/// Asks before a world goes, naming it exactly as the list above the button
-/// named it - the world and the build it belongs to, because two builds can
-/// each have a "New World" and the name alone would not say which one is about
-/// to be deleted.
-/// </summary>
-/// <remarks>
-/// A window of ours rather than a MessageBox, for the reason the build's
-/// question is: a system box is a light dialog dropped on a dark launcher, and
-/// this one has to be read rather than dismissed. A world is the only thing in
-/// the launcher that cannot be downloaded again.
-/// </remarks>
+public enum WorldRemovalAnswer
+{
+    Keep,
+    WorldOnly,
+    AllWorlds
+}
+
+/// <summary>Asks whether to remove the selected world or all local worlds.</summary>
 public partial class WorldRemovalConfirmationDialog : Window
 {
-    private WorldRemovalConfirmationDialog(string displayName)
+    private WorldRemovalConfirmationDialog()
     {
         InitializeComponent();
         DarkTitleBar.Apply(this);
-        QuestionText.Text = $"Вы точно хотите удалить мир «{displayName}»?";
-        ExplanationText.Text =
-            "Мир удалится с диска вместе со всем, что в нём построено, и вернуть его будет неоткуда.";
-        // Keep the text at its native size and fit the current monitor's work
-        // area, even when Windows DPI scaling leaves little room.
-        Loaded += (_, _) => DialogScale.MatchOwner(this, RemovalPanel);
+        Loaded += (_, _) =>
+        {
+            DialogScale.MatchOwner(this, RemovalPanel);
+            QuestionText.Focus();
+        };
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape) return;
+            e.Handled = true;
+            Close(WorldRemovalAnswer.Keep);
+        };
     }
 
-    /// <summary>True when the player asked for the world to go.</summary>
-    internal static WorldRemovalConfirmationDialog Prepared() => new("");
+    internal static WorldRemovalConfirmationDialog Prepared() => new();
 
-    public static bool Ask(Window owner, string displayName)
+    public WorldRemovalAnswer Answer { get; private set; }
+
+    public static WorldRemovalAnswer Ask(Window owner, string? displayName, bool canDeleteAll = true)
     {
-        var dialog = DialogPreloadCache.Take(() => new WorldRemovalConfirmationDialog(displayName));
-        dialog.Owner = owner;
-        dialog.QuestionText.Text = $"Вы точно хотите удалить мир «{displayName}»?";
-        return dialog.ShowDialog() == true;
+        var dialog = DialogPreloadCache.Take(Prepared);
+        if (owner.IsLoaded) dialog.Owner = owner;
+        dialog.QuestionText.Text = displayName is null
+            ? "Какие миры удалить?"
+            : $"Вы точно хотите удалить мир «{displayName}»?";
+        dialog.DeleteButton.IsEnabled = displayName is not null;
+        dialog.AllWorldsButton.IsEnabled = canDeleteAll;
+        dialog.ShowDialog();
+        return dialog.Answer;
     }
 
-    private void DeleteButton_Click(object sender, RoutedEventArgs e)
-    {
-        DialogResult = true;
-        Close();
-    }
+    private void DeleteButton_Click(object sender, RoutedEventArgs e) => Close(WorldRemovalAnswer.WorldOnly);
 
-    private void KeepButton_Click(object sender, RoutedEventArgs e)
+    private void AllWorldsButton_Click(object sender, RoutedEventArgs e) => Close(WorldRemovalAnswer.AllWorlds);
+
+    private void Close(WorldRemovalAnswer answer)
     {
-        DialogResult = false;
-        Close();
+        Answer = answer;
+        DialogResult = answer != WorldRemovalAnswer.Keep;
     }
 }

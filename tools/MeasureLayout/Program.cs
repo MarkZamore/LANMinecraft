@@ -255,16 +255,25 @@ internal static class Program
         if (window.FindName("MemoryTextBox") is TextBox memory) memory.Text = "8";
         if (window.FindName("MemoryEstimateText") is TextBlock estimate) estimate.Text = "Рекомендуется от 13 ГБ";
         if (window.FindName("BugReportMessageTextBox") is TextBox report) report.Text = "Опишите проблему: что произошло и что должно было произойти.\nТекст сохраняется при сворачивании секции.";
-        foreach (var name in new[] { "BuildComboBox", "WorldComboBox", "OnlinePlayerComboBox", "DiagnosticLogTargetComboBox" })
+        foreach (var name in new[] { "BuildComboBox", "WorldComboBox", "OnlinePlayerComboBox",
+                     "PersonalPackComboBox", "PackRecipientComboBox", "DiagnosticLogTargetComboBox" })
         {
             if (window.FindName(name) is not CenteredDropDown dropdown) continue;
-            var text = name switch { "BuildComboBox" => "Minecraft 1.21.1 NeoForge", "WorldComboBox" => "Мой мир", "OnlinePlayerComboBox" => "Игрок в локальной сети", _ => "Разработчик" };
+            var text = name switch
+            {
+                "BuildComboBox" => "Minecraft 1.21.1 NeoForge",
+                "WorldComboBox" => "Мой мир",
+                "PersonalPackComboBox" => "Личная сборка",
+                "OnlinePlayerComboBox" or "PackRecipientComboBox" => "Игрок в локальной сети",
+                _ => "Разработчик"
+            };
             var item = new SampleItem(text, text);
             dropdown.ItemsSource = new[] { item };
             dropdown.SelectedItem = item;
         }
         if (window.FindName("ChangelogList") is ItemsControl changes)
-            changes.ItemsSource = ChangelogService.Load().Take(12).Select(entry => new { Title = $"Версия {entry.Version}", entry.Text }).ToArray();
+            changes.ItemsSource = ChangelogService.Parse(File.ReadAllText(Path.Combine(Repository, "Program", "Changelog.md")))
+                .Take(12).Select(entry => new { Title = $"Версия {entry.Version}", entry.Text }).ToArray();
     }
 
     private static object MakeReport(Window window, string id, double width, double height, double dpi, Expander[] expanders,

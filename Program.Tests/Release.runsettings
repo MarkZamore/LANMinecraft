@@ -207,7 +207,16 @@
       FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.RemovedEntriesStayRemovedOfflineWhileListedPackKeepsItsVerifiedBundleOnUpdateFailure|
       FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.MissingOrMalformedIndexKeepsTheLastAuthoritativeMembership|
       FullyQualifiedName=Minecraft.Tests.PackCatalogAuthorityTests.ChangedRepositoryBecomesEffectiveOnlyAfterVerificationIncludingAcrossOfflineRestart|
-      FullyQualifiedName=Minecraft.Tests.PackCatalogPlayMembershipTests.GitHubRemovalHidesInstalledAndOfferedEntriesWithoutDeletingWorldsOrCustomPacks|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogStagedStartupTests.WithdrawnCompletePackLaunchesLocallyAndRejectsDamagedFiles|
+      FullyQualifiedName=Minecraft.Tests.PackArchiveTests.PersonalArchiveKeepsNetworkHashButLeavesWorldsAndPlayerFilesOnSender|
+      FullyQualifiedName=Minecraft.Tests.PackArchiveTests.ManagedArchiveReconstructsExactReceiptWithoutSourceAndIgnoresUnownedFiles|
+      FullyQualifiedName=Minecraft.Tests.PackArchiveTests.RejectsTamperingCancelledImportsAndReservedNamesWithoutPublishingPartials|
+      FullyQualifiedName=Minecraft.Tests.PackTransferTests.ConfirmedSteamTransferInstallsBeforeStoredAndRejectsDeclinedAndCorruptPayloads|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.BatchRemovalDeduplicatesAliasedWorldsAndKeepsBackups|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.AllWorldsIncludesUninstalledAndFlatWorldsButNeverFollowsLinks|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.BusyWorldRejectsBatchBeforeDeletingAnyBuild|
+      FullyQualifiedName=Minecraft.Tests.BuildRemovalServiceTests.BatchRemovalRefusesAJunctionAtThePacksRoot|
+      FullyQualifiedName=Minecraft.Tests.PackCatalogPlayMembershipTests.GitHubRemovalKeepsCompleteInstalledPacksPersonalWithoutChangingWorlds|
       FullyQualifiedName=Minecraft.Tests.PackCatalogDisplayNameTests.StartupCatalogueNameUpdateRefreshesPlayListWhileKeepingTheSameInstallationAndPlayerSettings|
       FullyQualifiedName=Minecraft.Tests.TerraFirmaPackMigrationTests.InstalledPackKeepsWorldsPersonalFilesAndSettingsAndCanRunAgain|
       FullyQualifiedName=Minecraft.Tests.PackCatalogTests.AddDoesNotDownloadAndRemovalSurvivesSettingsReload|

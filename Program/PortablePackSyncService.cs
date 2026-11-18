@@ -201,6 +201,113 @@ public sealed partial class PortablePackSyncService
 
     internal sealed record ManagedFileSnapshot(string Path, long SizeBytes, string Sha256);
 
+    internal static IReadOnlyList<ManagedFileSnapshot> ReadInstalledSnapshot(AppPaths paths, string packDirectory)
+    {
+        if (IsUpdatePending(packDirectory))
+            throw new IOException("Обновление сборки было прервано. Для игры нужна полная копия.");
+        RequireOrdinarySnapshotFile(paths, packDirectory, SyncStateFileName);
+        RequireOrdinarySnapshotFile(paths, packDirectory, PackManifestService.ManifestFileName);
+        var files = ReadManagedFiles(packDirectory) ??
+            throw new IOException("В локальной сборке нет списка установленных файлов.");
+        _ = ReadInstalledSnapshotFeatures(packDirectory);
+        var descriptor = PackManifestService.Load(packDirectory);
+        RequireSnapshotEntry(files, PackManifestService.ManifestFileName);
+        var bundledClient = descriptor.NativeRuntime?.Executable ?? descriptor.ClientJar;
+        if (!string.IsNullOrEmpty(bundledClient)) RequireSnapshotEntry(files, bundledClient);
+        return files;
+    }
+
+    private static void RequireSnapshotEntry(IReadOnlyList<ManagedFileSnapshot> files, string path)
+    {
+        if (!files.Any(file => file.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException($"Локальная сборка не содержит обязательный файл: {path}");
+    }
+
+    internal static IReadOnlyList<ManagedFileSnapshot> VerifyInstalledSnapshot(
+        AppPaths paths, string packDirectory, CancellationToken token)
+    {
+        var files = ReadInstalledSnapshot(paths, packDirectory);
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            var path = RequireOrdinarySnapshotFile(paths, packDirectory, file.Path);
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 128 * 1024, FileOptions.SequentialScan);
+            if (input.Length != file.SizeBytes || !HashesEqual(Convert.ToHexString(SHA256.HashData(input)), file.Sha256))
+                throw new IOException($"Файл локальной сборки изменён или повреждён: {file.Path}");
+        }
+        token.ThrowIfCancellationRequested();
+        if (IsUpdatePending(packDirectory))
+            throw new IOException("Локальная сборка изменяется. Повторите попытку.");
+        return files;
+    }
+
+    private static string RequireOrdinarySnapshotFile(AppPaths paths, string packDirectory, string relative)
+    {
+        var path = Path.Combine(packDirectory, relative.Replace('/', Path.DirectorySeparatorChar));
+        if (!MaintenancePath.TryRead(paths, path, out var attributes) || attributes.HasFlag(FileAttributes.Directory))
+            throw new IOException($"Файл локальной сборки отсутствует или недоступен: {relative}");
+        return path;
+    }
+
+    internal static string[] ReadInstalledSnapshotFeatures(string packDirectory)
+    {
+        var path = Path.Combine(packDirectory, SyncStateFileName);
+        try
+        {
+            var state = JsonSerializer.Deserialize<SyncStateDto>(File.ReadAllText(path), JsonOptions);
+            if (state?.SchemaVersion != SyncStateCacheGeneration || state.Files is not { Count: > 0 })
+                throw new InvalidDataException("Локальная сборка не содержит проверенного списка файлов.");
+            var features = state.RequiredLauncherFeatures ?? [];
+            ValidateSnapshotFeatures(features);
+            return features;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Список установленных файлов локальной сборки повреждён.", ex);
+        }
+    }
+
+    private static void ValidateSnapshotFeatures(IReadOnlyList<string> features)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (features.Any(feature => !SupportedLauncherFeatures.Contains(feature) || !seen.Add(feature)))
+            throw new InvalidDataException("Локальная сборка требует неподдерживаемую функцию лаунчера.");
+    }
+
+    // The transfer manifest is validated independently and never supplies a
+    // receipt or source marker. Rebuild the local receipt from ordinary files
+    // in the receiver's staging directory.
+    internal static void WriteImportedSnapshot(string packDirectory,
+        IReadOnlyList<ManagedFileSnapshot> files, IReadOnlyList<string> requiredFeatures)
+    {
+        ValidateSnapshotFeatures(requiredFeatures);
+        RequireSnapshotEntry(files, PackManifestService.ManifestFileName);
+        var descriptor = PackManifestService.Load(packDirectory);
+        var bundledClient = descriptor.NativeRuntime?.Executable ?? descriptor.ClientJar;
+        if (!string.IsNullOrEmpty(bundledClient)) RequireSnapshotEntry(files, bundledClient);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(packDirectory));
+        var state = new SyncStateDto
+        {
+            SchemaVersion = SyncStateCacheGeneration,
+            HasCompleteLauncherPaths = true,
+            RequiredLauncherFeatures = requiredFeatures.Count == 0 ? null : [.. requiredFeatures]
+        };
+        foreach (var file in files)
+        {
+            var relative = ValidateManifestPath(file.Path, root);
+            var info = new FileInfo(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!info.Exists || info.Length != file.SizeBytes || !state.Files.TryAdd(relative, new SyncStateFileDto
+                {
+                    SizeBytes = file.SizeBytes,
+                    LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks,
+                    Sha256 = ValidateSha256(file.Sha256, relative)
+                }))
+                throw new InvalidDataException($"Недействительный файл локальной сборки: {relative}");
+        }
+        AtomicFile.WriteAllText(Path.Combine(root, SyncStateFileName), JsonSerializer.Serialize(state, JsonOptions));
+    }
+
     /// <summary>Historical ownership proofs, including older installations without instance state.</summary>
     internal static IReadOnlyList<ManagedFileSnapshot> ReadRetiredFiles(string packDirectory)
     {
@@ -532,6 +639,12 @@ public sealed partial class PortablePackSyncService
         var packDir = _paths.CombineUnderPacks(packRelativePath);
         if (source is null)
         {
+            if (Catalog?.IsWithdrawn(packRelativePath) == true)
+            {
+                if (!Catalog.IsRetiredInstalled(packRelativePath))
+                    throw new IOException("Сборка снята с публикации и не установлена полностью.");
+                await Task.Run(() => VerifyInstalledSnapshot(_paths, packDir, token), token).ConfigureAwait(false);
+            }
             return LocalDownloadPlan(packRelativePath, packDir,
                 new PackSyncResult(PackSyncOutcome.SkippedNoSource, null, 0, 0, null));
         }
@@ -1965,7 +2078,7 @@ public sealed partial class PortablePackSyncService
         }
     }
 
-    private static void TryDeleteDownloadPlanDirectory(string packDir, string path)
+    private static void TryDeleteDownloadPlanDirectory(string packDir, string path, string ownership = DownloadPlanOwnership)
     {
         try
         {
@@ -1978,8 +2091,8 @@ public sealed partial class PortablePackSyncService
             var marker = relative + "/" + DownloadPlanOwnershipFile;
             ValidateManifestPath(marker, packRoot);
             var ownerFile = Path.Combine(packRoot, marker.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(ownerFile) || new FileInfo(ownerFile).Length != System.Text.Encoding.UTF8.GetByteCount(DownloadPlanOwnership) ||
-                File.ReadAllText(ownerFile) != DownloadPlanOwnership) return;
+            if (!File.Exists(ownerFile) || new FileInfo(ownerFile).Length != System.Text.Encoding.UTF8.GetByteCount(ownership) ||
+                File.ReadAllText(ownerFile) != ownership) return;
             // Do not descend into links introduced after staging was created.
             var pending = new Stack<string>();
             pending.Push(path);

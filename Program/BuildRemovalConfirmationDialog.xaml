@@ -18,8 +18,8 @@
         <TextBlock x:Name="QuestionText"
                    FontSize="{StaticResource Font.SizeHeading}"
                    Style="{StaticResource EmphasisTextStyle}"
+                   Focusable="True"
                    TextWrapping="Wrap"/>
-        <!-- Enter, Escape and closing the window keep everything as it is. -->
         <Grid Margin="{StaticResource Gap.Above4}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -27,6 +27,8 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="{StaticResource Size.DialogActionGap}"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="{StaticResource Size.DialogActionGap}"/>
                 <RowDefinition Height="Auto"/>
@@ -41,10 +43,15 @@
                     ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
                     Padding="{StaticResource Pad.Wide}"
                     Click="WithWorldsButton_Click"/>
-            <Button x:Name="KeepButton" Grid.Row="2" Grid.Column="2" Content="Не хочу" IsCancel="True" IsDefault="True"
+            <Button x:Name="AllBuildsButton" Grid.Row="2" Grid.Column="2" Content="Удалить все сборки"
                     ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
                     Padding="{StaticResource Pad.Wide}"
-                    Click="KeepButton_Click"/>
+                    Click="AllBuildsButton_Click"/>
+            <Button x:Name="AllWithWorldsButton" Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3"
+                    Content="Удалить все сборки с мирами"
+                    ContentTemplate="{StaticResource RemovalChoiceContentTemplate}"
+                    Padding="{StaticResource Pad.Wide}"
+                    Click="AllWithWorldsButton_Click"/>
         </Grid>
     </StackPanel>
 </Window>
