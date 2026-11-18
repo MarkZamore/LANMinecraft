@@ -74,7 +74,7 @@ internal static class Program
                 view.SetCatalog(args.Contains("--six-packs") ? SixPackFixture(catalog.Packs) :
                     libraryModules ? catalog.Packs : catalog.PacksForDisplay(new AppSettings
                     { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
-                view.IsAdded = path => path == PortablePackSyncService.DefaultPackRelativePath;
+                view.IsAdded = path => mode == "pack-mods" && path == PortablePackSyncService.DefaultPackRelativePath;
                 HideLauncherPageWithRetainedLog(window);
                 view.Visibility = Visibility.Visible;
                 if (mode is "pack-detail" or "pack-mods")
@@ -259,6 +259,7 @@ internal static class Program
         if (window.FindName("PlayerNameTextBox") is TextBox player) player.Text = "MarkZamore";
         if (window.FindName("MemoryTextBox") is TextBox memory) memory.Text = "8";
         if (window.FindName("MemoryEstimateText") is TextBlock estimate) estimate.Text = "Рекомендуется от 13 ГБ";
+        if (window.FindName("UpdateProgressText") is TextBlock update) update.Text = "Вы на последней версии";
         if (window.FindName("BugReportMessageTextBox") is TextBox report) report.Text = "Опишите проблему: что произошло и что должно было произойти.\nТекст сохраняется при сворачивании секции.";
         foreach (var name in new[] { "BuildComboBox", "WorldComboBox", "OnlinePlayerComboBox",
                      "PersonalPackComboBox", "PackRecipientComboBox", "DiagnosticLogTargetComboBox" })

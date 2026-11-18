@@ -249,26 +249,42 @@ public sealed class WindowCanvasTests
         });
     }
 
-    [Fact]
-    public void TheChangelog_RemainsVisibleWhileLeftSectionsCollapse()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    [InlineData(2)]
+    public void TheChangelog_RemainsVisibleWhileLeftSectionsCollapse(double scale)
     {
         OnAStaThread(() =>
         {
             var window = LoadWindow();
             var size = new Size(804, 521);
             var card = Element<Border>(window, "SidePanelCard");
+            var heading = Element<StackPanel>(window, "SidePanelHeading");
             var title = Element<TextBlock>(window, "SidePanelTitle");
+            var release = Element<TextBlock>(window, "SidePanelRelease");
             var news = Element<Grid>(window, "ChangelogPanel");
+            var dpi = new DpiScale(scale, scale);
+            VisualTreeHelper.SetRootDpi(window, dpi);
+            VisualTreeHelper.SetRootDpi((Visual)window.Content, dpi);
             LayoutWindow(window, size);
             var height = card.ActualHeight;
+            Assert.Equal("Что нового", title.Text);
+            Assert.Equal($"(Вы на {UpdateService.CurrentReleaseNumber})", release.Text);
             foreach (var expanded in new[] { true, false })
             {
                 foreach (var name in SectionNames) Element<Expander>(window, name).IsExpanded = expanded;
                 LayoutWindow(window, size);
                 Assert.Same(card, window.FindName("SidePanelCard"));
                 Assert.Equal(height, card.ActualHeight, 3);
-                Assert.Equal("Что нового", title.Text);
-                Assert.True(title.ActualWidth > 0 && title.ActualHeight >= 31.5);
+                Assert.True(heading.ActualHeight >= 31.5);
+                var titleBounds = Bounds(title, heading);
+                var releaseBounds = Bounds(release, heading);
+                Assert.True(titleBounds.Width > 0 && releaseBounds.Width > 0);
+                Assert.True(titleBounds.Right <= releaseBounds.Left);
+                Assert.True(releaseBounds.Right <= heading.ActualWidth,
+                    $"Changelog heading needs {releaseBounds.Right:F1} DIP, available {heading.ActualWidth:F1} DIP.");
                 Assert.Equal(Visibility.Visible, news.Visibility);
                 Assert.True(news.ActualHeight > 200);
                 var root = Element<Grid>(window, "RootGrid");

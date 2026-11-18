@@ -29,10 +29,9 @@ public class UpdateProgressLineTests
             TimeSpan.FromMinutes(1435)
         ];
 
-        var lines = new List<string>();
+        var lines = new List<string> { UpdateProgressLine.UpToDate() };
         foreach (var release in releases)
         {
-            lines.Add(UpdateProgressLine.UpToDate(release));
             lines.Add(UpdateProgressLine.Ready(release));
             lines.Add(UpdateProgressLine.WaitForGame(release));
             lines.Add(UpdateProgressLine.Starting(release) + "...");
@@ -84,7 +83,6 @@ public class UpdateProgressLineTests
         const int release = 4242;
         string[] named =
         [
-            UpdateProgressLine.UpToDate(release),
             UpdateProgressLine.Ready(release),
             UpdateProgressLine.WaitForGame(release),
             UpdateProgressLine.Starting(release),
@@ -94,7 +92,7 @@ public class UpdateProgressLineTests
         Assert.All(named, line =>
             Assert.Contains(release.ToString(CultureInfo.InvariantCulture), line, StringComparison.Ordinal));
 
-        // The two that are about no release in particular must not invent one.
+        Assert.Equal("Вы на последней версии", UpdateProgressLine.UpToDate());
         Assert.DoesNotContain(release.ToString(CultureInfo.InvariantCulture), UpdateProgressLine.Checking());
         Assert.DoesNotContain(release.ToString(CultureInfo.InvariantCulture), UpdateProgressLine.CheckFailed());
     }

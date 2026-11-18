@@ -6,10 +6,8 @@ namespace Minecraft;
 /// It is the third of three bars and the last to get a class of its own. The
 /// other two - <see cref="PlayButtonCaption"/> and
 /// <see cref="TransferProgressLine"/> - name what is moving and how far it has
-/// got; this one used to say "Скачивается обновление" and nothing else, while
-/// holding a release number and a byte count it never showed. So every line
-/// here names the release it is about, and the one with bytes carries the same
-/// four things the transfer line does: what, how much, how fast, how long left.
+/// got. When an update is available, its caption names the release and the
+/// download caption also reports size, speed and estimated time remaining.
 /// </summary>
 /// <remarks>
 /// The bar is 454 px: the canvas's two left columns, 550 px together, less the
@@ -39,8 +37,8 @@ internal static class UpdateProgressLine
     /// </remarks>
     public static string Checking() => "Проверка обновлений";
 
-    /// <summary>Nothing to install, and the release that settles it.</summary>
-    public static string UpToDate(int release) => $"Вы на последней версии ({release})";
+    /// <summary>The check confirmed that the installed version is current.</summary>
+    public static string UpToDate() => "Вы на последней версии";
 
     /// <summary>Downloaded and waiting for the launcher to close.</summary>
     public static string Ready(int release) => $"Обновление {release} готово к установке";

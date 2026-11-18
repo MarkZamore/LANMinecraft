@@ -138,6 +138,7 @@ public sealed class ChangelogTests
     public void EveryVersion_IsTwoShortSentences()
     {
         const int limit = 240;
+        var seenSentences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in ReadSourceHistory())
         {
             Assert.True(
@@ -145,13 +146,23 @@ public sealed class ChangelogTests
                 $"version {entry.Version} is {entry.Text.Length} characters; {limit} is the most");
             // A full stop ends a sentence when the text ends there or a space
             // follows it; the one inside a file name like `.log.gz` does not.
-            var sentences = Enumerable.Range(0, entry.Text.Length)
-                .Count(index =>
+            var endings = Enumerable.Range(0, entry.Text.Length)
+                .Where(index =>
                     entry.Text[index] is '.' or '!' or '?' &&
-                    (index == entry.Text.Length - 1 || char.IsWhiteSpace(entry.Text[index + 1])));
+                    (index == entry.Text.Length - 1 || char.IsWhiteSpace(entry.Text[index + 1])))
+                .ToArray();
             Assert.True(
-                sentences <= 2,
-                $"version {entry.Version} says {sentences} sentences; two is the most");
+                endings.Length == 2 && endings[^1] == entry.Text.Length - 1,
+                $"version {entry.Version} must contain exactly two complete sentences");
+
+            var start = 0;
+            foreach (var end in endings)
+            {
+                var sentence = entry.Text[start..end].Trim();
+                Assert.NotEmpty(sentence);
+                Assert.True(seenSentences.Add(sentence), $"version {entry.Version} repeats the sentence '{sentence}'");
+                start = end + 1;
+            }
         }
     }
 

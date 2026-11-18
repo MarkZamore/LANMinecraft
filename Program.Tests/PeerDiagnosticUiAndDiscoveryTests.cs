@@ -295,6 +295,10 @@ public sealed class PeerDiagnosticUiAndDiscoveryTests
         Assert.Empty(title.Ancestors(presentation + "Expander"));
         Assert.Equal("{StaticResource Font.SizeHeading}", (string?)title.Attribute("FontSize"));
         Assert.Equal("Что нового", (string?)title.Attribute("Text"));
+        var release = title.Parent!.Elements(presentation + "TextBlock")
+            .Single(element => (string?)element.Attribute(x + "Name") == "SidePanelRelease");
+        Assert.Equal("{Binding Source={x:Static local:UpdateService.CurrentReleaseNumber}, StringFormat='(Вы на {0})'}",
+            (string?)release.Attribute("Text"));
         var list = document.Descendants(presentation + "ItemsControl")
             .Single(element => (string?)element.Attribute(x + "Name") == "ChangelogList");
         Assert.NotEmpty(list.Ancestors(presentation + "ScrollViewer"));

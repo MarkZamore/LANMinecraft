@@ -9,6 +9,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 using Minecraft;
 
 namespace Minecraft.Tests;
@@ -373,7 +374,8 @@ public sealed class PackCatalogTests : IDisposable
             foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
                 if (child != view) child.Visibility = Visibility.Hidden;
             view.Visibility = Visibility.Visible;
-            System.Windows.Media.VisualTreeHelper.SetRootDpi(window, new DpiScale(dpi, dpi));
+            VisualTreeHelper.SetRootDpi(window, new DpiScale(dpi, dpi));
+            VisualTreeHelper.SetRootDpi((Visual)window.Content, new DpiScale(dpi, dpi));
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             var actions = (Grid)window.FindName("LaunchActions");
             var back = (Button)view.FindName("ReturnLauncherButton");
@@ -446,8 +448,12 @@ public sealed class PackCatalogTests : IDisposable
             AssertScrollInput(details);
             details.ScrollToTop();
             details.UpdateLayout();
+            Assert.NotNull(pack.Requirements);
+            var requirements = VisualChildren<TextBlock>(details).Single(text => text.Text == pack.Requirements.Label);
+            Assert.True(requirements.ActualWidth > 0);
             var membership = (Button)view.FindName("MembershipButton");
             Assert.Equal("Добавить", membership.Content);
+            AssertMembershipFits();
             var addSize = membership.RenderSize;
             var addFont = (membership.FontFamily, membership.FontSize, membership.FontWeight);
             var addPadding = membership.Padding;
@@ -458,6 +464,7 @@ public sealed class PackCatalogTests : IDisposable
             view.RefreshMembership();
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             Assert.Equal("Убрать", membership.Content);
+            AssertMembershipFits();
             Assert.Equal(addSize, membership.RenderSize);
             Assert.Equal(addFont, (membership.FontFamily, membership.FontSize, membership.FontWeight));
             Assert.Equal(addPadding, membership.Padding);
@@ -474,6 +481,23 @@ public sealed class PackCatalogTests : IDisposable
                 .Where(child => child.Content is CatalogPack).ToArray();
 
             Rect CardBounds(ContentPresenter card) => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize));
+
+            void AssertMembershipFits()
+            {
+                var buttonBounds = membership.TransformToAncestor(details).TransformBounds(new Rect(membership.RenderSize));
+                Assert.InRange(buttonBounds.Left, 0, details.ViewportWidth);
+                Assert.InRange(buttonBounds.Right, buttonBounds.Left, details.ViewportWidth + 0.5);
+                var requirementBounds = requirements.TransformToAncestor(details).TransformBounds(new Rect(requirements.RenderSize));
+                Assert.True(requirementBounds.Bottom <= buttonBounds.Top);
+
+                var label = new FormattedText((string)membership.Content, System.Globalization.CultureInfo.InvariantCulture,
+                    membership.FlowDirection, new Typeface(membership.FontFamily, membership.FontStyle,
+                        membership.FontWeight, membership.FontStretch), membership.FontSize, membership.Foreground,
+                    VisualTreeHelper.GetDpi(membership).PixelsPerDip);
+                var presenter = Assert.Single(VisualChildren<ContentPresenter>(membership));
+                Assert.True(label.Width <= presenter.ActualWidth + 0.5,
+                    $"\"{membership.Content}\" needs {label.Width:F1} DIP, available {presenter.ActualWidth:F1} DIP.");
+            }
 
             void AssertLeftAlignedGrid()
             {

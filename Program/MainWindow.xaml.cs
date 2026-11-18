@@ -2512,15 +2512,6 @@ public partial class MainWindow : Window
     // short hash it used to carry said the same thing twice.
     private static string BuildVersionText() => $"Версия {UpdateService.CurrentReleaseNumber}";
 
-    /// <summary>
-    /// What the update bar says when there is nothing to fetch. The number
-    /// rides along: the corner that used to hold it is a button now, and a
-    /// player asked what version they are on has to be able to read it off the
-    /// one line that is already about versions.
-    /// </summary>
-    private static string LatestVersionText() =>
-        $"Вы на последней версии ({UpdateService.CurrentReleaseNumber})";
-
     /// <summary>Shows cached history immediately, then refreshes it without blocking startup.</summary>
     private void LoadChangelog()
     {
@@ -2728,7 +2719,7 @@ public partial class MainWindow : Window
                         UpdateProgressBar.IsIndeterminate = false;
                         UpdateProgressBar.Value = 0;
                         SetProgressActivity(UpdateProgressBar, active: false);
-                        SetUpdateProgressCaption(UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
+                        SetUpdateProgressCaption(UpdateProgressLine.UpToDate());
                     });
                 }
             }
@@ -2851,7 +2842,7 @@ public partial class MainWindow : Window
             if (prepared is null)
             {
                 _preparedUpdate = null;
-                SetUpdateProgressCaption(UpdateProgressLine.UpToDate(UpdateService.CurrentReleaseNumber));
+                SetUpdateProgressCaption(UpdateProgressLine.UpToDate());
                 UpdateProgressBar.Value = 0;
                 SetProgressActivity(UpdateProgressBar, active: false);
                 return;

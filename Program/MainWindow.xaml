@@ -592,15 +592,17 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <TextBlock x:Name="SidePanelTitle"
-                    Grid.Row="0"
-                    Text="Что нового"
-                    Style="{StaticResource SectionTitleStyle}"
-                    Height="{StaticResource Size.SidePanelHeader}"
-                    FontSize="{StaticResource Font.SizeHeading}"
-                    LineHeight="{StaticResource Font.LineHeightHeading}"
-                    TextWrapping="NoWrap"
-                    Margin="{StaticResource Gap.None}" />
+                <StackPanel x:Name="SidePanelHeading" Grid.Row="0" Orientation="Horizontal"
+                            Height="{StaticResource Size.SidePanelHeader}">
+                    <TextBlock x:Name="SidePanelTitle" Text="Что нового"
+                               Style="{StaticResource SectionTitleStyle}"
+                               FontSize="{StaticResource Font.SizeHeading}"
+                               LineHeight="{StaticResource Font.LineHeightHeading}"
+                               Margin="{StaticResource Gap.None}" />
+                    <TextBlock x:Name="SidePanelRelease" Style="{StaticResource LabelTextStyle}"
+                               Text="{Binding Source={x:Static local:UpdateService.CurrentReleaseNumber}, StringFormat='(Вы на {0})'}"
+                               Margin="{StaticResource Gap.Left2}" />
+                </StackPanel>
                 <Grid Grid.Row="1" Margin="{StaticResource Gap.Above4}">
                     <Grid x:Name="ChangelogPanel">
                         <ScrollViewer x:Name="ChangelogScroll"
