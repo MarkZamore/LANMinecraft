@@ -54,7 +54,8 @@ public enum RuntimePreparationStage
     Verifying,
     Ready,
     Failed,
-    RepairingPackStructure
+    RepairingPackStructure,
+    PreparingNativeGame
 }
 
 /// <summary>

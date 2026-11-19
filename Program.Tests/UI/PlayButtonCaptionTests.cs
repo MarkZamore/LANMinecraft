@@ -236,7 +236,11 @@ public sealed class PlayButtonCaptionTests
             yield return PlayButtonCaption.For(new RuntimePreparationProgress(stage, "Проверка"), 0);
         }
         yield return PlayButtonCaption.For(new RuntimePreparationProgress(RuntimePreparationStage.Ready, "Готовится к запуску", 1), 0);
-        yield return "Подготовка ресурсов игры";
+        yield return NativeStartupProgress.PreparationMessage;
+        yield return PlayButtonCaption.For(new(RuntimePreparationStage.PreparingNativeGame,
+            NativeStartupProgress.PreparationMessage, 0.95), 0);
+        yield return "Подготовка ресурсов · 12:00";
+        yield return NativeStartupProgress.OpeningMessage;
         yield return "Отмена запуска";
     }
 

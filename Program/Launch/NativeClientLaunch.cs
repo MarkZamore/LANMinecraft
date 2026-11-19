@@ -8,10 +8,9 @@ internal static class NativeClientLaunch
 {
     private static readonly TimeSpan WindowPollInterval = TimeSpan.FromMilliseconds(250);
 
-    internal static async Task<bool> WaitForGameWindowAsync(Task exited, Func<bool> hasGameWindow, CancellationToken token)
+    internal static async Task<bool> WaitForGameWindowAsync(Task exited, Func<bool> hasGameWindow, CancellationToken token,
+        NativeStartupProgress? startup = null)
     {
-        // A cold native bootstrap may still be acquiring game assets while it
-        // has no window. Its own failure or cancellation ends this wait.
         while (true)
         {
             token.ThrowIfCancellationRequested();
@@ -21,6 +20,8 @@ internal static class NativeClientLaunch
                 token.ThrowIfCancellationRequested();
                 return !exited.IsCompleted;
             }
+            if (startup?.PollForOpeningTimeout() == true)
+                throw new TimeoutException("The native client produced no output or window for five minutes after preparing resources.");
             await Task.WhenAny(exited, Task.Delay(WindowPollInterval, token)).ConfigureAwait(false);
         }
     }

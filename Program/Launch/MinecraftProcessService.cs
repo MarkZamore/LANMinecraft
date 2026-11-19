@@ -747,11 +747,12 @@ public sealed class MinecraftProcessService
             };
             using var noticeOverlay = NoticeOverlay.PrepareSession(native: true);
             process.StartInfo.Environment["LANMINECRAFT_NOTICE_DIRECTORY"] = noticeOverlay.Directory;
-            progress?.Report(new(RuntimePreparationStage.Checking, "Подготовка ресурсов игры"));
+            progress?.Report(new(RuntimePreparationStage.PreparingNativeGame, NativeStartupProgress.PreparationMessage));
             var lifetime = files;
             files = null;
             await RunClientAsync(process, packRelativePath, gameDir, worldSession, token,
-                nativeExecutable: executable, nativeFiles: lifetime, afterStart: noticeOverlay.BindProcess).ConfigureAwait(false);
+                nativeExecutable: executable, nativeFiles: lifetime, afterStart: noticeOverlay.BindProcess,
+                nativeStartup: new NativeStartupProgress(progress)).ConfigureAwait(false);
             progress?.Report(new(RuntimePreparationStage.Ready, "Игра запущена", 1));
             _logger.Info($"Native client started with profile {runtime.Adapter}/{runtime.Version}.");
         }
@@ -765,7 +766,7 @@ public sealed class MinecraftProcessService
         WorldLaunchSession worldSession, CancellationToken token, Action? beforeStart = null,
         Action<Process>? afterStart = null, int heapGb = 0, VideoMemoryProfile video = default,
         int installedGb = 0, string? nativeExecutable = null, NativeRuntimeFiles? nativeFiles = null,
-        Func<JavaLaunchArgumentFile?>? prepareArguments = null)
+        Func<JavaLaunchArgumentFile?>? prepareArguments = null, NativeStartupProgress? nativeStartup = null)
     {
         var startupOutput = new StartupOutputBuffer();
         var started = false;
@@ -782,8 +783,8 @@ public sealed class MinecraftProcessService
             process.StartInfo.StandardOutputEncoding = Utf8NoBom;
             process.StartInfo.StandardErrorEncoding = Utf8NoBom;
             startupOutput.MirrorTo(gameDir);
-            process.OutputDataReceived += (_, e) => startupOutput.Append(e.Data);
-            process.ErrorDataReceived += (_, e) => startupOutput.Append(e.Data);
+            process.OutputDataReceived += ObserveClientOutput;
+            process.ErrorDataReceived += ObserveClientOutput;
 
             token.ThrowIfCancellationRequested();
             argumentFile = prepareArguments?.Invoke();
@@ -824,6 +825,7 @@ public sealed class MinecraftProcessService
                     catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
                 }
                 startupOutput.Close();
+                nativeStartup?.Complete();
                 process.Dispose();
                 nativeFiles?.Dispose();
                 argumentFile?.Dispose();
@@ -835,13 +837,23 @@ public sealed class MinecraftProcessService
             try
             {
                 if (await NativeClientLaunch.WaitForGameWindowAsync(exitCode.Task,
-                        () => MinecraftWindowPlacementService.HasNativeGameWindow(process), token).ConfigureAwait(false))
+                        () => MinecraftWindowPlacementService.HasNativeGameWindow(process), token, nativeStartup).ConfigureAwait(false))
                     return;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 await StopNativeStartupAsync(process, monitor).ConfigureAwait(false);
                 throw;
+            }
+            catch (TimeoutException ex)
+            {
+                await StopNativeStartupAsync(process, monitor).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                throw MinecraftLaunchFailure.FromNativeStartupTimeout(ex, startupOutput.Describe(), ReadLatestLogTail(gameDir));
+            }
+            finally
+            {
+                nativeStartup?.Complete();
             }
 
             var code = await exitCode.Task.ConfigureAwait(false);
@@ -855,6 +867,12 @@ public sealed class MinecraftProcessService
         {
             throw MinecraftLaunchFailure.FromProcessExit(
                 exitCode.Task.Result, startupOutput.Describe(), ReadLatestLogTail(gameDir));
+        }
+
+        void ObserveClientOutput(object sender, DataReceivedEventArgs output)
+        {
+            startupOutput.Append(output.Data);
+            nativeStartup?.Observe(output.Data);
         }
     }
 

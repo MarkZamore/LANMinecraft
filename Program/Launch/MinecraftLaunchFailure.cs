@@ -6,6 +6,9 @@ namespace Minecraft;
 internal sealed class MinecraftMemoryAllocationException(string message, Exception? inner = null)
     : InvalidOperationException(message, inner);
 
+internal sealed class MinecraftStartupTimeoutException(string message, Exception inner)
+    : TimeoutException(message, inner);
+
 internal static class MinecraftLaunchFailure
 {
     internal const string MemoryHeading = "Недостаточно оперативной памяти";
@@ -37,10 +40,16 @@ internal static class MinecraftLaunchFailure
     internal static MinecraftMemoryAllocationException FromProcessStart(Win32Exception error) =>
         new($"Minecraft process could not be started (Windows error {error.NativeErrorCode}): {error.Message}", error);
 
-    internal static (string Heading, string Detail) ForUser(Exception error) =>
-        error is MinecraftMemoryAllocationException
-            ? (MemoryHeading, MemoryDetail)
-            : ("Игра не запустилась", error.Message);
+    internal static MinecraftStartupTimeoutException FromNativeStartupTimeout(TimeoutException error, string console, string logTail) =>
+        new(error.Message + console + logTail, error);
+
+    internal static (string Heading, string Detail) ForUser(Exception error) => error switch
+    {
+        MinecraftMemoryAllocationException => (MemoryHeading, MemoryDetail),
+        MinecraftStartupTimeoutException => ("Игра не запустилась",
+            "Ресурсы игры готовы, но её окно так и не появилось. Попробуйте запустить сборку ещё раз."),
+        _ => ("Игра не запустилась", error.Message)
+    };
 
     internal static void Present(Exception error, Action<string> log, Action<string, string> show)
     {

@@ -298,6 +298,10 @@
       FullyQualifiedName=Minecraft.Tests.NativeRuntimeFilesTests.VerifiedPayloadRejectsUnmanagedAndModifiedFilesAndLocksTheActiveSnapshot|
       FullyQualifiedName=Minecraft.Tests.NativeRuntimeFilesTests.InvalidExecutablesAreRejected|
       FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeClientUsesThePortableInstanceAndOnlySteamIdentity|
+      FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeStartupWaitsForTheWindowAndCanEndBeforeItOpens|
+      FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeStartupReportsOnlyIncreasingPreparationFractions|
+      FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeStartupStopsReportingWhenTheWaitEnds|
+      FullyQualifiedName=Minecraft.Tests.NativeClientLaunchTests.NativeStartupTimesOutOnlyAfterResourcesAreReadyAndOpeningIsSilent|
       FullyQualifiedName=Minecraft.Tests.ClientPresenceTests.NativeSessionsRequireTheOriginalExecutablePath|
       FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.LibraryProjectsGroupVisibleModulesWithoutAddingToTheInventory|
       FullyQualifiedName=Minecraft.Tests.CatalogPresentationTests.EmptyNativeDetailHidesTheModSectionAndRoutesOnlyTheProjectLink|

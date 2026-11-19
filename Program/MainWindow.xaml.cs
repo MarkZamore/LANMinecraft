@@ -2553,6 +2553,7 @@ public partial class MainWindow : Window
             RuntimePreparationStage.Downloading or
             RuntimePreparationStage.InstallingJava or
             RuntimePreparationStage.InstallingLoader or
+            RuntimePreparationStage.PreparingNativeGame or
             RuntimePreparationStage.Verifying;
         PlayProgressBar.Visibility = busy || progress.Stage == RuntimePreparationStage.Ready
             ? Visibility.Visible

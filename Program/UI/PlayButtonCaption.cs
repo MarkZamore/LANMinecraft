@@ -28,6 +28,8 @@ internal static class PlayButtonCaption
             RuntimePreparationStage.RepairingPackStructure => "Восстановление сборки",
             RuntimePreparationStage.Downloading or RuntimePreparationStage.InstallingJava when moving =>
                 WithBytes(progress.Message, progress, bytesPerSecond),
+            RuntimePreparationStage.PreparingNativeGame when progress.Fraction is double fraction =>
+                $"{progress.Message} · {Math.Min(99, Math.Round(fraction * 100))}%",
             _ => progress.Message
         };
     }
