@@ -35,7 +35,7 @@ git merge --ff-only origin/main
 
 ## Подготовить компоненты и контрактные проверки
 
-Общий Java-код и таблицы совместимости публикуются в `MarkZamore/LANMinecraft-Components`. Перед тестами выполнить `tools/Prepare-ComponentTests.ps1` в том же процессе PowerShell. Он получает закреплённые исходники в `LocalSources/LANMinecraft-Components-Tests` и проверенные артефакты. Канонический рабочий репозиторий компонентов можно держать отдельно в `LocalSources/LANMinecraft-Components`. Порядок доставки, первого сетевого перехода и последующего офлайн-запуска описан в [RUNTIME-COMPONENTS.md](RUNTIME-COMPONENTS.md).
+Общий Java-код и таблицы совместимости публикуются в `MarkZamore/LANMinecraft-Components`. Перед тестами выполнить `tools/Prepare-ComponentTests.ps1` в том же процессе PowerShell. Он получает закреплённые исходники в `%LOCALAPPDATA%/LANMinecraft/DevCache/ComponentSources/<sourceCommit>` и проверенные артефакты. Рабочие репозитории компонентов и сборок держите в `LocalSources`; тесты получают отдельный checkout через `LANMINECRAFT_COMPONENT_TEST_SOURCES`. Порядок доставки, первой сетевой подготовки и последующего офлайн-запуска описан в [RUNTIME-COMPONENTS.md](RUNTIME-COMPONENTS.md).
 
 ## Найти сборки по текущему каталогу
 
@@ -52,8 +52,13 @@ $catalog.packs | Select-Object id, relativePath, sourcePath, source
 Для нужной записи клонировать отдельный репозиторий
 `https://github.com/<source.owner>/<source.repo>.git`; существующий обновлять через
 `git fetch --no-tags origin`, затем чистый fast-forward его рабочей ветки.
-Папку исходников выбирать самостоятельно; `sourcePath` отличается от публичного
-`relativePath`, а стабильный `id` отличается от видимого имени карточки.
+Рабочие репозитории этого проекта лежат в `LocalSources`. Один репозиторий
+на действующий источник каталога. Для имени папки брать `installationPath`
+или, если его нет, `relativePath`. Сценарии подготовки, которым нужен иной
+авторский путь, получают его через параметр `--pack-source` или `--packs-root`.
+Исторический адрес сначала сверять с текущим источником, чтобы не создавать
+дубликат при переименовании. Не клонировать исходники в `Minecraft/Packs`,
+эту папку изменяет игровой установщик.
 
 `pack-latest` — изменяемый тег поставки, а не обязательно HEAD исходников. QA-only
 коммит может быть новее игровой поставки. Не применять `--force --tags` ко всем

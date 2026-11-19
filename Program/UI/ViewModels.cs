@@ -1,0 +1,355 @@
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+
+namespace Minecraft;
+
+/// <summary>A Steam friend a report can be sent to.</summary>
+public sealed record DiagnosticLogTargetOption(SteamId64 SteamId, string DisplayName);
+
+/// <summary>
+/// A Steam friend running this launcher, as the window shows them. The VPN era
+/// tracked addresses, routes and round-trip times here; a peer is now an
+/// account, and everything else comes from their rich presence.
+/// </summary>
+public sealed class PeerViewModel : INotifyPropertyChanged
+{
+    private string _personaName = "";
+    private string _playerName = "";
+    private string _minecraftUuid = "";
+    private string _packHash = "";
+    private string _packName = "";
+    private PackDisplayNames? _displayNames;
+    private int _release;
+    private bool _isOutsideLauncher;
+    private string _localPackHash = "";
+    private bool _isMinecraftRunning;
+    private bool _isMinecraftPreparing;
+    private bool _isSkinAvailable;
+    private string _skinSha256 = "";
+    private string _skinModel = "classic";
+    private string _hostedWorldId = "";
+    private int _protocolVersion;
+    private int _waypointProtocolVersion;
+    private IReadOnlyList<WaypointProviderAnnouncement> _waypointProviders = [];
+    private int _diagnosticProtocolVersion;
+    private DateTimeOffset _lastSeen;
+
+    public required SteamId64 SteamId { get; init; }
+
+    /// <summary>The Steam display name; always present, unlike the Minecraft nickname.</summary>
+    public string PersonaName
+    {
+        get => _personaName;
+        set { if (Set(ref _personaName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    public string PlayerName
+    {
+        get => _playerName;
+        set { if (Set(ref _playerName, value ?? "")) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    /// <summary>Self-reported: it names their data, it never authorises anything.</summary>
+    public string MinecraftUuid
+    {
+        get => _minecraftUuid;
+        set => Set(ref _minecraftUuid, value ?? "");
+    }
+
+    public string PackHash
+    {
+        get => _packHash;
+        set { if (Set(ref _packHash, value ?? "")) OnPropertyChanged(nameof(PackStatus)); }
+    }
+
+    public string LocalPackHash
+    {
+        get => _localPackHash;
+        set { if (Set(ref _localPackHash, value ?? "")) OnPropertyChanged(nameof(PackStatus)); }
+    }
+
+    /// <summary>The build they opened, by the name of its folder.</summary>
+    public string PackName
+    {
+        get => PackDisplayName.CorrectCase(_packName);
+        set { if (Set(ref _packName, value ?? "")) RefreshPackDisplayName(); }
+    }
+
+    /// <summary>The peer's unmodified wire identity, never a display title.</summary>
+    public string PackIdentity => _packName;
+    public string DisplayPackName => _displayNames?.Resolve(_packName, PackName) ?? PackDisplayName.For(_packName, PackName);
+    public PackDisplayNames? DisplayNames
+    {
+        get => _displayNames;
+        set { if (!ReferenceEquals(_displayNames, value)) { _displayNames = value; RefreshPackDisplayName(); } }
+    }
+    public void RefreshPackDisplayName()
+    {
+        OnPropertyChanged(nameof(DisplayPackName));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(DisplayName));
+    }
+
+    /// <summary>Which release of the launcher put them there, or 0 if unsaid.</summary>
+    public int Release
+    {
+        get => _release;
+        set { if (Set(ref _release, value)) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    /// <summary>In Minecraft, but not through this launcher.</summary>
+    public bool IsOutsideLauncher
+    {
+        get => _isOutsideLauncher;
+        set
+        {
+            if (!Set(ref _isOutsideLauncher, value)) return;
+            OnPropertyChanged(nameof(IsCompatible));
+            OnPropertyChanged(nameof(SupportsDiagnosticLogs));
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
+
+    public bool IsMinecraftRunning
+    {
+        get => _isMinecraftRunning;
+        set { if (Set(ref _isMinecraftRunning, value)) OnPropertyChanged(nameof(DisplayName)); }
+    }
+
+    public bool IsMinecraftPreparing
+    {
+        get => _isMinecraftPreparing;
+        set => Set(ref _isMinecraftPreparing, value);
+    }
+
+    public bool IsSkinAvailable
+    {
+        get => _isSkinAvailable;
+        set => Set(ref _isSkinAvailable, value);
+    }
+
+    public string SkinSha256
+    {
+        get => _skinSha256;
+        set => Set(ref _skinSha256, value ?? "");
+    }
+
+    public string SkinModel
+    {
+        get => _skinModel;
+        set => Set(ref _skinModel, string.Equals(value, "slim", StringComparison.OrdinalIgnoreCase) ? "slim" : "classic");
+    }
+
+    public string HostedWorldId
+    {
+        get => _hostedWorldId;
+        set => Set(ref _hostedWorldId, value ?? "");
+    }
+
+    /// <summary>The launcher protocol the peer publishes in its presence.</summary>
+    public int ProtocolVersion
+    {
+        get => _protocolVersion;
+        set
+        {
+            if (!Set(ref _protocolVersion, value)) return;
+            OnPropertyChanged(nameof(IsPresenceKnown));
+            OnPropertyChanged(nameof(IsCompatible));
+            OnPropertyChanged(nameof(SupportsDiagnosticLogs));
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
+
+    public int WaypointProtocolVersion
+    {
+        get => _waypointProtocolVersion;
+        set => Set(ref _waypointProtocolVersion, value);
+    }
+
+    public IReadOnlyList<WaypointProviderAnnouncement> WaypointProviders
+    {
+        get => _waypointProviders;
+        set => Set(ref _waypointProviders, value ?? []);
+    }
+
+    public int DiagnosticProtocolVersion
+    {
+        get => _diagnosticProtocolVersion;
+        set { if (Set(ref _diagnosticProtocolVersion, value)) OnPropertyChanged(nameof(SupportsDiagnosticLogs)); }
+    }
+
+    public DateTimeOffset LastSeen
+    {
+        get => _lastSeen;
+        set { if (Set(ref _lastSeen, value)) OnPropertyChanged(nameof(LastSeenText)); }
+    }
+
+    /// <summary>
+    /// Whether we know what this peer speaks at all. Zero means their presence
+    /// could not be read - they are listed because we hold a connection to
+    /// them, which is proof they are there and no evidence about their version.
+    /// No launcher announces zero.
+    /// </summary>
+    public bool IsPresenceKnown => ProtocolVersion > 0;
+
+    /// <summary>
+    /// False only when we know they cannot understand us. An unread presence is
+    /// not a version mismatch: two players on the same build were told to update
+    /// because Steam would not serve one of them, and the transfer refused to
+    /// start. The handshake checks versions properly and says so - guessing
+    /// here only made it lie.
+    /// </summary>
+    public bool IsCompatible =>
+        !IsOutsideLauncher && (!IsPresenceKnown || PortableFormat.CanSpeak(ProtocolVersion));
+
+    public bool SupportsDiagnosticLogs =>
+        IsCompatible &&
+        (!IsPresenceKnown ||
+         (PortableFormat.CanSpeak(DiagnosticProtocolVersion) && DiagnosticProtocolVersion > 0));
+
+    /// <summary>Both names when they differ, because either one may be the familiar one.</summary>
+    public string PeerName
+    {
+        get
+        {
+            var minecraftName = string.IsNullOrWhiteSpace(PlayerName) ? "" : PlayerName.Trim();
+            var steamName = string.IsNullOrWhiteSpace(PersonaName) ? "" : PersonaName.Trim();
+            return minecraftName.Length == 0
+                ? steamName.Length == 0 ? "Неизвестный игрок" : steamName
+                : steamName.Length == 0 ||
+                  string.Equals(minecraftName, steamName, StringComparison.OrdinalIgnoreCase)
+                    ? minecraftName
+                    : $"{minecraftName} ({steamName})";
+        }
+    }
+
+    /// <summary>
+    /// Where this player is, in the words a player would use.
+    /// </summary>
+    /// <remarks>
+    /// The order is what makes it useful. Anything that stops a world reaching
+    /// them is said first, because that is what the list is being read for:
+    /// somebody in Minecraft without this launcher, or with a launcher too old
+    /// to talk to. Only then the ordinary answers - the build they opened,
+    /// named by its folder, or the launcher itself.
+    ///
+    /// A build nobody named reads as the launcher rather than as an empty
+    /// space: a friend on a launcher older than this field says nothing about
+    /// which build they are in, and inventing one would be worse than the
+    /// answer they used to get.
+    /// </remarks>
+    public string StatusText
+    {
+        get
+        {
+            // Somebody who closed the launcher and kept playing is still in
+            // the build he was in, on the launcher that put him there. Saying
+            // "in another game" would take away both, and neither stopped
+            // being true - only his answering did.
+            if (IsOutsideLauncher)
+            {
+                return string.IsNullOrWhiteSpace(PackName)
+                    ? On("В другой игре")
+                    : On(DisplayPackName.Trim());
+            }
+            if (!IsPresenceKnown) return "на связи, данные Steam недоступны";
+            if (!IsCompatible) return On("нужно обновить лаунчер");
+            if (IsMinecraftRunning && !string.IsNullOrWhiteSpace(PackName)) return On(DisplayPackName.Trim());
+            return Release > 0 ? $"В лаунчере {Release}" : "В лаунчере";
+        }
+    }
+
+    /// <summary>"…, on 312", where the number is known and not otherwise.</summary>
+    private string On(string what) =>
+        Release > 0 ? $"{what} на {Release}" : what;
+
+    public string DisplayName => $"{PeerName} - {StatusText}";
+
+    public string PackStatus
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(PackHash) || string.IsNullOrWhiteSpace(LocalPackHash)) return "";
+            return string.Equals(PackHash, LocalPackHash, StringComparison.OrdinalIgnoreCase)
+                ? "сборка совпадает"
+                : "другая сборка";
+        }
+    }
+
+    public string LastSeenText => LastSeen == default
+        ? ""
+        : LastSeen.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>Copies everything a peer told us about itself through Steam.</summary>
+    public void Apply(SteamPeerPresence presence, string localPackHash)
+    {
+        ArgumentNullException.ThrowIfNull(presence);
+        PersonaName = presence.PersonaName;
+        PlayerName = presence.PlayerName;
+        MinecraftUuid = presence.MinecraftUuid;
+        PackHash = presence.PackHash;
+        PackName = presence.PackName;
+        // Never unlearnt: a player who stops answering has not gone back to an
+        // older launcher, and the number is what tells the pair of them which
+        // side has to update.
+        if (presence.Release > 0) Release = presence.Release;
+        IsOutsideLauncher = presence.IsOutsideLauncher;
+        LocalPackHash = localPackHash;
+        IsMinecraftRunning = presence.IsMinecraftRunning;
+        IsMinecraftPreparing = presence.IsMinecraftPreparing;
+        IsSkinAvailable = presence.IsSkinAvailable;
+        SkinSha256 = presence.SkinSha256;
+        SkinModel = presence.SkinModel;
+        HostedWorldId = presence.HostedWorldId;
+        ProtocolVersion = presence.ProtocolVersion;
+        WaypointProtocolVersion = presence.WaypointProtocolVersion;
+        WaypointProviders = presence.WaypointProviders;
+        DiagnosticProtocolVersion = presence.DiagnosticProtocolVersion;
+        LastSeen = DateTimeOffset.Now;
+    }
+
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        OnPropertyChanged(propertyName);
+        return true;
+    }
+
+    private void OnPropertyChanged(string? propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
+
+public sealed class WorldViewModel : INotifyPropertyChanged
+{
+    public required string Name { get; init; }
+    public required string Path { get; init; }
+    public required string BuildName { get; init; }
+    /// <summary>The build folder this world records, used to offer it only there.</summary>
+    public string BuildRelativePath { get; init; } = "";
+    public PackDisplayNames? DisplayNames { get; init; }
+    public string DisplayName => $"{Name} ({DisplayNames?.Resolve(string.IsNullOrWhiteSpace(BuildRelativePath) ? BuildName : BuildRelativePath, BuildName) ?? PackDisplayName.For(BuildRelativePath, BuildName)})";
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public void RefreshPackDisplayName() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
+}
+
+public sealed class ClientBuildViewModel
+{
+    public required string Name { get; init; }
+    public required string RelativePath { get; init; }
+    public required string FullPath { get; init; }
+    public bool IsInstalled { get; init; } = true;
+}
+
+/// <summary>One row of the "Что нового" list.</summary>
+public sealed class ChangelogEntryViewModel
+{
+    public required int Version { get; init; }
+    public required string Text { get; init; }
+    public string Title => $"Версия {Version}";
+}

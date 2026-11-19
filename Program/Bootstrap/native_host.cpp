@@ -489,33 +489,6 @@ Handle Materialize(Directories& directories, HANDLE parent, const std::wstring& 
     catch (...) { if (writtenFile) DeleteOpened(writtenFile.get()); throw; }
 }
 
-Handle AcquireLease(Directories& directories, const std::wstring& key)
-{
-    std::string marker = "LMHOST01\n";
-    for (auto character : key) marker.push_back(static_cast<char>(character));
-    marker.push_back('\n');
-    Entry lease{};
-    lease.path = key + L".lease";
-    lease.length = marker.size();
-    lease.digest = HashBytes(reinterpret_cast<const unsigned char*>(marker.data()), marker.size());
-    Packet owner{};
-    owner.data = reinterpret_cast<const unsigned char*>(marker.data());
-    owner.dataLength = marker.size();
-    HANDLE parent = directories.Get(L"Minecraft/Launcher/Runtime");
-    const auto started = GetTickCount64();
-    while (true)
-    {
-        try { return Materialize(directories, parent, lease.path, lease, owner); }
-        catch (const Failure& error)
-        {
-            // The cleaner can briefly hold an exclusive lease while removing an
-            // inactive generation. Wait before touching/recreating that cache.
-            if ((error.code() != 0xC0000043ul && error.code() != ERROR_SHARING_VIOLATION) || GetTickCount64() - started >= 30000) throw;
-            Sleep(50);
-        }
-    }
-}
-
 bool OwnTemporary(const std::wstring& name)
 {
     if (name.rfind(L".lmhost-", 0) != 0 || name.size() < 17 || name.substr(name.size() - 4) != L".tmp") return false;

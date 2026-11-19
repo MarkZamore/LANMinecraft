@@ -68,7 +68,8 @@ usernamecache.json
 **/*minecraft*server*.jar
 server.jar
 
-# Track the portable project graph and its provenance only.
-/graphify-out/*
-!/graphify-out/graph.json
-!/graphify-out/source.json
+# Track the published project map. Working-tree maps and release bundles are generated separately.
+/graphify/*
+!/graphify/Update-Graphify.ps1
+!/graphify/graph.json
+!/graphify/source.json

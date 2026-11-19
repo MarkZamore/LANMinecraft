@@ -275,7 +275,7 @@ internal static class Program
             if (File.ReadAllText(destination) != "replacement") throw new IOException("The native fixture storage replacement failed.");
             written.Add(destination);
         }
-        var runtime = Path.Combine(paths.Launcher, "Runtime");
+        var runtime = Path.Combine(paths.Launcher, "LauncherRuntime");
         var generations = new List<string>();
         for (var index = 0; index < 4; index++)
         {

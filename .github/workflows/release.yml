@@ -315,3 +315,39 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  graphify:
+    name: Publish Graphify for the launcher release
+    needs: publish
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout the released commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate and verify the source map
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check 'graphifyy==0.9.111'
+          if ($LASTEXITCODE -ne 0) { throw 'Graphify installation failed.' }
+          ./graphify/Update-Graphify.ps1 -ReleaseArtifact
+          ./graphify/Update-Graphify.ps1 -ReleaseArtifact -Check
+
+      - name: Upload the verified source map
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphify-${{ github.sha }}
+          path: |
+            graphify/release/graph.json
+            graphify/release/source.json
+          if-no-files-found: error
+          overwrite: true

@@ -92,11 +92,11 @@ SHA-256 исходных дескрипторов:
 
 | Компонент | Ответственность |
 | --- | --- |
-| `Program/WindowTitleSettings.cs` | Только постоянное имя конкретного экземпляра и его стабильный cache-key; единое включённое правило без определения mod-провайдера |
-| `Program/WindowTitleMappingService.cs` | Поиск фактического `Minecraft` и no-arg производителя `String`, независимо от необязательных UUID/LAN-маппингов |
-| `Program/PortableIdentityAdapterService.cs` | Подготовка параметров и включение названия/привязки в кеш существующего адаптера |
-| `LocalSources/LANMinecraft-Components/Program/IdentityAdapters/Common/PortableWindowTitleTransformer.java` | Финальная замена тела выбранного производителя, включая имеющиеся callback-вызовы, на постоянную строку; остальные методы сохраняются |
-| `LocalSources/LANMinecraft-Components/Program/IdentityAdapters/Common/PortableIdentityPreflight.java` | Проверка реальной цели, результата преобразования и неизменности остальных методов |
+| `Program/Runtime/WindowTitleSettings.cs` | Только постоянное имя конкретного экземпляра и его стабильный cache-key; единое включённое правило без определения mod-провайдера |
+| `Program/Runtime/WindowTitleMappingService.cs` | Поиск фактического `Minecraft` и no-arg производителя `String`, независимо от необязательных UUID/LAN-маппингов |
+| `Program/Runtime/PortableIdentityAdapterService.cs` | Подготовка параметров и включение названия/привязки в кеш существующего адаптера |
+| `LocalSources/LANMinecraft Components/Program/IdentityAdapters/Common/PortableWindowTitleTransformer.java` | Финальная замена тела выбранного производителя, включая имеющиеся callback-вызовы, на постоянную строку; остальные методы сохраняются |
+| `LocalSources/LANMinecraft Components/Program/IdentityAdapters/Common/PortableIdentityPreflight.java` | Проверка реальной цели, результата преобразования и неизменности остальных методов |
 
 Title-трансформер регистрируется в существующем агенте до условного включения UUID/LAN-хуков. Новый именованный runtime 26.2 не должен терять заголовок из-за несовпадения необязательных старых сетевых маппингов. Используются Java-параметры с префиксом `minecraft.portable.identity.`: `windowTitleEnabled`, `windowTitleText`, `windowTitleClasses`, `createTitleMethods`, `createTitleDescriptors`. Допустимый дескриптор производителя — `()Ljava/lang/String;`.
 

@@ -20,19 +20,112 @@ function Confirm-File([string]$Path, [long]$Size, [string]$Sha256) {
         (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -eq $Sha256
 }
 
+function Assert-OrdinaryPath([string]$Path) {
+    for ($current = [IO.Path]::GetFullPath($Path); $current; $current = [IO.Path]::GetDirectoryName($current)) {
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+        if ($item -and $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+            throw "The component test path is redirected: $current"
+        }
+    }
+}
+
+function Get-ComponentCheckoutHead([string]$Source) {
+    Assert-OrdinaryPath (Join-Path $Source '.git')
+    if (-not (Test-Path -LiteralPath (Join-Path $Source '.git'))) {
+        throw "The component test checkout is missing: $Source"
+    }
+    $topLevel = & git -C $Source rev-parse --show-toplevel
+    if ($LASTEXITCODE -ne 0 -or
+        -not [string]::Equals([IO.Path]::GetFullPath($topLevel), $Source, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Not the root of a component test checkout: $Source"
+    }
+    $head = & git -C $Source rev-parse HEAD
+    if ($LASTEXITCODE -ne 0) { throw "Cannot identify the component test checkout: $Source" }
+    return $head
+}
+
+function Confirm-ComponentCheckout([string]$Source, [string]$Commit) {
+    if ((Get-ComponentCheckoutHead $Source) -cne $Commit) {
+        throw "The component test checkout must be at $($Commit): $Source"
+    }
+    $changes = @(& git --no-optional-locks -C $Source status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 0) {
+        throw "The component test checkout has unfinished changes: $Source"
+    }
+}
+
+function Get-ComponentSourceCache {
+    $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($localAppData)) { throw 'Local application data is unavailable.' }
+    return [IO.Path]::GetFullPath((Join-Path $localAppData 'LANMinecraft\DevCache\ComponentSources'))
+}
+
+function Initialize-PinnedComponentCheckout([string]$Source, [string]$Commit, [string]$Origin) {
+    $parent = Split-Path -Parent $Source
+    Assert-OrdinaryPath $parent
+    [void][IO.Directory]::CreateDirectory($parent)
+    $leasePath = $Source + '.lock'
+    Assert-OrdinaryPath $leasePath
+    $deadline = [DateTime]::UtcNow.AddMinutes(5)
+    while ($true) {
+        try {
+            $lease = [IO.File]::Open($leasePath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            break
+        }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 200
+        }
+    }
+    try {
+        Assert-OrdinaryPath $Source
+        if (Test-Path -LiteralPath $Source) {
+            Confirm-ComponentCheckout $Source $Commit
+            return
+        }
+
+        # Readers only see a completed checkout. A failed download can resume the same stage.
+        $stage = $Source + '.preparing'
+        Assert-OrdinaryPath $stage
+        if (-not (Test-Path -LiteralPath $stage)) {
+            Invoke-CheckedGit @('clone', '--filter=blob:none', '--no-checkout', $Origin, $stage)
+        }
+        $stageHead = Get-ComponentCheckoutHead $stage
+        $stageOrigin = & git -C $stage remote get-url origin
+        if ($LASTEXITCODE -ne 0 -or $stageOrigin -cne $Origin) { throw "Unexpected component test staging origin: $stage" }
+        $indexPaths = @(& git -C $stage ls-files)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect the component test staging index: $stage" }
+        if ($indexPaths.Count -eq 0 -and -not (Get-ChildItem -LiteralPath $stage -Force | Where-Object Name -ne '.git')) {
+            if ($stageHead -cne $Commit) {
+                Invoke-CheckedGit @('-C', $stage, 'fetch', '--no-tags', 'origin', $Commit)
+            }
+            Invoke-CheckedGit @('-C', $stage, 'checkout', '--detach', $Commit)
+        }
+        Confirm-ComponentCheckout $stage $Commit
+        [IO.Directory]::Move($stage, $Source)
+    }
+    finally {
+        $lease.Dispose()
+    }
+}
+
 $candidateRoot = [Environment]::GetEnvironmentVariable('LANMINECRAFT_COMPONENT_TEST_CANDIDATE', 'Process')
 if ($candidateRoot) {
     $candidateRoot = [IO.Path]::GetFullPath($candidateRoot)
     $candidateCatalog = Join-Path $candidateRoot 'catalog.json'
     if (-not (Test-Path -LiteralPath $candidateCatalog -PathType Leaf)) { throw 'Candidate component catalog is missing.' }
     $catalog = Get-Content -LiteralPath $candidateCatalog -Raw | ConvertFrom-Json
-    $sourceRoot = Join-Path $repositoryRoot 'LocalSources/LANMinecraft-Components-Tests'
-    $sourceCommit = & git -C $sourceRoot rev-parse HEAD
-    if ($LASTEXITCODE -ne 0 -or $catalog.sourceCommit -notmatch '^[a-f0-9]{40}$' -or
-        $sourceCommit -cne $catalog.sourceCommit -or $catalog.schemaVersion -ne 1 -or
+    if ($catalog.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $catalog.schemaVersion -ne 1 -or
         $catalog.componentApiVersion -ne 1 -or [int]$catalog.minimumLauncherRelease -lt 1) {
-        throw 'The candidate catalog does not describe the checked-out component source and supported contract.'
+        throw 'The candidate catalog does not describe a component source and supported contract.'
     }
+    $sourceRoot = [Environment]::GetEnvironmentVariable('LANMINECRAFT_COMPONENT_TEST_CANDIDATE_SOURCES', 'Process')
+    if ([string]::IsNullOrWhiteSpace($sourceRoot)) {
+        # Older component CI pre-seeds this checkout. It must never be created or changed here.
+        $sourceRoot = Join-Path $repositoryRoot 'LocalSources/LANMinecraft-Components-Tests'
+    }
+    $sourceRoot = [IO.Path]::GetFullPath($sourceRoot)
+    Confirm-ComponentCheckout $sourceRoot $catalog.sourceCommit
     $expected = @{
         'identity-adapter' = 'portable-identity-adapter.jar'
         'notice-overlay' = 'launcher-notice-agent.jar'
@@ -61,30 +154,19 @@ if ($candidateRoot) {
     }
     $env:LANMINECRAFT_COMPONENT_TEST_ASSETS = $candidateRoot
     $env:LANMINECRAFT_COMPONENT_TEST_SOURCES = $sourceRoot
-    Write-Host ('Using checked candidate component dependencies from ' + $sourceCommit)
+    Write-Host ('Using checked candidate component dependencies from ' + $catalog.sourceCommit)
     return
 }
 
 $pin = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
 if ($pin.schemaVersion -ne 1 -or $pin.repository -cne 'MarkZamore/LANMinecraft-Components' -or
-    $pin.sourceCommit -notmatch '^[a-f0-9]{40}$' -or $pin.catalogSha256 -notmatch '^[a-f0-9]{64}$' -or
+    $pin.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $pin.catalogSha256 -cnotmatch '^[a-f0-9]{64}$' -or
     $pin.releaseTag -notmatch '^components-[A-Za-z0-9._-]+$') {
     throw 'The external component test lock is invalid.'
 }
 
-$sourceRoot = Join-Path $repositoryRoot 'LocalSources/LANMinecraft-Components-Tests'
-$createdSource = $false
-if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot '.git'))) {
-    Invoke-CheckedGit @('clone', '--filter=blob:none', '--no-checkout', ('https://github.com/' + $pin.repository + '.git'), $sourceRoot)
-    $createdSource = $true
-}
-$head = (& git -C $sourceRoot rev-parse HEAD 2>$null)
-if ($createdSource -or $LASTEXITCODE -ne 0 -or $head -cne $pin.sourceCommit) {
-    $status = @(& git -C $sourceRoot status --porcelain)
-    if (-not $createdSource -and $status.Count -gt 0) { throw 'The component source checkout has unfinished changes.' }
-    Invoke-CheckedGit @('-C', $sourceRoot, 'fetch', '--no-tags', 'origin', $pin.sourceCommit)
-    Invoke-CheckedGit @('-C', $sourceRoot, 'checkout', '--detach', $pin.sourceCommit)
-}
+$sourceRoot = Join-Path (Get-ComponentSourceCache) $pin.sourceCommit
+Initialize-PinnedComponentCheckout $sourceRoot $pin.sourceCommit ('https://github.com/' + $pin.repository + '.git')
 
 $assetRoot = Join-Path $repositoryRoot ('artifacts/agent-runs/component-test-dependencies/' + $pin.catalogSha256)
 [void][IO.Directory]::CreateDirectory($assetRoot)

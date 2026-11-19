@@ -226,7 +226,7 @@ public sealed class PortabilityTests
     [Fact]
     public void TheGameIsGivenAHome_InsideTheFolder()
     {
-        var launch = File.ReadAllText(Path.Combine(ProgramDirectory(), "MinecraftProcessService.cs"));
+        var launch = File.ReadAllText(Path.Combine(ProgramDirectory(), "Launch", "MinecraftProcessService.cs"));
 
         Assert.Contains("-Duser.home=", launch, StringComparison.Ordinal);
         Assert.Contains("-Djava.io.tmpdir=", launch, StringComparison.Ordinal);

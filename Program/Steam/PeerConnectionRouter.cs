@@ -1,0 +1,190 @@
+﻿using System.Collections.Concurrent;
+using System.IO;
+
+namespace Minecraft;
+
+/// <summary>
+/// Reads the first frame of every accepted peer connection and hands it to the
+/// protocol that claims it - the same multiplexing the shared TCP port used to
+/// do inside the world-transfer listener, minus the sockets.
+///
+/// World transfer is the fallback handler because its own frames do not carry a
+/// "protocol" field; that quirk predates the multiplexer and is kept so old and
+/// new builds still recognise each other's transfer handshake.
+/// </summary>
+public sealed class PeerConnectionRouter : IAsyncDisposable
+{
+    /// <summary>
+    /// The opening frame is not always a handshake: a waypoint push carries its
+    /// whole snapshot in it. The bound is the protocol's own JSON limit, so a
+    /// player with a mature waypoint set is not silently dropped.
+    /// </summary>
+    internal const int MaxInitialFrameBytes = PortableProtocol.MaxJsonFrameBytes;
+    internal static readonly TimeSpan InitialFrameTimeout = TimeSpan.FromSeconds(10);
+    private const int MaxConcurrentConnections = 32;
+
+    private readonly IPeerTransport _transport;
+    private readonly Logger? _logger;
+    private readonly ConcurrentDictionary<string, IPortableProtocolHandler> _handlers =
+        new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _connectionGate = new(MaxConcurrentConnections, MaxConcurrentConnections);
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private readonly object _dispatchGate = new();
+    private readonly HashSet<Task> _dispatches = [];
+    private Task? _shutdown;
+    private IPortableProtocolHandler? _fallback;
+    private bool _started;
+    private volatile bool _disposed;
+
+    public PeerConnectionRouter(IPeerTransport transport, Logger? logger = null)
+    {
+        _transport = transport;
+        _logger = logger;
+        _transport.ConnectionAccepted += OnConnectionAccepted;
+    }
+
+    /// <summary>Registers a protocol; the last registration for a name wins.</summary>
+    public void Register(IPortableProtocolHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        _handlers[handler.ProtocolName] = handler;
+    }
+
+    /// <summary>Handles connections whose first frame names no known protocol.</summary>
+    public void RegisterFallback(IPortableProtocolHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        _fallback = handler;
+    }
+
+    /// <summary>
+    /// Begins accepting connections. A transport that refuses to listen leaves
+    /// the router unstarted rather than half-started, so the player can fix
+    /// Steam and press Retry.
+    /// </summary>
+    public async Task StartAsync(CancellationToken token = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_started) return;
+        await _transport.StartListeningAsync(token).ConfigureAwait(false);
+        _started = true;
+    }
+
+    private void OnConnectionAccepted(object? sender, PeerConnection connection)
+    {
+        lock (_dispatchGate)
+        {
+            if (!_disposed)
+            {
+                var dispatch = Task.Run(() => DispatchAsync(connection));
+                _dispatches.Add(dispatch);
+                _ = dispatch.ContinueWith(completed =>
+                {
+                    _ = completed.Exception;
+                    lock (_dispatchGate) _dispatches.Remove(completed);
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                return;
+            }
+        }
+        _ = CloseLateConnectionAsync(connection);
+    }
+
+    private static async Task CloseLateConnectionAsync(PeerConnection connection)
+    {
+        try { await connection.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+    }
+
+    private async Task DispatchAsync(PeerConnection connection)
+    {
+        await using var scope = connection;
+        var token = _shutdownCts.Token;
+        var acquired = false;
+        try
+        {
+            acquired = await _connectionGate.WaitAsync(TimeSpan.Zero, token).ConfigureAwait(false);
+            if (!acquired)
+            {
+                _logger?.Warn(
+                    $"Rejected a connection from {connection.Context.PeerId}: too many concurrent peer connections.");
+                return;
+            }
+            // Only friends can reach us; the transport authenticates the
+            // account, so this is the whole authorisation check.
+            if (!connection.Context.IsFriend)
+            {
+                _logger?.Warn(
+                    $"Rejected a connection from {connection.Context.PeerId}: not a Steam friend.");
+                return;
+            }
+
+            using var initialTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            initialTimeout.CancelAfter(InitialFrameTimeout);
+            var initialFrame = await PortableProtocol.ReadFrameAsync(
+                connection.Stream,
+                initialTimeout.Token,
+                MaxInitialFrameBytes).ConfigureAwait(false);
+
+            var protocol = PortableProtocol.ReadProtocol(initialFrame);
+            var handler = !string.IsNullOrEmpty(protocol) && _handlers.TryGetValue(protocol, out var registered)
+                ? registered
+                : _fallback;
+            if (handler is null)
+            {
+                _logger?.Warn(
+                    $"No handler for protocol '{protocol}' from {connection.Context.PeerId}.");
+                return;
+            }
+
+            await handler.HandleAsync(
+                connection.Stream,
+                initialFrame,
+                connection.Context,
+                token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or EndOfStreamException)
+        {
+            _logger?.Warn($"Peer connection from {connection.Context.PeerId} failed: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn($"Peer connection from {connection.Context.PeerId} faulted: {ex}");
+        }
+        finally
+        {
+            if (acquired) _connectionGate.Release();
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_dispatchGate)
+        {
+            if (_shutdown is not null) return new ValueTask(_shutdown);
+            _disposed = true;
+            _transport.ConnectionAccepted -= OnConnectionAccepted;
+            return new ValueTask(_shutdown = DrainAsync(_dispatches.ToArray()));
+        }
+    }
+
+    private async Task DrainAsync(Task[] dispatches)
+    {
+        try
+        {
+            try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
+            finally { await _transport.StopListeningAsync().ConfigureAwait(false); }
+        }
+        finally
+        {
+            try { await Task.WhenAll(dispatches).ConfigureAwait(false); }
+            finally
+            {
+                _shutdownCts.Dispose();
+                _connectionGate.Dispose();
+            }
+        }
+    }
+}

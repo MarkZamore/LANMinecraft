@@ -10,4 +10,4 @@ Program/Assets/Icons/*.svg -text
 Program/LibrarySeed/*.zip -text
 
 # Preserve the generated Graphify data and its checksum on every checkout.
-/graphify-out/graph.json -text -diff linguist-generated=true
+/graphify/graph.json -text -diff linguist-generated=true

@@ -47,7 +47,10 @@ foreach (var pack in packs)
         throw new ArgumentException("A pack must be one directory name.");
     var packDirectory = Path.Combine(install, "Packs", pack);
     var manifestPath = Path.Combine(packDirectory, PackManifestService.ManifestFileName);
-    var runtimeRoot = Path.Combine(install, "Launcher", "Runtimes", pack);
+    var launcher = Path.Combine(install, "Launcher");
+    var legacyRuntime = Path.Combine(launcher, "Runtimes", pack);
+    var legacyLayout = Directory.Exists(legacyRuntime);
+    var runtimeRoot = legacyLayout ? legacyRuntime : Path.Combine(launcher, "PackRuntimes", pack);
     var runtimeStatePath = Path.Combine(runtimeRoot, ".portable-runtime.json");
     inputs.Add(manifestPath, Hash(manifestPath));
     inputs.Add(runtimeStatePath, Hash(runtimeStatePath));
@@ -59,8 +62,9 @@ foreach (var pack in packs)
     var profileId = root.GetProperty("profileId").GetString() ?? throw new InvalidDataException("Missing runtime profile.");
     if (profileId is "." or ".." || Path.GetFileName(profileId) != profileId || profileId.IndexOfAny(['/', '\\']) >= 0)
         throw new InvalidDataException("The cached profile must be one installed version identifier.");
-    var launcher = Path.Combine(install, "Launcher");
     var clientRelative = root.GetProperty("clientJarRelativePath").GetString() ?? throw new InvalidDataException("Missing runtime client path.");
+    if (!legacyLayout && clientRelative.StartsWith("Runtimes/", StringComparison.OrdinalIgnoreCase))
+        clientRelative = "PackRuntimes/" + clientRelative["Runtimes/".Length..];
     var client = Path.GetFullPath(Path.Combine(launcher, clientRelative.Replace('/', Path.DirectorySeparatorChar)));
     if (Path.IsPathRooted(clientRelative) || !IsWithin(client, launcher) || !File.Exists(client))
         throw new InvalidDataException("The recorded runtime client is not an installed launcher file.");

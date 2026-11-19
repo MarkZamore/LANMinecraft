@@ -109,7 +109,7 @@ public sealed class DesktopBootstrapCacheTests : IDisposable
     {
         var current = CreateSet(1);
         DesktopBootstrapCache.RecordSuccessful(paths, current);
-        var flatRoot = Path.Combine(paths.Launcher, "Runtime");
+        var flatRoot = Path.Combine(paths.Launcher, LauncherStorageLayout.LegacyLauncherRuntime);
         var old = Path.Combine(flatRoot, Hash(200));
         var active = Path.Combine(flatRoot, Hash(201));
         foreach (var directory in new[] { old, active })
@@ -120,13 +120,18 @@ public sealed class DesktopBootstrapCacheTests : IDisposable
         }
         using (var lease = new FileStream(active + ".lease", FileMode.Open, FileAccess.Read, FileShare.Read))
         {
+            Assert.False(PortableRuntimeCache.TryImportLegacy(paths));
             PortableRuntimeCache.Cleanup(paths);
-            Assert.False(Directory.Exists(old));
+            Assert.True(Directory.Exists(old));
             Assert.True(Directory.Exists(active));
         }
+        Assert.True(PortableRuntimeCache.TryImportLegacy(paths));
         PortableRuntimeCache.Cleanup(paths);
-        Assert.False(Directory.Exists(active));
-        Assert.True(File.Exists(active + ".lease"));
+        Assert.False(Directory.Exists(flatRoot));
+        var migrated = Path.Combine(paths.Launcher, LauncherStorageLayout.LauncherRuntime);
+        Assert.False(Directory.Exists(Path.Combine(migrated, Hash(200))));
+        Assert.False(Directory.Exists(Path.Combine(migrated, Hash(201))));
+        Assert.True(File.Exists(Path.Combine(migrated, Hash(201) + ".lease")));
     }
 
     private DesktopBootstrapCache.SuccessfulSet CreateSet(int index)

@@ -113,14 +113,14 @@
     }
     Rules = @(
         @{ Paths = @('Program/Changelog.md'); Suites = @('Changelog') }
-        @{ Paths = @('Program/AdaptiveLauncherLayout.cs'); Suites = @('LauncherLayout') }
-        @{ Paths = @('Program/NameMarquee.cs'); Suites = @('NicknamePresentation') }
+        @{ Paths = @('Program/UI/AdaptiveLauncherLayout.cs'); Suites = @('LauncherLayout') }
+        @{ Paths = @('Program/UI/NameMarquee.cs'); Suites = @('NicknamePresentation') }
         @{ Paths = @('Program/CenteredDropDown.xaml', 'Program/CenteredDropDown.xaml.cs'); Suites = @('LauncherDropDown') }
-        @{ Paths = @('Program/CatalogLibraryTree.cs', 'Program/CatalogModGroup.cs'); Suites = @('LibraryGroups') }
-        @{ Paths = @('Program/CatalogModPages.cs'); Suites = @('LibraryLinks') }
-        @{ Paths = @('Program/LibraryTreeMotion.cs'); Suites = @('LibraryMotion') }
+        @{ Paths = @('Program/Packs/Catalog/CatalogLibraryTree.cs', 'Program/Packs/Catalog/CatalogModGroup.cs'); Suites = @('LibraryGroups') }
+        @{ Paths = @('Program/Packs/Catalog/CatalogModPages.cs'); Suites = @('LibraryLinks') }
+        @{ Paths = @('Program/UI/LibraryTreeMotion.cs'); Suites = @('LibraryMotion') }
         @{
-            Paths = @('Program/BackdropSurfaceBorder.cs', 'Program/BackdropSurfaceCache.cs', 'Program/PreparedWindowBackdrop.cs')
+            Paths = @('Program/UI/BackdropSurfaceBorder.cs', 'Program/UI/BackdropSurfaceCache.cs', 'Program/UI/PreparedWindowBackdrop.cs')
             Suites = @('BackdropRendering')
         }
         @{ Paths = @('Program/MainWindow.MaintenanceStatus.cs'); Suites = @('MaintenanceStatus') }

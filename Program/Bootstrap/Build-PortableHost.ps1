@@ -205,7 +205,7 @@ try {
     [IO.File]::WriteAllBytes($dependencyPath, $dependencyBuffer.ToArray())
 } finally { $dependencyWriter.Dispose(); $dependencyBuffer.Dispose() }
 $dependencyResource = Escape-ResourcePath $dependencyPath
-$icon = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Minecraft.ico')))
+$icon = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\icon.ico')))
 $regularFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-Regular.ttf')))
 $semiboldFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-SemiBold.ttf')))
 $packetResource = Escape-ResourcePath $packetPath

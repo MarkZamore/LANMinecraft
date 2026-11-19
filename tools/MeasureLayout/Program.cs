@@ -138,7 +138,7 @@ internal static class Program
         var assembly = typeof(CenteredDropDown).Assembly;
         var publishedExecutable = args.FirstOrDefault(arg => arg.StartsWith("--exe=", StringComparison.Ordinal))?[6..]
             ?? Path.Combine(Repository, "Program.Tests", "PortabilityAudit", "Artifacts", "recheck-build", "LANMinecraft.exe");
-        var inputs = new[] { assembly.Location, Path.Combine(Repository, "Program", "Minecraft.csproj"), Path.Combine(Repository, "Program", "App.xaml.cs"), Path.Combine(Repository, "Program", "App.xaml"), Path.Combine(Repository, "Program", "MainWindow.xaml"), Path.Combine(Repository, "Program", "AdaptiveLauncherLayout.cs"), Path.Combine(Repository, "Program", "CenteredDropDown.xaml"), Path.Combine(Repository, "Program", "ControlMotion.cs"), Path.Combine(Repository, "Program", "WindowsThemeService.cs"), Path.Combine(Repository, "Program", "MainWindow.xaml.cs"), publishedExecutable };
+        var inputs = new[] { assembly.Location, Path.Combine(Repository, "Program", "Minecraft.csproj"), Path.Combine(Repository, "Program", "App.xaml.cs"), Path.Combine(Repository, "Program", "App.xaml"), Path.Combine(Repository, "Program", "MainWindow.xaml"), Path.Combine(Repository, "Program", "UI", "AdaptiveLauncherLayout.cs"), Path.Combine(Repository, "Program", "CenteredDropDown.xaml"), Path.Combine(Repository, "Program", "UI", "ControlMotion.cs"), Path.Combine(Repository, "Program", "UI", "WindowsThemeService.cs"), Path.Combine(Repository, "Program", "MainWindow.xaml.cs"), publishedExecutable };
         inputs = inputs.Concat(new[] { Assembly.GetExecutingAssembly().Location, Path.Combine(AppContext.BaseDirectory, "MeasureLayout.runtimeconfig.json"), Path.Combine(Repository, "tools", "MeasureLayout", "Program.cs"), Path.Combine(Repository, "tools", "MeasureLayout", "MeasureLayout.csproj") }).ToArray();
         var hashes = inputs.Where(File.Exists).Select(path => new { Path = path, SHA256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) }).ToArray();
         var dirtyRectangleSwitchPresent = AppContext.TryGetSwitch("Switch.System.Windows.Media.MediaContext.DisableDirtyRectangles", out var dirtyRectanglesDisabled);
@@ -233,7 +233,7 @@ internal static class Program
         var xaml = File.ReadAllText(Path.Combine(program, "MainWindow.xaml"));
         xaml = Regex.Replace(xaml, @"x:Class=""[^""]*""", namespaces);
         xaml = Regex.Replace(xaml, @"\s(Click|Loaded|Closing|SizeChanged|SelectionChanged|TextChanged|PreviewTextInput|LostFocus|KeyDown|DataObject\.Pasting)=""[^""]*""", "");
-        xaml = xaml.Replace(@"Icon=""Minecraft.ico""", "").Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
+        xaml = xaml.Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
         resources = resources.Replace(@"clr-namespace:Minecraft""", @"clr-namespace:Minecraft;assembly=LANMinecraft""");
         xaml = xaml.Replace("<Window.Resources>", "<Window.Resources>" + resources);
         return (Window)XamlReader.Parse(xaml);

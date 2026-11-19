@@ -10,8 +10,8 @@ dotnet build tools/NoticeOverlayProbe/Delivery/NoticeDeliveryProbe.csproj
 dotnet tools/NoticeOverlayProbe/Delivery/bin/Debug/net10.0-windows/NoticeDeliveryProbe.dll <root> <launcher-dll> <output> <game-pid> <delay-ms> [repeat-test-ms]
 ```
 
-Допускается опубликованный `LANMinecraft.dll` внутри `Minecraft/Launcher/Runtime`
-или локальный кандидат в `Program/bin`. Игра должна быть на переднем плане,
+Допускается опубликованный `LANMinecraft.dll` внутри `Minecraft/Launcher/Bootstrap/app`,
+старый кеш `LauncherRuntime` или `Runtime` либо локальный кандидат в `Program/bin`. Игра должна быть на переднем плане,
 в настоящем полном экране без заголовка. Проверка сверяет границы монитора,
 PID и время старта, требует ровно одну живую сессию и не трогает параллельную
 игру. Она вызывает штатный `TryShow`, сохраняет SHA сборки, heartbeat,

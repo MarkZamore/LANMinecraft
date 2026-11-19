@@ -1,0 +1,880 @@
+﻿using System.IO.Compression;
+using System.Net;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using Minecraft;
+
+namespace Minecraft.Tests;
+
+public sealed class PackCatalogTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "catalog-test-" + Guid.NewGuid().ToString("N"));
+    private readonly AppPaths _paths;
+    private readonly Logger _logger;
+    public PackCatalogTests()
+    {
+        _paths = new AppPaths(_root);
+        _paths.Ensure();
+        _logger = new Logger(_paths.LogFile);
+    }
+    public void Dispose() => TempTree.Delete(_root);
+
+    [Fact]
+    public void MigrationKeepsInstalledAndSelectedButAnEmptyListStaysEmpty()
+    {
+        Directory.CreateDirectory(Path.Combine(_paths.Packs, "All The Mods 10", "mods"));
+        var old = new AppSettings { ClientRelativePath = PortablePackSyncService.TerraFirmaRelativePath };
+        PackMembership.Initialize(old, _paths);
+        Assert.Equal(new[] { "All The Mods 10", PortablePackSyncService.TerraFirmaRelativePath },
+            old.AddedPackRelativePaths!.Order(StringComparer.Ordinal));
+        old.AddedPackRelativePaths = [];
+        PackMembership.Initialize(old, _paths);
+        Assert.Empty(old.AddedPackRelativePaths);
+        var freshPaths = new AppPaths(Path.Combine(_root, "Fresh"));
+        freshPaths.Ensure();
+        var freshSettings = new SettingsService(freshPaths);
+        Assert.False(File.Exists(freshPaths.SettingsFile));
+        var defaults = freshSettings.Load();
+        Assert.Empty(defaults.AddedPackRelativePaths!);
+        Assert.Empty(defaults.ClientRelativePath);
+        Assert.True(File.Exists(freshPaths.SettingsFile));
+        Assert.Empty(freshSettings.Load().AddedPackRelativePaths!);
+
+        var oldInstall = Path.Combine(_paths.Packs, "LL8 Extended", "mods", "keep.jar");
+        var oldWorld = Path.Combine(_paths.Worlds, "LL8 Extended", "World", "level.dat");
+        Directory.CreateDirectory(Path.GetDirectoryName(oldInstall)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(oldWorld)!);
+        File.WriteAllText(oldInstall, "local installation");
+        File.WriteAllText(oldWorld, "local world");
+        var retired = new AppSettings { ClientRelativePath = "LL8 Extended", AddedPackRelativePaths = ["LL8 Extended"] };
+        PackMembership.Initialize(retired, _paths);
+        Assert.Equal(new[] { "LL8 Extended" }, retired.AddedPackRelativePaths);
+        Assert.False(PackMembership.IsHidden(retired, "LL8 Extended"));
+        Assert.False(PackMembership.Add(retired, "LL8 Extended"));
+        Assert.True(PackMembership.ShouldListInstalled(retired, "LL8 Extended", isCatalogPack: false));
+        Assert.Equal("local installation", File.ReadAllText(oldInstall));
+        Assert.Equal("local world", File.ReadAllText(oldWorld));
+
+        File.WriteAllText(_paths.SettingsFile, JsonSerializer.Serialize(new
+        {
+            schemaVersion = SettingsService.CurrentSchemaVersion,
+            playerName = "Player",
+            memorySettingIsTheHeap = true,
+            maxMemoryGb = 6,
+            clientRelativePath = "All The Mods 10",
+            addedPackRelativePaths = new[] { "All The Mods 10" },
+            hiddenPackRelativePaths = new[] { "LL8 Extended" }
+        }));
+        var persisted = new SettingsService(_paths);
+        var restored = persisted.Load();
+        Assert.Equal(new[] { "All The Mods 10" }, restored.AddedPackRelativePaths);
+        Assert.True(restored.Ll8LocalVisibilityMigrated);
+        Assert.True(PackMembership.ShouldListInstalled(restored, "LL8 Extended", isCatalogPack: false));
+        Assert.True(PackMembership.Remove(restored, "LL8 Extended"));
+        persisted.Save(restored);
+        Assert.True(PackMembership.IsHidden(persisted.Load(), "LL8 Extended"));
+    }
+
+    [Fact]
+    public void AddDoesNotDownloadAndRemovalSurvivesSettingsReload()
+    {
+        var settings = new AppSettings { AddedPackRelativePaths = [] };
+        var java = Path.Combine(_paths.JavaRuntimes, "17", "release");
+        Directory.CreateDirectory(Path.GetDirectoryName(java)!);
+        File.WriteAllText(java, "keep this Java runtime");
+        Assert.True(PackMembership.Add(settings, "All The Mods 10"));
+        Assert.False(PackMembership.Add(settings, "all the mods 10"));
+        Assert.False(Directory.Exists(Path.Combine(_paths.Packs, "All The Mods 10")));
+        Assert.True(PackMembership.Remove(settings, "All The Mods 10"));
+        var service = new SettingsService(_paths);
+        service.Save(settings);
+        Assert.Empty(service.Load().AddedPackRelativePaths!);
+        Assert.Equal("keep this Java runtime", File.ReadAllText(java));
+    }
+
+    [Fact]
+    public async Task FilteredDisplayCountsNeverReplaceThePublishedNativeMemoryCount()
+    {
+        CatalogMod[] mods = [
+            new() { Id = "base", Name = "Base" }, new() { Id = "dependency", Name = "Dependency" },
+            new() { Id = "helper", Name = "Helper", IsLibrary = true },
+            new() { Id = "helper2", Name = "Helper2", IsLibrary = true },
+            new() { Id = "root", Name = "Root", ParentId = "base" },
+            new() { Id = "child", Name = "Child", ParentId = "root" },
+            new() { Id = "grandchild", Name = "Grandchild", ParentId = "child" },
+            new() { Id = "hidden", Name = "Hidden" }, new() { Id = "hidden_child", Name = "Hidden child", ParentId = "hidden" }];
+        using var host = new CatalogHost(mods: mods, publishedModCount: 9, configure: content =>
+        {
+            content.BaseModIds = ["base"];
+            content.VisibleModIds = ["root", "child", "grandchild"];
+            content.ModGroups = [new() { Title = "A category", ModIds = ["root"] }];
+            content.ModCountScope = "all";
+        });
+        var catalog = new PackCatalogService(_paths, _logger, host.Client);
+        await catalog.RefreshOnceAsync();
+        var pack = catalog.Find(CatalogHost.Folder)!;
+        Assert.Equal(9, pack.ModCount);
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal("Minecraft 26.3 NeoForge (7 модов)", pack.VersionLabel);
+        pack.Content.ModCountScope = "visible";
+        pack.BuildTree();
+        Assert.Equal(3, pack.DisplayModCount);
+        Assert.Equal("Minecraft 26.3 NeoForge (3 мода)", pack.VersionLabel);
+        var root = Assert.Single(pack.Mods);
+        pack.Mods.Add(new CatalogModNode(new CatalogMod { Id = "grandchild", Name = "Repeated view entry" }));
+        Assert.Equal(3, pack.DisplayModCount);
+        pack.Mods.RemoveAt(1);
+        root.IsExpanded = true;
+        root.Children[0].IsExpanded = true;
+        Assert.Equal(3, pack.DisplayModCount);
+        root.IsExpanded = false;
+        Assert.Equal(3, pack.DisplayModCount);
+        var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = catalog };
+        var before = await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
+        Assert.Equal(9, before.ModCount);
+        Assert.Equal(1, before.JarCount);
+        pack.Content.ModCountScope = "all";
+        pack.BuildTree();
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal(9, pack.ModCount);
+        Assert.Single(pack.ModGroups);
+        Assert.Single(pack.Mods);
+        Assert.Single(pack.Mods[0].Children);
+        Assert.Equal("Minecraft 26.3 NeoForge (7 модов)", pack.VersionLabel);
+        pack.Content.ModCountScope = "visible";
+        pack.Content.ModGroups = null;
+        pack.BuildTree();
+        Assert.Equal(3, pack.DisplayModCount);
+        pack.Content.VisibleModIds = null;
+        pack.BuildTree();
+        Assert.Equal(7, pack.DisplayModCount);
+        Assert.Equal(2, pack.Libraries.Count);
+        var after = await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
+        Assert.Equal(before, after);
+        foreach (var ram in new[] { 8UL, 32UL, 64UL })
+            Assert.Equal(MemorySizingService.GetRecommendedMemoryGb(before, ram * 1024 * 1024 * 1024),
+                MemorySizingService.GetRecommendedMemoryGb(after, ram * 1024 * 1024 * 1024));
+        Assert.DoesNotContain(host.Requests, url => new Uri(url).AbsolutePath.EndsWith("/payload.jar", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NewPackIsDiscoveredOnceAndPlayChecksTheCurrentManifest()
+    {
+        CatalogMod[] initialMods = [
+            new() { Id = "example", Name = "Example" },
+            new() { Id = "addon", Name = "Addon", ParentId = "example" },
+            new() { Id = "helper", Name = "Helper", IsLibrary = true }
+        ];
+        using var host = new CatalogHost(mods: initialMods);
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        var settings = new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] };
+        Assert.False(service.HasOnlineCatalog);
+        Assert.Equal(PortablePackSyncService.DefaultPackRelativePath, Assert.Single(service.PacksForDisplay(settings)).Entry.RelativePath);
+        var task = service.RefreshOnceAsync();
+        Assert.Same(task, service.RefreshOnceAsync());
+        await task;
+        Assert.True(service.IsReady);
+        Assert.True(service.HasOnlineCatalog);
+        Assert.Contains(service.PacksForDisplay(settings), p => p.Entry.RelativePath == CatalogHost.Folder);
+        Assert.False(PackMembership.Contains(settings, CatalogHost.Folder));
+        Assert.Contains(service.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
+        var originalPack = service.Find(CatalogHost.Folder)!;
+        Assert.Equal(3, originalPack.ModCount);
+        Assert.Equal("Minecraft 26.3 NeoForge (2 мода)", originalPack.VersionLabel);
+        var before = host.Requests.Count;
+        var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
+        Assert.Equal(host.Source, sync.TryResolveSource(CatalogHost.Folder));
+        await sync.WeighFromSourceAsync(CatalogHost.Folder, default);
+        var result = await sync.SyncAsync(CatalogHost.Folder, null, default);
+        Assert.Equal(PackSyncOutcome.Installed, result.Outcome);
+        Assert.Equal(before + 3, host.Requests.Count);
+        Assert.EndsWith("/payload.jar", host.Requests.Last(), StringComparison.Ordinal);
+        Assert.Equal(CatalogHost.Payload, File.ReadAllBytes(Path.Combine(_paths.Packs, CatalogHost.Folder, "mods", "payload.jar")));
+        await service.RefreshOnceAsync();
+        Assert.Equal(before + 3, host.Requests.Count);
+
+        // The next startup receives the changed published mod list. It must
+        // replace the count from the disk cache, including dependencies.
+        using var changedHost = new CatalogHost(mods: [
+            .. initialMods,
+            new() { Id = "another", Name = "Another mod" },
+            new() { Id = "another_helper", Name = "Another library", IsLibrary = true }
+        ], revision: "next-revision");
+        var nextStartup = new PackCatalogService(_paths, _logger, changedHost.Client);
+        Assert.Equal(3, nextStartup.Find(CatalogHost.Folder)!.ModCount);
+        await nextStartup.RefreshOnceAsync();
+        Assert.Equal(5, nextStartup.Find(CatalogHost.Folder)!.ModCount);
+        Assert.Equal("Minecraft 26.3 NeoForge (3 мода)", nextStartup.Find(CatalogHost.Folder)!.VersionLabel);
+        Assert.Equal(3, originalPack.ModCount);
+
+        // Discovery persists without an EXE update, but offline presentation
+        // stays limited to explicitly added packs from that verified cache.
+        using var offlineHttp = new HttpClient(new OfflineHandler());
+        var offlineStartup = new PackCatalogService(_paths, _logger, offlineHttp);
+        await offlineStartup.RefreshOnceAsync();
+        Assert.False(offlineStartup.HasOnlineCatalog);
+        Assert.Empty(offlineStartup.PacksForDisplay(settings));
+        Assert.NotNull(offlineStartup.Find(CatalogHost.Folder));
+        Assert.True(PackMembership.Add(settings, CatalogHost.Folder));
+        Assert.Single(offlineStartup.PacksForDisplay(settings));
+        Assert.Contains(offlineStartup.PacksForDisplay(settings), pack => pack.Entry.RelativePath == CatalogHost.Folder);
+        settings.AddedPackRelativePaths!.Clear();
+        Assert.Empty(offlineStartup.PacksForDisplay(settings));
+    }
+
+    [Fact]
+    public async Task OfflineAndCorruptRemoteBundleKeepTheLastVerifiedCatalogAndManifest()
+    {
+        using var host = new CatalogHost();
+        await new PackCatalogService(_paths, _logger, host.Client).RefreshOnceAsync();
+        host.Offline = true;
+        var cached = new PackCatalogService(_paths, _logger, host.Client);
+        Assert.Contains(cached.Packs, p => p.Entry.RelativePath == CatalogHost.Folder);
+        await cached.RefreshOnceAsync();
+        Assert.Contains("revision", cached.SessionManifest(host.Source), StringComparison.Ordinal);
+        host.Offline = false;
+        host.CorruptBundle = true;
+        var again = new PackCatalogService(_paths, _logger, host.Client);
+        await again.RefreshOnceAsync();
+        Assert.Equal(CatalogHost.Revision, again.Find(CatalogHost.Folder)!.Content.Revision);
+    }
+
+    [Fact]
+    public async Task CustomSourceIsFrozenAtStartupWithoutBecomingACatalogMembership()
+    {
+        using var host = new CatalogHost { InvalidIndex = true };
+        var path = Path.Combine(_paths.Packs, "My Custom Pack");
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, PortablePackSyncService.SourceMarkerFileName),
+            JsonSerializer.Serialize(new { schemaVersion = 1, owner = host.Source.Owner, repo = host.Source.Repo, tag = host.Source.Tag }));
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        await service.RefreshOnceAsync();
+        Assert.Null(service.Find("My Custom Pack"));
+        Assert.Equal(5, service.Packs.Count);
+        var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
+        Assert.Equal(host.Source, sync.TryResolveSource("My Custom Pack"));
+        Assert.Contains("revision", service.SessionManifest(host.Source), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CancelledStartupStillFreezesOfflineSnapshotAndDoesNotRetryOnNavigation()
+    {
+        using var host = new CatalogHost();
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        await service.RefreshOnceAsync(new CancellationToken(true));
+        var count = host.Requests.Count;
+        Assert.True(service.IsReady);
+        Assert.Equal(5, service.Packs.Count);
+        await service.RefreshOnceAsync();
+        Assert.Equal(count, host.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CorruptDiskCacheCanBeRepairedByAValidStartupDownload()
+    {
+        using var host = new CatalogHost();
+        await new PackCatalogService(_paths, _logger, host.Client).RefreshOnceAsync();
+        var path = Directory.GetFiles(Path.Combine(_paths.Launcher, "Library"), "*.json")
+            .Single(p => Path.GetFileName(p) != "catalog.json");
+        File.WriteAllText(path, "corrupt cache");
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        Assert.Null(service.Find(CatalogHost.Folder));
+        await service.RefreshOnceAsync();
+        Assert.NotNull(service.Find(CatalogHost.Folder));
+        Assert.Contains("revision", service.SessionManifest(host.Source), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MissingSelectedPayloadRequestsAnotherPlayAndNeverOverwritesAnInstalledFile()
+    {
+        using var host = new CatalogHost();
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        await service.RefreshOnceAsync();
+        var pack = Path.Combine(_paths.Packs, CatalogHost.Folder);
+        Directory.CreateDirectory(Path.Combine(pack, "mods"));
+        File.WriteAllText(Path.Combine(pack, "portable-pack.json"), "{}");
+        var original = Path.Combine(pack, "mods", "payload.jar");
+        File.WriteAllText(original, "keep me");
+        host.MissingPayload = true;
+        var sync = new PortablePackSyncService(_paths, _logger, host.Client) { Catalog = service };
+        var error = await Assert.ThrowsAsync<PackSessionExpiredException>(() => sync.SyncAsync(CatalogHost.Folder, null, default));
+        Assert.Contains("Повторите «Играть»", error.Message, StringComparison.Ordinal);
+        Assert.Equal("keep me", File.ReadAllText(original));
+    }
+
+    [Fact]
+    public async Task MalformedIndexCannotEscapePortableRootAndOfflineSeedIsAlwaysAvailable()
+    {
+        using var host = new CatalogHost { InvalidIndex = true };
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        await service.RefreshOnceAsync();
+        Assert.Equal(5, service.Packs.Count);
+        Assert.Equal(2, service.Packs.Count(pack => pack.VersionLabel.Contains(" Forge (", StringComparison.Ordinal)));
+        Assert.Equal(3, service.Packs.Count(pack => pack.VersionLabel.Contains(" NeoForge (", StringComparison.Ordinal)));
+        Assert.DoesNotContain(service.Sources, p => p.RelativePath.Contains("..", StringComparison.Ordinal));
+        Assert.False(PackCatalogService.ValidFolder("../escape"));
+    }
+
+    private static void AssertMatchingCardContour(CornerRadius radius, double dpi)
+    {
+        // Compare real rendered corner pixels, including the border and a bright
+        // preview. Equal token values alone missed the old whole-card clipping.
+        Border[] borders = [new Border(), new RoundedClipBorder()];
+        var pixels = new List<byte[]>();
+        foreach (var border in borders)
+        {
+            border.Width = 80;
+            border.Height = 44;
+            border.CornerRadius = radius;
+            border.BorderThickness = new Thickness(1);
+            border.Background = System.Windows.Media.Brushes.White;
+            border.BorderBrush = System.Windows.Media.Brushes.Black;
+            if (border is RoundedClipBorder)
+                border.Child = new Border { Background = System.Windows.Media.Brushes.White };
+            border.Measure(new Size(80, 44));
+            border.Arrange(new Rect(0, 0, 80, 44));
+            border.UpdateLayout();
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                (int)(80 * dpi), (int)(44 * dpi), 96 * dpi, 96 * dpi, System.Windows.Media.PixelFormats.Pbgra32);
+            bitmap.Render(border);
+            var bytes = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4];
+            bitmap.CopyPixels(bytes, bitmap.PixelWidth * 4, 0);
+            pixels.Add(bytes);
+        }
+        // The outer silhouette must match a normal button's Border. Ignore
+        // partial-coverage pixels where adjoining antialiased fills compose.
+        var corner = (int)(radius.TopLeft * dpi / 2);
+        var stride = (int)(80 * dpi) * 4;
+        for (var y = 0; y < corner; y++)
+        for (var x = 0; x < corner; x++)
+            if (pixels[0][y * stride + x * 4 + 3] == 0)
+                Assert.Equal(0, pixels[1][y * stride + x * 4 + 3]);
+    }
+
+    [Theory]
+    [InlineData(804, 521, 1)]
+    [InlineData(804, 521, 1.5)]
+    [InlineData(1904, 1001, 2)]
+    public void LibraryFitsRealControlsAndTreeExpansionSurvivesNavigation(double width, double height, double dpi)
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var view = (PackLibraryView)window.FindName("LibraryView");
+            var catalog = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
+            view.SetCatalog(catalog.Packs);
+            foreach (UIElement child in ((Grid)window.FindName("RootGrid")).Children)
+                if (child != view) child.Visibility = Visibility.Hidden;
+            view.Visibility = Visibility.Visible;
+            VisualTreeHelper.SetRootDpi(window, new DpiScale(dpi, dpi));
+            VisualTreeHelper.SetRootDpi((Visual)window.Content, new DpiScale(dpi, dpi));
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            var actions = (Grid)window.FindName("LaunchActions");
+            var back = (Button)view.FindName("ReturnLauncherButton");
+            Assert.InRange(Math.Abs(back.ActualWidth - ((Button)window.FindName("PlayButton")).ActualWidth), 0, 1);
+            Assert.True(back.ActualHeight >= 44);
+            var play = (Button)window.FindName("PlayButton");
+            Assert.Equal(play.FontFamily, back.FontFamily);
+            Assert.Equal(play.FontSize, back.FontSize);
+            Assert.Equal(play.FontWeight, back.FontWeight);
+            var list = (ScrollViewer)view.FindName("CatalogScroll");
+            Assert.InRange(list.ScrollableWidth, 0, 0.5);
+            var panel = VisualChildren<LibraryColumnsPanel>((ItemsControl)view.FindName("CatalogCards")).Single();
+            Assert.Equal(new Thickness(0), list.Margin);
+            Assert.Equal(new Thickness(0, 0, -20, 0), view.Margin);
+            AssertLibraryScrollGutter(list);
+            var cards = CardRows();
+            Assert.Equal(5, cards.Length);
+            Assert.All(cards, card =>
+            {
+                Assert.Equal(240, card.ActualWidth, 3);
+                Assert.Equal(cards[0].ActualHeight, card.ActualHeight, 3);
+            });
+            AssertLeftAlignedGrid();
+            var cardBorder = VisualChildren<RoundedClipBorder>(cards[0]).Single();
+            var radius = (CornerRadius)window.FindResource("Radius.Control");
+            Assert.Equal(radius, cardBorder.CornerRadius);
+            // Dynamic resources can resolve after the first size pass. The
+            // preview must follow a new radius without requiring another resize.
+            cardBorder.CornerRadius = new CornerRadius(16);
+            Assert.Null(cardBorder.Clip);
+            var contentClip = Assert.IsType<System.Windows.Media.RectangleGeometry>(cardBorder.Child.Clip);
+            Assert.False(contentClip.FillContains(new Point(1, 1)));
+            Assert.True(contentClip.FillContains(new Point(16, 1)));
+            cardBorder.CornerRadius = radius;
+            AssertMatchingCardContour(radius, dpi);
+            if (width == 804)
+            {
+                foreach (var section in cards.GroupBy(card => ((CatalogPack)card.Content).Entry.LibraryGroup))
+                {
+                    var rows = section.Chunk(3).Select(row => row.Select(CardBounds).ToArray()).ToArray();
+                    foreach (var row in rows)
+                        Assert.All(row, bounds => Assert.Equal(row[0].Top, bounds.Top, 3));
+                    for (var index = 1; index < rows.Length; index++)
+                        Assert.True(rows[index][0].Top >= rows[index - 1][0].Bottom + 15);
+                }
+            }
+            foreach (var summary in VisualChildren<TextBlock>((ItemsControl)view.FindName("CatalogCards"))
+                         .Where(text => catalog.Packs.Any(pack => pack.Summary == text.Text)))
+            {
+                Assert.True(double.IsPositiveInfinity(summary.MaxHeight));
+                Assert.Equal(TextTrimming.None, summary.TextTrimming);
+                Assert.True(summary.ActualHeight + summary.Margin.Top + summary.Margin.Bottom >= summary.DesiredSize.Height - 1);
+            }
+            var sizes = cards.Select(card => card.RenderSize).ToArray();
+            WindowCanvasTests.LayoutWindow(window, new Size(width + 400, height));
+            Assert.Equal(sizes, CardRows().Select(card => card.RenderSize));
+            AssertLeftAlignedGrid();
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            if (list.ScrollableHeight > 0) AssertScrollInput(list);
+            var catalogOffset = list.VerticalOffset;
+            var pack = catalog.Find("All The Mods 10")!;
+            var root = pack.Mods.First(m => m.HasChildren);
+            root.IsExpanded = true;
+            view.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            var details = (ScrollViewer)view.FindName("DetailScroll");
+            Assert.InRange(details.ScrollableWidth, 0, 0.5);
+            Assert.True(details.ScrollableHeight > 0);
+            AssertLibraryScrollGutter(details);
+            AssertScrollInput(details);
+            details.ScrollToTop();
+            details.UpdateLayout();
+            Assert.NotNull(pack.Requirements);
+            var requirements = VisualChildren<TextBlock>(details).Single(text => text.Text == pack.Requirements.Label);
+            Assert.True(requirements.ActualWidth > 0);
+            var membership = (Button)view.FindName("MembershipButton");
+            Assert.Equal("Добавить", membership.Content);
+            AssertMembershipFits();
+            var addSize = membership.RenderSize;
+            var addFont = (membership.FontFamily, membership.FontSize, membership.FontWeight);
+            var addPadding = membership.Padding;
+            var addBorder = membership.BorderThickness;
+            var green = Assert.IsType<System.Windows.Media.SolidColorBrush>(membership.Background).Color;
+            Assert.Equal((0x47, 0xB5, 0x80), ((int)green.R, (int)green.G, (int)green.B));
+            view.IsAdded = _ => true;
+            view.RefreshMembership();
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            Assert.Equal("Убрать", membership.Content);
+            AssertMembershipFits();
+            Assert.Equal(addSize, membership.RenderSize);
+            Assert.Equal(addFont, (membership.FontFamily, membership.FontSize, membership.FontWeight));
+            Assert.Equal(addPadding, membership.Padding);
+            Assert.Equal(addBorder, membership.BorderThickness);
+            view.ShowCatalog();
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            Assert.Equal(catalogOffset, list.VerticalOffset, 2);
+            view.ShowDetails(pack);
+            Assert.True(root.IsExpanded);
+            Assert.Equal(new[] { 3d, 2d }, new[] { actions.ColumnDefinitions[0].Width.Value, actions.ColumnDefinitions[2].Width.Value });
+            return true;
+
+            ContentPresenter[] CardRows() => panel.Children.OfType<ContentPresenter>()
+                .Where(child => child.Content is CatalogPack).ToArray();
+
+            Rect CardBounds(ContentPresenter card) => card.TransformToAncestor(panel).TransformBounds(new Rect(card.RenderSize));
+
+            void AssertMembershipFits()
+            {
+                var buttonBounds = membership.TransformToAncestor(details).TransformBounds(new Rect(membership.RenderSize));
+                Assert.InRange(buttonBounds.Left, 0, details.ViewportWidth);
+                Assert.InRange(buttonBounds.Right, buttonBounds.Left, details.ViewportWidth + 0.5);
+                var requirementBounds = requirements.TransformToAncestor(details).TransformBounds(new Rect(requirements.RenderSize));
+                Assert.True(requirementBounds.Bottom <= buttonBounds.Top);
+
+                var label = new FormattedText((string)membership.Content, System.Globalization.CultureInfo.InvariantCulture,
+                    membership.FlowDirection, new Typeface(membership.FontFamily, membership.FontStyle,
+                        membership.FontWeight, membership.FontStretch), membership.FontSize, membership.Foreground,
+                    VisualTreeHelper.GetDpi(membership).PixelsPerDip);
+                var presenter = Assert.Single(VisualChildren<ContentPresenter>(membership));
+                Assert.True(label.Width <= presenter.ActualWidth + 0.5,
+                    $"\"{membership.Content}\" needs {label.Width:F1} DIP, available {presenter.ActualWidth:F1} DIP.");
+            }
+
+            void AssertLeftAlignedGrid()
+            {
+                var bounds = cards.Select(CardBounds).ToArray();
+                var left = bounds.Min(rect => rect.Left);
+                Assert.InRange(Math.Abs(left), 0, 1);
+                Assert.True(bounds.Max(rect => rect.Right) <= panel.ActualWidth + 1);
+                // The incomplete final row keeps the same columns as the first.
+                var firstTop = bounds.Min(rect => rect.Top);
+                if (bounds.Any(rect => rect.Top > firstTop))
+                    Assert.Equal(left, bounds.First(rect => rect.Top > firstTop).Left, 3);
+            }
+
+            void AssertScrollInput(ScrollViewer viewer)
+            {
+                Assert.True(viewer.ScrollableHeight > 0);
+                var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+                viewer.RaiseEvent(wheel);
+                Assert.True(wheel.Handled);
+                var controller = SmoothScrollingController.Attach(viewer);
+                for (var frame = 0; frame < 80; frame++) { controller.AdvanceFrame(1000d / 60); viewer.UpdateLayout(); }
+                Assert.True(viewer.VerticalOffset > 0);
+                var scrollbar = (System.Windows.Controls.Primitives.ScrollBar)viewer.Template.FindName("PART_VerticalScrollBar", viewer);
+                var target = viewer.ScrollableHeight / 2;
+                scrollbar.Value = target;
+                viewer.UpdateLayout();
+                Assert.Equal(target, viewer.VerticalOffset, 2);
+            }
+
+            void AssertLibraryScrollGutter(ScrollViewer viewer)
+            {
+                var canvas = (FrameworkElement)window.Content;
+                var presenter = VisualChildren<ScrollContentPresenter>(viewer).First();
+                var content = presenter.TransformToAncestor(canvas).TransformBounds(new Rect(presenter.RenderSize));
+                Assert.InRange(Math.Abs(content.Left), 0, 1);
+                Assert.InRange(Math.Abs(canvas.ActualWidth - content.Right), 0, 1);
+                var scrollbar = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(viewer)
+                    .Single(bar => bar.Name == "PART_VerticalScrollBar");
+                // Auto keeps the reserved gutter, but only overflowing content
+                // needs a visible, movable scrollbar.
+                Assert.Equal(ScrollBarVisibility.Auto, viewer.VerticalScrollBarVisibility);
+                Assert.Equal(((GridLength)window.FindResource("Size.ScrollGutter")).Value, viewer.ActualWidth - presenter.ActualWidth, 3);
+                Assert.Same(viewer, ScrollBarBridge.GetTarget(scrollbar));
+                if (viewer.ScrollableHeight > 0)
+                {
+                    Assert.Equal(Visibility.Visible, scrollbar.Visibility);
+                    var inside = scrollbar.TransformToAncestor(view).TransformBounds(new Rect(scrollbar.RenderSize));
+                    Assert.True(inside.Right <= view.ActualWidth + 0.5, "Library scrollbar must fit inside its own view.");
+                    var thumb = VisualChildren<System.Windows.Controls.Primitives.Thumb>(scrollbar).Single();
+                    Assert.True(thumb.ActualWidth > 0 && thumb.ActualHeight > 0);
+                    var bounds = scrollbar.TransformToAncestor(canvas).TransformBounds(new Rect(scrollbar.RenderSize));
+                    Assert.True(bounds.Left >= canvas.ActualWidth);
+                    Assert.True(bounds.Right <= canvas.ActualWidth + canvas.Margin.Right);
+                    Assert.InRange(Math.Abs(bounds.Left + bounds.Width / 2 -
+                        (canvas.ActualWidth + canvas.Margin.Right / 2)), 0, 1);
+                }
+                else
+                {
+                    Assert.Equal(Visibility.Collapsed, scrollbar.Visibility);
+                    Assert.Equal(0, scrollbar.Maximum);
+                }
+            }
+        });
+    }
+
+    [Fact]
+    public void AllSeedModsHaveProjectPagesAndOldCachedMetadataUsesTheSameOfflineLinks()
+    {
+        var service = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
+        var defaultPack = service.Find(PortablePackSyncService.DefaultPackRelativePath)!;
+        Assert.Equal("All The Mods 10", defaultPack.Name);
+        Assert.Equal("minecraft-1", defaultPack.Entry.Id);
+        Assert.Null(service.Find("LL8 Extended"));
+        Assert.DoesNotContain(service.Sources, source => source.RelativePath == "LL8 Extended");
+        Assert.Equal("Other Pack", PackDisplayName.For("Other Pack", "Other Pack"));
+        foreach (var pack in service.Packs)
+        {
+            Assert.DoesNotContain("\n", pack.Description, StringComparison.Ordinal);
+            foreach (var mod in pack.Content.Mods)
+            {
+                if (!mod.WebsiteAvailable)
+                {
+                    Assert.Null(new CatalogModNode(mod, pack.Content.Id).WebsiteUri);
+                    Assert.Null(new CatalogModNode(new CatalogMod { Id = mod.Id, Name = mod.Name }, pack.Content.Id).WebsiteUri);
+                    continue;
+                }
+                var page = Assert.IsType<Uri>(new CatalogModNode(mod, pack.Content.Id).WebsiteUri);
+                Assert.Equal("https", page.Scheme);
+                Assert.Equal(page, new CatalogModNode(new CatalogMod { Id = mod.Id, Name = mod.Name }, pack.Content.Id).WebsiteUri);
+            }
+        }
+        Assert.Null(new CatalogModNode(new CatalogMod { Id = "unknown", WebsiteUrl = "javascript:alert(1)" }).WebsiteUri);
+        Assert.Null(new CatalogModNode(new CatalogMod { Id = "unknown", WebsiteUrl = "file:///C:/mod.jar" }).WebsiteUri);
+    }
+
+    [Fact]
+    public void ModAddonAndLibraryLinksOpenTheirOwnPagesWithoutChangingExpansion()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var view = (PackLibraryView)window.FindName("LibraryView");
+            var catalog = new PackCatalogService(_paths, _logger, new HttpClient(new OfflineHandler()));
+            var pack = catalog.Find("All The Mods 10")!;
+            const string libraryPage = "https://example.org/library-project";
+            pack.Content.Mods.AddRange([
+                new() { Id = "library_project", Name = "Library Project", IsLibrary = true, WebsiteUrl = libraryPage },
+                new() { Id = "library_module", Name = "Library Module", IsLibrary = true, WebsiteUrl = libraryPage }
+            ]);
+            pack.BuildTree();
+            var project = pack.Libraries.Single(node => node.Id == "library_project");
+            var unavailable = new CatalogModNode(new CatalogMod
+            {
+                Id = "unavailable_project", Name = "Unavailable project",
+                WebsiteUrl = "https://example.org/unavailable", WebsiteAvailable = false
+            });
+            pack.Mods.Add(unavailable);
+            var parent = pack.Mods.First(node => node.HasChildren);
+            parent.IsExpanded = true;
+            view.SetCatalog(catalog.Packs);
+            view.Visibility = Visibility.Visible;
+            view.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            var section = Assert.IsType<Expander>(view.FindName("LibrariesSection"));
+            var headerToggle = Assert.IsType<ToggleButton>(section.Template.FindName("HeaderToggle", section));
+            var sectionContent = Assert.IsType<Border>(section.Template.FindName("SectionContent", section));
+            Assert.False(section.IsExpanded);
+            Assert.Equal(Visibility.Collapsed, sectionContent.Visibility);
+            headerToggle.IsChecked = true;
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            Assert.True(section.IsExpanded);
+            Assert.Equal(Visibility.Visible, sectionContent.Visibility);
+            var projectItem = VisualChildren<TreeViewItem>(view).Single(item => ReferenceEquals(item.DataContext, project));
+            var projectToggle = Assert.IsType<ToggleButton>(projectItem.Template.FindName("Expander", projectItem));
+            var opened = new List<Uri>();
+            view.ModPageRequested += opened.Add;
+            foreach (var node in new[] { parent, parent.Children[0], project })
+            {
+                var link = LinkFor(node);
+                Assert.Equal(node.WebsiteUri, link.NavigateUri);
+                link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+                Assert.Equal(node.WebsiteUri, opened[^1]);
+                Assert.True(parent.IsExpanded);
+            }
+            Assert.False(projectItem.IsExpanded);
+            projectToggle.IsChecked = true;
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            var moduleLink = LinkFor(Assert.Single(project.Children));
+            moduleLink.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+            Assert.Equal(new Uri(libraryPage), opened[^1]);
+            Assert.True(projectItem.IsExpanded);
+            Assert.True(section.IsExpanded);
+            var disabled = VisualChildren<TextBlock>(view).SelectMany(text => text.Inlines.OfType<Hyperlink>())
+                .Single(link => ReferenceEquals(link.DataContext, unavailable));
+            Assert.False(disabled.IsEnabled);
+            Assert.Equal(Cursors.Arrow, disabled.Cursor);
+            Assert.Null(disabled.NavigateUri);
+            disabled.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
+            Assert.Equal(4, opened.Count);
+            view.ShowCatalog();
+            view.ShowDetails(pack);
+            WindowCanvasTests.LayoutWindow(window, new Size(1104, 761));
+            Assert.Same(section, view.FindName("LibrariesSection"));
+            Assert.False(section.IsExpanded);
+            var reopenedContent = Assert.IsType<Border>(section.Template.FindName("SectionContent", section));
+            Assert.Equal(Visibility.Collapsed, reopenedContent.Visibility);
+            return true;
+
+            Hyperlink LinkFor(CatalogModNode node) => VisualChildren<TextBlock>(view)
+                .SelectMany(text => text.Inlines.OfType<Hyperlink>())
+                .Single(link => ReferenceEquals(link.DataContext, node));
+        });
+    }
+
+    [Fact]
+    public async Task UnsafeProjectPageCannotReplaceTheVerifiedCatalogue()
+    {
+        using var verifiedHost = new CatalogHost("https://example.org/verified-mod");
+        var verified = new PackCatalogService(_paths, _logger, verifiedHost.Client);
+        await verified.RefreshOnceAsync();
+        var manifest = verified.SessionManifest(verifiedHost.Source);
+        using var host = new CatalogHost("javascript:alert(1)");
+        var service = new PackCatalogService(_paths, _logger, host.Client);
+        var previous = Assert.IsType<CatalogPack>(service.Find(CatalogHost.Folder));
+        await service.RefreshOnceAsync();
+        var retained = Assert.Single(service.Packs);
+        Assert.Equal(previous.Content.Revision, retained.Content.Revision);
+        Assert.Equal("https://example.org/verified-mod", Assert.Single(retained.Mods).WebsiteUri!.AbsoluteUri);
+        Assert.Equal(manifest, service.SessionManifest(host.Source));
+    }
+
+    [Fact]
+    public async Task NativeCardUsesTheVerifiedProjectVersionAndRejectsAnUnsafeUpdate()
+    {
+        var project = new CatalogNativeProject("Example Engine", "Nightly 2026-11-05",
+            "123abcd" + new string('0', 33), "https://example.org/engine");
+        using var host = new CatalogHost(mods: [], configure: doc =>
+        {
+            doc.MinecraftVersion = "26.3";
+            doc.Loader = "native";
+            doc.NativeProject = project;
+        });
+        var catalogue = new PackCatalogService(_paths, _logger, host.Client);
+        await catalogue.RefreshOnceAsync();
+        var pack = Assert.Single(catalogue.Packs);
+        Assert.Equal("Minecraft 26.3 · Example Engine Nightly 2026-11-05 · 123abcd (0 модов)", pack.VersionLabel);
+        Assert.Equal(0, pack.ModCount);
+        Assert.False(pack.ShowModSection);
+        Assert.Equal(project.WebsiteUrl, pack.WebsiteUri!.AbsoluteUri);
+
+        using var unverified = new CatalogHost(mods: [], revision: "next", configure: doc =>
+        {
+            doc.Loader = "native";
+            doc.NativeProject = project with { WebsiteUrl = "file:///C:/client.exe" };
+        });
+        var reopened = new PackCatalogService(_paths, _logger, unverified.Client);
+        await reopened.RefreshOnceAsync();
+        Assert.Equal(project, Assert.Single(reopened.Packs).Content.NativeProject);
+    }
+
+    [Theory]
+    [InlineData(0, "модов")]
+    [InlineData(1, "мод")]
+    [InlineData(2, "мода")]
+    [InlineData(5, "модов")]
+    [InlineData(11, "модов")]
+    [InlineData(14, "модов")]
+    [InlineData(21, "мод")]
+    [InlineData(22, "мода")]
+    [InlineData(111, "модов")]
+    [InlineData(200, "модов")]
+    public void VersionLabelCountsDisplayedModIdsAndUsesRussianPlural(int count, string word)
+    {
+        var pack = new PackCatalogService(_paths, _logger).Find("All The Mods 10")!;
+        pack.Content.Mods = Enumerable.Range(0, count)
+            .Select(index => new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })
+            .Concat(count > 0 ? [new CatalogMod { Id = "mod_0", Name = "Repeated ID" }] : Array.Empty<CatalogMod>())
+            .Append(new CatalogMod { Id = "language_provider", Name = "Language provider", IsLibrary = true, IsLoadedMod = false })
+            .ToList();
+        Assert.Equal(count, pack.ModCount);
+        // Use the actual rendered roots; the full raw inventory can contain
+        // repeated IDs and helper/provider entries without inflating the UI.
+        pack.Mods.Clear();
+        pack.Mods.AddRange(Enumerable.Range(0, count).Select(index => new CatalogModNode(new CatalogMod { Id = "mod_" + index, Name = "Mod " + index })));
+        Assert.Equal(count, pack.DisplayModCount);
+        Assert.Equal($"Minecraft {pack.Content.MinecraftVersion} NeoForge ({count} {word})", pack.VersionLabel);
+    }
+
+    [Fact]
+    public async Task WithdrawnCatalogPackIsNotRestoredByItsLocalSourceMarker()
+    {
+        var cache = Path.Combine(_paths.Launcher, "Library");
+        Directory.CreateDirectory(cache);
+        const string folder = "Previously listed pack";
+        var retiredSource = new PackSyncSource("MarkZamore", "Previously-Listed-Pack", "pack-latest");
+        File.WriteAllText(Path.Combine(cache, "catalog.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            packs = Array.Empty<CatalogSource>(),
+            knownRelativePaths = new[] { folder }
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var packDir = Path.Combine(_paths.Packs, folder);
+        Directory.CreateDirectory(packDir);
+        File.WriteAllText(Path.Combine(packDir, PortablePackSyncService.SourceMarkerFileName),
+            JsonSerializer.Serialize(retiredSource, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        using var http = new HttpClient(new OfflineHandler());
+        var catalog = new PackCatalogService(_paths, _logger, http);
+        Assert.Null(catalog.Find(folder));
+        await catalog.RefreshOnceAsync();
+        Assert.Null(catalog.Find(folder));
+        Assert.Empty(catalog.Sources);
+        Assert.True(catalog.IsWithdrawn(folder));
+        Assert.Null(new PortablePackSyncService(_paths, _logger, http) { Catalog = catalog }.TryResolveSource(folder));
+        Assert.True(Directory.Exists(packDir));
+    }
+
+    [Fact]
+    public void RemovingAnOfflineCardAlsoClosesItsDetailPage()
+    {
+        WindowCanvasTests.OnAStaThread(() =>
+        {
+            var window = WindowCanvasTests.LoadWindow();
+            var view = (PackLibraryView)window.FindName("LibraryView");
+            var service = new PackCatalogService(_paths, _logger);
+            var settings = new AppSettings { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] };
+            var pack = Assert.Single(service.PacksForDisplay(settings));
+            view.SetCatalog(service.PacksForDisplay(settings));
+            view.ShowDetails(pack);
+            Assert.True(PackMembership.Remove(settings, pack.Entry.RelativePath));
+            view.SetCatalog(service.PacksForDisplay(settings));
+            var detail = (ContentControl)view.FindName("DetailHost");
+            var cards = (ItemsControl)view.FindName("CatalogCards");
+            Assert.Equal(Visibility.Collapsed, detail.Visibility);
+            Assert.Empty(cards.Items);
+            return true;
+        });
+    }
+
+    private static IEnumerable<T> VisualChildren<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, index);
+            if (child is T matching) yield return matching;
+            foreach (var descendant in VisualChildren<T>(child)) yield return descendant;
+        }
+    }
+
+    private sealed class OfflineHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+    }
+
+    private sealed class CatalogHost : HttpMessageHandler
+    {
+        internal const string Folder = "New Pack";
+        internal const string Revision = "test-revision";
+        internal static readonly byte[] Payload = [1, 2, 3, 4];
+        internal PackSyncSource Source { get; } = new("MarkZamore", "New-Pack", "pack-latest");
+        internal HttpClient Client { get; }
+        internal List<string> Requests { get; } = [];
+        internal bool Offline, InvalidIndex, CorruptBundle, MissingPayload;
+        private readonly byte[] _bundle;
+        private readonly string _revision;
+        private readonly int? _publishedModCount;
+        private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+        internal CatalogHost(string? projectPage = null, CatalogMod[]? mods = null, string revision = Revision,
+            Action<CatalogDescription>? configure = null, int? publishedModCount = null)
+        {
+            _revision = revision;
+            _publishedModCount = publishedModCount;
+            Client = new HttpClient(this);
+            using var original = OfflineCatalogSeed.Open("minecraft-26-2")!;
+            using var zip = new ZipArchive(original, ZipArchiveMode.Read);
+            using var reader = zip.GetEntry("library.json")!.Open();
+            var description = JsonSerializer.Deserialize<CatalogDescription>(reader, Options)!;
+            if (mods is not null) description.Mods = mods.ToList();
+            if (projectPage is not null) description.Mods = [new CatalogMod { Id = "example", Name = "Example", WebsiteUrl = projectPage }];
+            description.Id = "new-pack";
+            description.Name = Folder;
+            description.RelativePath = Folder;
+            description.Revision = _revision;
+            configure?.Invoke(description);
+            using var output = new MemoryStream();
+            using (var archive = new ZipArchive(output, ZipArchiveMode.Create, true))
+            {
+                using (var writer = archive.CreateEntry("library.json").Open()) JsonSerializer.Serialize(writer, description, Options);
+                using var source = zip.GetEntry("preview.jpg")!.Open();
+                using var image = archive.CreateEntry("preview.jpg").Open();
+                source.CopyTo(image);
+            }
+            _bundle = output.ToArray();
+        }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var url = request.RequestUri!.AbsoluteUri;
+            lock (Requests) Requests.Add(url);
+            if (Offline) return Reply(HttpStatusCode.ServiceUnavailable, []);
+            if (request.RequestUri.AbsolutePath.EndsWith("catalog.json", StringComparison.Ordinal))
+                return Json(new { schemaVersion = 1, packs = new[] { new CatalogSource("new-pack", InvalidIndex ? "../escape" : Folder, Source) } });
+            if (!url.Contains("/New-Pack/", StringComparison.Ordinal)) return Reply(HttpStatusCode.NotFound, []);
+            if (request.RequestUri.AbsolutePath.EndsWith("pack-manifest.json", StringComparison.Ordinal))
+            {
+                var hash = Convert.ToHexStringLower(SHA256.HashData(_bundle));
+                var payloadHash = Convert.ToHexStringLower(SHA256.HashData(Payload));
+                return Json(new { schemaVersion = 1, revision = CorruptBundle ? "changed" : _revision, minecraftVersion = "26.3", modCount = _publishedModCount,
+                    files = new[] { new { path = "mods/payload.jar", sha256 = payloadHash, sizeBytes = Payload.Length } },
+                    assets = new[] { new { name = "payload.jar", kind = "jar", sha256 = payloadHash, sizeBytes = Payload.Length, covers = new[] { "mods/payload.jar" } } },
+                    library = new { name = "library-" + hash + ".zip", sha256 = hash, sizeBytes = _bundle.Length, revision = CorruptBundle ? "changed" : _revision } });
+            }
+            if (url.EndsWith("payload.jar", StringComparison.Ordinal)) return Reply(MissingPayload ? HttpStatusCode.NotFound : HttpStatusCode.OK, Payload);
+            if (url.Contains("library-", StringComparison.Ordinal)) return Reply(HttpStatusCode.OK, _bundle);
+            return Reply(HttpStatusCode.NotFound, []);
+        }
+        private static Task<HttpResponseMessage> Json(object value) => Reply(HttpStatusCode.OK, JsonSerializer.SerializeToUtf8Bytes(value, Options));
+        private static Task<HttpResponseMessage> Reply(HttpStatusCode status, byte[] payload) =>
+            Task.FromResult(new HttpResponseMessage(status) { Content = new ByteArrayContent(payload) });
+    }
+}

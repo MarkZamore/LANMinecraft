@@ -20,6 +20,24 @@ internal static class ComponentTestFiles
     internal static string AssetsDirectory => Environment.GetEnvironmentVariable("LANMINECRAFT_COMPONENT_TEST_ASSETS")
         ?? throw new InvalidOperationException("Run tools/Prepare-ComponentTests.ps1 before executing component-dependent tests.");
 
+    internal static string SourcePath(params string[] parts)
+    {
+        var root = Environment.GetEnvironmentVariable("LANMINECRAFT_COMPONENT_TEST_SOURCES");
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root) || !Directory.Exists(root))
+            throw new InvalidOperationException(
+                "Run tools/Prepare-ComponentTests.ps1 in this PowerShell session to locate the pinned component sources.");
+
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        if (parts.Length == 0 || parts.Any(part => string.IsNullOrWhiteSpace(part) ||
+            part[^1] is '.' or ' ' || part.IndexOfAny(invalidCharacters) >= 0))
+            throw new ArgumentException("Component source paths must contain only relative file and directory names.", nameof(parts));
+
+        var path = parts.Aggregate(Path.GetFullPath(root), Path.Combine);
+        if (!Path.Exists(path))
+            throw new FileNotFoundException("The prepared component checkout is missing a test source.", path);
+        return path;
+    }
+
     [ModuleInitializer]
     internal static void Initialize()
     {

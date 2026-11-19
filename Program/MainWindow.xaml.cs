@@ -27,8 +27,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
-    private readonly CancellationTokenSource _lifetimeCts = new();
-    private readonly CancellationTokenSource _catalogLifetimeCts = new();
+    private readonly LauncherSession _session = new();
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
     private readonly TransferRateTracker _runtimeRate = new();
@@ -56,32 +55,22 @@ public partial class MainWindow : Window
     private Task _launcherDataRefresh = Task.CompletedTask;
     private bool _libraryVisible;
     private readonly Dictionary<UIElement, Visibility> _launcherVisibility = [];
-    private PackAutoManifestService? _autoManifest;
+    private PlayLaunchCoordinator? _playLaunch;
     private WorldMetadataService? _worldMetadata;
     private WorldPlayerProfileService? _worldPlayerProfiles;
     private SteamClientService? _steamClient;
     private SteamIdentityService? _identityService;
     private Task _steamConnectionTask = Task.CompletedTask;
-    private PortableIdentityAdapterService? _identityAdapter;
-    private PackInstanceService? _packInstances;
-    private PackRuntimeService? _packRuntimes;
     private WaypointSyncService? _waypointSync;
     private SkinService? _skinService;
     private PortableIdentityRegistryService? _identityRegistry;
 
-    [SuppressMessage(
-        "Performance",
-        "CA1859",
-        Justification = "The concrete transport is chosen at startup; every consumer takes the seam.")]
-    private IPeerTransport? _peerTransport;
-    private PeerConnectionRouter? _peerRouter;
     private SteamPeerDirectory? _peerDirectory;
     private MinecraftProcessService? _minecraft;
     private WorldTransferService? _transfer;
     private UpdateService? _updateService;
     private LauncherMaintenance? _maintenance;
     private BugReportService? _bugReports;
-    private PeerGreetingService? _greetings;
     private string _localPackHash = "";
     private string _state = "Starting";
     private bool _busy;
@@ -115,6 +104,7 @@ public partial class MainWindow : Window
     private bool _minecraftRunning;
     private bool _minecraftPreparing;
     private bool _playRequested;
+    private CancellationTokenSource? _nativePlayCancellation;
     private string? _playProgressText;
     private bool _shutdownStarted;
     private bool _shutdownComplete;
@@ -123,7 +113,6 @@ public partial class MainWindow : Window
     private PreparedUpdate? _preparedUpdate;
     private readonly WindowPlacementService _windowPlacement;
     private ControlsPresetService? _controlsPreset;
-    private MinimapResetService? _minimapReset;
     private ControlsPresetStatus _controlsPresetStatus;
     private string? _controlsPresetStamp;
 
@@ -177,12 +166,17 @@ public partial class MainWindow : Window
             if (!_shutdownStarted && _steamClient is { } steam && _steamConnectionTask.IsCompleted &&
                 SteamRecoveryPolicy.ShouldConnect(steam.Status, IsIdentityBound))
             {
-                _steamConnectionTask = ConnectSteamAndBindIdentityAsync();
+                _steamConnectionTask = _session.RunAsync("Steam connection", ConnectSteamAndBindIdentityAsync);
             }
         };
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        await _session.RunAsync("startup", LoadLauncherAsync);
+    }
+
+    private async Task LoadLauncherAsync()
     {
         AdaptiveLauncherLayout.Apply(this);
         try
@@ -202,25 +196,22 @@ public partial class MainWindow : Window
             // built here rather than in the constructor because it reports what
             // it measures, and there is no logger to report to until now.
             _playerNameMarquee = new NameMarquee(PlayerNameTextBox, _logger);
-            _settingsService = new SettingsService(_paths, _logger);
+            var core = _session.InitializeCore(_paths, _logger,
+                gameIsRunning: () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _removingPackFiles) ||
+                    _minecraft is { IsClientPreparing: true } or { IsClientRunning: true },
+                isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true,
+                updating: () => Volatile.Read(ref _updateBusy),
+                reportProgress: UpdateMaintenanceProgress, reportActivity: UpdateMaintenanceActivity);
+            _settingsService = core.Settings;
             _settings = _settingsService.Load();
             StartupTrace.Mark("настройки");
             // The first frame contains only the saved settings and shell.
             // Catalog, disk discovery and hidden views start after ContentRendered.
-            _packHash = new PackHashService(_paths);
-            _packSync = new PortablePackSyncService(_paths, _logger);
-            var paths = _paths;
-            var log = _logger;
-            var packSync = _packSync;
-            _maintenance = new LauncherMaintenance(paths, log,
-                run => LauncherMaintenancePass.Run(paths, log, packSync, run, () => Volatile.Read(ref _updateBusy)),
-                gameIsRunning: () => Volatile.Read(ref _playRequested) || Volatile.Read(ref _removingPackFiles) ||
-                    _minecraft is { IsClientPreparing: true } or { IsClientRunning: true },
-                isPackInUse: pack => _minecraft?.IsPackInUse(pack, _catalog) == true,
-                reportProgress: UpdateMaintenanceProgress,
-                reportActivity: UpdateMaintenanceActivity);
-            _worldMetadata = new WorldMetadataService();
-            _controlsPreset = new ControlsPresetService(_logger);
+            _packHash = core.PackHash;
+            _packSync = core.PackSync;
+            _maintenance = core.Maintenance;
+            _worldMetadata = core.WorldMetadata;
+            _controlsPreset = core.ControlsPreset;
             LoadSettingsIntoUi();
             RefreshControlsPresetStatus();
             SetMemoryText(_settings.MaxHeapGb.ToString(CultureInfo.InvariantCulture));
@@ -244,43 +235,30 @@ public partial class MainWindow : Window
             _preload.Completed += (key, ms) => _logger?.Info($"Предзагрузка {key}: {ms} мс с постановки в очередь.");
             _preparedBackdrop = PreparedWindowBackdrop.Attach(this, _preload);
             // Load shared runtime metadata before consumers resolve Java or transport rules.
-            var componentStartupToken = _lifetimeCts.Token;
-            var componentsStartup = Task.Run(() => new RuntimeComponentService(_paths, _logger)
-                .LoadAsync(refresh: false, componentStartupToken), componentStartupToken);
-            var components = await componentsStartup;
+            await _session.LoadRuntimeMetadataAsync();
             if (_shutdownStarted) return;
-            RuntimeComponentContext.SetDefault(components);
-            _catalogStartup = InitializeCatalogAsync();
+            _catalogStartup = _session.RunAsync("catalog startup", InitializeCatalogAsync);
             _ = RefreshLauncherDataAsync();
 
-            _autoManifest = new PackAutoManifestService(_paths, _logger, new System.Net.Http.HttpClient());
             _transferPacingStore = new TransferPacingStore(_paths);
             _transferPacing = _transferPacingStore.Load();
-            _minimapReset = new MinimapResetService(_logger);
-            _steamClient = new SteamClientService(
-                new SteamworksApiFacade(),
-                new SteamNativeLibraryService(_paths, _logger),
-                _logger);
+            (_steamClient, _identityService) = _session.InitializeSteam();
             _steamClient.StatusChanged += (_, status) => PostToUi(() => OnSteamStatusChanged(status));
-            _identityService = new SteamIdentityService(new SteamClientUserSource(_steamClient), _logger);
-            _identityAdapter = new PortableIdentityAdapterService(_paths, _logger);
             StartupTrace.Mark("сервисы");
-            await (_steamConnectionTask = ConnectSteamAndBindIdentityAsync());
+            await (_steamConnectionTask = _session.RunAsync("Steam connection", ConnectSteamAndBindIdentityAsync));
             if (_shutdownStarted) return;
             StartupTrace.Mark("steam");
-            _peerTransport = new SteamPeerTransport(_steamClient, _logger);
-            _peerRouter = new PeerConnectionRouter(_peerTransport, _logger);
-            _peerDirectory = new SteamPeerDirectory(_steamClient, _peerTransport, _logger);
+            _peerDirectory = _session.InitializePeers();
             _peerDirectory.PeersChanged += (_, peers) => PostToUi(() => ApplyPeers(peers));
             _peerNotices = new PeerNoticeService(this, _logger, () => _minecraft?.GetNoticeWindow() ?? IntPtr.Zero);
-            _worldPlayerProfiles = new WorldPlayerProfileService(_paths, _logger);
-            _packInstances = new PackInstanceService(_paths, _logger);
-            _packRuntimes = new PackRuntimeService(_paths, _logger, packSync: _packSync);
-            _waypointSync = new WaypointSyncService(_paths, _logger, RequireWorldMetadata(), _peerTransport);
-            _skinService = new SkinService(_paths, _logger, _peerTransport);
-            _identityRegistry = new PortableIdentityRegistryService(_paths, _logger);
-            await _skinService.StartAsync(_lifetimeCts.Token);
-            _minecraft = new MinecraftProcessService(_paths, _logger, _identityService, _identityAdapter, _worldPlayerProfiles, _packInstances, _packRuntimes, _waypointSync, _skinService, _identityRegistry, packSync: _packSync);
+            var game = await _session.InitializeGameAsync();
+            if (_shutdownStarted) return;
+            _minecraft = game.Client;
+            _playLaunch = game.Launch;
+            _worldPlayerProfiles = game.Profiles;
+            _waypointSync = game.Waypoints;
+            _skinService = game.Skin;
+            _identityRegistry = game.Registry;
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
@@ -294,32 +272,14 @@ public partial class MainWindow : Window
             // the startup rename. Start them after the new paths are settled.
             await _catalogStartup;
             if (_shutdownStarted) return;
-            _transfer = new WorldTransferService(_paths, _logger, _minecraft, _settingsService, RequireWorldMetadata(), _identityService, _worldPlayerProfiles, _waypointSync, _skinService, _peerTransport,
-                runtimeOptions: null,
-                confirmation: new WpfWorldTransferConfirmation(this), recoverAtStartup: false)
-            {
-                CompatibilityPathFor = path => _catalog?.CompatibilityPathFor(path) ?? path,
-                InstallationPathFor = path => _catalog?.InstallationPathFor(path) ?? path,
-                MayStartTransfer = () => !Volatile.Read(ref _shutdownStarted) && !Volatile.Read(ref _removingPackFiles) &&
-                    !Volatile.Read(ref _playRequested) && !PackTransferActive
-            };
-            _bugReports = new BugReportService(
-                _paths,
-                _logger,
-                _peerTransport,
-                ResolveCurrentInstanceDirectory,
-                CreateBugReportContext,
-                CaptureSupportEnvironmentAsync);
-            _bugReports.PruneStoredReports();
-            _peerRouter.Register(_bugReports);
-            _peerRouter.Register(_waypointSync);
-            _peerRouter.Register(_skinService);
-            _greetings = new PeerGreetingService(_peerTransport, _logger);
-            _greetings.Greeted += presence => _peerDirectory?.Introduce(presence);
-            _peerRouter.Register(_greetings);
-            _peerRouter.RegisterFallback(_transfer);
+            _transfer = _session.InitializeWorldTransfer(new WpfWorldTransferConfirmation(this),
+                path => _catalog?.CompatibilityPathFor(path) ?? path,
+                path => _catalog?.InstallationPathFor(path) ?? path,
+                () => !Volatile.Read(ref _shutdownStarted) && !Volatile.Read(ref _removingPackFiles) &&
+                    !Volatile.Read(ref _playRequested) && !PackTransferActive);
+            (_bugReports, _updateService) = _session.InitializeDiagnostics(ResolveCurrentInstanceDirectory,
+                CreateBugReportContext, CaptureSupportEnvironmentAsync);
             InitializePackTransfer();
-            _updateService = new UpdateService(_paths, _logger);
             _transfer.StatusChanged += message => PostToUi(() => SetState(message));
             _transfer.ProgressChanged += progress =>
                 PostToUi(() => ApplyTransferProgress(progress));
@@ -338,7 +298,7 @@ public partial class MainWindow : Window
             // place, and stays wrong until the two-second timer ticks or the
             // pack hash finishes, whichever loses.
             RefreshUi();
-            _ = CheckForUpdatesAsync(_lifetimeCts.Token);
+            _ = _session.RunAsync("update check", () => CheckForUpdatesAsync(_session.LifetimeToken));
             _uiTimer.Start();
             DesktopBootstrapCache.CommitSuccessful(_paths, _logger);
             _maintenance.Start();
@@ -346,11 +306,11 @@ public partial class MainWindow : Window
             _logger.Info("Minecraft portable launcher started.");
             _startupFinished = true;
             ReportStartupTrace();
-            await RefreshPackHashAsync(_lifetimeCts.Token);
+            await RefreshPackHashAsync(_session.LifetimeToken);
             await StartNetworkingAsync();
             _startupComplete = true;
         }
-        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_shutdownStarted || _session.LifetimeToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -384,65 +344,34 @@ public partial class MainWindow : Window
         if (_shutdownStarted) return;
         var canInstallUpdate = !GameNeedsLauncher;
         _shutdownStarted = true;
+        _session.BeginClosing();
         _uiTimer.Stop();
         StopMaintenanceStatus();
-        _maintenance?.Stop();
         _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
-        _preparedBackdrop?.Dispose();
-        _preload?.Dispose();
-        LibraryView.Dispose();
-        _displayNames?.Dispose();
-        DialogPreloadCache.Clear();
-        _catalogLifetimeCts.Cancel();
-        _windowPlacement.Save(this);
+        _session.TryStep("disposing the prepared backdrop", () => _preparedBackdrop?.Dispose());
+        _session.TryStep("stopping UI preload", () => _preload?.Dispose());
+        _session.TryStep("disposing the library view", () => LibraryView.Dispose());
+        _session.TryStep("clearing dialog preload", DialogPreloadCache.Clear);
+        _session.TryStep("saving the window placement", () => _windowPlacement.Save(this));
 
         // Always leave the original Closing event before issuing the final Close().
         // Several services can complete synchronously when networking was never started.
         await Dispatcher.Yield(DispatcherPriority.Background);
 
-        // Before anything is torn down, tell Steam this launcher is going.
-        // Steam keeps the keys of a closed launcher and keeps serving them, so
-        // without this the player stays on everybody's list and a report sent
-        // their way dies on a connection nobody is listening to.
-        if (_peerDirectory is not null && _lastPublishedPresence is not null)
-        {
-            try
-            {
-                _peerDirectory.PublishDeparture(_lastPublishedPresence);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Warn($"The leaving notice could not be published ({ex.Message}).");
-            }
-        }
-
-        _lifetimeCts.Cancel();
         try
         {
-            await _steamConnectionTask;
-            try { await Task.WhenAll(_launcherDataByPack.Values.ToArray()).WaitAsync(TimeSpan.FromSeconds(1)); }
-            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException) { }
-            if (_peerRouter is not null) await _peerRouter.DisposeAsync();
-            if (_packTransfer is not null) await _packTransfer.DisposeAsync();
-            if (_transfer is not null) await _transfer.DisposeAsync();
-            if (_waypointSync is not null) await _waypointSync.DisposeAsync();
-            if (_skinService is not null) await _skinService.DisposeAsync();
-            if (_peerTransport is not null) await _peerTransport.DisposeAsync();
-            if (_steamClient is not null) await _steamClient.DisposeAsync();
-            // Before the launcher goes: a notice left standing is a window
-            // that outlives the process that drew it.
-            _peerNotices?.Dispose();
-            _packInstances?.Dispose();
-            _packRuntimes?.Dispose();
-            _identityAdapter?.Dispose();
-            _packHash?.Dispose();
-            _catalogLifetimeCts.Dispose();
-            _lifetimeCts.Dispose();
+            await _session.CloseAsync(() =>
+            {
+                if (_peerDirectory is not null && _lastPublishedPresence is not null)
+                    _peerDirectory.PublishDeparture(_lastPublishedPresence);
+            });
         }
         finally
         {
+            _session.TryStep("disposing the peer notices", () => _peerNotices?.Dispose());
+            _session.TryStep("disposing the pack display names", () => _displayNames?.Dispose());
             try
             {
                 if (canInstallUpdate && _updateService is not null)
@@ -518,9 +447,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshPackHashAsync(CancellationToken token = default, bool requireAvailable = false)
+    private async Task RefreshPackHashAsync(CancellationToken token = default)
     {
-        if (!token.CanBeCanceled) token = _lifetimeCts.Token;
+        if (!token.CanBeCanceled) token = _session.LifetimeToken;
         var settings = RequireSettings();
         var paths = RequirePaths();
         var relativePath = settings.ClientRelativePath;
@@ -529,15 +458,20 @@ public partial class MainWindow : Window
         {
             hash = await RequirePackHash().CalculateAsync(paths.CombineUnderPacks(relativePath), token);
         }
-        catch (Exception ex) when (!requireAvailable &&
-                                   ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
         {
             _logger?.Warn($"Pack compatibility hash unavailable for {relativePath}: {ex.Message}");
             hash = "";
         }
-        if (!string.Equals(RequireSettings().ClientRelativePath, relativePath, StringComparison.OrdinalIgnoreCase)) return;
+        if (_shutdownStarted ||
+            !string.Equals(RequireSettings().ClientRelativePath, relativePath, StringComparison.OrdinalIgnoreCase)) return;
+        SetDisplayedPackHash(hash);
+    }
+
+    private void SetDisplayedPackHash(string hash)
+    {
         _localPackHash = hash;
-        PackHashText.Text = _localPackHash.Length > 12 ? _localPackHash[..12] : _localPackHash;
+        PackHashText.Text = hash.Length > 12 ? hash[..12] : hash;
     }
 
     private void RefreshBuilds()
@@ -769,7 +703,7 @@ public partial class MainWindow : Window
     /// </summary>
     private async void SendBugReportButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_bugReports is null || _bugReportSending) return;
+        if (_shutdownStarted || _bugReports is null || _bugReportSending) return;
         // Both of these are what a disabled button already says. Reached only
         // if the state changed between the refresh and the click, and then the
         // right answer is to do nothing rather than to explain.
@@ -784,28 +718,27 @@ public partial class MainWindow : Window
         try
         {
             var message = BugReportMessageTextBox.Text;
-            await _bugReports
-                .SendAsync(recipient.SteamId, message, progress: null, _lifetimeCts.Token)
-                .ConfigureAwait(true);
-            if (_lifetimeCts.IsCancellationRequested) return;
+            await _session.RunAsync("bug report", () =>
+                _bugReports.SendAsync(recipient.SteamId, message, progress: null, _session.LifetimeToken));
+            if (_session.LifetimeToken.IsCancellationRequested || _shutdownStarted) return;
             if (BugReportMessageTextBox.Text == message) BugReportMessageTextBox.Clear();
             NoticeDialog.Show(this, "Отчёт доставлен",
                 "Лаунчер получателя подтвердил получение и сохранение отчёта.");
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_session.LifetimeToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
             _logger?.Warn($"Bug report could not be sent: {ex.Message}");
-            if (!_lifetimeCts.IsCancellationRequested)
+            if (!_session.LifetimeToken.IsCancellationRequested && !_shutdownStarted)
                 NoticeDialog.Show(this, "Доставка отчёта не подтверждена",
                     "Не удалось получить подтверждение от получателя. Проверьте соединение и попробуйте отправить отчёт ещё раз.");
         }
         finally
         {
             _bugReportSending = false;
-            RefreshDiagnosticsPanel();
+            if (!_shutdownStarted) RefreshDiagnosticsPanel();
         }
     }
 
@@ -933,7 +866,9 @@ public partial class MainWindow : Window
     /// the presence keys friends discover this launcher by. Without Steam there
     /// is nothing to start, and the window says so instead of failing.
     /// </summary>
-    private async Task StartNetworkingAsync()
+    private Task StartNetworkingAsync() => _session.RunAsync("peer networking", StartNetworkingCoreAsync);
+
+    private async Task StartNetworkingCoreAsync()
     {
         var settings = RequireSettings();
         if (!IsIdentityBound || _steamClient?.Status.IsReady != true)
@@ -944,10 +879,8 @@ public partial class MainWindow : Window
         }
 
         RequireTransfer().UseSettingsForIncomingTransfers(settings);
-        if (_peerRouter is not null)
-        {
-            await _peerRouter.StartAsync(_lifetimeCts.Token).ConfigureAwait(true);
-        }
+        await _session.StartPeerListenerAsync();
+        if (_shutdownStarted) return;
         PublishLocalPresence();
     }
 
@@ -955,9 +888,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            await RefreshPackHashAsync();
-            if (_startupComplete) await StartNetworkingAsync();
+            await _session.RunAsync("pack hash and presence", async () =>
+            {
+                await RefreshPackHashAsync();
+                if (!_shutdownStarted && _startupComplete) await StartNetworkingAsync();
+            });
         }
+        catch (OperationCanceledException) when (_shutdownStarted) { }
         catch (Exception ex)
         {
             _logger?.Warn($"Pack refresh failed: {ex.Message}");
@@ -994,9 +931,9 @@ public partial class MainWindow : Window
             // Keep the published path on the wire across local folder renames.
             PackName = _catalog?.CompatibilityPathFor(settings.ClientRelativePath) ?? settings.ClientRelativePath,
             Release = UpdateService.CurrentReleaseNumber,
-            State = _minecraftRunning
+            State = _minecraftRunning && !NativeLaunchPending
                 ? SteamPresenceCodec.StateInGame
-                : _minecraftPreparing
+                : _minecraftPreparing || NativeLaunchPending
                     ? SteamPresenceCodec.StatePreparing
                     : SteamPresenceCodec.StateIdle,
             IsSkinAvailable = skin.IsAvailable,
@@ -1016,8 +953,7 @@ public partial class MainWindow : Window
         // Steam decides per client whose presence it serves; a friend we can
         // see may not be able to see us. Telling them ourselves is the only
         // way to be sure the two lists agree.
-        _greetings?.SetLocalPresence(presence);
-        _greetings?.GreetNew(_peerDirectory.Peers, _lifetimeCts.Token);
+        _session.GreetPeers(presence);
     }
 
     /// <summary>What a report says about the machine it came from.</summary>
@@ -1364,12 +1300,28 @@ public partial class MainWindow : Window
 
     private async void PlayButton_Click(object sender, RoutedEventArgs e)
     {
+        if (CanCancelNativeLaunch && _nativePlayCancellation is { } cancellation)
+        {
+            cancellation.Cancel();
+            RefreshUi();
+            return;
+        }
         var steamStatus = _steamClient?.Status;
         if (_shutdownStarted || GameNeedsLauncher || !SelectedBuildIsReady ||
             !SteamRecoveryPolicy.HasMatchingIdentity(steamStatus, _identityService?.Binding) ||
-            HasUnsavedPlayerName || _minecraft is null || _transfer is null) return;
-        using var packUse = BuildComboBox.SelectedItem is ClientBuildViewModel selected
-            ? _maintenance?.ProtectPack(selected.RelativePath) : null;
+            HasUnsavedPlayerName || _playLaunch is not { } launch || _transfer is null ||
+            BuildComboBox.SelectedItem is not ClientBuildViewModel build) return;
+
+        await _session.RunAsync("launch", () => PlaySelectedBuildAsync(launch, build, steamStatus, _session.PlayToken));
+    }
+
+    private async Task PlaySelectedBuildAsync(PlayLaunchCoordinator launch, ClientBuildViewModel build,
+        SteamClientStatus? steamStatus, CancellationToken token)
+    {
+        using var cancellation = _selectedNativeRuntime ? CancellationTokenSource.CreateLinkedTokenSource(token) : null;
+        _nativePlayCancellation = cancellation;
+        if (cancellation is not null) token = cancellation.Token;
+        using var packUse = _maintenance?.ProtectPack(build.RelativePath);
         _playRequested = true;
         _minecraftPreparing = true;
         _playProgressText = "Проверка сборки";
@@ -1377,110 +1329,60 @@ public partial class MainWindow : Window
         try
         {
             if (RequireTransfer().IsOperationActive || PackTransferActive || _removingPackFiles)
-            {
                 throw new InvalidOperationException("Дождитесь завершения передачи перед запуском игры.");
-            }
+
             var settings = RequireSettings();
             var launchNickname = GetLaunchNickname(steamStatus);
             CommitPlayerName(launchNickname);
             if (launchNickname.Length == 0)
-            {
                 throw new InvalidOperationException("Не удалось взять никнейм из Steam. Придумайте и сохраните никнейм.");
-            }
             if (!_selectedNativeRuntime) ApplyMemoryText();
-            if (BuildComboBox.SelectedItem is not ClientBuildViewModel build)
-            {
-                throw new InvalidOperationException("В папке Minecraft/Packs не найдены сборки. Добавьте папку сборки с подпапкой mods.");
-            }
 
-            if (!string.Equals(settings.ClientRelativePath, build.RelativePath, StringComparison.OrdinalIgnoreCase))
+            var launcherDataRefresh = _launcherDataByPack.GetValueOrDefault(build.RelativePath, Task.CompletedTask);
+            var runtimeProgress = new Progress<RuntimePreparationProgress>(progress =>
             {
-                settings.ClientRelativePath = build.RelativePath;
-                RequireSettingsService().Save(settings);
-            }
-
-            var runtimeProgress = new Progress<RuntimePreparationProgress>(ApplyRuntimeProgress);
-            PackSyncResult syncResult;
-            LocalAiDownloadPlan localAiDownloads;
-            try
-            {
-                // Metadata refresh and a full sync share the pack directory.
-                // Finish any earlier selection request before the full sync writes.
-                await _launcherDataByPack.GetValueOrDefault(build.RelativePath, Task.CompletedTask);
-                var prepared = await new PackPreparationDownloadService(RequirePaths(), RequirePackSync())
-                    .PrepareAsync(build.RelativePath, runtimeProgress, _lifetimeCts.Token);
-                syncResult = prepared.SyncResult;
-                localAiDownloads = prepared.LocalAi;
-            }
-            catch
-            {
-                ApplyRuntimeProgress(new RuntimePreparationProgress(
-                    RuntimePreparationStage.Failed,
-                    "Не удалось подготовить сборку"));
-                throw;
-            }
-            if (syncResult.Warning is not null)
-            {
-                RequireLogger().Warn(syncResult.Warning);
-                SetState(syncResult.Warning);
-            }
-
-            // A folder somebody filled with mods becomes a pack here: what
-            // loader and which Minecraft comes out of the jars, which build of
-            // that loader comes from whoever publishes it, and the answer is
-            // written into the folder as the manifest every service downstream
-            // already reads. A pack that came with one is untouched.
-            if (_autoManifest is not null)
-            {
-                await _autoManifest.EnsureAsync(build.RelativePath, _lifetimeCts.Token);
-            }
-
-            await RefreshPackHashAsync(requireAvailable: true);
-            // The pack that just arrived may weigh something else than the one
-            // that was here: the split, and a suggestion nobody has overruled,
-            // are worked out again before the game is told its heap size.
-            await RefreshPackMemoryAsync();
-            // Before the game reads its options: a mapping written twice stops
-            // NeoForge before its loading window, and the player cannot reach
-            // the preset button to fix it because the preset counts as applied.
-            if (!_selectedNativeRuntime) RepairInstanceOptions();
-            RefreshControlsPresetStatus();
-            if (_localPackHash == "missing")
-            {
-                throw new InvalidOperationException($"Pack validation failed: ./Minecraft/Packs/{settings.ClientRelativePath} is missing.");
-            }
-
-            RequireSettingsService().Save(settings);
-
-            SetState("Starting client");
-            try
-            {
-                await RequireMinecraft().StartClientAsync(settings, runtimeProgress, localAiDownloads, _localPackHash, _lifetimeCts.Token);
-            }
-            catch
-            {
-                ApplyRuntimeProgress(new RuntimePreparationProgress(
-                    RuntimePreparationStage.Failed,
-                    "Не удалось подготовить сборку"));
-                throw;
-            }
-            SetState("Minecraft");
+                if (!token.IsCancellationRequested) ApplyRuntimeProgress(progress);
+            });
+            await launch.LaunchAsync(build.RelativePath, settings, launcherDataRefresh, runtimeProgress,
+                SetState, hash => ShowPreparedPackAsync(build.RelativePath, hash), token);
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
             MinecraftLaunchFailure.Present(ex, RequireLogger().Warn,
-                (heading, detail) => NoticeDialog.Show(this, heading, detail));
+                (heading, detail) =>
+                {
+                    if (!_shutdownStarted) NoticeDialog.Show(this, heading, detail);
+                });
         }
         finally
         {
+            _nativePlayCancellation = null;
             _playRequested = false;
             _minecraftPreparing = _minecraft?.IsClientPreparing == true;
-            RefreshUi();
-            RestartWhenGameEnds();
+            if (!_shutdownStarted)
+            {
+                RefreshUi();
+                RestartWhenGameEnds();
+            }
         }
+    }
+
+    private bool NativeLaunchPending => _nativePlayCancellation is not null;
+
+    private bool CanCancelNativeLaunch => !_shutdownStarted &&
+        _nativePlayCancellation is { IsCancellationRequested: false };
+
+    private async Task ShowPreparedPackAsync(string relativePath, string packHash)
+    {
+        if (_shutdownStarted ||
+            !string.Equals(_settings?.ClientRelativePath, relativePath, StringComparison.OrdinalIgnoreCase)) return;
+        SetDisplayedPackHash(packHash);
+        // The installed revision may have a different weight. Update the RAM hint.
+        await RefreshPackMemoryCoreAsync(weighFromSource: false);
+        if (!_shutdownStarted) RefreshControlsPresetStatus();
     }
 
     /// <summary>
@@ -1501,23 +1403,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Re-reads where the selected build stands against its pack's controls
-    /// preset. Cheap - two small files - and called at the moments either can
-    /// change: a build is picked, the pack syncs, the game exits, the button
-    /// is pressed.
-    /// </summary>
-    private void RepairInstanceOptions()
-    {
-        var directories = ResolveSelectedBuildDirectories();
-        if (directories is null) return;
-        var removed = _controlsPreset?.RemoveDuplicateMappings(directories.Value.Instance) ?? 0;
-        if (removed > 0) SetState($"Repaired the controls file: {removed} repeated line(s)");
-        // And when the pack has reset the world's chunks, the map a minimap has
-        // already drawn is a picture of ground that no longer exists.
-        _minimapReset?.Apply(directories.Value.Pack, directories.Value.Instance);
-    }
-
-    /// <summary>
     /// Fetches the pack's own launcher folder - the controls preset, the
     /// resource pack list, the reset tokens - without waiting for a launch, and
     /// looks at the preset again once it lands. Tens of kilobytes: the button
@@ -1531,7 +1416,7 @@ public partial class MainWindow : Window
         var pack = _settings.ClientRelativePath;
         if (!PackCatalogService.ValidFolder(pack)) return Task.CompletedTask;
         var previous = _launcherDataByPack.GetValueOrDefault(pack, Task.CompletedTask);
-        _launcherDataRefresh = RefreshLauncherDataCoreAsync(pack, previous);
+        _launcherDataRefresh = _session.RunAsync("pack metadata", () => RefreshLauncherDataCoreAsync(pack, previous));
         _launcherDataByPack[pack] = _launcherDataRefresh;
         return _launcherDataRefresh;
     }
@@ -1544,16 +1429,16 @@ public partial class MainWindow : Window
             if (_catalogStartup is not null) await _catalogStartup;
             if (_packSync is null || !CanRefreshLauncherDataFor(pack)) return;
             using var packUse = _maintenance?.ProtectPack(pack);
-            if (_catalog is { } catalog) await catalog.EnsureLaunchReadyAsync(pack, _catalogLifetimeCts.Token);
+            if (_catalog is { } catalog) await catalog.EnsureLaunchReadyAsync(pack, _session.CatalogToken);
             if (!CanRefreshLauncherDataFor(pack)) return;
-            if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _lifetimeCts.Token), _lifetimeCts.Token) &&
+            if (await Task.Run(() => _packSync.RefreshLauncherDataAsync(pack, _session.LifetimeToken), _session.LifetimeToken) &&
                 CanRefreshLauncherDataFor(pack))
             {
                 RefreshControlsPresetStatus();
                 RefreshUi();
             }
         }
-        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_shutdownStarted || _session.LifetimeToken.IsCancellationRequested) { }
         catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or
                                    System.Text.Json.JsonException or NotSupportedException)
         {
@@ -1585,17 +1470,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        var stamp = ControlsPresetStamp(directories.Value.Pack, directories.Value.Instance);
+        ControlsPreset? preview = null;
+        var hasPreview = _packSync?.TryGetControlsPresetPreview(Path.GetFileName(directories.Value.Pack), out preview) == true;
+        var stamp = ControlsPresetStamp(directories.Value.Pack, directories.Value.Instance,
+            hasPreview ? "preview:" + (preview?.Sha256 ?? "removed") : null);
         if (stamp is not null && stamp == _controlsPresetStamp) return;
         _controlsPresetStamp = stamp;
-        _controlsPresetStatus = _controlsPreset.Evaluate(directories.Value.Pack, directories.Value.Instance);
+        _controlsPresetStatus = hasPreview
+            ? _controlsPreset.Evaluate(preview, directories.Value.Instance)
+            : _controlsPreset.Evaluate(directories.Value.Pack, directories.Value.Instance);
     }
 
     /// <summary>
     /// What the two files looked like: their paths, sizes and moments of
     /// writing. Null when either cannot be looked at, which forces a real read.
     /// </summary>
-    private static string? ControlsPresetStamp(string packDirectory, string instanceDirectory)
+    private static string? ControlsPresetStamp(string packDirectory, string instanceDirectory, string? previewStamp)
     {
         try
         {
@@ -1605,7 +1495,7 @@ public partial class MainWindow : Window
             return string.Join(
                 '|',
                 packDirectory,
-                preset.Exists ? preset.Length + "@" + preset.LastWriteTimeUtc.Ticks : "none",
+                previewStamp ?? (preset.Exists ? preset.Length + "@" + preset.LastWriteTimeUtc.Ticks : "none"),
                 options.Exists ? options.Length + "@" + options.LastWriteTimeUtc.Ticks : "none");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -1616,7 +1506,7 @@ public partial class MainWindow : Window
 
     private async void ControlsPresetButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_minecraftRunning || _minecraftPreparing || _controlsPreset is null) return;
+        if (_minecraftRunning || _minecraftPreparing || _controlsPreset is null || _paths is null) return;
         await _launcherDataRefresh;
         if (_shutdownStarted || _minecraftRunning || _minecraftPreparing) return;
         RefreshControlsPresetStatus();
@@ -1628,7 +1518,12 @@ public partial class MainWindow : Window
 
         try
         {
-            var changed = _controlsPreset.Apply(directories.Value.Pack, directories.Value.Instance);
+            var pack = Path.GetFileName(directories.Value.Pack);
+            using var access = PackAccess.RequireAvailable(_paths, [pack]);
+            if (PackAccess.IsRunning(_paths, [pack], _logger)) return;
+            var changed = _packSync?.TryGetControlsPresetPreview(pack, out var preview) == true
+                ? _controlsPreset.Apply(directories.Value.Pack, directories.Value.Instance, preview)
+                : _controlsPreset.Apply(directories.Value.Pack, directories.Value.Instance);
             SetState(changed == 0
                 ? "Controls preset already in place"
                 : $"Controls preset applied: {changed} key(s) changed");
@@ -1861,7 +1756,7 @@ public partial class MainWindow : Window
 
     private async void TransferButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_transferActive || PackTransferActive || _removingPackFiles || _minecraftRunning || _minecraftPreparing)
+        if (_shutdownStarted || _transferActive || PackTransferActive || _removingPackFiles || _minecraftRunning || _minecraftPreparing)
         {
             return;
         }
@@ -1890,12 +1785,14 @@ public partial class MainWindow : Window
 
             var settings = RequireSettings();
             SetState("Transferring world");
-            await RequireTransfer().SendWorldAsync(peer, settings, world.Path, _lifetimeCts.Token);
+            await _session.RunAsync("world transfer", () =>
+                RequireTransfer().SendWorldAsync(peer, settings, world.Path, _session.LifetimeToken));
             RequireSettingsService().Save(settings);
+            if (_shutdownStarted) return;
             RefreshWorlds();
             SetState("World sent");
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_session.LifetimeToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -1909,7 +1806,7 @@ public partial class MainWindow : Window
             // survived. It did: nothing leaves this machine until the far side
             // has the whole world and says so.
             RequireLogger().Warn(ex.Message);
-            NoticeDialog.Show(
+            if (!_shutdownStarted) NoticeDialog.Show(
                 this,
                 "Передача мира прервалась",
                 "Ваш мир на месте, ничего не потеряно - можно просто попробовать ещё раз." +
@@ -1920,7 +1817,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            RefreshUi();
+            if (!_shutdownStarted) RefreshUi();
         }
     }
 
@@ -2081,7 +1978,7 @@ public partial class MainWindow : Window
         {
             // Native initialization and joining the old callback pump can wait.
             // Keep input and the first window responsive during every attempt.
-            var status = await Task.Run(() => _steamClient.StartAsync(_lifetimeCts.Token), _lifetimeCts.Token);
+            var status = await Task.Run(() => _steamClient.StartAsync(_session.LifetimeToken), _session.LifetimeToken);
             if (_shutdownStarted) return;
             ApplySteamStatus(status);
             if (!status.IsReady) return;
@@ -2105,7 +2002,7 @@ public partial class MainWindow : Window
             _logger?.Warn($"Identity binding failed: {ex.Message}");
             SetSteamMessage(ex.Message);
         }
-        catch (OperationCanceledException) when (_shutdownStarted || _lifetimeCts.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_shutdownStarted || _session.LifetimeToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _logger?.Warn($"Steam connection failed: {ex}");
@@ -2130,7 +2027,7 @@ public partial class MainWindow : Window
         if (_startupComplete && IsIdentityBound &&
             SteamRecoveryPolicy.ShouldRestartNetworking(previous, status.Availability))
         {
-            _ = RestartNetworkingAfterSteamReturnedAsync();
+            _ = _session.RunAsync("network reconnection", RestartNetworkingAfterSteamReturnedAsync);
         }
     }
 
@@ -2399,24 +2296,33 @@ public partial class MainWindow : Window
 
     private async void BuildComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressBuildPersistence || _settings is null || _settingsService is null) return;
+        if (_shutdownStarted || _suppressBuildPersistence || _settings is null || _settingsService is null) return;
         if (BuildComboBox.SelectedItem is not ClientBuildViewModel build) return;
 
-        _settings.ClientRelativePath = build.RelativePath;
-        _settingsService.Save(_settings);
-        RefreshPackMemory();
-        InitializeRuntimeProgressUi();
-        RefreshControlsPresetStatus();
-        var launch = PrepareSelectedLaunchAsync();
-        RefreshUi();
-        await launch;
-        if (_shutdownStarted || !string.Equals(_settings.ClientRelativePath, build.RelativePath, StringComparison.OrdinalIgnoreCase)) return;
-        await RefreshLauncherDataAsync();
-        if (_shutdownStarted) return;
-        await RefreshPackHashAsync();
-        if (_startupComplete) await StartNetworkingAsync();
-        SetState($"Build selected: {build.Name}");
-        RefreshUi();
+        try
+        {
+            await _session.RunAsync("build selection", async () =>
+            {
+                _settings.ClientRelativePath = build.RelativePath;
+                _settingsService.Save(_settings);
+                RefreshPackMemory();
+                InitializeRuntimeProgressUi();
+                RefreshControlsPresetStatus();
+                var launch = PrepareSelectedLaunchAsync();
+                RefreshUi();
+                await launch;
+                if (_shutdownStarted || !string.Equals(_settings.ClientRelativePath, build.RelativePath, StringComparison.OrdinalIgnoreCase)) return;
+                await RefreshLauncherDataAsync();
+                if (_shutdownStarted) return;
+                await RefreshPackHashAsync();
+                if (_shutdownStarted) return;
+                if (_startupComplete) await StartNetworkingAsync();
+                if (_shutdownStarted) return;
+                SetState($"Build selected: {build.Name}");
+                RefreshUi();
+            });
+        }
+        catch (OperationCanceledException) when (_shutdownStarted) { }
     }
 
     private void WorldComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2520,7 +2426,7 @@ public partial class MainWindow : Window
         ChangelogList.ItemsSource = _changelogShown;
         ChangelogScroll.ScrollChanged -= ChangelogScroll_ScrollChanged;
         ChangelogScroll.ScrollChanged += ChangelogScroll_ScrollChanged;
-        _ = RefreshChangelogAsync(cachePath, _lifetimeCts.Token);
+        _ = _session.RunAsync("changelog", () => RefreshChangelogAsync(cachePath, _session.LifetimeToken));
     }
 
     private async Task RefreshChangelogAsync(string cachePath, CancellationToken token)
@@ -2795,7 +2701,7 @@ public partial class MainWindow : Window
             if (fetching is null && !token.IsCancellationRequested)
             {
                 retryingCheck = true;
-                _ = RetryUpdateCheckAsync(token);
+                _ = _session.RunAsync("update retry", () => RetryUpdateCheckAsync(token));
             }
         }
         finally
@@ -2838,7 +2744,7 @@ public partial class MainWindow : Window
         RefreshUi();
         try
         {
-            var prepared = await Task.Run(RequireUpdateService().TryGetPreparedUpdate, _lifetimeCts.Token);
+            var prepared = await Task.Run(RequireUpdateService().TryGetPreparedUpdate, _session.LifetimeToken);
             if (prepared is null)
             {
                 _preparedUpdate = null;
@@ -2854,7 +2760,7 @@ public partial class MainWindow : Window
             UpdateProgressBar.Value = 100;
             SetProgressActivity(UpdateProgressBar, active: false);
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_session.LifetimeToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -2911,9 +2817,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshPackMemory() => _ = RefreshPackMemoryAsync();
 
-    private Task RefreshPackMemoryAsync()
+    private Task RefreshPackMemoryAsync() => RefreshPackMemoryCoreAsync(weighFromSource: true);
+
+    private Task RefreshPackMemoryCoreAsync(bool weighFromSource)
     {
-        if (_settings is null || _settingsService is null) return Task.CompletedTask;
+        if (_shutdownStarted || _settings is null || _settingsService is null) return Task.CompletedTask;
 
         // Weighing a pack walks every jar in it - nine hundred of them on the
         // largest build here - and that is a second of disk on a cold cache. It
@@ -2944,7 +2852,7 @@ public partial class MainWindow : Window
             // laptop than under the 880-mod one beside it. Its manifest names
             // every file with its size, so it can be weighed without fetching
             // any of them.
-            if (!measured.IsKnown && sync is not null)
+            if (weighFromSource && !measured.IsKnown && sync is not null)
             {
                 service.UsePackMemory(
                     await sync.WeighFromSourceAsync(wanted, CancellationToken.None).ConfigureAwait(false));
@@ -2954,7 +2862,7 @@ public partial class MainWindow : Window
             {
                 // A player who clicks through three builds gets three walks, and
                 // only the last one is about the build in front of them.
-                if (generation != _packMemoryGeneration) return;
+                if (_shutdownStarted || generation != _packMemoryGeneration) return;
                 StopMemoryEstimateWait();
                 DescribeMemorySplit(MemoryTextBox.Text);
                 RefreshMemoryEstimate();
@@ -3130,7 +3038,7 @@ public partial class MainWindow : Window
         {
             await action();
         }
-        catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (_session.LifetimeToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
@@ -3187,21 +3095,20 @@ public partial class MainWindow : Window
         RefreshPlayerNameEditor(settingsEnabled);
         BuildComboBox.IsEnabled = configurationEnabled && _builds.Count > 1;
         BuildPlaceholderText.Visibility = _builds.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        // Three states of one control: idle, preparing (the fill and the stage
-        // are inside it), and a game that is already up. While preparing it stays
-        // enabled so its text keeps its colour, and simply does not take clicks -
-        // PlayButton_Click refuses them anyway.
-        if (_minecraftRunning)
+        // During native preparation the same button can cancel the pending launch.
+        if (_minecraftRunning && !NativeLaunchPending)
         {
             PlayButtonText.Text = "Игра запущена";
             PlayProgressBar.Visibility = Visibility.Collapsed;
             PlayButton.IsHitTestVisible = true;
             PlayButton.IsEnabled = false;
         }
-        else if (_minecraftPreparing)
+        else if (_minecraftPreparing || NativeLaunchPending)
         {
-            PlayButtonText.Text = _playProgressText ?? "Проверка сборки";
-            PlayButton.IsHitTestVisible = false;
+            PlayButtonText.Text = _nativePlayCancellation is { IsCancellationRequested: true }
+                ? "Отмена запуска"
+                : _playProgressText ?? "Проверка сборки";
+            PlayButton.IsHitTestVisible = CanCancelNativeLaunch;
             PlayButton.IsEnabled = true;
         }
         else
@@ -3216,7 +3123,8 @@ public partial class MainWindow : Window
             else if (hasBuild && !SelectedBuildIsReady)
                 PlayButtonText.Text = _selectedLaunchError is null ? "Проверка сборки" : "Сборка недоступна";
         }
-        PlayButton.ToolTip = HasUnsavedPlayerName ? "Сначала сохраните никнейм" : hasBuild ? _selectedLaunchError : null;
+        PlayButton.ToolTip = CanCancelNativeLaunch ? "Нажмите, чтобы отменить запуск" :
+            HasUnsavedPlayerName ? "Сначала сохраните никнейм" : hasBuild ? _selectedLaunchError : null;
         // Preparing a pack is a long wait and the skin is only read when the
         // client itself starts, so there is room to change it right up to then.
         SkinButton.IsEnabled = !_minecraftRunning;
@@ -3334,13 +3242,14 @@ public partial class MainWindow : Window
         _selectedLaunchError = null;
         var generation = ++_selectedLaunchGeneration;
         RefreshUi();
-        return _selectedLaunchPreparation = PrepareSelectedLaunchCoreAsync(catalog, path, generation);
+        return _selectedLaunchPreparation = _session.RunAsync("selected pack",
+            () => PrepareSelectedLaunchCoreAsync(catalog, path, generation));
     }
 
     private async Task PrepareSelectedLaunchCoreAsync(PackCatalogService catalog, string path, int generation)
     {
         using var packUse = _maintenance?.ProtectPack(path);
-        var token = _catalogLifetimeCts.Token;
+        var token = _session.CatalogToken;
         try
         {
             await Task.Run(() => catalog.EnsureLaunchReadyAsync(path, token), token);
@@ -3377,7 +3286,7 @@ public partial class MainWindow : Window
 
     private async Task InitializeCatalogCoreAsync()
     {
-        var token = _catalogLifetimeCts.Token;
+        var token = _session.CatalogToken;
         var paths = _paths!;
         var logger = _logger!;
         var catalog = await Task.Run(() =>
@@ -3426,12 +3335,12 @@ public partial class MainWindow : Window
     private void StartLibraryPreparation()
     {
         if (_shutdownStarted || _libraryStartup is not null || _catalog is not { } catalog) return;
-        _libraryStartup = PrepareLibraryCoreAsync(catalog);
+        _libraryStartup = _session.RunAsync("pack library", () => PrepareLibraryCoreAsync(catalog));
     }
 
     private async Task PrepareLibraryCoreAsync(PackCatalogService catalog)
     {
-        var token = _catalogLifetimeCts.Token;
+        var token = _session.CatalogToken;
         try { await Task.Run(() => catalog.PrepareLibraryAsync(token), token); }
         catch (OperationCanceledException) when (_shutdownStarted) { return; }
         catch (Exception ex)
@@ -3591,11 +3500,9 @@ public partial class MainWindow : Window
     private Logger RequireLogger() => _logger ?? throw new InvalidOperationException("Logger is not initialized.");
     private PackHashService RequirePackHash() => _packHash ?? throw new InvalidOperationException("Pack hash service is not initialized.");
 
-    private PortablePackSyncService RequirePackSync() => _packSync ?? throw new InvalidOperationException("Pack sync service is not initialized.");
     private WorldMetadataService RequireWorldMetadata() => _worldMetadata ?? throw new InvalidOperationException("World metadata service is not initialized.");
     private SteamIdentityService RequireIdentityService() => _identityService ?? throw new InvalidOperationException("Identity service is not initialized.");
     private WorldPlayerProfileService RequireWorldPlayerProfiles() => _worldPlayerProfiles ?? throw new InvalidOperationException("World player profile service is not initialized.");
-    private MinecraftProcessService RequireMinecraft() => _minecraft ?? throw new InvalidOperationException("Minecraft service is not initialized.");
     private WorldTransferService RequireTransfer() => _transfer ?? throw new InvalidOperationException("World transfer service is not initialized.");
     private WaypointSyncService RequireWaypointSync() => _waypointSync ?? throw new InvalidOperationException("Waypoint sync service is not initialized.");
     private SkinService RequireSkinService() => _skinService ?? throw new InvalidOperationException("Skin service is not initialized.");

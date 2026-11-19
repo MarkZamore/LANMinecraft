@@ -37,7 +37,8 @@ internal static class Program
             if (string.Equals(root.TrimEnd('\\'), Path.GetPathRoot(root)?.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) throw new IOException("Drive roots are forbidden.");
             Guard.OrdinaryParents(root); Guard.OrdinaryParents(assemblyPath);
             foreach (var relative in new[] { "Minecraft", "Minecraft/Packs", "Minecraft/Personal", "Minecraft/Personal/settings.json",
-                "Minecraft/Personal/Instances", "Minecraft/Worlds", "Minecraft/Launcher", "Minecraft/Launcher/Runtimes" })
+                "Minecraft/Personal/Instances", "Minecraft/Worlds", "Minecraft/Launcher",
+                "Minecraft/Launcher/Runtimes", "Minecraft/Launcher/PackRuntimes" })
                 Guard.OrdinaryParents(Path.Combine(root, relative));
             if (rehearsal && !File.Exists(Path.Combine(root, ".deployment-rehearsal"))) throw new IOException("Rehearsal requires the generated fixture marker.");
             if ((options.ContainsKey("skip-runtime") || options.ContainsKey("fixture-dist") || options.ContainsKey("fixture-components")) && !rehearsal)
@@ -244,7 +245,8 @@ internal static class Program
                 }
             }
             if (name != canonical && new[] { packs, Path.Combine(root, "Minecraft", "Personal", "Instances"),
-                    Path.Combine(root, "Minecraft", "Worlds"), Path.Combine(root, "Minecraft", "Launcher", "Runtimes") }
+                    Path.Combine(root, "Minecraft", "Worlds"), Path.Combine(root, "Minecraft", "Launcher", "Runtimes"),
+                    Path.Combine(root, "Minecraft", "Launcher", "PackRuntimes") }
                 .Any(parent => Directory.Exists(Path.Combine(parent, name)) && Directory.Exists(Path.Combine(parent, canonical))))
                 error ??= "Both old and renamed deployment folders exist in one of the managed roots.";
             result.Add(new(name, canonical, (string)api.Get(descriptor, "MinecraftVersion")!, loader, desired, transports, error));

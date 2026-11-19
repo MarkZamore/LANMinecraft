@@ -24,7 +24,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         Assert.Equal("1.0.65001.0", version.FileVersion);
         Assert.Equal("1.0.65001+" + NativePortableHostFixture.Revision, version.ProductVersion);
         var group = NativeHostResources.Read(fixture.Executable, 14, 1); // GROUP_ICON
-        var icon = File.ReadAllBytes(Path.Combine(fixture.Repository, "Program", "Minecraft.ico"));
+        var icon = File.ReadAllBytes(Path.Combine(fixture.Repository, "Program", "Assets", "icon.ico"));
         var iconCount = BinaryPrimitives.ReadUInt16LittleEndian(icon.AsSpan(4));
         Assert.Equal(iconCount, BinaryPrimitives.ReadUInt16LittleEndian(group.AsSpan(4)));
         for (var index = 0; index < iconCount; index++)

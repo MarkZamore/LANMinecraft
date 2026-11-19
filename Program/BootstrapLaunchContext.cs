@@ -106,7 +106,7 @@ internal sealed class BootstrapLaunchContext
         foreach (var origin in new[] { AppContext.BaseDirectory, root })
         for (var directory = new DirectoryInfo(origin); directory is not null; directory = directory.Parent)
         {
-            var icon = Path.Combine(directory.FullName, "Program", "Minecraft.ico");
+            var icon = Path.Combine(directory.FullName, "Program", "Assets", "icon.ico");
             if (!File.Exists(icon)) continue;
             LauncherWindowIcon.TestIconPath = icon;
             return;

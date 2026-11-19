@@ -14,20 +14,15 @@ public partial class MainWindow
 
     private void InitializePackTransfer()
     {
-        var paths = RequirePaths();
-        var archive = new PackArchiveService(paths, IsPersonalPack,
+        _packTransfer = _session.InitializePackTransfer(IsPersonalPack,
             path => _catalog?.IsKnownCatalogPath(path) != false,
-            prepareDescriptor: (path, token) => _autoManifest?.EnsureAsync(path, token) ?? Task.CompletedTask);
-        _packTransfer = new PackTransferService(paths,
-            _peerTransport ?? throw new InvalidOperationException("Steam transport unavailable."),
-            archive, ConfirmPackTransferAsync, MayStartPackTransfer, _logger);
+            ConfirmPackTransferAsync, MayStartPackTransfer);
         _packTransfer.ProgressChanged += progress => PostToUi(() => ApplyPackTransferProgress(progress));
         _packTransfer.PackReceived += path => PostToUi(() => OnPackReceived(path));
         _packTransfer.IncomingFailed += message => PostToUi(() =>
         {
             if (!_shutdownStarted) NoticeDialog.Show(this, "Не удалось получить сборку", message);
         });
-        _peerRouter?.Register(_packTransfer);
     }
 
     private bool IsPersonalPack(string path) => _catalog?.IsPersonalInstalled(path) == true;
@@ -122,11 +117,11 @@ public partial class MainWindow
             PackRecipientComboBox.SelectedItem is not PeerViewModel
                 { IsCompatible: true, IsMinecraftRunning: false, IsMinecraftPreparing: false } peer) return;
 
-        var token = _lifetimeCts.Token;
+        var token = _session.LifetimeToken;
         using var protection = _maintenance?.ProtectPack(pack.RelativePath);
         try
         {
-            await _packTransfer.SendAsync(peer, pack.RelativePath, token);
+            await _session.RunAsync("pack transfer", () => _packTransfer.SendAsync(peer, pack.RelativePath, token));
             if (!_shutdownStarted) SetState($"Сборка передана: {pack.Name}");
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }

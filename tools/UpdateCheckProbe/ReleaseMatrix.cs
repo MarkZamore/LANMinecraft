@@ -61,7 +61,8 @@ internal static class ReleaseMatrix
         var indexUri = new Uri(PackCatalogService.IndexUri + "?probe=" + Guid.NewGuid().ToString("N"));
         var indexBytes = (await Fetch(indexUri)).Bytes;
         File.WriteAllBytes(Path.Combine(output, "catalog.json"), indexBytes);
-        var entries = (IEnumerable<CatalogSource>)typeof(PackCatalogService).GetMethod("ParseIndex", BindingFlags.Static | BindingFlags.NonPublic)!
+        var catalogIndex = typeof(CatalogSource).Assembly.GetType("Minecraft.PackCatalogIndex", throwOnError: true)!;
+        var entries = (IEnumerable<CatalogSource>)catalogIndex.GetMethod("ParseIndex", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [System.Text.Encoding.UTF8.GetString(indexBytes), true])!;
         foreach (var entry in entries)
         {

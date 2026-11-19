@@ -564,7 +564,7 @@ internal static class Probe
         var xaml = File.ReadAllText(Path.Combine(repository, "Program/MainWindow.xaml"));
         xaml = Regex.Replace(xaml, @"x:Class=""[^""]*""", namespaces);
         xaml = Regex.Replace(xaml, @"\s(Click|Loaded|Closing|SizeChanged|SelectionChanged|TextChanged|PreviewTextInput|LostFocus|KeyDown|DataObject\.Pasting)=""[^""]*""", "");
-        xaml = xaml.Replace("Icon=\"Minecraft.ico\"", "").Replace("clr-namespace:Minecraft\"", "clr-namespace:Minecraft;assembly=LANMinecraft\"");
+        xaml = xaml.Replace("clr-namespace:Minecraft\"", "clr-namespace:Minecraft;assembly=LANMinecraft\"");
         xaml = xaml.Replace("<Window.Resources>", "<Window.Resources>" + resources);
         return (Window)XamlReader.Parse(xaml);
     }

@@ -20,8 +20,14 @@ internal static class Program
         var pid = int.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture);
         var delay = int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture);
         var repeat = args.Length == 6 ? int.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture) : 0;
-        if ((!dll.StartsWith(Path.Combine(root, "Minecraft", "Launcher", "Runtime") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-             !dll.StartsWith(Path.Combine(root, "Program", "bin") + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) || Path.GetFileName(dll) != "LANMinecraft.dll" ||
+        var cache = Path.Combine(root, "Minecraft", "Launcher");
+        var assemblyRoots = new[]
+        {
+            Path.Combine(cache, "Bootstrap", "app"), Path.Combine(cache, "LauncherRuntime"),
+            Path.Combine(cache, "Runtime"), Path.Combine(root, "Program", "bin")
+        };
+        if (!assemblyRoots.Any(path => dll.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) ||
+            Path.GetFileName(dll) != "LANMinecraft.dll" ||
             !output.StartsWith(Path.Combine(root, "artifacts", "agent-runs") + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase) || delay is < 0 or > 30000 || repeat is < 0 or > 30000)
             throw new ArgumentException("Use a published launcher assembly and a task-owned output directory.");

@@ -104,6 +104,30 @@ public sealed class ReleaseWorkflowTests
         Assert.Contains("-Publish", release, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void GraphifyFollowsSuccessfulPublicationAndIndexesTheReleasedCommit()
+    {
+        var workflow = ReleaseWorkflow();
+        var graphify = WorkflowJob(workflow, "graphify");
+        Assert.Matches(@"(?m)^    needs: publish\r?$", graphify);
+        Assert.DoesNotMatch(@"(?m)^    (?:if|continue-on-error):", graphify);
+        Assert.DoesNotContain("contents: write", graphify, StringComparison.Ordinal);
+        Assert.DoesNotContain("graphify", WorkflowJob(workflow, "publish"), StringComparison.OrdinalIgnoreCase);
+
+        var steps = WorkflowSteps(graphify);
+        var checkout = Assert.Single(steps, step => step.Contains("uses: actions/checkout@", StringComparison.Ordinal));
+        var generate = Assert.Single(steps, step => step.Contains("Update-Graphify.ps1", StringComparison.Ordinal));
+        var upload = Assert.Single(steps, step => step.Contains("uses: actions/upload-artifact@", StringComparison.Ordinal));
+        Assert.Contains("ref: ${{ github.sha }}", checkout, StringComparison.Ordinal);
+        Assert.Contains("persist-credentials: false", checkout, StringComparison.Ordinal);
+        Assert.Contains("-ReleaseArtifact -Check", generate, StringComparison.Ordinal);
+        Assert.Contains("name: graphify-${{ github.sha }}", upload, StringComparison.Ordinal);
+        Assert.Contains("graphify/release/graph.json", upload, StringComparison.Ordinal);
+        Assert.Contains("graphify/release/source.json", upload, StringComparison.Ordinal);
+        Assert.True(Array.IndexOf(steps, checkout) < Array.IndexOf(steps, generate) &&
+                    Array.IndexOf(steps, generate) < Array.IndexOf(steps, upload));
+    }
+
     /// <summary>gh is called through the helper, never on its own.</summary>
     [Fact]
     public void ReleaseWorkflow_CallsGhOnlyThroughTheRetryHelper()
