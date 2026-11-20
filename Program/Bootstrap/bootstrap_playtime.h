@@ -197,20 +197,60 @@ bool Acquire(HANDLE mutex, DWORD timeout)
     return result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
 }
 
+Handle FileMutex(HANDLE personal)
+{
+    BY_HANDLE_FILE_INFORMATION identity{};
+    if (!GetFileInformationByHandle(personal, &identity)) Fail(L"Identify playtime directory");
+    const auto name = L"Global\\LANMinecraft.Playtime.File." + std::to_wstring(identity.dwVolumeSerialNumber) +
+        L"." + std::to_wstring(identity.nFileIndexHigh) + L"." + std::to_wstring(identity.nFileIndexLow);
+    Handle mutex(CreateMutexW(nullptr, FALSE, name.c_str()));
+    if (!mutex) Fail(L"Create playtime file lock");
+    return mutex;
+}
+
+int Prune(Directories& directories)
+{
+    const auto input = GetStdHandle(STD_INPUT_HANDLE);
+    if (GetFileType(input) != FILE_TYPE_PIPE) return ERROR_INVALID_PARAMETER;
+    std::string data;
+    std::array<char, 4096> buffer{};
+    for (;;)
+    {
+        DWORD count = 0;
+        if (!ReadFile(input, buffer.data(), static_cast<DWORD>(buffer.size()), &count, nullptr))
+        {
+            if (GetLastError() == ERROR_BROKEN_PIPE) break;
+            Fail(L"Read catalog repositories for playtime");
+        }
+        if (count == 0) break;
+        if (count > Limit - data.size()) return ERROR_INVALID_DATA;
+        data.append(buffer.data(), count);
+    }
+    const auto catalog = TimeJson(data).Parse();
+    const auto personal = directories.Get(L"Minecraft/Personal");
+    const auto mutex = FileMutex(personal);
+    if (!Acquire(mutex.get(), 3000)) return ERROR_BUSY;
+    // The command process owns the mutex until it exits, including on an error.
+    auto totals = Load(personal);
+    const auto previous = totals.size();
+    for (auto entry = totals.begin(); entry != totals.end();)
+    {
+        if (catalog.find(entry->first) == catalog.end()) entry = totals.erase(entry);
+        else ++entry;
+    }
+    if (totals.size() != previous) Save(personal, totals);
+    ReleaseMutex(mutex.get());
+    return 0;
+}
+
 class Observer
 {
 public:
-    Observer(Directories& directories, std::string key, ULONGLONG start)
+    Observer(Directories& directories, std::string key, ULONGLONG start, bool resume)
         : directories_(directories), parent_(directories.Get(L"Minecraft/Personal")),
-          key_(std::move(key)), savedUntil_(start)
-    {
-        BY_HANDLE_FILE_INFORMATION identity{};
-        if (!GetFileInformationByHandle(parent_, &identity)) Fail(L"Identify playtime directory");
-        const auto name = L"Global\\LANMinecraft.Playtime.File." + std::to_wstring(identity.dwVolumeSerialNumber) +
-            L"." + std::to_wstring(identity.nFileIndexHigh) + L"." + std::to_wstring(identity.nFileIndexLow);
-        mutex_ = Handle(CreateMutexW(nullptr, FALSE, name.c_str()));
-        if (!mutex_) Fail(L"Create playtime file lock");
-    }
+          key_(std::move(key)), savedUntil_(start), mutex_(FileMutex(parent_)), resume_(resume) { }
+
+    bool Revoked() const { return revoked_; }
 
     static ULONGLONG Now()
     {
@@ -229,6 +269,12 @@ public:
         try
         {
             auto totals = Load(parent_);
+            if ((written_ || resume_) && totals.find(key_) == totals.end())
+            {
+                revoked_ = true;
+                ReleaseMutex(mutex_.get());
+                return true;
+            }
             auto [entry, inserted] = totals.try_emplace(key_, 0);
             if (delta > MaxDuration - entry->second) throw Failure(L"Playtime duration overflow");
             entry->second += delta;
@@ -273,13 +319,16 @@ private:
     std::string key_;
     ULONGLONG savedUntil_;
     Handle mutex_;
+    bool resume_;
+    bool revoked_ = false;
     bool written_ = false;
     bool reportedError_ = false;
 };
 
 int Run(HINSTANCE instance, Directories& directories, const std::vector<std::wstring>& args)
 {
-    if (args.size() != 5) return ERROR_INVALID_PARAMETER;
+    const bool resume = args.size() == 6 && args[5] == L"--resume";
+    if (args.size() != 5 && !resume) return ERROR_INVALID_PARAMETER;
     const auto ascii = [](const std::wstring& value)
     {
         if (value.size() > 4096 || !std::all_of(value.begin(), value.end(), [](wchar_t ch) { return ch < 128; }))
@@ -303,7 +352,7 @@ int Run(HINSTANCE instance, Directories& directories, const std::vector<std::wst
     Handle single(CreateMutexW(nullptr, FALSE, name.c_str()));
     if (!single) return ERROR_ACCESS_DENIED;
     if (!Acquire(single.get(), 0)) return ERROR_ALREADY_EXISTS;
-    Observer observer(directories, key, start);
+    Observer observer(directories, key, start, resume);
     WNDCLASSW windowClass{};
     windowClass.hInstance = instance;
     windowClass.lpszClassName = L"LANMinecraft.Playtime";
@@ -315,7 +364,7 @@ int Run(HINSTANCE instance, Directories& directories, const std::vector<std::wst
     observer.Checkpoint(start);
     const auto handle = game.get();
     auto next = start + Interval * 10000ULL;
-    for (;;)
+    while (!observer.Revoked())
     {
         const auto now = Observer::Now();
         const auto wait = static_cast<DWORD>(now >= next ? 0 : (next - now + 9999) / 10000);

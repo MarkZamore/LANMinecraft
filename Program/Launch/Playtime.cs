@@ -34,7 +34,7 @@ internal static class Playtime
 
     internal static ulong? Timestamp() => QueryUnbiasedInterruptTime(out var time) ? time : null;
 
-    internal static void Observe(int processId, string key, ulong? start, Logger logger, Action changed)
+    internal static void Observe(int processId, string key, ulong? start, Logger logger, Action changed, bool resume = false)
     {
         if (start is null || !ValidKey(key)) return;
         try
@@ -47,11 +47,46 @@ internal static class Playtime
             info.ArgumentList.Add(game.StartTime.ToFileTimeUtc().ToString(CultureInfo.InvariantCulture));
             info.ArgumentList.Add(start.Value.ToString(CultureInfo.InvariantCulture));
             info.ArgumentList.Add(key);
+            if (resume) info.ArgumentList.Add("--resume");
             if (Process.Start(info) is { } observer) _ = WaitForObserverAsync(observer, logger, changed);
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or ArgumentException)
         {
             logger.Warn("Playtime observer could not start: " + ex.Message);
+        }
+    }
+
+    internal static async Task PruneAsync(AppPaths paths, IEnumerable<CatalogSource> sources, Logger logger, CancellationToken token)
+    {
+        if (!File.Exists(paths.PlaytimeFile)) return;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            if (!BootstrapLaunchContext.TryGet(out var context) || context is null || !File.Exists(context.ExePath)) return;
+            var repositories = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var source in sources)
+            {
+                var key = Key(source);
+                if (!ValidKey(key)) return;
+                repositories.TryAdd(key, 0);
+            }
+            var json = JsonSerializer.SerializeToUtf8Bytes(repositories);
+            if (json.Length > FileLimit) return;
+            var info = new ProcessStartInfo(context.ExePath)
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true
+            };
+            info.ArgumentList.Add("--prune-playtime");
+            using var process = Process.Start(info);
+            if (process is null) return;
+            using (var input = process.StandardInput)
+                await input.BaseStream.WriteAsync(json, token).ConfigureAwait(false);
+            await process.WaitForExitAsync(token).ConfigureAwait(false);
+            if (process.ExitCode != 0) logger.Warn($"Playtime cleanup exited with code {process.ExitCode}.");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            logger.Warn("Could not clean playtime: " + ex.Message);
         }
     }
 

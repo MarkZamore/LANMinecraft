@@ -700,6 +700,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
                 try { return Playtime::Run(instance, directories, values); }
                 catch (...) { return ERROR_INVALID_DATA; }
             }
+            if (argumentCount == 2 && std::wstring_view(arguments[1]) == L"--prune-playtime")
+            {
+                LocalFree(arguments);
+                try { return Playtime::Prune(directories); }
+                catch (...) { return ERROR_INVALID_DATA; }
+            }
             LocalFree(arguments);
         }
         directories.Get(L"Minecraft/Launcher");

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private long _nextPlaytimeRefresh;
     private bool _playtimeRefreshPending;
+    private int _playtimeRefreshVersion;
     private readonly LauncherSession _session = new();
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
@@ -3331,6 +3332,12 @@ public partial class MainWindow : Window
         StartupTrace.Mark("каталог из кеша");
         await Task.Run(() => catalog.InitializeIndexAsync(token), token);
         if (_shutdownStarted) return;
+        if (catalog.HasOnlineCatalog)
+        {
+            await Task.Run(() => Playtime.PruneAsync(paths, catalog.Sources, logger, token), token);
+            if (_shutdownStarted) return;
+            if (_libraryVisible) _ = RefreshPlaytimeAsync(force: true);
+        }
         // Authoritative membership can remove the previous choice. Validate
         // its replacement without waiting for the first choice or any cards.
         RefreshBuilds();
@@ -3432,17 +3439,18 @@ public partial class MainWindow : Window
         if (_libraryVisible) _ = RefreshPlaytimeAsync();
     });
 
-    private async Task RefreshPlaytimeAsync()
+    private async Task RefreshPlaytimeAsync(bool force = false)
     {
-        if (_playtimeRefreshPending || _shutdownStarted || _paths is not { } paths || _logger is not { } logger) return;
+        if (_playtimeRefreshPending && !force || _shutdownStarted || _paths is not { } paths || _logger is not { } logger) return;
+        var version = ++_playtimeRefreshVersion;
         _playtimeRefreshPending = true;
         _nextPlaytimeRefresh = Environment.TickCount64 + 30000;
         try
         {
             var snapshot = await Task.Run(() => Playtime.Read(paths, logger));
-            if (!_shutdownStarted) LibraryView.SetPlaytime(snapshot);
+            if (!_shutdownStarted && version == _playtimeRefreshVersion) LibraryView.SetPlaytime(snapshot);
         }
-        finally { _playtimeRefreshPending = false; }
+        finally { if (version == _playtimeRefreshVersion) _playtimeRefreshPending = false; }
     }
 
     private void ShowLibrary(bool visible)

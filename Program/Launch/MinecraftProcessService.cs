@@ -1534,7 +1534,7 @@ public sealed class MinecraftProcessService
             {
                 var gamePid = session.ExecutablePath is null ? session.ProcessId :
                     MinecraftWindowPlacementService.NativeGameWindowProcessId(process);
-                if (gamePid != 0) Playtime.Observe(gamePid, key, Playtime.Timestamp(), _logger, NotifyPlaytimeChanged);
+                if (gamePid != 0) Playtime.Observe(gamePid, key, Playtime.Timestamp(), _logger, NotifyPlaytimeChanged, resume: true);
             }
             _logger.Info($"A game started by an earlier launcher is still running (process {session.ProcessId}, {session.PackRelativePath}).");
             var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -110,6 +110,8 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 }
                 finally { if (!duplicate.HasExited) duplicate.Kill(); }
             }
+            await Prune("{\"another-repo\":0,\"better-vanilla\":0}");
+            Assert.Equal(45000, Playtime.Read(paths, logger).Total);
             await Task.Delay(250, timeout.Token);
             game.Kill();
             await observer.WaitForExitAsync(timeout.Token);
@@ -135,6 +137,10 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
                 Directory.Delete(copied.Service);
                 Directory.Delete(copied.Root);
             }
+            await Prune("{\"better-vanilla\":0}");
+            Assert.Equal(total.Packs[key], Playtime.Read(paths, logger).Total);
+            await Prune("{}");
+            Assert.Empty(Playtime.Read(paths, logger).Packs);
         }
         finally
         {
@@ -151,6 +157,21 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             var info = new ProcessStartInfo(fixture.Executable) { UseShellExecute = false, CreateNoWindow = true };
             foreach (var value in args) info.ArgumentList.Add(value);
             return Process.Start(info)!;
+        }
+
+        async Task Prune(string json)
+        {
+            var info = new ProcessStartInfo(fixture.Executable, "--prune-playtime")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true };
+            using var cleanup = Process.Start(info)!;
+            try
+            {
+                await cleanup.StandardInput.WriteAsync(json);
+                cleanup.StandardInput.Close();
+                await cleanup.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal(0, cleanup.ExitCode);
+            }
+            finally { if (!cleanup.HasExited) cleanup.Kill(); }
         }
     }
 
