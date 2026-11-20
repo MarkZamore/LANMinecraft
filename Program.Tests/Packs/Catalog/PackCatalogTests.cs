@@ -380,9 +380,17 @@ public sealed class PackCatalogTests : IDisposable
             var actions = (Grid)window.FindName("LaunchActions");
             var back = (Button)view.FindName("ReturnLauncherButton");
             var totalTime = (TextBlock)view.FindName("TotalPlaytimeText");
-            Assert.Equal("Общее время игры: 0:00", totalTime.Text);
+            Assert.Equal(Visibility.Collapsed, totalTime.Visibility);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { ["pack-a"] = 30000, ["pack-b"] = 29999 }, 59999));
+            Assert.Equal(Visibility.Collapsed, totalTime.Visibility);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { ["pack-a"] = 30000, ["pack-b"] = 30000 }, 60000));
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            Assert.Equal(Visibility.Visible, totalTime.Visibility);
+            Assert.Equal("Общее время игры: 0:01", totalTime.Text);
             Assert.True(totalTime.TranslatePoint(new Point(0, 0), view).X >
                 back.TranslatePoint(new Point(back.ActualWidth, 0), view).X);
+            view.SetPlaytime(PlaytimeSnapshot.Empty);
+            Assert.Equal(Visibility.Collapsed, totalTime.Visibility);
             Assert.InRange(Math.Abs(back.ActualWidth - ((Button)window.FindName("PlayButton")).ActualWidth), 0, 1);
             Assert.True(back.ActualHeight >= 44);
             var play = (Button)window.FindName("PlayButton");
@@ -460,7 +468,14 @@ public sealed class PackCatalogTests : IDisposable
             Assert.Equal(Visibility.Collapsed, packTime.Visibility);
             var key = Playtime.Key(pack.Entry);
             view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 0 }, 0));
-            Assert.Equal("Время на сборке: 0:00", packTime.Text);
+            Assert.Equal(Visibility.Collapsed, packTime.Visibility);
+            Assert.Equal(Visibility.Collapsed, totalTime.Visibility);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 59999, ["other"] = 1 }, 60000));
+            Assert.Equal(Visibility.Collapsed, packTime.Visibility);
+            Assert.Equal(Visibility.Visible, totalTime.Visibility);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 60000 }, 60000));
+            Assert.Equal(Visibility.Visible, packTime.Visibility);
+            Assert.Equal("Время на сборке: 0:01", packTime.Text);
             view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 97500000 }, 97500000));
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             Assert.Equal("Время на сборке: 27:05", packTime.Text);

@@ -324,7 +324,9 @@ public partial class PackLibraryView : UserControl
     internal void SetPlaytime(PlaytimeSnapshot snapshot)
     {
         playtime = snapshot;
-        TotalPlaytimeText.Text = "Общее время игры: " + Playtime.Format(snapshot.Total);
+        var hasTotal = snapshot.Total >= Playtime.MillisecondsPerMinute;
+        TotalPlaytimeText.Visibility = hasTotal ? Visibility.Visible : Visibility.Collapsed;
+        TotalPlaytimeText.Text = hasTotal ? "Общее время игры: " + Playtime.Format(snapshot.Total) : "";
         RefreshSelectedPlaytime();
     }
 

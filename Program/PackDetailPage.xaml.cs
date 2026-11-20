@@ -125,8 +125,10 @@ public partial class PackDetailPage : UserControl, IDisposable
     }
     internal void SetPlaytime(long? milliseconds)
     {
-        PackPlaytimeText.Text = milliseconds is long duration ? "Время на сборке: " + Playtime.Format(duration) : "";
-        PackPlaytimeText.Visibility = milliseconds.HasValue ? Visibility.Visible : Visibility.Collapsed;
+        var duration = milliseconds.GetValueOrDefault();
+        var hasPlaytime = duration >= Playtime.MillisecondsPerMinute;
+        PackPlaytimeText.Visibility = hasPlaytime ? Visibility.Visible : Visibility.Collapsed;
+        PackPlaytimeText.Text = hasPlaytime ? "Время на сборке: " + Playtime.Format(duration) : "";
     }
 
     private void ReturnCatalog_Click(object sender, RoutedEventArgs e) => ReturnRequested?.Invoke();

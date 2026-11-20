@@ -9,6 +9,7 @@ namespace Minecraft;
 
 internal static class Playtime
 {
+    internal const long MillisecondsPerMinute = 60000;
     private const int FileLimit = 1024 * 1024;
     private const string Header = "LANMinecraft-playtime 1";
 
@@ -113,7 +114,7 @@ internal static class Playtime
 
     internal static string Format(long milliseconds)
     {
-        var minutes = milliseconds / 60000;
+        var minutes = milliseconds / MillisecondsPerMinute;
         return FormattableString.Invariant($"{minutes / 60}:{minutes % 60:00}");
     }
 }
