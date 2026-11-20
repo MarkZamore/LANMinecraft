@@ -379,6 +379,10 @@ public sealed class PackCatalogTests : IDisposable
             WindowCanvasTests.LayoutWindow(window, new Size(width, height));
             var actions = (Grid)window.FindName("LaunchActions");
             var back = (Button)view.FindName("ReturnLauncherButton");
+            var totalTime = (TextBlock)view.FindName("TotalPlaytimeText");
+            Assert.Equal("Общее время игры: 0:00", totalTime.Text);
+            Assert.True(totalTime.TranslatePoint(new Point(0, 0), view).X >
+                back.TranslatePoint(new Point(back.ActualWidth, 0), view).X);
             Assert.InRange(Math.Abs(back.ActualWidth - ((Button)window.FindName("PlayButton")).ActualWidth), 0, 1);
             Assert.True(back.ActualHeight >= 44);
             var play = (Button)window.FindName("PlayButton");
@@ -452,6 +456,18 @@ public sealed class PackCatalogTests : IDisposable
             var requirements = VisualChildren<TextBlock>(details).Single(text => text.Text == pack.Requirements.Label);
             Assert.True(requirements.ActualWidth > 0);
             var membership = (Button)view.FindName("MembershipButton");
+            var packTime = (TextBlock)view.FindName("PackPlaytimeText");
+            Assert.Equal(Visibility.Collapsed, packTime.Visibility);
+            var key = Playtime.Key(pack.Entry);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 0 }, 0));
+            Assert.Equal("Время на сборке: 0:00", packTime.Text);
+            view.SetPlaytime(new PlaytimeSnapshot(new Dictionary<string, long> { [key] = 97500000 }, 97500000));
+            WindowCanvasTests.LayoutWindow(window, new Size(width, height));
+            Assert.Equal("Время на сборке: 27:05", packTime.Text);
+            Assert.Equal("Общее время игры: 27:05", totalTime.Text);
+            Assert.True(packTime.ActualWidth > 0);
+            Assert.True(packTime.TranslatePoint(new Point(packTime.ActualWidth, 0), view).X <
+                membership.TranslatePoint(new Point(0, 0), view).X);
             Assert.Equal("Добавить", membership.Content);
             AssertMembershipFits();
             var addSize = membership.RenderSize;

@@ -555,6 +555,7 @@ unsigned long RetryableIoCode(unsigned long code)
 #include "bootstrap_fonts.h"
 #include "bootstrap_progress.h"
 #include "bootstrap_dependencies.h"
+#include "bootstrap_playtime.h"
 
 struct HostParameters { std::size_t size; const wchar_t* hostPath; const wchar_t* dotnetRoot; };
 using HostHandle = void*;
@@ -689,6 +690,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         const auto separator = executable.find_last_of(L"\\/");
         if (separator == std::wstring::npos) throw Failure(L"Cannot determine launcher directory");
         Directories directories(executable.substr(0, separator));
+        int argumentCount = 0;
+        if (auto arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount))
+        {
+            if (argumentCount > 1 && std::wstring_view(arguments[1]) == L"--track-playtime")
+            {
+                std::vector<std::wstring> values(arguments + 1, arguments + argumentCount);
+                LocalFree(arguments);
+                try { return Playtime::Run(instance, directories, values); }
+                catch (...) { return ERROR_INVALID_DATA; }
+            }
+            LocalFree(arguments);
+        }
         directories.Get(L"Minecraft/Launcher");
         OpenLog(directories);
         Log(L"Native startup PID " + std::to_wstring(GetCurrentProcessId()));

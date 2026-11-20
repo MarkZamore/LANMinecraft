@@ -321,15 +321,17 @@ public sealed class MinecraftWindowPlacementService
         return found;
     }
 
-    internal static bool HasNativeGameWindow(Process root)
+    internal static int NativeGameWindowProcessId(Process root)
     {
         try
         {
-            if (root.HasExited) return false;
+            if (root.HasExited) return 0;
             var processId = root.Id;
             var startedAt = root.StartTime.ToUniversalTime();
             var tree = GameProcessTree.Expand([processId]);
-            return FindMinecraftWindow(processId, IsChild) != nint.Zero && !root.HasExited;
+            var window = FindMinecraftWindow(processId, IsChild);
+            return window != nint.Zero && !root.HasExited && GetWindowThreadProcessId(window, out var owner) != 0
+                ? owner : 0;
 
             bool IsChild(int candidate)
             {
@@ -349,7 +351,7 @@ public sealed class MinecraftWindowPlacementService
         }
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
         {
-            return false;
+            return 0;
         }
     }
 

@@ -30,6 +30,7 @@ internal static class LauncherStorageLayout
     internal const string ProfileTransactions = "ProfileTransactions";
     internal const string WaypointConflicts = "WaypointConflicts";
     internal const string Settings = "settings.json";
+    internal const string Playtime = "time";
     internal const string PackHashes = "pack-hashes.json";
     internal const string PackWeights = "pack-weights.json";
     internal const string WindowPlacement = "window-placement.json";
@@ -52,7 +53,7 @@ internal static class LauncherStorageLayout
 
     internal static FrozenSet<string> PersonalEntries { get; } = Names(
         Instances, PackConflicts, Backups, WaypointConflicts, ProfileTransactions, BugReports, "Temp",
-        "Home", "ClientSessions", "PackRenames", "Transfers", "Updates", "Logs", Settings, PackHashes,
+        "Home", "ClientSessions", "PackRenames", "Transfers", "Updates", "Logs", Settings, Playtime, PackHashes,
         PackWeights, "memory-measurements.json", WindowPlacement, MinecraftWindowPlacement,
         SkinProfiles, LegacySkinProfiles, IdentityProfiles, "legacy-identity-profiles.properties",
         WaypointSync, "transfer-pacing.json", Log, ".terrafirma-rename.lock", ".terrafirma-rename.pending",

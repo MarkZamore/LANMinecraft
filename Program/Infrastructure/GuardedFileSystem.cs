@@ -30,9 +30,9 @@ internal static class GuardedFileSystem
         return null;
     }
 
-    internal static SafeFileHandle? TryOpenOrdinaryReadFile(string path)
+    internal static SafeFileHandle? TryOpenOrdinaryReadFile(string path, bool shareReplacement = false)
     {
-        var handle = CreateFile(NativePath(path), GenericRead, 1, 0, OpenExisting, OpenReparsePoint, 0);
+        var handle = CreateFile(NativePath(path), GenericRead, shareReplacement ? 7u : 1u, 0, OpenExisting, OpenReparsePoint, 0);
         if (!handle.IsInvalid && IsPlainFile(handle)) return handle;
         handle.Dispose();
         return null;

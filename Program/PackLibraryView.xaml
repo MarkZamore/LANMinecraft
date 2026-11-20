@@ -95,6 +95,8 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="3*"/><ColumnDefinition Width="{DynamicResource Size.LibraryActionGap}"/><ColumnDefinition Width="2*"/></Grid.ColumnDefinitions>
                 <Button x:Name="ReturnLauncherButton" Content="Вернуться в лаунчер" Click="ReturnLauncher_Click" HorizontalAlignment="Stretch" MinHeight="{DynamicResource Size.Primary}"
                     FontSize="{DynamicResource Font.SizeDisplay}" FontWeight="{DynamicResource Font.WeightEmphasis}"/>
+                <TextBlock x:Name="TotalPlaytimeText" Grid.Column="2" Text="Общее время игры: 0:00"
+                           Style="{DynamicResource LabelTextStyle}" TextWrapping="Wrap" VerticalAlignment="Center"/>
             </Grid>
         </Grid>
         <ScrollViewer x:Name="CatalogScroll" Grid.Row="1" Style="{DynamicResource FluentScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

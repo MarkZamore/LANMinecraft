@@ -123,6 +123,12 @@ public partial class PackDetailPage : UserControl, IDisposable
         MembershipButton.IsEnabled = enabled;
         MembershipButton.ToolTip = enabled ? null : "Дождитесь загрузки настроек, завершения игры, подготовки или передачи мира.";
     }
+    internal void SetPlaytime(long? milliseconds)
+    {
+        PackPlaytimeText.Text = milliseconds is long duration ? "Время на сборке: " + Playtime.Format(duration) : "";
+        PackPlaytimeText.Visibility = milliseconds.HasValue ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void ReturnCatalog_Click(object sender, RoutedEventArgs e) => ReturnRequested?.Invoke();
     private void Membership_Click(object sender, RoutedEventArgs e) => MembershipRequested?.Invoke(pack);
     private void ModLink_Click(object sender, RoutedEventArgs e)

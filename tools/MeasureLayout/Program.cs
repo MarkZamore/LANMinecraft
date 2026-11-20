@@ -26,6 +26,18 @@ internal static class Program
         throw new DirectoryNotFoundException("Launcher repository was not found. Pass its path as the first argument.");
     }
 
+    private static void SeedPlaytime(PackLibraryView view, IEnumerable<CatalogPack> packs)
+    {
+        var assembly = typeof(MainWindow).Assembly;
+        var key = assembly.GetType("Minecraft.Playtime", throwOnError: true)!.GetMethod("Key", AnyStatic)!;
+        const long duration = 97500000;
+        var values = packs.ToDictionary(pack => (string)key.Invoke(null, [pack.Entry])!, _ => duration);
+        var snapshot = Activator.CreateInstance(assembly.GetType("Minecraft.PlaytimeSnapshot", throwOnError: true)!,
+            values, values.Values.Sum());
+        typeof(PackLibraryView).GetMethod("SetPlaytime", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(view, [snapshot]);
+    }
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -75,6 +87,8 @@ internal static class Program
                     libraryModules ? catalog.Packs : catalog.PacksForDisplay(new AppSettings
                     { AddedPackRelativePaths = [PortablePackSyncService.DefaultPackRelativePath] }));
                 view.IsAdded = path => mode == "pack-mods" && path == PortablePackSyncService.DefaultPackRelativePath;
+                if (args.Contains("--playtime"))
+                    SeedPlaytime(view, catalog.Packs);
                 HideLauncherPageWithRetainedLog(window);
                 view.Visibility = Visibility.Visible;
                 if (mode is "pack-detail" or "pack-mods")

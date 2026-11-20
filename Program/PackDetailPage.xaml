@@ -81,12 +81,16 @@
                                             ContentTemplate="{DynamicResource LibraryRequirementDetailTemplate}"
                                             HorizontalAlignment="Right" VerticalAlignment="Top" Focusable="False"/>
                             <Grid Grid.Row="2">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Bottom" Margin="{DynamicResource Gap.Right3}">
                                     <TextBlock Text="{Binding Name}" FontSize="{DynamicResource Font.SizeHeading}" FontWeight="{DynamicResource Font.WeightEmphasis}" TextWrapping="Wrap"/>
                                     <TextBlock Text="{Binding VersionLabel}" TextWrapping="Wrap" Margin="{DynamicResource Gap.Above2}" Foreground="{DynamicResource Brush.TextMuted}"/>
                                 </StackPanel>
-                                <Button x:Name="MembershipButton" Grid.Column="1" Click="Membership_Click" Content="Добавить" Width="{DynamicResource Size.ButtonMax}" MinHeight="{DynamicResource Size.Primary}" Padding="{DynamicResource Pad.Control}" VerticalAlignment="Bottom"/>
+                                <Grid Grid.Column="1" VerticalAlignment="Bottom" MinHeight="{DynamicResource Size.Primary}">
+                                    <TextBlock x:Name="PackPlaytimeText" Visibility="Collapsed" VerticalAlignment="Center"
+                                               Margin="{DynamicResource Gap.Right3}" Style="{DynamicResource LabelTextStyle}"/>
+                                </Grid>
+                                <Button x:Name="MembershipButton" Grid.Column="2" Click="Membership_Click" Content="Добавить" Width="{DynamicResource Size.ButtonMax}" MinHeight="{DynamicResource Size.Primary}" Padding="{DynamicResource Pad.Control}" VerticalAlignment="Bottom"/>
                             </Grid>
                         </Grid>
                     </Grid>

@@ -18,7 +18,7 @@ public sealed class NativePortableHostCollection { }
 public sealed class NativePortableHostTests(NativePortableHostFixture fixture) : IClassFixture<NativePortableHostFixture>
 {
     [Fact]
-    public void OuterResourcesAndPacketKeepTheProductIdentityWithoutTheUnusedSdkApphost()
+    public async Task OuterResourcesAndPacketKeepTheProductIdentityWithoutTheUnusedSdkApphost()
     {
         var version = FileVersionInfo.GetVersionInfo(fixture.Executable);
         Assert.Equal("65001.0.0.0", version.FileVersion);
@@ -63,6 +63,82 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             Assert.DoesNotContain(external, paths);
         fixture.AssertDependencyResource();
         Assert.True(File.Exists(Path.Combine(fixture.Payload, "PortabilityAuditHost.exe")), "The SDK apphost must exist before the production packer deliberately omits it.");
+        await VerifyPlaytimeObserver();
+    }
+
+    private async Task VerifyPlaytimeObserver()
+    {
+        var paths = new AppPaths(fixture.Installation);
+        var logger = new Logger(paths.LogFile);
+        var gameInfo = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60")
+            { UseShellExecute = false, CreateNoWindow = true };
+        using var game = Process.Start(gameInfo)!;
+        var source = new CatalogSource("new-identifier", "Fixture",
+            new PackSyncSource("fixture", "fixture", "latest")) { LegacyId = "original-identifier" };
+        var key = Playtime.Key(source);
+        Assert.Equal(key, Playtime.Key(source with { Id = "another-display-id", RelativePath = "Renamed" }));
+        var args = new[]
+        {
+            "--track-playtime",
+            game.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            game.StartTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Playtime.Timestamp()!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            key
+        };
+        using var observer = StartObserver();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (!File.Exists(paths.PlaytimeFile) && !observer.HasExited)
+                await Task.Delay(50, timeout.Token);
+            Assert.False(observer.HasExited);
+            Assert.Equal(0L, Playtime.Read(paths, logger).Packs[key]);
+            using (var duplicate = StartObserver())
+            {
+                try
+                {
+                    await duplicate.WaitForExitAsync(timeout.Token);
+                    Assert.Equal(183, duplicate.ExitCode);
+                }
+                finally { if (!duplicate.HasExited) duplicate.Kill(); }
+            }
+            await Task.Delay(250, timeout.Token);
+            game.Kill();
+            await observer.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, observer.ExitCode);
+            var total = Playtime.Read(paths, logger);
+            Assert.Equal(total.Packs[key], total.Total);
+            Assert.InRange(total.Total, 250, 15000);
+            var copied = new AppPaths(Path.Combine(fixture.Root, "copied playtime"));
+            Directory.CreateDirectory(copied.Personal);
+            try
+            {
+                File.Copy(paths.PlaytimeFile, copied.PlaytimeFile);
+                Assert.Equal(total.Total, Playtime.Read(copied, logger).Packs[key]);
+            }
+            finally
+            {
+                File.Delete(copied.PlaytimeFile);
+                Directory.Delete(copied.Personal);
+                Directory.Delete(copied.Service);
+                Directory.Delete(copied.Root);
+            }
+        }
+        finally
+        {
+            if (!game.HasExited) game.Kill();
+            if (!observer.HasExited) observer.Kill();
+            await observer.WaitForExitAsync();
+            await game.WaitForExitAsync();
+            File.Delete(paths.PlaytimeFile);
+        }
+
+        Process StartObserver()
+        {
+            var info = new ProcessStartInfo(fixture.Executable) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var value in args) info.ArgumentList.Add(value);
+            return Process.Start(info)!;
+        }
     }
 
     [Fact]

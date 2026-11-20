@@ -791,7 +791,19 @@ public sealed class UpdateService
           if (Test-Path -LiteralPath $BackupPath) { Remove-Item -LiteralPath $BackupPath -Force }
           $replacementStarted = $true
           if (Test-Path -LiteralPath $ExePath -PathType Leaf) {
-            [System.IO.File]::Replace($CandidatePath, $ExePath, $BackupPath, $true)
+            for ($attempt = 0; ; $attempt++) {
+              try {
+                [System.IO.File]::Replace($CandidatePath, $ExePath, $BackupPath, $true)
+                break
+              } catch {
+                $code = $_.Exception.GetBaseException().HResult -band 0xffff
+                # ReplaceFile can report ERROR_UNABLE_TO_REMOVE_REPLACED while an observer maps the EXE.
+                if ($code -notin @(32, 33, 1175) -or $attempt -ge 9 -or
+                    (Test-Path -LiteralPath $BackupPath) -or !(Test-Path -LiteralPath $CandidatePath) -or
+                    (Get-Sha256 $ExePath) -ne $CurrentSha256.ToLowerInvariant()) { throw }
+                Start-Sleep -Milliseconds 500
+              }
+            }
           } else {
             [System.IO.File]::Move($CandidatePath, $ExePath)
           }

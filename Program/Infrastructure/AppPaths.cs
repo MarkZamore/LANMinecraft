@@ -110,6 +110,7 @@ public sealed class AppPaths
     public string PackConflicts { get; }
     public string Worlds { get; }
     public string SettingsFile => Path.Combine(Personal, LauncherStorageLayout.Settings);
+    public string PlaytimeFile => Path.Combine(Personal, LauncherStorageLayout.Playtime);
     /// <summary>Copies of per-world documents taken before this build first rewrites them.</summary>
     public string IdentityBackups => Path.Combine(Personal, LauncherStorageLayout.Backups, "Identity");
     public string PackHashesFile => Path.Combine(Personal, LauncherStorageLayout.PackHashes);

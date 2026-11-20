@@ -37,6 +37,9 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
 
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public string? ComponentRevision { get; init; }
+
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string? PlaytimeKey { get; init; }
     }
 
     private string Root => Path.Combine(paths.Personal, DirectoryName);
@@ -79,6 +82,21 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             logger?.Warn($"A finished game could not be forgotten ({ex.Message}): {PathFor(processId)}");
+        }
+    }
+
+    internal void MarkPlaytimeReady(int processId, string key)
+    {
+        try
+        {
+            var path = PathFor(processId);
+            var session = JsonSerializer.Deserialize<ClientSession>(File.ReadAllText(path), JsonOptions);
+            if (session?.ProcessId == processId)
+                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(session with { PlaytimeKey = key }, JsonOptions));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            logger?.Warn("Could not record playtime readiness: " + ex.Message);
         }
     }
 

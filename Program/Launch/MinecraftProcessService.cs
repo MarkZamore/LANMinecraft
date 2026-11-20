@@ -321,6 +321,8 @@ public sealed class MinecraftProcessService
     public string DiagnosticProfileId => Volatile.Read(ref _lastProfileId);
     public event Action<bool>? ClientRunningChanged;
     internal event Action<string>? ClientSessionEnded;
+    internal event Action? PlaytimeChanged;
+    internal Func<string, string>? ResolvePlaytimeKey { get; set; }
 
     /// <summary>
     /// The game died for want of memory, carrying the size it was given. Worth
@@ -771,6 +773,8 @@ public sealed class MinecraftProcessService
     {
         var startupOutput = new StartupOutputBuffer();
         var started = false;
+        var processId = 0;
+        ulong? javaPlaytimeStart = null;
         Task? monitor = null;
         JavaLaunchArgumentFile? argumentFile = null;
         var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -800,11 +804,12 @@ public sealed class MinecraftProcessService
             process.BeginErrorReadLine();
             afterStart?.Invoke(process);
 
-            var processId = process.Id;
+            processId = process.Id;
             var components = nativeExecutable is null ? RuntimeComponentContext.CurrentSet : null;
             _presence.Remember(process, packRelativePath, nativeExecutable,
                 componentHashes: components?.ComponentHashes, componentRevision: components?.Snapshot.Revision);
             components?.Commit();
+            if (nativeExecutable is null) javaPlaytimeStart = Playtime.Timestamp();
             if (_activeClientProcesses.TryAdd(processId, packRelativePath) && _activeClientProcesses.Count == 1)
                 NotifyClientRunningChanged(true);
 
@@ -835,11 +840,16 @@ public sealed class MinecraftProcessService
 
         if (nativeExecutable is not null)
         {
+            var gameProcessId = 0;
             try
             {
                 if (await NativeClientLaunch.WaitForGameWindowAsync(exitCode.Task,
-                        () => MinecraftWindowPlacementService.HasNativeGameWindow(process), token, nativeStartup).ConfigureAwait(false))
+                        () => (gameProcessId = MinecraftWindowPlacementService.NativeGameWindowProcessId(process)) != 0,
+                        token, nativeStartup).ConfigureAwait(false))
+                {
+                    StartPlaytime(processId, gameProcessId, packRelativePath, Playtime.Timestamp());
                     return;
+                }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -869,6 +879,7 @@ public sealed class MinecraftProcessService
             throw MinecraftLaunchFailure.FromProcessExit(
                 exitCode.Task.Result, startupOutput.Describe(), ReadLatestLogTail(gameDir));
         }
+        if (!exitCode.Task.IsCompleted) StartPlaytime(processId, processId, packRelativePath, javaPlaytimeStart);
 
         void ObserveClientOutput(object sender, DataReceivedEventArgs output)
         {
@@ -876,6 +887,16 @@ public sealed class MinecraftProcessService
             nativeStartup?.Observe(output.Data);
         }
     }
+
+    private void StartPlaytime(int recordedPid, int gamePid, string path, ulong? start)
+    {
+        if (ResolvePlaytimeKey is not { } resolve) return;
+        var key = resolve(path);
+        Playtime.Observe(gamePid, key, start, _logger, NotifyPlaytimeChanged);
+        _presence.MarkPlaytimeReady(recordedPid, key);
+    }
+
+    private void NotifyPlaytimeChanged() => PlaytimeChanged?.Invoke();
 
     private async Task StopNativeStartupAsync(Process process, Task monitor)
     {
@@ -1510,6 +1531,12 @@ public sealed class MinecraftProcessService
             }
             if (!_activeClientProcesses.TryAdd(session.ProcessId, session.PackRelativePath)) { process.Dispose(); continue; }
             adopted++;
+            if (session.PlaytimeKey is { } key)
+            {
+                var gamePid = session.ExecutablePath is null ? session.ProcessId :
+                    MinecraftWindowPlacementService.NativeGameWindowProcessId(process);
+                if (gamePid != 0) Playtime.Observe(gamePid, key, Playtime.Timestamp(), _logger, NotifyPlaytimeChanged);
+            }
             _logger.Info($"A game started by an earlier launcher is still running (process {session.ProcessId}, {session.PackRelativePath}).");
             var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
             // A game this launcher did not start: its size was another

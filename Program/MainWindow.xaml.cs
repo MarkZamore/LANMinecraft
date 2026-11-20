@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<WorldViewModel> _worlds = new();
     private readonly ObservableCollection<ClientBuildViewModel> _builds = new();
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private long _nextPlaytimeRefresh;
+    private bool _playtimeRefreshPending;
     private readonly LauncherSession _session = new();
     private readonly TransferRateTracker _transferRate = new();
     private readonly TransferRateTracker _updateRate = new();
@@ -152,6 +154,8 @@ public partial class MainWindow : Window
         _uiTimer.Tick += (_, _) =>
         {
             if (_shutdownStarted) return;
+            if (_libraryVisible && GameNeedsLauncher && Environment.TickCount64 >= _nextPlaytimeRefresh)
+                _ = RefreshPlaytimeAsync();
             RefreshBuilds();
             RefreshWorlds();
             RefreshSteamPeers();
@@ -261,6 +265,8 @@ public partial class MainWindow : Window
             _identityRegistry = game.Registry;
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
+            _minecraft.ResolvePlaytimeKey = path => Playtime.LaunchKey(path, _catalog?.Sources ?? []);
+            _minecraft.PlaytimeChanged += OnPlaytimeChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;
             _minecraft.ClientPreparingChanged += OnMinecraftClientPreparingChanged;
@@ -350,6 +356,7 @@ public partial class MainWindow : Window
         _updateDotsTimer?.Stop();
         _firstFrame.TrySetCanceled();
         if (_catalog is { } catalog) catalog.PresentationChanged -= OnLibraryPresentationChanged;
+        if (_minecraft is { } game) game.PlaytimeChanged -= OnPlaytimeChanged;
         _session.TryStep("disposing the prepared backdrop", () => _preparedBackdrop?.Dispose());
         _session.TryStep("stopping UI preload", () => _preload?.Dispose());
         _session.TryStep("disposing the library view", () => LibraryView.Dispose());
@@ -3416,6 +3423,24 @@ public partial class MainWindow : Window
 
     private void LibraryButton_Click(object sender, RoutedEventArgs e) => ShowLibrary(true);
 
+    private void OnPlaytimeChanged() => PostToUi(() =>
+    {
+        if (_libraryVisible) _ = RefreshPlaytimeAsync();
+    });
+
+    private async Task RefreshPlaytimeAsync()
+    {
+        if (_playtimeRefreshPending || _shutdownStarted || _paths is not { } paths || _logger is not { } logger) return;
+        _playtimeRefreshPending = true;
+        _nextPlaytimeRefresh = Environment.TickCount64 + 30000;
+        try
+        {
+            var snapshot = await Task.Run(() => Playtime.Read(paths, logger));
+            if (!_shutdownStarted) LibraryView.SetPlaytime(snapshot);
+        }
+        finally { _playtimeRefreshPending = false; }
+    }
+
     private void ShowLibrary(bool visible)
     {
         if (_libraryVisible == visible) return;
@@ -3427,6 +3452,7 @@ public partial class MainWindow : Window
             LibraryView.ShowCatalog();
             LibraryView.Visibility = Visibility.Visible;
             HideLauncherVisibility();
+            _ = RefreshPlaytimeAsync();
         }
         else
         {

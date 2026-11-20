@@ -15,6 +15,7 @@ public partial class PackLibraryView : UserControl
     public event Action<CatalogPack>? MembershipRequested;
     public event Action<Uri>? ModPageRequested;
     private CatalogPack? _selected;
+    private PlaytimeSnapshot playtime = PlaytimeSnapshot.Empty;
     private double _catalogOffset;
     private CatalogPack[] packs = [];
     private readonly Dictionary<CatalogPack, PackDetailPage> pages = [];
@@ -320,6 +321,19 @@ public partial class PackLibraryView : UserControl
         foreach (var (pack, page) in pages)
             page.RefreshMembership(IsAdded?.Invoke(pack.Entry.RelativePath) == true, CanChangeMembership);
     }
+    internal void SetPlaytime(PlaytimeSnapshot snapshot)
+    {
+        playtime = snapshot;
+        TotalPlaytimeText.Text = "Общее время игры: " + Playtime.Format(snapshot.Total);
+        RefreshSelectedPlaytime();
+    }
+
+    private void RefreshSelectedPlaytime()
+    {
+        if (_selected is not { } pack || DetailHost.Content is not PackDetailPage page) return;
+        page.SetPlaytime(playtime.Packs.TryGetValue(Playtime.Key(pack.Entry), out var duration) ? duration : null);
+    }
+
     public void ShowCatalog()
     {
         if (_selected is not null) Preloader?.Forget(Key(_selected));
@@ -349,6 +363,7 @@ public partial class PackLibraryView : UserControl
             Preloader.Promote(Key(pack));
         }
         DetailHost.Content = page;
+        RefreshSelectedPlaytime();
         LibraryTopBar.Visibility = Visibility.Collapsed;
         CatalogScroll.Visibility = Visibility.Collapsed;
         DetailHost.Visibility = Visibility.Visible;
