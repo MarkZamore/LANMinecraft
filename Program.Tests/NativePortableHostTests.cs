@@ -21,7 +21,9 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     public void OuterResourcesAndPacketKeepTheProductIdentityWithoutTheUnusedSdkApphost()
     {
         var version = FileVersionInfo.GetVersionInfo(fixture.Executable);
-        Assert.Equal("1.0.65001.0", version.FileVersion);
+        Assert.Equal("65001.0.0.0", version.FileVersion);
+        Assert.Equal((65001, 0, 0, 0),
+            (version.FileMajorPart, version.FileMinorPart, version.FileBuildPart, version.FilePrivatePart));
         Assert.Equal("1.0.65001+" + NativePortableHostFixture.Revision, version.ProductVersion);
         var group = NativeHostResources.Read(fixture.Executable, 14, 1); // GROUP_ICON
         var icon = File.ReadAllBytes(Path.Combine(fixture.Repository, "Program", "Assets", "icon.ico"));
@@ -208,7 +210,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             Assert.Empty(restarted.RootElement.GetProperty("args").EnumerateArray());
             Assert.False(File.Exists(journal));
             Assert.Equal(expectedHash, NativePortableHostFixture.HashFile(target));
-            Assert.Equal("1.0.65002.0", FileVersionInfo.GetVersionInfo(target).FileVersion);
+            Assert.Equal("65002.0.0.0", FileVersionInfo.GetVersionInfo(target).FileVersion);
             Assert.False(File.Exists(Path.Combine(fixture.Cache, "audit-restarted.txt")));
             Assert.Equal(fixture.Records.Select(record => record.Path).Order(StringComparer.Ordinal),
                 Directory.EnumerateFiles(fixture.Cache, "*", SearchOption.AllDirectories)

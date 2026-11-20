@@ -209,6 +209,7 @@ $icon = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Prog
 $regularFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-Regular.ttf')))
 $semiboldFont = Escape-ResourcePath ([IO.Path]::GetFullPath((Join-Path $repository 'Program\Assets\Fonts\Roboto-SemiBold.ttf')))
 $packetResource = Escape-ResourcePath $packetPath
+$fileVersion = "$ReleaseNumber.0.0.0"
 $productVersion = '1.0.' + $ReleaseNumber + $(if ($SourceRevisionId) { '+' + $SourceRevisionId.ToLowerInvariant() } else { '' })
 $resources = @"
 #include <windows.h>
@@ -218,7 +219,7 @@ $resources = @"
 103 RCDATA "$regularFont"
 104 RCDATA "$semiboldFont"
 1 VERSIONINFO
- FILEVERSION 1,0,$ReleaseNumber,0
+ FILEVERSION $ReleaseNumber,0,0,0
  PRODUCTVERSION 1,0,$ReleaseNumber,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
@@ -232,7 +233,7 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "LANMinecraft\0"
    VALUE "FileDescription", "LANMinecraft\0"
-   VALUE "FileVersion", "1.0.$ReleaseNumber.0\0"
+   VALUE "FileVersion", "$fileVersion\0"
    VALUE "InternalName", "LANMinecraft\0"
    VALUE "OriginalFilename", "LANMinecraft.exe\0"
    VALUE "ProductName", "LANMinecraft\0"
@@ -304,7 +305,7 @@ if ($process.ExitCode -ne 0) { throw ('Native host build failed. See ' + (Join-P
 $built = Join-Path $stage 'LANMinecraft.exe'
 if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw 'The native compiler did not produce LANMinecraft.exe.' }
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($built)
-if ($version.FileBuildPart -ne $ReleaseNumber -or $version.FileMajorPart -ne 1 -or $version.FileMinorPart -ne 0) {
+if ($version.FileVersion -cne $fileVersion -or $version.FileVersionRaw -ne [version]$fileVersion) {
     throw 'The outer native host has incorrect version resources.'
 }
 [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))

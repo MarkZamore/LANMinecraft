@@ -86,7 +86,9 @@ try {
     $exe = Get-CheckedFile 'LANMinecraft.exe'
     Assert-HashSize $exe $manifest
     $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
-    if ($version.FileVersion -ne "1.0.$ReleaseNumber.0" -or $version.ProductVersion -ne "1.0.$ReleaseNumber+$commit") { throw 'Outer EXE version/commit does not match its manifest.' }
+    $expectedFileVersion = "$ReleaseNumber.0.0.0"
+    if ($version.FileVersion -cne $expectedFileVersion -or $version.FileVersionRaw -ne [version]$expectedFileVersion -or
+        $version.ProductVersion -cne "1.0.$ReleaseNumber+$commit") { throw 'Outer EXE version/commit does not match its manifest.' }
     $assetPaths = [Collections.Generic.List[string]]::new()
     $assetPaths.Add($exe)
     $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)

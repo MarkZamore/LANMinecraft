@@ -70,8 +70,10 @@ function Get-ExistingExecutableReleaseNumber {
 
     try {
         $version = (Get-Item -LiteralPath $existingExecutable).VersionInfo.FileVersionRaw
-        if ($null -ne $version -and $version.Build -gt 0) {
-            return $version.Build
+        if ($null -ne $version -and $version.Minor -eq 0 -and $version.Revision -eq 0) {
+            if ($version.Build -eq 0 -and $version.Major -gt 0) { return $version.Major }
+            # Releases through 546 stored their number in the build part.
+            if ($version.Major -eq 1 -and $version.Build -gt 0) { return $version.Build }
         }
     } catch {
         Write-Verbose "The existing executable version could not be read: $($_.Exception.Message)"
