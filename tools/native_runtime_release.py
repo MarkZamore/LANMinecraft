@@ -5,6 +5,7 @@ import argparse
 from collections.abc import Callable
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
@@ -93,17 +94,30 @@ def rows(mapping):
     return [{"path": path, **mapping[path]} for path in sorted(mapping)]
 
 
+def file_access_path(path):
+    """Use the Windows extended namespace when a normal absolute path is too long."""
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\?\\") or len(absolute.encode("utf-16-le", "surrogatepass")) < 2 * 260:
+        return path
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
 def identity(path):
+    path = file_access_path(path)
     with path.open("rb") as stream:
         return {"sizeBytes": path.stat().st_size, "sha256": hashlib.file_digest(stream, "sha256").hexdigest()}
 
 
 def checked_file(root, value, expected=None):
     relative = safe_path(value)
-    path = root
+    path = file_access_path(root)
     require(not path.is_symlink() and not path.is_junction(), f"Linked input root: {root}")
     for part in relative.parts:
-        path = path / part
+        path = file_access_path(path / part)
         require(not path.is_symlink() and not path.is_junction(), f"Linked input path: {path}")
     require(path.is_file(), f"Missing input file: {path}")
     if expected is not None:

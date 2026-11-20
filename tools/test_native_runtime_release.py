@@ -1,4 +1,6 @@
+import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -146,6 +148,43 @@ class NativeRuntimeReleaseTests(unittest.TestCase):
         for different in (CLIENT.upper(), CLIENT + "/child"):
             with self.subTest(different=different), self.assertRaises(ValueError):
                 release.assert_disjoint(common, {different: common[CLIENT]})
+
+    @unittest.skipUnless(os.name == "nt", "Exercises Windows long paths and junction checks")
+    def test_runtime_checks_and_packages_long_files_without_following_junctions(self):
+        from _winapi import CreateJunction
+
+        branch = Path("native") / ("a" * 80)
+        folder = branch / ("b" * 80) / ("c" * 80)
+        member = (folder / "payload.dat").as_posix()
+        self.assertGreaterEqual(len(str(self.common / folder)), 260)
+        extended = Path("\\\\?\\" + str(self.common))
+        payload = b"deep shared runtime file"
+        record = {"sizeBytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        junction = extended / folder / "junction"
+        try:
+            self.emit(extended, member, payload)
+            self.assertEqual(payload, release.checked_file(self.common, member, record).read_bytes())
+            self.assertEqual(record, release.identity(self.common / member))
+            self.assertEqual(self.common / CLIENT, release.checked_file(self.common, CLIENT))
+            with self.assertRaisesRegex(ValueError, "approved SHA-256 or size"):
+                release.checked_file(self.common, member, {**record, "sha256": "0" * 64})
+
+            spec = {**self.spec, "files": [*self.spec["files"], {"path": member, **record}]}
+            output = self.root / "runtime-long-path"
+            contract = release.stage_runtime(self.common, spec, output)
+            with zipfile.ZipFile(output / "assets" / contract["archive"]["name"]) as archive:
+                self.assertEqual(payload, archive.read(member))
+
+            target = self.root / "junction-target"
+            self.emit(target, "payload.dat", payload)
+            CreateJunction(str(target), str(junction))
+            with self.assertRaisesRegex(ValueError, "Linked input path"):
+                release.checked_file(self.common, (folder / "junction" / "payload.dat").as_posix(), record)
+        finally:
+            if junction.is_junction():
+                junction.rmdir()
+            if (extended / branch).exists():
+                shutil.rmtree(extended / branch)
 
 
 if __name__ == "__main__":
