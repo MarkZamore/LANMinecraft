@@ -322,7 +322,7 @@ public sealed class MinecraftProcessService
     public event Action<bool>? ClientRunningChanged;
     internal event Action<string>? ClientSessionEnded;
     internal event Action? PlaytimeChanged;
-    internal Func<string, string>? ResolvePlaytimeKey { get; set; }
+    internal Func<string, string?>? ResolvePlaytimeKey { get; set; }
 
     /// <summary>
     /// The game died for want of memory, carrying the size it was given. Worth
@@ -890,8 +890,7 @@ public sealed class MinecraftProcessService
 
     private void StartPlaytime(int recordedPid, int gamePid, string path, ulong? start)
     {
-        if (ResolvePlaytimeKey is not { } resolve) return;
-        var key = resolve(path);
+        if (ResolvePlaytimeKey?.Invoke(path) is not { } key) return;
         Playtime.Observe(gamePid, key, start, _logger, NotifyPlaytimeChanged);
         _presence.MarkPlaytimeReady(recordedPid, key);
     }
@@ -1531,7 +1530,7 @@ public sealed class MinecraftProcessService
             }
             if (!_activeClientProcesses.TryAdd(session.ProcessId, session.PackRelativePath)) { process.Dispose(); continue; }
             adopted++;
-            if (session.PlaytimeKey is { } key)
+            if (session.PlaytimeRepository is { } key)
             {
                 var gamePid = session.ExecutablePath is null ? session.ProcessId :
                     MinecraftWindowPlacementService.NativeGameWindowProcessId(process);

@@ -225,14 +225,14 @@ public sealed class LogVolumeTests : IDisposable
         File.WriteAllText(paths.LogFile, "current session");
         for (var index = 0; index < 12; index++)
         {
-            var path = Path.Combine(paths.Personal, $"logs-2026081{index % 10}-0000{index:D2}.log");
+            var path = Path.Combine(paths.Logs, $"logs-2026081{index % 10}-0000{index:D2}.log");
             File.WriteAllBytes(path, new byte[2 * 1024 * 1024]);
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-index));
         }
 
         LogCleanupService.RunCleanup(paths);
 
-        var archives = Directory.GetFiles(paths.Personal, "logs-*.log");
+        var archives = Directory.GetFiles(paths.Logs, "logs-*.log");
         var total = archives.Sum(path => new FileInfo(path).Length);
         Assert.True(total <= 16L * 1024 * 1024, $"{total} bytes of launcher logs survived.");
     }

@@ -321,6 +321,8 @@ public partial class PackLibraryView : UserControl
         foreach (var (pack, page) in pages)
             page.RefreshMembership(IsAdded?.Invoke(pack.Entry.RelativePath) == true, CanChangeMembership);
     }
+    internal Func<CatalogSource, string>? PlaytimeKeyFor { get; set; }
+
     internal void SetPlaytime(PlaytimeSnapshot snapshot)
     {
         playtime = snapshot;
@@ -333,7 +335,8 @@ public partial class PackLibraryView : UserControl
     private void RefreshSelectedPlaytime()
     {
         if (_selected is not { } pack || DetailHost.Content is not PackDetailPage page) return;
-        page.SetPlaytime(playtime.Packs.TryGetValue(Playtime.Key(pack.Entry), out var duration) ? duration : null);
+        var key = PlaytimeKeyFor?.Invoke(pack.Entry) ?? Playtime.Key(pack.Entry);
+        page.SetPlaytime(playtime.Packs.TryGetValue(key, out var duration) ? duration : null);
     }
 
     public void ShowCatalog()

@@ -39,7 +39,7 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
         public string? ComponentRevision { get; init; }
 
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-        public string? PlaytimeKey { get; init; }
+        public string? PlaytimeRepository { get; init; }
     }
 
     private string Root => Path.Combine(paths.Personal, DirectoryName);
@@ -92,7 +92,7 @@ public sealed class ClientPresenceService(AppPaths paths, Logger? logger = null)
             var path = PathFor(processId);
             var session = JsonSerializer.Deserialize<ClientSession>(File.ReadAllText(path), JsonOptions);
             if (session?.ProcessId == processId)
-                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(session with { PlaytimeKey = key }, JsonOptions));
+                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(session with { PlaytimeRepository = key }, JsonOptions));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

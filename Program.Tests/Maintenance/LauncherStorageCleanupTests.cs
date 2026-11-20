@@ -209,21 +209,30 @@ public sealed class LauncherStorageCleanupTests : IDisposable
     [Fact]
     public void LogRotationLeavesOldArchivesForIdleRetention()
     {
-        var expired = Path.Combine(_paths.Personal, "logs-20210101-000000.log");
+        var expired = Path.Combine(_paths.Logs, "logs-20210101-000000.log");
         Write(expired);
         File.SetLastWriteTimeUtc(expired, DateTime.UtcNow.AddDays(-10));
-        Write(_paths.LogFile);
+        var oldLayout = new[] { "logs.log", "logs-20261120-172400.log", "steam-spike-20261120-172400.log", "time" }
+            .Select(name => Path.Combine(_paths.Personal, name)).ToArray();
+        foreach (var file in oldLayout) Write(file);
+        Write(_paths.PlaytimeFile);
+        Assert.Equal(Path.Combine(_paths.Logs, "logs.log"), _paths.LogFile);
+        new Logger(_paths.LogFile).Info("Previous session");
 
         LogCleanupService.RotateLauncherLog(_paths);
 
         Assert.False(File.Exists(_paths.LogFile));
         Assert.True(File.Exists(expired));
-        Assert.Equal(2, Directory.GetFiles(_paths.Personal, "logs-*.log").Length);
+        Assert.Equal(2, Directory.GetFiles(_paths.Logs, "logs-*.log").Length);
+        new Logger(_paths.LogFile).Info("Current session");
 
         Run();
 
+        Assert.All(oldLayout, file => Assert.False(File.Exists(file)));
         Assert.False(File.Exists(expired));
-        Assert.Single(Directory.GetFiles(_paths.Personal, "logs-*.log"));
+        Assert.Single(Directory.GetFiles(_paths.Logs, "logs-*.log"));
+        Assert.Contains("Current session", File.ReadAllText(_paths.LogFile));
+        Assert.True(File.Exists(_paths.PlaytimeFile));
     }
 
     [Fact]

@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Text.Json;
 
 namespace Minecraft;
 
@@ -11,19 +11,22 @@ internal static class Playtime
 {
     internal const long MillisecondsPerMinute = 60000;
     private const int FileLimit = 1024 * 1024;
-    private const string Header = "LANMinecraft-playtime 1";
+    internal static string Key(CatalogSource entry) => entry.Source.Repo;
 
-    internal static string Key(CatalogSource entry) => Encode("catalog:" + entry.StorageId);
-
-    internal static string LaunchKey(string path, IEnumerable<CatalogSource> sources)
+    internal static string? LaunchKey(string path, IEnumerable<CatalogSource> sources, PackSyncSource? launchedSource)
     {
+        if (launchedSource is null) return null;
         var entry = sources.FirstOrDefault(source =>
-            source.RelativePath.Equals(path, StringComparison.OrdinalIgnoreCase) ||
-            source.LegacyRelativePaths.Contains(path, StringComparer.OrdinalIgnoreCase));
-        return entry is null ? Encode("local:" + path) : Key(entry);
+            source.RelativePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+        if (entry is null || !ValidKey(Key(entry))) return null;
+        return PackSyncSource.EqualsIgnoringCase(entry.Source, launchedSource) ||
+            entry.LegacySources.Any(source => PackSyncSource.EqualsIgnoringCase(source, launchedSource))
+            ? Key(entry) : null;
     }
 
-    private static string Encode(string value) => Convert.ToHexString(Encoding.UTF8.GetBytes(value.ToUpperInvariant()));
+    private static bool ValidKey(string repository) => repository.Length is > 0 and <= 100 &&
+        repository is not ("." or "..") &&
+        repository.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -33,7 +36,7 @@ internal static class Playtime
 
     internal static void Observe(int processId, string key, ulong? start, Logger logger, Action changed)
     {
-        if (start is null) return;
+        if (start is null || !ValidKey(key)) return;
         try
         {
             if (!BootstrapLaunchContext.TryGet(out var context) || context is null || !File.Exists(context.ExePath)) return;
@@ -82,34 +85,27 @@ internal static class Playtime
             if (stream.Length is <= 0 or > FileLimit) throw new InvalidDataException("Invalid playtime file size.");
             var bytes = new byte[(int)stream.Length];
             stream.ReadExactly(bytes);
-            var lines = Encoding.ASCII.GetString(bytes).Split('\n');
-            if (lines[0] != Header || lines[^1].Length != 0) throw new InvalidDataException("Invalid playtime header.");
-            var values = new Dictionary<string, long>(StringComparer.Ordinal);
+            var json = bytes.AsMemory();
+            if (json.Span.StartsWith("\uFEFF"u8)) json = json[3..];
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Expected playtime object.");
+            var values = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             long total = 0;
-            foreach (var line in lines.AsSpan(1, lines.Length - 2))
+            foreach (var property in document.RootElement.EnumerateObject())
             {
-                var tab = line.IndexOf('\t');
-                if (tab <= 0 || tab > 4096 || tab % 2 != 0 ||
-                    !line.AsSpan(0, tab).ContainsOnlyUpperHex() ||
-                    !long.TryParse(line.AsSpan(tab + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var value) ||
-                    !values.TryAdd(line[..tab], value))
+                if (!ValidKey(property.Name) || property.Value.ValueKind != JsonValueKind.Number ||
+                    !property.Value.TryGetInt64(out var value) || value < 0 || property.Value.GetRawText()[0] == '-' ||
+                    !values.TryAdd(property.Name, value))
                     throw new InvalidDataException("Invalid playtime record.");
                 total = checked(total + value);
             }
             return new PlaytimeSnapshot(values, total);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OverflowException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OverflowException or InvalidDataException or JsonException or InvalidOperationException)
         {
             logger.Warn("Could not read playtime: " + ex.Message);
             return PlaytimeSnapshot.Empty;
         }
-    }
-
-    private static bool ContainsOnlyUpperHex(this ReadOnlySpan<char> text)
-    {
-        foreach (var ch in text)
-            if (!(ch is >= '0' and <= '9' or >= 'A' and <= 'F')) return false;
-        return true;
     }
 
     internal static string Format(long milliseconds)

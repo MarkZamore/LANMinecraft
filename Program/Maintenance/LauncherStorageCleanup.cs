@@ -80,8 +80,7 @@ internal static class LauncherStorageCleanup
             case LauncherStorageCleanupStep.LauncherRoot:
                 return SweepRoot(paths, paths.Launcher, LauncherStorageLayout.LauncherEntries, cutoff, checkpoint, resumeAfter, completedEntry);
             case LauncherStorageCleanupStep.PersonalRoot:
-                return SweepRoot(paths, paths.Personal, LauncherStorageLayout.PersonalEntries, cutoff, checkpoint, resumeAfter, completedEntry,
-                    isPersonalRoot: true);
+                return SweepRoot(paths, paths.Personal, LauncherStorageLayout.PersonalEntries, cutoff, checkpoint, resumeAfter, completedEntry);
             case LauncherStorageCleanupStep.LauncherArchives:
                 LogCleanupService.PruneLauncherArchives(paths, checkpoint);
                 break;
@@ -155,15 +154,14 @@ internal static class LauncherStorageCleanup
     }
 
     private static int SweepRoot(AppPaths paths, string root, IReadOnlySet<string> kept, DateTime cutoff,
-        Action checkpoint, string? resumeAfter, Action<string>? completedEntry, bool isPersonalRoot = false)
+        Action checkpoint, string? resumeAfter, Action<string>? completedEntry)
     {
         var removed = 0;
         foreach (var entry in ReadOrderedEntries(paths, root, checkpoint))
         {
             var name = Path.GetFileName(entry);
             if (kept.Contains(name) || IsProtected(name) ||
-                name.StartsWith(".pack-sync-stage", StringComparison.OrdinalIgnoreCase) ||
-                isPersonalRoot && (LogCleanupService.IsLauncherArchiveName(name) || LogCleanupService.IsSteamSpikeLogName(name)))
+                name.StartsWith(".pack-sync-stage", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             // AtomicFile publishes these by rename. Recent temporary files can

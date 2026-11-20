@@ -1,12 +1,12 @@
 // Included by native_host.cpp so the observer uses the same guarded paths.
 namespace Playtime
 {
-constexpr char Header[] = "LANMinecraft-playtime 1\n";
+constexpr wchar_t FileName[] = L"time.json";
 constexpr DWORD Interval = 30000;
 constexpr std::size_t Limit = 1024 * 1024;
 constexpr std::uint64_t MaxDuration = INT64_MAX;
 
-std::uint64_t Number(const std::string& value, std::uint64_t maximum)
+std::uint64_t Number(std::string_view value, std::uint64_t maximum)
 {
     std::uint64_t result = 0;
     if (value.empty()) throw Failure(L"Missing playtime number");
@@ -19,17 +19,124 @@ std::uint64_t Number(const std::string& value, std::uint64_t maximum)
     return result;
 }
 
-bool ValidKey(const std::string& key)
+bool RepositoryCharacter(char c)
 {
-    return !key.empty() && key.size() <= 4096 && key.size() % 2 == 0 &&
-        std::all_of(key.begin(), key.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'); });
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.';
 }
 
-using Totals = std::map<std::string, std::uint64_t>;
+bool ValidKey(std::string_view key)
+{
+    return !key.empty() && key.size() <= 100 && key != "." && key != ".." &&
+        std::all_of(key.begin(), key.end(), RepositoryCharacter);
+}
+
+struct RepositoryLess
+{
+    bool operator()(std::string_view left, std::string_view right) const
+    {
+        const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c; };
+        return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(),
+            [&](char a, char b) { return lower(a) < lower(b); });
+    }
+};
+
+using Totals = std::map<std::string, std::uint64_t, RepositoryLess>;
+
+// The time file is a flat JSON object: ASCII repository names and integer
+// millisecond values. No other JSON value types belong in this file.
+class TimeJson
+{
+public:
+    explicit TimeJson(std::string_view data) : remaining_(data)
+    {
+        if (remaining_.substr(0, 3) == "\xef\xbb\xbf") remaining_.remove_prefix(3);
+    }
+
+    Totals Parse()
+    {
+        Require('{');
+        Totals totals;
+        if (!Take('}'))
+        {
+            do
+            {
+                auto key = ReadKey();
+                Require(':');
+                SkipWhitespace();
+                const auto digits = remaining_.find_first_not_of("0123456789");
+                const auto number = remaining_.substr(0, digits);
+                if (number.size() > 1 && number.front() == '0') Invalid();
+                if (!totals.emplace(std::move(key), Number(number, MaxDuration)).second) Invalid();
+                remaining_.remove_prefix(number.size());
+            } while (Take(','));
+            Require('}');
+        }
+        SkipWhitespace();
+        if (!remaining_.empty()) Invalid();
+        return totals;
+    }
+
+private:
+    [[noreturn]] static void Invalid() { throw Failure(L"Invalid playtime JSON"); }
+
+    void SkipWhitespace()
+    {
+        const auto first = remaining_.find_first_not_of(" \t\r\n");
+        remaining_.remove_prefix(std::min(first, remaining_.size()));
+    }
+
+    bool Take(char expected)
+    {
+        SkipWhitespace();
+        if (remaining_.empty() || remaining_.front() != expected) return false;
+        remaining_.remove_prefix(1);
+        return true;
+    }
+
+    void Require(char expected) { if (!Take(expected)) Invalid(); }
+
+    std::string ReadKey()
+    {
+        Require('"');
+        std::string key;
+        while (!remaining_.empty())
+        {
+            auto c = remaining_.front();
+            remaining_.remove_prefix(1);
+            if (c == '"')
+            {
+                if (!ValidKey(key)) Invalid();
+                return key;
+            }
+            if (c == '\\')
+            {
+                if (remaining_.size() < 5 || remaining_.front() != 'u') Invalid();
+                unsigned int value = 0;
+                for (const auto digit : remaining_.substr(1, 4))
+                {
+                    value *= 16;
+                    if (digit >= '0' && digit <= '9') value += digit - '0';
+                    else if (digit >= 'a' && digit <= 'f') value += digit - 'a' + 10;
+                    else if (digit >= 'A' && digit <= 'F') value += digit - 'A' + 10;
+                    else Invalid();
+                }
+                if (value > 127) Invalid();
+                c = static_cast<char>(value);
+                remaining_.remove_prefix(5);
+            }
+            if (!RepositoryCharacter(c) || key.size() == 100) Invalid();
+            key.push_back(c);
+        }
+        Invalid();
+    }
+
+    std::string_view remaining_;
+};
 
 Totals Load(HANDLE parent)
 {
-    auto file = OpenRelative(parent, L"time", FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+    auto file = OpenRelative(parent, FileName, FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
         FILE_SHARE_READ | FILE_SHARE_DELETE, OpenExisting, false, true);
     if (!file) return {};
     LARGE_INTEGER length{};
@@ -37,37 +144,28 @@ Totals Load(HANDLE parent)
         throw Failure(L"Invalid playtime file size");
     std::string data(static_cast<std::size_t>(length.QuadPart), '\0');
     DWORD read = 0;
-    if (!ReadFile(file.get(), data.data(), static_cast<DWORD>(data.size()), &read, nullptr) || read != data.size() ||
-        data.compare(0, sizeof(Header) - 1, Header) != 0) throw Failure(L"Invalid playtime file header");
-    Totals totals;
-    for (std::size_t start = sizeof(Header) - 1; start < data.size();)
-    {
-        const auto end = data.find('\n', start);
-        const auto tab = data.find('\t', start);
-        if (end == std::string::npos || tab >= end) throw Failure(L"Invalid playtime record");
-        auto key = data.substr(start, tab - start);
-        if (!ValidKey(key) || !totals.emplace(key, Number(data.substr(tab + 1, end - tab - 1), MaxDuration)).second)
-            throw Failure(L"Invalid or duplicate playtime key");
-        start = end + 1;
-    }
-    return totals;
+    if (!ReadFile(file.get(), data.data(), static_cast<DWORD>(data.size()), &read, nullptr) || read != data.size())
+        throw Failure(L"Could not read playtime JSON");
+    return TimeJson(data).Parse();
 }
 
 void Save(HANDLE parent, const Totals& totals)
 {
-    std::string data = Header;
+    std::string data = "{";
     std::uint64_t sum = 0;
     for (const auto& [key, value] : totals)
     {
         if (value > MaxDuration - sum) throw Failure(L"Playtime total overflow");
         sum += value;
-        data += key + '\t' + std::to_string(value) + '\n';
+        if (data.size() != 1) data += ',';
+        data += "\n  \"" + key + "\": " + std::to_string(value);
     }
+    data += "\n}\n";
     if (data.size() > Limit) throw Failure(L"Playtime file too large");
     GUID guid{};
     wchar_t id[40]{};
     if (FAILED(CoCreateGuid(&guid)) || !StringFromGUID2(guid, id, 40)) throw Failure(L"Could not name playtime checkpoint");
-    const auto name = std::wstring(L".time.") + id + L".tmp";
+    const auto name = std::wstring(L".time.json.") + id + L".tmp";
     auto file = OpenRelative(parent, name, FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE,
         FILE_SHARE_READ | FILE_SHARE_DELETE, CreateNew, false);
     try
@@ -77,12 +175,11 @@ void Save(HANDLE parent, const Totals& totals)
             written != data.size() || !FlushFileBuffers(file.get())) Fail(L"Write playtime checkpoint");
         // A leaf name in FileRenameInformation is relative to the opened
         // source's parent and works while the directory guard is held.
-        constexpr wchar_t destination[] = L"time";
-        alignas(FILE_RENAME_INFO) std::array<unsigned char, sizeof(FILE_RENAME_INFO) + sizeof(destination)> renameBuffer{};
+        alignas(FILE_RENAME_INFO) std::array<unsigned char, sizeof(FILE_RENAME_INFO) + sizeof(FileName)> renameBuffer{};
         auto* rename = reinterpret_cast<FILE_RENAME_INFO*>(renameBuffer.data());
         rename->ReplaceIfExists = TRUE;
-        rename->FileNameLength = sizeof(destination) - sizeof(wchar_t);
-        std::memcpy(rename->FileName, destination, sizeof(destination));
+        rename->FileNameLength = sizeof(FileName) - sizeof(wchar_t);
+        std::memcpy(rename->FileName, FileName, sizeof(FileName));
         using RenameFile = LONG(NTAPI*)(HANDLE, NativeStatus*, PVOID, ULONG, ULONG);
         static const auto renameFile = reinterpret_cast<RenameFile>(
             GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSetInformationFile"));

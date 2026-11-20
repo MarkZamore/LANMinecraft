@@ -70,13 +70,21 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
     {
         var paths = new AppPaths(fixture.Installation);
         var logger = new Logger(paths.LogFile);
+        Directory.CreateDirectory(paths.Personal);
+        var legacyFile = Path.Combine(paths.Personal, "time");
+        File.WriteAllText(legacyFile, "Previous format");
+        File.WriteAllText(paths.PlaytimeFile, "{\r\n  \"Another-\\u0052epo\": 45000\r\n}\r\n", new UTF8Encoding(true));
         var gameInfo = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60")
             { UseShellExecute = false, CreateNoWindow = true };
         using var game = Process.Start(gameInfo)!;
         var source = new CatalogSource("new-identifier", "Fixture",
-            new PackSyncSource("fixture", "fixture", "latest")) { LegacyId = "original-identifier" };
+            new PackSyncSource("fixture", "Better-Vanilla", "latest"));
         var key = Playtime.Key(source);
-        Assert.Equal(key, Playtime.Key(source with { Id = "another-display-id", RelativePath = "Renamed" }));
+        Assert.Equal("Better-Vanilla", key);
+        Assert.Equal(key, Playtime.LaunchKey("Fixture", [source], source.Source));
+        Assert.Null(Playtime.LaunchKey("Fixture", [source], null));
+        Assert.Null(Playtime.LaunchKey("Personal copy", [source], source.Source));
+        Assert.Null(Playtime.LaunchKey("Fixture", [source], source.Source with { Owner = "other-owner" }));
         var args = new[]
         {
             "--track-playtime",
@@ -89,7 +97,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            while (!File.Exists(paths.PlaytimeFile) && !observer.HasExited)
+            while (!Playtime.Read(paths, logger).Packs.ContainsKey(key) && !observer.HasExited)
                 await Task.Delay(50, timeout.Token);
             Assert.False(observer.HasExited);
             Assert.Equal(0L, Playtime.Read(paths, logger).Packs[key]);
@@ -107,14 +115,18 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             await observer.WaitForExitAsync(timeout.Token);
             Assert.Equal(0, observer.ExitCode);
             var total = Playtime.Read(paths, logger);
-            Assert.Equal(total.Packs[key], total.Total);
-            Assert.InRange(total.Total, 250, 15000);
+            Assert.Equal(45000, total.Packs["another-repo"]);
+            Assert.Equal(total.Packs[key] + 45000, total.Total);
+            Assert.InRange(total.Packs["better-vanilla"], 250, 15000);
+            Assert.Equal("Previous format", File.ReadAllText(legacyFile));
+            using (var json = JsonDocument.Parse(File.ReadAllBytes(paths.PlaytimeFile)))
+                Assert.Equal(total.Packs[key], json.RootElement.GetProperty("Better-Vanilla").GetInt64());
             var copied = new AppPaths(Path.Combine(fixture.Root, "copied playtime"));
             Directory.CreateDirectory(copied.Personal);
             try
             {
                 File.Copy(paths.PlaytimeFile, copied.PlaytimeFile);
-                Assert.Equal(total.Total, Playtime.Read(copied, logger).Packs[key]);
+                Assert.Equal(total.Total, Playtime.Read(copied, logger).Total);
             }
             finally
             {
@@ -131,6 +143,7 @@ public sealed class NativePortableHostTests(NativePortableHostFixture fixture) :
             await observer.WaitForExitAsync();
             await game.WaitForExitAsync();
             File.Delete(paths.PlaytimeFile);
+            File.Delete(legacyFile);
         }
 
         Process StartObserver()

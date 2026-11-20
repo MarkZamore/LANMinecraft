@@ -187,7 +187,7 @@ else {
     $library = Join-Path $actual 'Launcher/Library'
     $indexPath = Join-Path $library 'catalog.json'
     $sourcePath = Join-Path $library $cacheName
-    $logPath = Join-Path $actual 'Personal/logs.log'
+    $logPath = Join-Path $actual 'Personal/Logs/logs.log'
     $line = 'Launch ' + $PackName + ': verified startup manifest revision "' + $expected.revision + '", SHA256 ' + $expectedManifestSha + '.'
     $process = $null
     try {

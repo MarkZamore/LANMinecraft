@@ -37,7 +37,7 @@ var profile = isFabric ? $"fabric-loader-{loaderVersion}-{version}" : "read-only
 var runtime = Activator.CreateInstance(Type("PreparedRuntime"), packRoot, profile, "java", client, descriptor)!;
 Type("PreparedRuntime").GetProperty("LibrariesRoot")!.SetValue(runtime, libraries);
 var paths = Activator.CreateInstance(Type("AppPaths"), appRoot)!;
-var logger = Activator.CreateInstance(Type("Logger"), Path.Combine(appRoot, "Minecraft", "Personal", "logs.log"))!;
+var logger = Activator.CreateInstance(Type("Logger"), Type("AppPaths").GetProperty("LogFile")!.GetValue(paths))!;
 var components = Activator.CreateInstance(Type("RuntimeComponentService"), paths, logger, null, null, null)!;
 var catalogTask = (Task)Type("RuntimeComponentService").GetMethod("LoadAsync")!
     .Invoke(components, [false, CancellationToken.None])!;

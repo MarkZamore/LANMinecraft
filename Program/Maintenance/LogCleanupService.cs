@@ -34,10 +34,12 @@ public static partial class LogCleanupService
                 return;
             }
             var stamp = info.LastWriteTimeUtc.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-            var archive = Path.Combine(paths.Personal, $"logs-{stamp}.log");
+            var name = $"logs-{stamp}.log";
+            var archive = Path.Combine(paths.Logs, name);
             if (File.Exists(archive) || Directory.Exists(archive))
-                archive = Path.Combine(paths.Personal, $"logs-{stamp}-{Guid.NewGuid():N}.log");
-            File.Move(current, archive);
+                name = $"logs-{stamp}-{Guid.NewGuid():N}.log";
+            using var parents = new GuardedFileSystem.DirectoryLocks();
+            if (parents.HoldAncestors(paths.Logs)) GuardedFileSystem.TryPublishNewOrdinaryFile(current, name);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -51,17 +53,14 @@ public static partial class LogCleanupService
         PruneLauncherArchives(paths, static () => { });
     }
 
-    internal static bool IsLauncherArchiveName(string name) => LauncherArchiveName().IsMatch(name);
-    internal static bool IsSteamSpikeLogName(string name) => SteamSpikeLogName().IsMatch(name);
-
     internal static void PruneLauncherArchives(AppPaths paths, Action checkpoint)
     {
         var kept = new List<FileInfo>();
         var cutoff = DateTime.UtcNow - DiagnosticRetention;
-        foreach (var path in LauncherStorageCleanup.ReadEntries(paths, paths.Personal, checkpoint))
+        foreach (var path in LauncherStorageCleanup.ReadEntries(paths, paths.Logs, checkpoint))
         {
             var name = Path.GetFileName(path);
-            if ((!IsLauncherArchiveName(name) && !IsSteamSpikeLogName(name)) ||
+            if ((!LauncherArchiveName().IsMatch(name) && !SteamSpikeLogName().IsMatch(name)) ||
                 !MaintenancePath.TryRead(paths, path, out var attributes) ||
                 (attributes & FileAttributes.Directory) != 0) continue;
             var file = new FileInfo(path);

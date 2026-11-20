@@ -151,6 +151,9 @@ public partial class MainWindow : Window
         LibraryView.MembershipRequested += ChangeLibraryMembership;
         LibraryView.ModPageRequested += OpenModPage;
         LibraryView.IsAdded = path => _settings is not null && PackMembership.Contains(_settings, path);
+        LibraryView.PlaytimeKeyFor = card => _catalog?.Sources.FirstOrDefault(entry =>
+            entry.AcceptsIdentity(card) && entry.RelativePath.Equals(card.RelativePath, StringComparison.OrdinalIgnoreCase))?.Source.Repo
+            ?? Playtime.Key(card);
         _uiTimer.Tick += (_, _) =>
         {
             if (_shutdownStarted) return;
@@ -265,7 +268,8 @@ public partial class MainWindow : Window
             _identityRegistry = game.Registry;
             _peerNotices.GameOverlay = _minecraft.NoticeOverlay;
             _minecraft.ClientRunningChanged += OnMinecraftClientRunningChanged;
-            _minecraft.ResolvePlaytimeKey = path => Playtime.LaunchKey(path, _catalog?.Sources ?? []);
+            _minecraft.ResolvePlaytimeKey = path => _catalog is { } catalog
+                ? Playtime.LaunchKey(path, catalog.Sources, catalog.SourceFor(path)) : null;
             _minecraft.PlaytimeChanged += OnPlaytimeChanged;
             _minecraft.ClientRanOutOfMemory += OnMinecraftRanOutOfMemory;
             _minecraft.ClientMemoryIsTooSmall += OnMinecraftMemoryIsTooSmall;

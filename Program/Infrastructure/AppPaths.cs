@@ -135,7 +135,8 @@ public sealed class AppPaths
 
     /// <summary>Bug reports received from friends, one directory per report.</summary>
     public string BugReports => Path.Combine(Personal, LauncherStorageLayout.BugReports);
-    public string LogFile => Path.Combine(Personal, LauncherStorageLayout.Log);
+    public string Logs => Path.Combine(Personal, LauncherStorageLayout.Logs);
+    public string LogFile => Path.Combine(Logs, LauncherStorageLayout.Log);
 
     public void Ensure()
     {
@@ -145,6 +146,12 @@ public sealed class AppPaths
         Directory.CreateDirectory(Runtimes);
         Directory.CreateDirectory(JavaRuntimes);
         Directory.CreateDirectory(Personal);
+        using (var parents = new GuardedFileSystem.DirectoryLocks())
+        {
+            if (!parents.HoldAncestors(Personal)) throw new IOException("Invalid personal storage directory.");
+            Directory.CreateDirectory(Logs);
+            if (!parents.Hold(Logs)) throw new IOException("Invalid launcher logs directory.");
+        }
         Directory.CreateDirectory(Instances);
         Directory.CreateDirectory(Worlds);
         Directory.CreateDirectory(BugReports);

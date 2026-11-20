@@ -7,8 +7,8 @@ if (!$exe.StartsWith($boundary + '\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Use a packaged launcher in an isolated agent-runs installation.'
 }
 $root = Split-Path -Parent $exe
-$file = Join-Path $root 'Minecraft/Personal/time'
-$key = [Convert]::ToHexString([Text.Encoding]::UTF8.GetBytes('CATALOG:PLAYTIME-QA-' + [guid]::NewGuid().ToString('N')))
+$file = Join-Path $root 'Minecraft/Personal/time.json'
+$key = 'Playtime-QA-' + [guid]::NewGuid().ToString('N')
 $observerIdFile = Join-Path $root 'qa-observer-pid.txt'
 if (Test-Path -LiteralPath $observerIdFile) { throw 'Remove the previous owned QA run first.' }
 Add-Type -Namespace PlaytimeQa -Name Clock -MemberDefinition '
@@ -16,8 +16,10 @@ Add-Type -Namespace PlaytimeQa -Name Clock -MemberDefinition '
     public static extern bool QueryUnbiasedInterruptTime(out ulong time);'
 
 function Read-Checkpoint {
-    $line = Get-Content -LiteralPath $file -ErrorAction SilentlyContinue | Where-Object { $_.StartsWith("$key`t") }
-    if ($line) { return [long]$line.Split([char]9)[1] }
+    if (Test-Path -LiteralPath $file) {
+        $values = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
+        if ($values.Contains($key)) { return [long]$values[$key] }
+    }
     return -1L
 }
 

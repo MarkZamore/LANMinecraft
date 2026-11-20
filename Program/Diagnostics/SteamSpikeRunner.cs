@@ -59,7 +59,7 @@ internal static class SteamSpikeRunner
         var paths = new AppPaths(AppPaths.ResolveApplicationRoot());
         paths.Ensure();
         var transcriptPath = Path.Combine(
-            paths.Personal,
+            paths.Logs,
             $"steam-spike-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         _transcript = new StreamWriter(transcriptPath, append: true) { AutoFlush = true };
         Log($"transcript: {transcriptPath}");
