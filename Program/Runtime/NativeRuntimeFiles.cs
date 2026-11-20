@@ -10,6 +10,7 @@ internal sealed class NativeRuntimeFiles : IDisposable
 {
     private readonly List<FileStream> _opened = [];
     private readonly HashSet<string> _files = new(StringComparer.OrdinalIgnoreCase);
+    private SharedNativeRuntimeStore.Lease? _shared;
 
     private NativeRuntimeFiles(string executablePath) => ExecutablePath = executablePath;
 
@@ -31,17 +32,27 @@ internal sealed class NativeRuntimeFiles : IDisposable
         var root = Path.GetFullPath(packDirectory);
         var prefix = PackManifestService.NativePayloadRoot + "/";
         var nativeFiles = snapshot.Where(file => file.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var executable = nativeFiles.SingleOrDefault(file => file.Path.Equals(runtime.Executable, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidDataException("The native executable is missing from the verified manifest.");
-        var steamLibrary = executable.Path[..(executable.Path.LastIndexOf('/') + 1)] +
+        var shared = runtime.SharedRuntime;
+        var features = PortablePackSyncService.ReadInstalledSnapshotFeatures(root);
+        PackManifestService.VerifySharedRuntimeOverlay(descriptor, nativeFiles.Select(file => file.Path),
+            features.Contains(PackManifestService.NativeSharedRuntimeFeature, StringComparer.Ordinal));
+        var executable = runtime.Executable;
+        var steamLibrary = executable[..(executable.LastIndexOf('/') + 1)] +
             SteamNativeLibraryService.NativeFileName;
-        if (!nativeFiles.Any(file => file.Path.Equals(steamLibrary, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException("The native Steam library is missing from the verified manifest.");
+        if (shared is null && (!nativeFiles.Any(file => file.Path.Equals(executable, StringComparison.OrdinalIgnoreCase)) ||
+            !nativeFiles.Any(file => file.Path.Equals(steamLibrary, StringComparison.OrdinalIgnoreCase))))
+            throw new InvalidDataException("The native executable or Steam library is missing from the verified manifest.");
         var manifest = snapshot.SingleOrDefault(file =>
             file.Path.Equals(PackManifestService.ManifestFileName, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidDataException("The native descriptor is missing from the verified manifest.");
 
-        var result = new NativeRuntimeFiles(Path.Combine(root, executable.Path.Replace('/', Path.DirectorySeparatorChar)));
+        var sharedLease = shared is null ? null : new SharedNativeRuntimeStore(paths ??
+            throw new InvalidOperationException("Shared native runtime requires launcher storage paths."))
+            .Open(shared, descriptor.MinecraftVersion, token);
+        var result = new NativeRuntimeFiles(Path.Combine(sharedLease?.Root ?? root, executable.Replace('/', Path.DirectorySeparatorChar)))
+        {
+            _shared = sharedLease
+        };
         try
         {
             result.OpenVerified(root, manifest);
@@ -79,18 +90,30 @@ internal sealed class NativeRuntimeFiles : IDisposable
         if (stream.Length != file.SizeBytes ||
             !Convert.ToHexStringLower(SHA256.HashData(stream)).Equals(file.Sha256, StringComparison.Ordinal))
             throw new InvalidDataException($"Файл сборки не прошёл проверку SHA-256: {file.Path}. Повторите «Играть» с подключением к сети.");
-        var executable = Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
-        var steamLibrary = Path.GetFileName(path).Equals(SteamNativeLibraryService.NativeFileName, StringComparison.OrdinalIgnoreCase);
+        VerifyWindowsImage(file.Path, stream);
+        _files.Add(file.Path);
+    }
+
+    internal static void VerifyWindowsImage(string relative, FileStream stream)
+    {
+        var executable = Path.GetExtension(relative).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+        var steamLibrary = Path.GetFileName(relative).Equals(SteamNativeLibraryService.NativeFileName, StringComparison.OrdinalIgnoreCase);
         if (executable || steamLibrary)
         {
-            stream.Position = 0;
-            using var image = new PEReader(stream, PEStreamOptions.LeaveOpen);
-            var headers = image.PEHeaders;
-            if (headers.CoffHeader.Machine != Machine.Amd64 || headers.PEHeader?.Magic != PEMagic.PE32Plus ||
-                ((headers.CoffHeader.Characteristics & Characteristics.Dll) != 0) != steamLibrary)
-                throw new InvalidDataException($"Native binary is not the required Windows x64 image: {file.Path}");
+            try
+            {
+                stream.Position = 0;
+                using var image = new PEReader(stream, PEStreamOptions.LeaveOpen);
+                var headers = image.PEHeaders;
+                if (headers.CoffHeader.Machine != Machine.Amd64 || headers.PEHeader?.Magic != PEMagic.PE32Plus ||
+                    ((headers.CoffHeader.Characteristics & Characteristics.Dll) != 0) != steamLibrary)
+                    throw new InvalidDataException($"Native binary is not the required Windows x64 image: {relative}");
+            }
+            catch (BadImageFormatException error)
+            {
+                throw new InvalidDataException($"Native binary is not the required Windows x64 image: {relative}", error);
+            }
         }
-        _files.Add(file.Path);
     }
 
     private void CheckContents(string root, string directory, CancellationToken token, List<string>? extras)
@@ -120,5 +143,7 @@ internal sealed class NativeRuntimeFiles : IDisposable
     {
         foreach (var file in _opened) file.Dispose();
         _opened.Clear();
+        _shared?.Dispose();
+        _shared = null;
     }
 }

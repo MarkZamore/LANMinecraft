@@ -131,7 +131,17 @@ public sealed class NativeClientLaunchTests
         Assert.Equal(identity.SteamId64.ToString(), start.Environment["LANMINECRAFT_STEAM_ID"]);
         Assert.Equal("nightly-test", start.Environment["LANMINECRAFT_NATIVE_VARIANT"]);
         Assert.Equal(paths.SharedRuntime, start.Environment["LANMINECRAFT_SHARED_MINECRAFT"]);
+        Assert.False(start.Environment.ContainsKey("LANMINECRAFT_NATIVE_PACK_ROOT"));
+        Assert.False(start.Environment.ContainsKey("LANMINECRAFT_NATIVE_PREPARED_CACHE"));
         Assert.DoesNotContain("java-only-test-token", start.Environment.Values);
+
+        var common = Path.Combine(paths.SharedRuntime, "NativeRuntimes", new string('a', 64), "native", "launch.exe");
+        var shared = NativeClientLaunch.CreateStartInfo(paths, identity, "Native fixture", instance, common,
+            "nightly-test", paths.SkinRegistryFile, paths.IdentityRegistryFile, paths.CombineUnderPacks("Native fixture"));
+        Assert.Equal(common, shared.FileName);
+        Assert.Equal(paths.CombineUnderPacks("Native fixture"), shared.Environment["LANMINECRAFT_NATIVE_PACK_ROOT"]);
+        Assert.Equal(SharedNativeRuntimeStore.PreparedCache(paths), shared.Environment["LANMINECRAFT_NATIVE_PREPARED_CACHE"]);
+        Assert.Equal(start.Environment["LANMINECRAFT_NATIVE_CACHE"], shared.Environment["LANMINECRAFT_NATIVE_CACHE"]);
     }
 
     private sealed class InlineProgress : IProgress<RuntimePreparationProgress>

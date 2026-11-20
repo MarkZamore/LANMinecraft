@@ -30,6 +30,14 @@ internal static class GuardedFileSystem
         return null;
     }
 
+    internal static SafeFileHandle? TryOpenOrdinaryReadFile(string path)
+    {
+        var handle = CreateFile(NativePath(path), GenericRead, 1, 0, OpenExisting, OpenReparsePoint, 0);
+        if (!handle.IsInvalid && IsPlainFile(handle)) return handle;
+        handle.Dispose();
+        return null;
+    }
+
     private static bool IsPlainFile(SafeFileHandle handle) =>
         GetFileInformationByHandle(handle, out var information) &&
         (information.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;

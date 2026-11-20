@@ -88,7 +88,7 @@ public sealed partial class PortablePackSyncService
     private static readonly HashSet<string> SupportedLauncherFeatures =
         new(["local-ai-native-v1", "local-ai-recipe-v1", "local-ai-blob-urls-v1", "curated-mod-list-v1", "launch-context-v1", "private-identity-asm-v1", "registry-player-skins-v1",
             "legacy-fabric-runtime-v1", "legacy-player-profiles-v1", "legacy-steam-v1",
-            PackManifestService.NativeRuntimeFeature, PackManifestService.NativeSteamFeature,
+            PackManifestService.NativeRuntimeFeature, PackManifestService.NativeSteamFeature, PackManifestService.NativeSharedRuntimeFeature,
             PackManifestService.Minecraft26WorldLayoutFeature, RuntimeLibrarySource.Feature, GameNoticeOverlayService.NativeFeature,
             PortableIdentityAdapterService.SteamNativePublicationMetadataFeature, PackManifestService.SteamWorldSharingFeature], StringComparer.Ordinal);
     // This local cache generation is independent of launcher releases and remote manifests.
@@ -103,7 +103,7 @@ public sealed partial class PortablePackSyncService
     /// <summary>The pack's word to the launcher: preset, pack list, reset tokens.</summary>
     private const string LauncherDataPrefix = "launcher/";
     /// <summary>A ceiling that keeps this to text files, never a pack's jars.</summary>
-    private const long MaximumLauncherDataBytes = 8L * 1024 * 1024;
+    internal const long MaximumLauncherDataBytes = 8L * 1024 * 1024;
     private sealed record PresetPreview(ControlsPreset? Preset);
     private readonly ConcurrentDictionary<string, PresetPreview> _presetPreviews = new(StringComparer.OrdinalIgnoreCase);
 
@@ -193,11 +193,14 @@ public sealed partial class PortablePackSyncService
         RequireOrdinarySnapshotFile(paths, packDirectory, PackManifestService.ManifestFileName);
         var files = ReadManagedFiles(packDirectory) ??
             throw new IOException("В локальной сборке нет списка установленных файлов.");
-        _ = ReadInstalledSnapshotFeatures(packDirectory);
+        var features = ReadInstalledSnapshotFeatures(packDirectory);
         var descriptor = PackManifestService.Load(packDirectory);
         RequireSnapshotEntry(files, PackManifestService.ManifestFileName);
+        PackManifestService.VerifySharedRuntimeOverlay(descriptor, files.Select(file => file.Path),
+            features.Contains(PackManifestService.NativeSharedRuntimeFeature, StringComparer.Ordinal));
         var bundledClient = descriptor.NativeRuntime?.Executable ?? descriptor.ClientJar;
-        if (!string.IsNullOrEmpty(bundledClient)) RequireSnapshotEntry(files, bundledClient);
+        if (descriptor.NativeRuntime?.SharedRuntime is null && !string.IsNullOrEmpty(bundledClient))
+            RequireSnapshotEntry(files, bundledClient);
         return files;
     }
 
@@ -208,7 +211,7 @@ public sealed partial class PortablePackSyncService
     }
 
     private static async Task<IReadOnlyList<ManagedFileSnapshot>> VerifyInstalledSnapshotAsync(
-        AppPaths paths, string packDirectory, CancellationToken token)
+        AppPaths paths, string packDirectory, bool verifySharedRuntime, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var files = ReadInstalledSnapshot(paths, packDirectory);
@@ -221,6 +224,12 @@ public sealed partial class PortablePackSyncService
             if (input.Length != file.SizeBytes ||
                 !HashesEqual(Convert.ToHexString(await SHA256.HashDataAsync(input, token).ConfigureAwait(false)), file.Sha256))
                 throw new IOException($"Файл локальной сборки изменён или повреждён: {file.Path}");
+        }
+        if (verifySharedRuntime)
+        {
+            var descriptor = PackManifestService.Load(packDirectory);
+            if (descriptor.NativeRuntime?.SharedRuntime is { } shared)
+                using (new SharedNativeRuntimeStore(paths).Open(shared, descriptor.MinecraftVersion, token)) { }
         }
         token.ThrowIfCancellationRequested();
         if (IsUpdatePending(packDirectory))
@@ -270,8 +279,11 @@ public sealed partial class PortablePackSyncService
         ValidateSnapshotFeatures(requiredFeatures);
         RequireSnapshotEntry(files, PackManifestService.ManifestFileName);
         var descriptor = PackManifestService.Load(packDirectory);
+        PackManifestService.VerifySharedRuntimeOverlay(descriptor, files.Select(file => file.Path),
+            requiredFeatures.Contains(PackManifestService.NativeSharedRuntimeFeature, StringComparer.Ordinal));
         var bundledClient = descriptor.NativeRuntime?.Executable ?? descriptor.ClientJar;
-        if (!string.IsNullOrEmpty(bundledClient)) RequireSnapshotEntry(files, bundledClient);
+        if (descriptor.NativeRuntime?.SharedRuntime is null && !string.IsNullOrEmpty(bundledClient))
+            RequireSnapshotEntry(files, bundledClient);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(packDirectory));
         var state = new SyncStateDto
         {
@@ -521,7 +533,7 @@ public sealed partial class PortablePackSyncService
             Directory.CreateDirectory(stageExtract);
             foreach (var asset in assets)
             {
-                await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token)
+                await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token: token)
                     .ConfigureAwait(false);
             }
             ExtractAndVerifyStagedSources(
@@ -629,6 +641,21 @@ public sealed partial class PortablePackSyncService
                     throw new IOException("Сборка снята с публикации и не установлена полностью.");
                 installedFiles = await VerifyOfflineInstallationAsync(packDir, token).ConfigureAwait(false);
             }
+            else if (ReadSyncState(Path.Combine(packDir, SyncStateFileName)).RequiredLauncherFeatures?
+                .Contains(PackManifestService.NativeSharedRuntimeFeature, StringComparer.Ordinal) == true)
+            {
+                // A transferred pack carries the verified overlay and its
+                // immutable runtime pin, even without a published pack source.
+                var files = await VerifyInstalledSnapshotAsync(_paths, packDir, verifySharedRuntime: false, token)
+                    .ConfigureAwait(false);
+                var descriptor = PackManifestService.Load(packDir);
+                var shared = descriptor.NativeRuntime!.SharedRuntime!;
+                var hashes = files.ToDictionary(file => file.Path, file => file.Sha256, StringComparer.OrdinalIgnoreCase);
+                installedFiles = path => hashes.GetValueOrDefault(ValidateManifestPath(path, packDir));
+                if (!new SharedNativeRuntimeStore(_paths).IsInstalled(shared, descriptor.MinecraftVersion, token))
+                    return new PackSyncDownloadPlan(this, new SharedRuntimeRecovery(descriptor), packRelativePath,
+                        packDir, packDir, shared.Archive.SizeBytes, installedFiles);
+            }
             return LocalDownloadPlan(packRelativePath, packDir,
                 new PackSyncResult(PackSyncOutcome.SkippedNoSource, null, 0, 0, null), installedFiles);
         }
@@ -687,9 +714,19 @@ public sealed partial class PortablePackSyncService
                 .ConfigureAwait(false);
             var changed = diff.ChangedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var prefetched = metadata.PrefetchedAssetNames;
+            PackRuntimeDescriptor? runtimeDescriptor = null;
+            long sharedBytes = 0;
+            if (manifest.RequiredLauncherFeatures.Contains(PackManifestService.NativeSharedRuntimeFeature))
+            {
+                runtimeDescriptor = PackManifestService.Load(metadata.Directory);
+                PackManifestService.VerifySharedRuntimeOverlay(runtimeDescriptor, manifest.FilesByPath.Keys, hasSharedRuntimeFeature: true);
+                var shared = runtimeDescriptor.NativeRuntime!.SharedRuntime!;
+                if (!new SharedNativeRuntimeStore(_paths).IsInstalled(shared, runtimeDescriptor.MinecraftVersion, token))
+                    sharedBytes = shared.Archive.SizeBytes;
+            }
             var pendingBytes = manifest.Assets.Where(asset => asset.Covers.Any(changed.Contains) && !prefetched.Contains(asset.Name))
-                .Aggregate(0L, (sum, asset) => checked(sum + asset.SizeBytes));
-            var state = new PreparedSyncState(source, manifest, diff, hadManifest, stageRoot, prefetched);
+                .Aggregate(sharedBytes, (sum, asset) => checked(sum + asset.SizeBytes));
+            var state = new PreparedSyncState(source, manifest, diff, hadManifest, stageRoot, prefetched, runtimeDescriptor, sharedBytes);
             var ownership = stageLease;
             var plan = new PackSyncDownloadPlan(this, state, packRelativePath, packDir, metadata.Directory, pendingBytes,
                 path => manifest.FilesByPath.TryGetValue(ValidateManifestPath(path, packDir), out var file) ? file.Sha256 : null,
@@ -733,7 +770,12 @@ public sealed partial class PortablePackSyncService
         var stageAssets = Path.Combine(stageRoot, "assets");
         var stageExtract = Path.Combine(stageRoot, "extract");
         Directory.CreateDirectory(metadataDirectory);
-        var metadata = manifest.Files.Where(file => file.Path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal)).ToList();
+        var hasSharedDescriptor = !launcherAssetsOnly && manifest.RequiredLauncherFeatures.Contains(PackManifestService.NativeSharedRuntimeFeature);
+        if (hasSharedDescriptor && (!manifest.AssetByCoveredPath.TryGetValue(PackManifestService.ManifestFileName, out var descriptorAsset) ||
+            descriptorAsset.Kind != PackAssetKind.ZipRoot || descriptorAsset.Covers.Count != 1))
+            throw new InvalidDataException("The verified shared native runtime descriptor must have its own ZIP asset.");
+        var metadata = manifest.Files.Where(file => file.Path.StartsWith(LauncherDataPrefix, StringComparison.Ordinal) ||
+            hasSharedDescriptor && file.Path == PackManifestService.ManifestFileName).ToList();
         if (metadata.Sum(file => file.SizeBytes) > MaximumLauncherDataBytes)
             throw new InvalidDataException("Pack launcher metadata exceeds its byte limit.");
         var missing = metadata.Where(file => !HasFileWithHash(packDir, file)).ToList();
@@ -746,8 +788,21 @@ public sealed partial class PortablePackSyncService
         Directory.CreateDirectory(stageExtract);
         foreach (var asset in metadataAssets)
         {
-            await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token)
+            await DownloadAssetAsync(source, asset, Path.Combine(stageAssets, asset.Name), _ => { }, token: token)
                 .ConfigureAwait(false);
+            if (hasSharedDescriptor && asset.Covers.Contains(PackManifestService.ManifestFileName, StringComparer.Ordinal))
+            {
+                using var archiveBytes = File.OpenRead(Path.Combine(stageAssets, asset.Name));
+                PackArchiveService.CheckCentralDirectory(archiveBytes, minimumEntries: 1);
+                archiveBytes.Position = 0;
+                using var descriptorZip = new ZipArchive(archiveBytes, ZipArchiveMode.Read);
+                if (descriptorZip.Entries.Count != 1 || descriptorZip.Entries[0] is not { } entry ||
+                    entry.FullName != PackManifestService.ManifestFileName ||
+                    entry.Length != manifest.FilesByPath[PackManifestService.ManifestFileName].SizeBytes ||
+                    (entry.ExternalAttributes & (int)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+                    ((entry.ExternalAttributes >> 16) & 0xf000) is not (0 or 0x8000))
+                    throw new InvalidDataException("Invalid shared native runtime descriptor ZIP.");
+            }
             if (launcherAssetsOnly && asset.Kind == PackAssetKind.ZipRoot)
             {
                 using var archive = ZipFile.OpenRead(Path.Combine(stageAssets, asset.Name));
@@ -789,7 +844,7 @@ public sealed partial class PortablePackSyncService
     {
         try
         {
-            var files = await VerifyInstalledSnapshotAsync(_paths, packDir, token).ConfigureAwait(false);
+            var files = await VerifyInstalledSnapshotAsync(_paths, packDir, verifySharedRuntime: true, token).ConfigureAwait(false);
             var hashes = files.ToDictionary(file => file.Path, file => file.Sha256, StringComparer.OrdinalIgnoreCase);
             return path => hashes.GetValueOrDefault(ValidateManifestPath(path, packDir));
         }
@@ -829,6 +884,13 @@ public sealed partial class PortablePackSyncService
         {
             _presetPreviews.TryRemove(plan.PackRelativePath, out _);
             return immediate;
+        }
+        if (plan.State is SharedRuntimeRecovery recovery)
+        {
+            EnsureGameStopped(plan.PackRelativePath);
+            var downloaded = await PrepareSharedRuntimeAsync(recovery.Descriptor, packBytes: 0, progress, token)
+                .ConfigureAwait(false);
+            return new PackSyncResult(PackSyncOutcome.UpToDate, null, 0, downloaded, null);
         }
         var prepared = (PreparedSyncState)plan.State!;
         EnsureGameStopped(plan.PackRelativePath);
@@ -877,6 +939,20 @@ public sealed partial class PortablePackSyncService
             throw new PackApplyFailedException(ex);
         }
 
+        var changedSet = new HashSet<string>(diff.ChangedPaths, StringComparer.OrdinalIgnoreCase);
+        var neededAssets = manifest.Assets.Where(asset => asset.Covers.Any(changedSet.Contains)).ToList();
+        var totalPendingBytes = neededAssets.Sum(asset => asset.SizeBytes);
+        var downloadAssets = prepared is null ? neededAssets :
+            neededAssets.Where(asset => !prepared.PrefetchedAssetNames.Contains(asset.Name)).ToList();
+        var remainingBytes = downloadAssets.Sum(asset => asset.SizeBytes);
+        long sharedBytesDownloaded = 0;
+        var sharedBudget = prepared?.SharedArchiveBytes ?? 0;
+        if (prepared?.RuntimeDescriptor is { } descriptor)
+        {
+            sharedBytesDownloaded = await PrepareSharedRuntimeAsync(descriptor, remainingBytes, progress, token).ConfigureAwait(false);
+            sharedBudget = Math.Max(sharedBudget, sharedBytesDownloaded);
+        }
+
         if (string.Equals(diff.StateRevision, manifest.Revision, StringComparison.Ordinal) &&
             diff.ChangedPaths.Count == 0 &&
             diff.Extras.Count == 0)
@@ -894,17 +970,8 @@ public sealed partial class PortablePackSyncService
                 RuntimePreparationStage.SyncingPack,
                 "Сборка актуальна",
                 1));
-            return new PackSyncResult(PackSyncOutcome.UpToDate, manifest.Revision, 0, 0, null);
+            return new PackSyncResult(PackSyncOutcome.UpToDate, manifest.Revision, 0, sharedBytesDownloaded, null);
         }
-
-        var changedSet = new HashSet<string>(diff.ChangedPaths, StringComparer.OrdinalIgnoreCase);
-        var neededAssets = manifest.Assets
-            .Where(asset => asset.Covers.Any(changedSet.Contains))
-            .ToList();
-        var totalPendingBytes = neededAssets.Sum(asset => asset.SizeBytes);
-        var downloadAssets = prepared is null ? neededAssets
-            : neededAssets.Where(asset => !prepared.PrefetchedAssetNames.Contains(asset.Name)).ToList();
-        var remainingBytes = downloadAssets.Sum(asset => asset.SizeBytes);
 
         Directory.CreateDirectory(packDir);
         var stageParent = Path.Combine(packDir, StagingDirectoryName);
@@ -927,7 +994,7 @@ public sealed partial class PortablePackSyncService
                 }
                 Directory.CreateDirectory(stageAssets);
                 Directory.CreateDirectory(stageExtract);
-                await DownloadAssetsAsync(source, downloadAssets, stageAssets, remainingBytes, progress, token)
+                await DownloadAssetsAsync(source, downloadAssets, stageAssets, checked(remainingBytes + sharedBudget), sharedBudget, progress, token)
                     .ConfigureAwait(false);
             }
 
@@ -984,7 +1051,7 @@ public sealed partial class PortablePackSyncService
             : diff.ChangedPaths.Count > 0 || diff.Extras.Count > 0
                 ? PackSyncOutcome.Updated
                 : PackSyncOutcome.UpToDate;
-        var bytesDownloaded = neededAssets.Count > 0 ? totalPendingBytes : 0;
+        var bytesDownloaded = checked(totalPendingBytes + sharedBytesDownloaded);
         _logger.Info(
             $"Pack sync finished: {outcome}, revision {manifest.Revision}, " +
             $"{diff.ChangedPaths.Count} file(s) written, {diff.Extras.Count} extra(s) removed.");
@@ -1113,11 +1180,12 @@ public sealed partial class PortablePackSyncService
         IReadOnlyList<ValidatedAsset> assets,
         string stageAssets,
         long totalBytes,
+        long alreadyDownloaded,
         IProgress<RuntimePreparationProgress>? progress,
         CancellationToken token)
     {
-        long downloadedBytes = 0;
-        long lastReportedBytes = 0;
+        long downloadedBytes = alreadyDownloaded;
+        long lastReportedBytes = alreadyDownloaded;
         void ReportBytes(long delta)
         {
             var current = Interlocked.Add(ref downloadedBytes, delta);
@@ -1139,8 +1207,8 @@ public sealed partial class PortablePackSyncService
         progress?.Report(new RuntimePreparationProgress(
             RuntimePreparationStage.SyncingPack,
             "Обновление",
-            totalBytes > 0 ? 0d : null,
-            0,
+            totalBytes > 0 ? (double)alreadyDownloaded / totalBytes : null,
+            alreadyDownloaded,
             totalBytes));
 
         await Parallel.ForEachAsync(
@@ -1156,8 +1224,24 @@ public sealed partial class PortablePackSyncService
                         asset,
                         Path.Combine(stageAssets, asset.Name),
                         ReportBytes,
-                        assetToken)
+                        token: assetToken)
                     .ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private Task<long> PrepareSharedRuntimeAsync(PackRuntimeDescriptor descriptor, long packBytes,
+        IProgress<RuntimePreparationProgress>? progress, CancellationToken token)
+    {
+        var shared = descriptor.NativeRuntime!.SharedRuntime!;
+        var asset = new ValidatedAsset(shared.Archive.Name, PackAssetKind.ZipRoot, shared.Archive.Sha256,
+            shared.Archive.SizeBytes, []);
+        long retained = 0;
+        var total = checked(packBytes + shared.Archive.SizeBytes);
+        return new SharedNativeRuntimeStore(_paths).PrepareAsync(shared, descriptor.MinecraftVersion,
+            (destination, ct) => DownloadAssetAsync(shared.Source, asset, destination, delta =>
+            {
+                retained += delta;
+                progress?.Report(new(RuntimePreparationStage.SyncingPack, "Загрузка файлов игры", (double)retained / total, retained, total));
+            }, refreshCatalogOnMissingAsset: false, token: ct), _freeSpaceProbe, token);
     }
 
     private async Task DownloadAssetAsync(
@@ -1165,7 +1249,7 @@ public sealed partial class PortablePackSyncService
         ValidatedAsset asset,
         string destinationPath,
         Action<long> reportBytes,
-        CancellationToken token)
+        bool refreshCatalogOnMissingAsset = true, CancellationToken token = default)
     {
         var assetUri = BuildReleaseAssetUri(source, asset.Name);
         Exception? lastError = null;
@@ -1189,7 +1273,8 @@ public sealed partial class PortablePackSyncService
                     throw new InvalidDataException(
                         $"Pack asset {asset.Name} download was redirected to {SanitizeUri(effectiveUri)}.");
                 }
-                if (Catalog is not null && response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
+                if (refreshCatalogOnMissingAsset && Catalog is not null &&
+                    response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
                     throw new PackSessionExpiredException();
                 response.EnsureSuccessStatusCode();
                 if (response.Content.Headers.ContentLength is { } length && length != asset.SizeBytes)
@@ -1913,7 +1998,7 @@ public sealed partial class PortablePackSyncService
         return path;
     }
 
-    private static string ValidateSha256(string? value, string context)
+    internal static string ValidateSha256(string? value, string context)
     {
         var sha = value?.Trim() ?? "";
         if (sha.Length != 64 || sha.Any(character => !Uri.IsHexDigit(character)))
@@ -2105,7 +2190,11 @@ public sealed partial class PortablePackSyncService
         PackSyncDiff Diff,
         bool HadManifest,
         string StageRoot,
-        IReadOnlySet<string> PrefetchedAssetNames);
+        IReadOnlySet<string> PrefetchedAssetNames,
+        PackRuntimeDescriptor? RuntimeDescriptor,
+        long SharedArchiveBytes);
+
+    private sealed record SharedRuntimeRecovery(PackRuntimeDescriptor Descriptor);
 
     private sealed record PreparedLauncherMetadata(string Directory, IReadOnlySet<string> PrefetchedAssetNames);
 

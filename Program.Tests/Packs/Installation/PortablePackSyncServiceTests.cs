@@ -4,12 +4,124 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Minecraft;
 
 namespace Minecraft.Tests;
 
 public sealed class PortablePackSyncServiceTests : IDisposable
 {
+    [Fact]
+    public async Task NativePacksShareOneVerifiedGameAndRepairItWithoutReplacingTheirOverlays()
+    {
+        const string future = "Future Native Mod Pack";
+        var common = BuildNativeGame("common-r1");
+        var first = BuildSharedNativeRelease("first", common);
+        var second = BuildSharedNativeRelease("second", common);
+        Directory.CreateDirectory(PackDir(future));
+        WriteMarker(PackDir(future), "FixtureOwner", "FutureNative", "pack-latest");
+        var handler = new RecordingHandler(request =>
+        {
+            var uri = request.RequestUri!;
+            var file = LastPathSegment(uri);
+            var payloads = uri.AbsolutePath.StartsWith("/FixtureOwner/FutureNative/", StringComparison.Ordinal) ? second : first;
+            return payloads.TryGetValue(file, out var payload)
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) }
+                : new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        using var http = new HttpClient(handler);
+        var service = CreateService(http);
+        var results = await Task.WhenAll(service.SyncAsync(DefaultPack, null, default), service.SyncAsync(future, null, default));
+        Assert.All(results, result => Assert.Equal(PackSyncOutcome.Installed, result.Outcome));
+        Assert.Single(handler.RequestUris, uri => LastPathSegment(uri) == common.Asset.Name);
+        var paths = new AppPaths(_root);
+        var left = PackManifestService.Load(PackDir(DefaultPack));
+        var right = PackManifestService.Load(PackDir(future));
+        Assert.NotEqual(left.NativeRuntime!.Version, right.NativeRuntime!.Version);
+        Assert.Equal(left.NativeRuntime.SharedRuntime!.Archive.Sha256, right.NativeRuntime.SharedRuntime!.Archive.Sha256);
+        Assert.False(File.Exists(LivePath(PackDir(DefaultPack), TestNativeExecutable)));
+        Assert.False(File.Exists(LivePath(PackDir(future), TestNativeExecutable)));
+        var commonResource = Path.Combine(paths.SharedRuntime, "NativeRuntimes", common.Asset.Sha, "native", "game-data.txt");
+        using (var leftFiles = NativeRuntimeFiles.Open(PackDir(DefaultPack), left, default, paths))
+        using (var rightFiles = NativeRuntimeFiles.Open(PackDir(future), right, default, paths))
+        {
+            Assert.Equal(leftFiles.ExecutablePath, rightFiles.ExecutablePath);
+            Assert.Throws<IOException>(() => File.WriteAllText(commonResource, "modified while in use"));
+        }
+        var firstOverlay = LivePath(PackDir(DefaultPack), "native/presentation.json");
+        var secondOverlay = LivePath(PackDir(future), "native/presentation.json");
+        Assert.NotEqual(File.ReadAllText(firstOverlay), File.ReadAllText(secondOverlay));
+        File.WriteAllText(commonResource, "corrupted");
+        var recovered = await service.SyncAsync(future, null, default);
+        Assert.Equal(0, recovered.FilesChanged);
+        Assert.Equal("common-r1", File.ReadAllText(commonResource));
+        Assert.Equal(2, handler.RequestUris.Count(uri => LastPathSegment(uri) == common.Asset.Name));
+        Assert.NotEqual(File.ReadAllText(firstOverlay), File.ReadAllText(secondOverlay));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RejectedNativeGameDoesNotSwitchThePackSnapshot(bool invalidExecutable)
+    {
+        var common = BuildNativeGame("working");
+        await InstallAsync(BuildSharedNativeRelease("working-pack", common), DefaultPack);
+        var next = BuildNativeGame("next-game", familyVersion: invalidExecutable ? null : "disagrees-with-pin",
+            invalidExecutable: invalidExecutable);
+        var rejected = BuildSharedNativeRelease("rejected-pack", next);
+        using var http = new HttpClient(CreateReleaseHandler(rejected));
+        var result = await CreateService(http).SyncAsync(DefaultPack, null, default);
+        Assert.Equal(PackSyncOutcome.OfflineFallback, result.Outcome);
+        var current = PackManifestService.Load(PackDir(DefaultPack));
+        Assert.Equal("working-pack", current.NativeRuntime!.Version);
+        Assert.Equal(common.Asset.Sha, current.NativeRuntime.SharedRuntime!.Archive.Sha256);
+        Assert.False(PortablePackSyncService.IsUpdatePending(PackDir(DefaultPack)));
+        var sharedRoot = Path.Combine(new AppPaths(_root).SharedRuntime, "NativeRuntimes");
+        Assert.False(Directory.Exists(Path.Combine(sharedRoot, next.Asset.Sha)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(new AppPaths(_root).Launcher, ".pack-sync-stage*"));
+    }
+
+    [Fact]
+    public async Task SharedNativeRuntimeRejectsAnOverlappingOverlayBeforeFetchingTheGame()
+    {
+        var common = BuildNativeGame("common-r1");
+        var overlap = new PackFile("native/game-data.txt", Encoding.UTF8.GetBytes("pack override"));
+        var handler = CreateReleaseHandler(BuildSharedNativeRelease("bad-pack", common, overlap));
+        using var http = new HttpClient(handler);
+        await Assert.ThrowsAsync<InvalidDataException>(() => CreateService(http).SyncAsync(DefaultPack, null, default));
+        Assert.DoesNotContain(handler.RequestUris, uri => LastPathSegment(uri) == common.Asset.Name);
+    }
+
+    [Fact]
+    public async Task ImportedNativePackCanRecoverItsLockedGameWithoutThePackRepository()
+    {
+        const string name = "Transferred Native Fixture";
+        var common = BuildNativeGame("transfer-game");
+        var release = BuildSharedNativeRelease("transfer-pack", common);
+        Directory.CreateDirectory(PackDir(name));
+        WriteMarker(PackDir(name), "FixtureOwner", "TransferPack", "pack-latest");
+        await InstallAsync(release, name);
+
+        var originalPaths = new AppPaths(_root);
+        var archive = Path.Combine(_root, "fixture.lanpack");
+        await new PackArchiveService(originalPaths, _ => true, _ => false).ExportAsync(name, archive, null, default);
+        var receiverPaths = new AppPaths(Path.Combine(_root, "receiver"));
+        receiverPaths.Ensure();
+        var imported = await new PackArchiveService(receiverPaths, _ => true, _ => false).ImportAsync(archive, null, default);
+        Assert.Equal(name, imported);
+        var handler = CreateReleaseHandler(new(StringComparer.Ordinal) { [common.Asset.Name] = common.Asset.Content });
+        using var http = new HttpClient(handler);
+        var receiver = new PortablePackSyncService(receiverPaths, new Logger(receiverPaths.LogFile), http, (_, _) => true);
+        Assert.Null(receiver.TryResolveSource(name));
+        var sync = await receiver.SyncAsync(name, null, default);
+        Assert.Equal(common.Asset.Content.LongLength, sync.BytesDownloaded);
+        Assert.Equal(common.Asset.Name, LastPathSegment(Assert.Single(handler.RequestUris)));
+        var pack = receiverPaths.CombineUnderPacks(name);
+        Assert.False(File.Exists(LivePath(pack, TestNativeExecutable)));
+        using var loaded = NativeRuntimeFiles.Open(pack, PackManifestService.Load(pack), default, receiverPaths);
+        Assert.True(File.Exists(loaded.ExecutablePath));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -1372,6 +1484,57 @@ public sealed class PortablePackSyncServiceTests : IDisposable
 
     private static PackFile PackManifestFile(string json) =>
         new(PackManifestService.ManifestFileName, Encoding.UTF8.GetBytes(json));
+
+    private const string TestNativeExecutable = "native/launch-test.exe";
+
+    private static (PackAsset Asset, PackFile[] Files, string Version) BuildNativeGame(string version,
+        string? familyVersion = null, bool invalidExecutable = false)
+    {
+        PackFile[] files =
+        [
+            new(TestNativeExecutable, invalidExecutable ? [1, 2, 3] : File.ReadAllBytes(Environment.ProcessPath!)),
+            new("native/steam_api64.dll", File.ReadAllBytes(Path.Combine(Environment.SystemDirectory, "kernel32.dll"))),
+            new("native/game-data.txt", Encoding.UTF8.GetBytes(version)),
+            new(SharedNativeRuntimeStore.FamilyPath, JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                schemaVersion = 1, id = "fixture-engine", version = familyVersion ?? version,
+                platform = "windows-x64", minecraftVersion = "26.3"
+            }))
+        ];
+        var asset = ZipRootAsset("engine", files);
+        return (asset with { Name = "native-runtime-" + asset.Sha + ".zip" }, files, version);
+    }
+
+    private static Dictionary<string, byte[]> BuildSharedNativeRelease(string revision,
+        (PackAsset Asset, PackFile[] Files, string Version) common, PackFile? extra = null)
+    {
+        var descriptor = PackManifestFile(JsonSerializer.Serialize(new
+        {
+            schemaVersion = 2, minecraftVersion = "26.3",
+            nativeRuntime = new
+            {
+                executable = TestNativeExecutable, platform = "windows-x64", adapter = "portable-native", version = revision,
+                sharedRuntime = new
+                {
+                    schemaVersion = 1, id = "fixture-engine", version = common.Version, platform = "windows-x64",
+                    source = new { owner = "FixtureOwner", repo = "SharedRuntime", tag = "native-r1" },
+                    archive = new { name = common.Asset.Name, sha256 = common.Asset.Sha, sizeBytes = common.Asset.Content.LongLength },
+                    files = common.Files.Select(file => new { path = file.Path, sizeBytes = file.Content.LongLength, sha256 = file.Sha })
+                }
+            }
+        }));
+        var presentation = new PackFile("native/presentation.json", JsonSerializer.SerializeToUtf8Bytes(new { name = revision }));
+        PackFile[] overlay = extra is null ? [presentation] : [presentation, extra];
+        var release = BuildRelease(revision, [descriptor, .. overlay], [ZipRootAsset("descriptor", descriptor), ZipRootAsset("overlay", overlay)]);
+        var manifest = JsonNode.Parse(release[PortablePackSyncService.PackManifestAssetName])!.AsObject();
+        manifest["schemaVersion"] = 2;
+        manifest["requiredLauncherFeatures"] = new JsonArray(PackManifestService.NativeRuntimeFeature,
+            PackManifestService.NativeSteamFeature, PackManifestService.Minecraft26WorldLayoutFeature,
+            PackManifestService.NativeSharedRuntimeFeature);
+        release[PortablePackSyncService.PackManifestAssetName] = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        release[common.Asset.Name] = common.Asset.Content;
+        return release;
+    }
 
     // Asset names mirror generate_manifest.py: sha prefix plus the sanitized
     // file name (everything outside [A-Za-z0-9._-] collapses to '-').

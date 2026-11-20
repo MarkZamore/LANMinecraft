@@ -17,6 +17,7 @@ public static class PackManifestService
     public const string ManifestFileName = "portable-pack.json";
     internal const string NativePayloadRoot = "native";
     internal const string NativeRuntimeFeature = "native-runtime-v1";
+    internal const string NativeSharedRuntimeFeature = "native-shared-runtime-v1";
     internal const string NativeSteamFeature = "native-steam-v1";
     internal const string Minecraft26WorldLayoutFeature = "minecraft-26-world-layout-v1";
     internal const string SteamWorldSharingFeature = "preserve-steam-world-settings-v1";
@@ -44,7 +45,10 @@ public static class PackManifestService
         PackManifestDto manifest;
         try
         {
-            manifest = JsonSerializer.Deserialize<PackManifestDto>(File.ReadAllText(manifestPath), JsonOptions)
+            using var reader = new StreamReader(File.OpenRead(manifestPath), Encoding.UTF8);
+            if (reader.BaseStream.Length > PortablePackSyncService.MaximumLauncherDataBytes)
+                throw new InvalidDataException("Pack descriptor exceeds the launcher metadata size limit.");
+            manifest = JsonSerializer.Deserialize<PackManifestDto>(reader.ReadToEnd(), JsonOptions)
                 ?? throw new InvalidDataException("Pack manifest is empty.");
         }
         catch (JsonException ex)
@@ -155,12 +159,70 @@ public static class PackManifestService
             throw new InvalidDataException("nativeRuntime.executable must be an .exe under native/.");
 
         var canonical = $"{NativeSchemaVersion}\n{minecraftVersion}\n{native.Platform}\n{native.Adapter}\n{version}\n{path}";
+        var shared = native.SharedRuntime is null ? null : ValidateSharedRuntime(native.SharedRuntime, native.Platform, path,
+            Path.TrimEndingDirectorySeparator(packRoot));
+        if (shared is not null)
+            canonical += $"\nsharedRuntime={shared.Id}/{shared.Version}/{shared.Archive.Sha256}";
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         return new PackRuntimeDescriptor(NativeSchemaVersion, minecraftVersion,
             new PackLoaderDescriptor(PackLoaderKind.Native, null), "", hash)
         {
-            NativeRuntime = new NativePackRuntimeDescriptor(path, native.Platform, native.Adapter, version)
+            NativeRuntime = new NativePackRuntimeDescriptor(path, native.Platform, native.Adapter, version) { SharedRuntime = shared }
         };
+    }
+
+    private static NativeSharedRuntimeDescriptor ValidateSharedRuntime(NativeSharedRuntimeDescriptor shared,
+        string platform, string executable, string packRoot)
+    {
+        if (shared.SchemaVersion != 1 || shared.Platform != platform || shared.Source is null ||
+            !PackCatalogIndex.ValidSource(shared.Source) || shared.Source.Repo is "." or ".." ||
+            shared.Source.Tag is "." or ".." || shared.Archive is not { } archive ||
+            archive.SizeBytes is <= 0 or > PackArchiveService.MaxArchiveBytes || shared.Files is not { Count: > 0 } ||
+            shared.Files.Count > PackArchiveService.MaxEntries)
+            throw new InvalidDataException("Invalid shared native runtime descriptor.");
+        var id = ValidateIdentifier(shared.Id, "sharedRuntime.id", allowSpaces: false);
+        var version = ValidateIdentifier(shared.Version, "sharedRuntime.version", allowSpaces: false);
+        if (version.Equals("latest", StringComparison.OrdinalIgnoreCase) || version.Equals("nightly", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("A shared native runtime requires an exact version.");
+        var name = ValidateIdentifier(archive.Name, "sharedRuntime.archive.name", allowSpaces: false);
+        if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+            name.Any(ch => !char.IsAsciiLetterOrDigit(ch) && ch is not ('.' or '-' or '_')))
+            throw new InvalidDataException("A shared native runtime archive must be a release ZIP name.");
+        var files = new List<NativeSharedRuntimeFile>(shared.Files.Count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long total = 0;
+        foreach (var file in shared.Files)
+        {
+            if (file is null || file.SizeBytes < 0 || file.SizeBytes > PackArchiveService.MaxPayloadBytes - total)
+                throw new InvalidDataException("Shared native runtime exceeds its size limit.");
+            var relative = PackArchiveService.ValidatePayloadPath(file.Path ?? "", packRoot);
+            if (!relative.StartsWith(NativePayloadRoot + "/", StringComparison.Ordinal) || !seen.Add(relative))
+                throw new InvalidDataException("Invalid or duplicate shared native runtime path: " + relative);
+            files.Add(new(relative, file.SizeBytes, PortablePackSyncService.ValidateSha256(file.Sha256, relative)));
+            total += file.SizeBytes;
+        }
+        var steamLibrary = executable[..(executable.LastIndexOf('/') + 1)] + SteamNativeLibraryService.NativeFileName;
+        if (!files.Any(file => file.Path == executable) || !files.Any(file => file.Path == steamLibrary) ||
+            !files.Any(file => file.Path == SharedNativeRuntimeStore.FamilyPath))
+            throw new InvalidDataException("Shared native runtime lacks its executable, Steam library or family manifest.");
+        return shared with
+        {
+            Id = id, Version = version,
+            Archive = new(name, PortablePackSyncService.ValidateSha256(archive.Sha256, name), archive.SizeBytes),
+            Files = files
+        };
+    }
+
+    internal static void VerifySharedRuntimeOverlay(PackRuntimeDescriptor descriptor, IEnumerable<string> paths,
+        bool hasSharedRuntimeFeature)
+    {
+        var shared = descriptor.NativeRuntime?.SharedRuntime;
+        if (hasSharedRuntimeFeature != (shared is not null))
+            throw new InvalidDataException("The pack manifest and descriptor disagree about a shared native runtime.");
+        if (shared is null) return;
+        var overlay = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!overlay.Contains("native/presentation.json") || shared.Files.Any(file => overlay.Contains(file.Path)))
+            throw new InvalidDataException("Shared native runtime overlaps its pack overlay or has no pack presentation.");
     }
 
     public static string ResolveClientJarPath(string packDirectory, PackRuntimeDescriptor descriptor)
@@ -232,6 +294,7 @@ public static class PackManifestService
         public string? Platform { get; set; }
         public string? Adapter { get; set; }
         public string? Version { get; set; }
+        public NativeSharedRuntimeDescriptor? SharedRuntime { get; set; }
     }
 
     private sealed class LoaderManifestDto

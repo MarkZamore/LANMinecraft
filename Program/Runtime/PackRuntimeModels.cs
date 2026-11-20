@@ -28,7 +28,17 @@ internal static class PackLoaderNames
 
 public sealed record PackLoaderDescriptor(PackLoaderKind Type, string? Version);
 
-public sealed record NativePackRuntimeDescriptor(string Executable, string Platform, string Adapter, string Version);
+public sealed record NativePackRuntimeDescriptor(string Executable, string Platform, string Adapter, string Version)
+{
+    public NativeSharedRuntimeDescriptor? SharedRuntime { get; init; }
+}
+
+public sealed record NativeSharedRuntimeDescriptor(int SchemaVersion, string Id, string Version, string Platform,
+    PackSyncSource Source, NativeSharedRuntimeArchive Archive, IReadOnlyList<NativeSharedRuntimeFile> Files);
+
+public sealed record NativeSharedRuntimeArchive(string Name, string Sha256, long SizeBytes);
+
+public sealed record NativeSharedRuntimeFile(string Path, long SizeBytes, string Sha256);
 
 public sealed record PackRuntimeDescriptor(
     int SchemaVersion,

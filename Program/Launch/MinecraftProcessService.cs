@@ -743,7 +743,8 @@ public sealed class MinecraftProcessService
             var process = new Process
             {
                 StartInfo = NativeClientLaunch.CreateStartInfo(_paths, identityContext, packRelativePath,
-                    gameDir, executable, runtime.Version, skinRegistryPath, identityRegistryPath)
+                    gameDir, executable, runtime.Version, skinRegistryPath, identityRegistryPath,
+                    runtime.SharedRuntime is null ? null : packDir)
             };
             using var noticeOverlay = NoticeOverlay.PrepareSession(native: true);
             process.StartInfo.Environment["LANMINECRAFT_NOTICE_DIRECTORY"] = noticeOverlay.Directory;

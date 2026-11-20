@@ -28,7 +28,7 @@ internal static class NativeClientLaunch
 
     internal static ProcessStartInfo CreateStartInfo(AppPaths paths, LocalIdentityContext identity,
         string packRelativePath, string gameDirectory, string executablePath, string runtimeVersion,
-        string skinRegistryPath, string identityRegistryPath)
+        string skinRegistryPath, string identityRegistryPath, string? sharedPackRoot = null)
     {
         var start = new ProcessStartInfo(executablePath)
         {
@@ -46,6 +46,11 @@ internal static class NativeClientLaunch
         start.ArgumentList.Add(gameDirectory);
         start.Environment["LANMINECRAFT_NATIVE_CACHE"] = Path.Combine(paths.CombineUnderRuntimes(packRelativePath), "Native");
         start.Environment["LANMINECRAFT_SHARED_MINECRAFT"] = paths.SharedRuntime;
+        if (sharedPackRoot is not null)
+        {
+            start.Environment["LANMINECRAFT_NATIVE_PACK_ROOT"] = sharedPackRoot;
+            start.Environment["LANMINECRAFT_NATIVE_PREPARED_CACHE"] = SharedNativeRuntimeStore.PreparedCache(paths);
+        }
         start.Environment["LANMINECRAFT_STEAM_ID"] = identity.SteamId64.ToString();
         start.Environment["LANMINECRAFT_PLAYER_UUID"] = identity.PlayerUuid.ToString("D");
         start.Environment["LANMINECRAFT_PLAYER_NAME"] = identity.IdentityName;

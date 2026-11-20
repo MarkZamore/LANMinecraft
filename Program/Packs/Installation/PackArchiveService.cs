@@ -16,8 +16,8 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
 {
     internal const string Extension = ".lanpack";
     internal const long MaxArchiveBytes = 8L * 1024 * 1024 * 1024;
-    private const long MaxPayloadBytes = 16L * 1024 * 1024 * 1024;
-    private const int MaxEntries = 100_000;
+    internal const long MaxPayloadBytes = 16L * 1024 * 1024 * 1024;
+    internal const int MaxEntries = 100_000;
     private const int MaxManifestBytes = 32 * 1024 * 1024;
     private const long MaxDirectoryBytes = 64L * 1024 * 1024;
     private const int BufferSize = 128 * 1024;
@@ -90,7 +90,7 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
             : EnumeratePersonal(source, descriptor, token);
         var features = managed ? PortablePackSyncService.ReadInstalledSnapshotFeatures(source) : [];
         var total = ValidateInventory(inventory, source, managed, descriptor.ClientJar, requireHash: managed);
-        ValidateRuntimePayload(descriptor, inventory);
+        ValidateRuntimePayload(descriptor, inventory, features);
         var finalPath = Path.GetFullPath(archivePath);
         var temporary = finalPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var ownsTemporary = false;
@@ -187,7 +187,7 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
         var descriptor = PackManifestService.Load(staging);
         if (!descriptor.ClientJar.Equals(manifest.ClientJar, StringComparison.Ordinal))
             throw new InvalidDataException("Описание сборки и список файлов указывают разные клиентские JAR.");
-        ValidateRuntimePayload(descriptor, manifest.Files);
+        ValidateRuntimePayload(descriptor, manifest.Files, manifest.RequiredFeatures);
         if (manifest.Managed)
             PortablePackSyncService.WriteImportedSnapshot(staging, manifest.Files, manifest.RequiredFeatures);
 
@@ -434,7 +434,7 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
         ValidatePayloadPath(name, root);
     }
 
-    private static void ValidatePayloadPath(string path, string root)
+    internal static string ValidatePayloadPath(string path, string root)
     {
         PortablePackSyncService.ValidateManifestPath(path, root, checkAncestors: false);
         if (path.Split('/').Any(segment =>
@@ -446,11 +446,15 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
             return stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
                 stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[^1]);
         })) throw new InvalidDataException("Недопустимый путь Windows в архиве сборки: " + path);
+        return path;
     }
 
     private static void ValidateRuntimePayload(PackRuntimeDescriptor descriptor,
-        IReadOnlyList<PortablePackSyncService.ManagedFileSnapshot> inventory)
+        IReadOnlyList<PortablePackSyncService.ManagedFileSnapshot> inventory, IReadOnlyList<string> features)
     {
+        PackManifestService.VerifySharedRuntimeOverlay(descriptor, inventory.Select(file => file.Path),
+            features.Contains(PackManifestService.NativeSharedRuntimeFeature, StringComparer.Ordinal));
+        if (descriptor.NativeRuntime?.SharedRuntime is not null) return;
         var expected = descriptor.NativeRuntime?.Executable ?? descriptor.ClientJar;
         if (expected.Length != 0 && !inventory.Any(file => file.Path.Equals(expected, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidDataException("В архиве нет файла, указанного для запуска сборки: " + expected);
@@ -491,7 +495,7 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
 
     // Bound metadata before ZipArchive materializes attacker-controlled central directory entries.
     // Our format emits no ZIP comment and only allows single-disk ZIP/ZIP64.
-    private static void CheckCentralDirectory(FileStream stream)
+    internal static void CheckCentralDirectory(FileStream stream, int minimumEntries = 2)
     {
         if (stream.Length is < 22 or > MaxArchiveBytes) throw TooLarge();
         Span<byte> end = stackalloc byte[22];
@@ -530,7 +534,7 @@ internal sealed class PackArchiveService(AppPaths paths, Func<string, bool> canE
                 BinaryPrimitives.ReadInt64LittleEndian(zip64[24..]) != count) throw BadZip();
         }
 
-        if (count is < 2 or > MaxEntries + 1 || size < count * 46 || size > MaxDirectoryBytes ||
+        if (count < minimumEntries || count > MaxEntries + 1 || size < count * 46 || size > MaxDirectoryBytes ||
             start < 0 || start != endOffset - size) throw BadZip();
     }
 
